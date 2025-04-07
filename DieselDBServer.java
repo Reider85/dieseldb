@@ -977,29 +977,60 @@ public class DieselDBServer {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
+
+            List<Map<String, Object>> table = tables.get(tableName);
             int deleted = 0;
-            synchronized (tables.get(tableName)) {
-                List<Map<String, Object>> toDelete;
-                if (condition == null) {
-                    toDelete = new ArrayList<>(tables.get(tableName));
-                    tables.get(tableName).clear();
+
+            if (condition == null) {
+                // Удаление всей таблицы
+                synchronized (table) {
+                    deleted = table.size();
+                    table.clear();
                     hashIndexes.get(tableName).clear();
                     btreeIndexes.get(tableName).clear();
-                    deleted = toDelete.size();
-                } else {
-                    toDelete = evaluateWithIndexes(tableName, condition, tables);
+                }
+            } else {
+                // Удаление по условию с использованием индексов
+                List<Map<String, Object>> toDelete = evaluateWithIndexes(tableName, condition, tables);
+                if (toDelete.isEmpty()) {
+                    return "OK: 0";
+                }
+
+                // Оптимизированное удаление
+                synchronized (table) {
                     for (Map<String, Object> row : toDelete) {
-                        tables.get(tableName).remove(row);
-                        for (Map.Entry<String, Object> entry : row.entrySet()) {
-                            String column = entry.getKey();
-                            Object value = entry.getValue();
-                            hashIndexes.get(tableName).get(column).getOrDefault(value, Collections.emptySet()).remove(row);
-                            btreeIndexes.get(tableName).get(column).getOrDefault(value, Collections.emptySet()).remove(row);
+                        if (table.remove(row)) { // Удаляем только если строка всё ещё в таблице
+                            deleted++;
+                            // Обновляем индексы
+                            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                                String column = entry.getKey();
+                                Object value = entry.getValue();
+                                Map<Object, Set<Map<String, Object>>> hashIndex = hashIndexes.get(tableName).get(column);
+                                if (hashIndex != null) {
+                                    Set<Map<String, Object>> rows = hashIndex.get(value);
+                                    if (rows != null) {
+                                        rows.remove(row);
+                                        if (rows.isEmpty()) {
+                                            hashIndex.remove(value);
+                                        }
+                                    }
+                                }
+                                TreeMap<Object, Set<Map<String, Object>>> btreeIndex = btreeIndexes.get(tableName).get(column);
+                                if (btreeIndex != null) {
+                                    Set<Map<String, Object>> btreeRows = btreeIndex.get(value);
+                                    if (btreeRows != null) {
+                                        btreeRows.remove(row);
+                                        if (btreeRows.isEmpty()) {
+                                            btreeIndex.remove(value);
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        deleted++;
                     }
                 }
             }
+
             return "OK: " + deleted;
         }
     }

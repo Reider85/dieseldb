@@ -10,3 +10,4 @@
 0.1.0 Indexes
 0.1.1 Order by
 0.1.2 Transaction
+0.1.3 Delete optimization
