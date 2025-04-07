@@ -11,11 +11,14 @@ public class DieselDBServer {
     private static final String DELIMITER = "§§§";
     private static final String DATA_DIR = "dieseldb_data";
     private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
+    private static final Map<String, Long> lastAccessTimes = new ConcurrentHashMap<>(); // Время последнего доступа
+    private static final Map<String, Boolean> dirtyTables = new ConcurrentHashMap<>(); // Флаг "грязных" таблиц
     private static final ExecutorService clientExecutor = Executors.newCachedThreadPool();
-    private static final ScheduledExecutorService diskExecutor = Executors.newScheduledThreadPool(1);
+    private static final ScheduledExecutorService diskExecutor = Executors.newScheduledThreadPool(2);
     private static volatile boolean isRunning = true;
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-    private static final Map<String, Boolean> dirtyTables = new ConcurrentHashMap<>(); // Флаг "грязных" таблиц
+    private static final long MEMORY_THRESHOLD = 512 * 1024 * 1024; // 512 MB порог памяти
+    private static final long INACTIVE_TIMEOUT = 30_000; // 30 секунд для неактивных таблиц
 
     public static void main(String[] args) {
         File dataDir = new File(DATA_DIR);
@@ -26,12 +29,13 @@ public class DieselDBServer {
         // Асинхронная загрузка таблиц
         loadTablesFromFilesAsync().thenRun(() -> {
             System.out.println("All tables loaded asynchronously");
-            startDiskFlushing(); // Запуск периодической записи
+            startDiskFlushing();
+            startMemoryCleanup(); // Запуск очистки памяти
         });
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             isRunning = false;
-            flushAllTablesToDisk(); // Сохранение перед завершением
+            flushAllTablesToDisk();
             clientExecutor.shutdown();
             diskExecutor.shutdown();
             System.out.println("Server shutting down...");
@@ -79,7 +83,8 @@ public class DieselDBServer {
                     ByteArrayInputStream bais = new ByteArrayInputStream(data);
                     try (ObjectInputStream ois = new ObjectInputStream(bais)) {
                         List<Map<String, Object>> tableData = (List<Map<String, Object>>) ois.readObject();
-                        tables.put(tableName, new ArrayList<>(tableData)); // Используем ArrayList вместо CopyOnWrite
+                        tables.put(tableName, new ArrayList<>(tableData));
+                        lastAccessTimes.put(tableName, System.currentTimeMillis());
                         System.out.println("Loaded table: " + tableName);
                     }
                 } catch (Exception e) {
@@ -88,7 +93,6 @@ public class DieselDBServer {
             }, clientExecutor);
             futures.add(future);
         }
-
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
 
@@ -98,10 +102,41 @@ public class DieselDBServer {
             for (String tableName : dirtyTables.keySet()) {
                 if (Boolean.TRUE.equals(dirtyTables.get(tableName))) {
                     saveTableToDisk(tableName);
-                    dirtyTables.put(tableName, false); // Сбрасываем флаг после записи
+                    dirtyTables.put(tableName, false);
                 }
             }
-        }, 5, 5, TimeUnit.SECONDS); // Запись каждые 5 секунд
+        }, 5, 5, TimeUnit.SECONDS);
+    }
+
+    // Периодическая очистка памяти
+    private static void startMemoryCleanup() {
+        diskExecutor.scheduleAtFixedRate(() -> {
+            long usedMemory = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+            if (usedMemory > MEMORY_THRESHOLD) {
+                System.out.println("Memory usage exceeded threshold: " + usedMemory / (1024 * 1024) + " MB");
+                cleanupInactiveTables();
+                System.gc(); // Принудительный вызов сборщика мусора
+            }
+        }, 10, 10, TimeUnit.SECONDS); // Проверка каждые 10 секунд
+    }
+
+    // Очистка неактивных таблиц
+    private static void cleanupInactiveTables() {
+        long currentTime = System.currentTimeMillis();
+        for (String tableName : tables.keySet()) {
+            long lastAccess = lastAccessTimes.getOrDefault(tableName, 0L);
+            if (currentTime - lastAccess > INACTIVE_TIMEOUT) {
+                synchronized (tables.get(tableName)) {
+                    if (dirtyTables.getOrDefault(tableName, false)) {
+                        saveTableToDisk(tableName); // Сохраняем перед удалением
+                        dirtyTables.put(tableName, false);
+                    }
+                    tables.remove(tableName);
+                    lastAccessTimes.remove(tableName);
+                    System.out.println("Unloaded inactive table from memory: " + tableName);
+                }
+            }
+        }
     }
 
     // Сохранение одной таблицы на диск
@@ -119,7 +154,7 @@ public class DieselDBServer {
         }
     }
 
-    // Принудительное сохранение всех таблиц перед завершением
+    // Принудительное сохранение всех таблиц
     private static void flushAllTablesToDisk() {
         for (String tableName : tables.keySet()) {
             saveTableToDisk(tableName);
@@ -165,15 +200,27 @@ public class DieselDBServer {
                 if ("PING".equalsIgnoreCase(command.trim())) {
                     return "OK: PONG";
                 }
+                if ("CLEAR_MEMORY".equalsIgnoreCase(command.trim())) {
+                    cleanupInactiveTables();
+                    System.gc();
+                    return "OK: Memory cleanup triggered";
+                }
 
                 String[] parts = command.split(DELIMITER, 3);
                 if (parts.length < 2) {
-                    return "ERROR: Invalid command format. Use COMMAND§§§TABLE§§§DATA or PING";
+                    return "ERROR: Invalid command format. Use COMMAND§§§TABLE§§§DATA or PING or CLEAR_MEMORY";
                 }
 
                 String cmd = parts[0].toUpperCase();
                 String tableName = parts[1];
                 String data = parts.length > 2 ? parts[2] : null;
+
+                // Проверка и загрузка таблицы, если она не в памяти
+                if (!tables.containsKey(tableName) && !cmd.equals("CREATE")) {
+                    loadTableFromDisk(tableName);
+                }
+
+                lastAccessTimes.put(tableName, System.currentTimeMillis()); // Обновляем время доступа
 
                 String response;
                 switch (cmd) {
@@ -200,7 +247,6 @@ public class DieselDBServer {
                         return "ERROR: Unknown command";
                 }
 
-                // Отмечаем таблицу как "грязную" только для операций модификации
                 if (!cmd.equals("SELECT") && response.startsWith("OK")) {
                     dirtyTables.put(tableName, true);
                 }
@@ -211,13 +257,32 @@ public class DieselDBServer {
             }
         }
 
+        // Загрузка таблицы с диска, если она отсутствует в памяти
+        private void loadTableFromDisk(String tableName) {
+            Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
+            if (Files.exists(filePath)) {
+                try {
+                    byte[] data = Files.readAllBytes(filePath);
+                    ByteArrayInputStream bais = new ByteArrayInputStream(data);
+                    try (ObjectInputStream ois = new ObjectInputStream(bais)) {
+                        List<Map<String, Object>> tableData = (List<Map<String, Object>>) ois.readObject();
+                        tables.put(tableName, new ArrayList<>(tableData));
+                        lastAccessTimes.put(tableName, System.currentTimeMillis());
+                        System.out.println("Reloaded table from disk: " + tableName);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error reloading table " + tableName + ": " + e.getMessage());
+                }
+            } else if (!tables.containsKey(tableName)) {
+                throw new IllegalStateException("Table " + tableName + " not found on disk or in memory");
+            }
+        }
+
         private Object parseValue(String typedValue) {
             String[] parts = typedValue.split(":", 2);
             if (parts.length != 2) return parts[0];
-
             String type = parts[0];
             String value = parts[1];
-
             switch (type.toLowerCase()) {
                 case "integer": return Integer.parseInt(value);
                 case "bigdecimal": return new BigDecimal(value);
@@ -241,6 +306,7 @@ public class DieselDBServer {
 
         private String createTable(String tableName) {
             tables.putIfAbsent(tableName, new ArrayList<>());
+            lastAccessTimes.put(tableName, System.currentTimeMillis());
             return "OK: Table '" + tableName + "' created";
         }
 
@@ -286,7 +352,6 @@ public class DieselDBServer {
         }
 
         private boolean evaluateWhereCondition(Map<String, Object> row, String condition) {
-            // Оставляем как есть для простоты, можно оптимизировать отдельно
             String[] orParts = condition.split("\\s+OR\\s+");
             for (String orPart : orParts) {
                 String[] andParts = orPart.split("\\s+AND\\s+");
@@ -328,7 +393,6 @@ public class DieselDBServer {
         }
 
         private boolean compareValues(Object value1, Object value2, String operator) {
-            // Оставляем как есть для простоты
             if (value1 == null || value2 == null) return false;
             if (value1 instanceof Integer && value2 instanceof Integer) {
                 int v1 = (Integer) value1;
@@ -375,16 +439,18 @@ public class DieselDBServer {
         }
 
         private String handleJoin(String leftTable, String joinData) {
-            // Оставляем как есть, только добавляем синхронизацию
             String[] joinParts = joinData.split("§§§");
             if (joinParts.length < 3) return "ERROR: Invalid JOIN format";
             if (!joinParts[0].equals("JOIN")) return "ERROR: JOIN command must start with JOIN";
             String rightTable = joinParts[1];
             String joinCondition = joinParts[2];
             String whereCondition = joinParts.length > 3 ? joinParts[3] : null;
-            if (!tables.containsKey(leftTable) || !tables.containsKey(rightTable)) {
-                return "ERROR: One or both tables not found";
-            }
+
+            if (!tables.containsKey(leftTable)) loadTableFromDisk(leftTable);
+            if (!tables.containsKey(rightTable)) loadTableFromDisk(rightTable);
+
+            lastAccessTimes.put(rightTable, System.currentTimeMillis());
+
             String[] keys = joinCondition.split("=");
             if (keys.length != 2) return "ERROR: Invalid join condition";
             String leftKey = keys[0];

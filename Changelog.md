@@ -6,3 +6,4 @@
 0.0.6 add simple WHERE
 0.0.7 Integer,BigDecimal,String,Data,Boolean datatype
 0.0.8 Optimization file save and load
+0.0.9 Memory clear
