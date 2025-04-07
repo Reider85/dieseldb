@@ -166,7 +166,11 @@ public class DieselDBServer {
                         response = data != null ? insertRow(tableName, data) : "ERROR: Missing data for INSERT";
                         break;
                     case "SELECT":
-                        response = selectRows(tableName, data);
+                        if (data != null && data.startsWith("JOIN")) {
+                            response = handleJoin(tableName, data);
+                        } else {
+                            response = selectRows(tableName, data);
+                        }
                         break;
                     case "UPDATE":
                         response = data != null ? updateRows(tableName, data) : "ERROR: Missing data for UPDATE";
@@ -178,7 +182,6 @@ public class DieselDBServer {
                         return "ERROR: Unknown command";
                 }
 
-                // Save changes to file after modifying operations
                 if (!cmd.equals("SELECT") && response.startsWith("OK")) {
                     executor.submit(() -> {
                         try (ObjectOutputStream oos = new ObjectOutputStream(
@@ -195,6 +198,78 @@ public class DieselDBServer {
                 return "ERROR: " + e.getMessage();
             }
         }
+
+        private String handleJoin(String leftTable, String joinData) {
+            // Expected format: JOIN§§§rightTable§§§leftKey=rightKey[;;;whereCondition]
+            String[] joinParts = joinData.split("§§§");
+            if (joinParts.length < 3) {
+                return "ERROR: Invalid JOIN format. Use JOIN§§§rightTable§§§leftKey=rightKey[;;;whereCondition]";
+            }
+
+            if (!joinParts[0].equals("JOIN")) {
+                return "ERROR: JOIN command must start with JOIN";
+            }
+
+            String rightTable = joinParts[1];
+            String joinCondition = joinParts[2];
+            String whereCondition = joinParts.length > 3 ? joinParts[3] : null;
+
+            if (!tables.containsKey(leftTable) || !tables.containsKey(rightTable)) {
+                return "ERROR: One or both tables not found";
+            }
+
+            String[] keys = joinCondition.split("=");
+            if (keys.length != 2) {
+                return "ERROR: Invalid join condition. Use leftKey=rightKey";
+            }
+
+            String leftKey = keys[0];
+            String rightKey = keys[1];
+
+            List<Map<String, String>> result = joinTables(leftTable, rightTable, leftKey, rightKey, whereCondition);
+
+            if (result.isEmpty()) {
+                return "OK: 0 rows";
+            }
+
+            StringBuilder response = new StringBuilder("OK: ");
+            response.append(String.join(":::", result.get(0).keySet()));
+            for (Map<String, String> row : result) {
+                response.append(";;;").append(String.join(":::", row.values()));
+            }
+            return response.toString();
+        }
+
+        private List<Map<String, String>> joinTables(String leftTable, String rightTable,
+                                                     String leftKey, String rightKey, String whereCondition) {
+            List<Map<String, String>> result = new ArrayList<>();
+
+            for (Map<String, String> leftRow : tables.get(leftTable)) {
+                String leftValue = leftRow.get(leftKey);
+                if (leftValue == null) continue;
+
+                for (Map<String, String> rightRow : tables.get(rightTable)) {
+                    String rightValue = rightRow.get(rightKey);
+                    if (rightValue != null && leftValue.equals(rightValue)) {
+                        // Combine the rows
+                        Map<String, String> joinedRow = new LinkedHashMap<>();
+
+                        // Add left table fields with prefix
+                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                        // Add right table fields with prefix
+                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+
+                        // Apply where condition if present
+                        if (whereCondition == null || rowMatchesCondition(joinedRow, whereCondition)) {
+                            result.add(joinedRow);
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+
 
         // [Rest of the ClientHandler methods remain unchanged: createTable, insertRow, selectRows,
         // rowMatchesCondition, updateRows, deleteRows]
@@ -226,6 +301,7 @@ public class DieselDBServer {
             }
         }
 
+        // Modified selectRows to handle prefixed column names
         private String selectRows(String tableName, String condition) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
@@ -250,6 +326,7 @@ public class DieselDBServer {
             return response.toString();
         }
 
+        // Modified rowMatchesCondition to handle prefixed column names
         private boolean rowMatchesCondition(Map<String, String> row, String condition) {
             String[] parts = condition.split("=", 2);
             if (parts.length != 2) return false;
