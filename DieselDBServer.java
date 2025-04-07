@@ -55,11 +55,13 @@ public class DieselDBServer {
     private static void loadTablesFromFiles() {
         File dataDir = new File(DATA_DIR);
         File[] tableFiles = dataDir.listFiles((dir, name) -> name.endsWith(".ddb"));
-        if (tableFiles == null) return;
+        if (tableFiles == null || tableFiles.length == 0) {
+            System.out.println("No tables to load from " + DATA_DIR);
+            return; // Нет файлов для загрузки, выходим
+        }
 
-        ExecutorService loadExecutor = Executors.newFixedThreadPool(
-                Math.min(tableFiles.length, Runtime.getRuntime().availableProcessors())
-        );
+        int threadCount = Math.max(1, Math.min(tableFiles.length, Runtime.getRuntime().availableProcessors()));
+        ExecutorService loadExecutor = Executors.newFixedThreadPool(threadCount);
 
         for (File file : tableFiles) {
             loadExecutor.submit(() -> {
@@ -81,7 +83,6 @@ public class DieselDBServer {
             System.err.println("Error waiting for table loading: " + e.getMessage());
         }
     }
-
     private static void saveTablesToFiles() {
         ExecutorService saveExecutor = Executors.newFixedThreadPool(
                 Math.min(tables.size(), Runtime.getRuntime().availableProcessors())

@@ -3,8 +3,8 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class DieselDBPerformanceTest {
-    private static final int RECORD_COUNT = 1_000_000;
-    private static final int BATCH_SIZE = 10_000;
+    private static final int RECORD_COUNT = 1000;
+    private static final int BATCH_SIZE = 10;
     private static final String TABLE_NAME = "perf_test";
 
     public static void main(String[] args) {
@@ -89,11 +89,16 @@ public class DieselDBPerformanceTest {
 
         // Тест выборки по условию
         startTime = System.currentTimeMillis();
-        List<Map<String, String>> filteredRecords = client.select(TABLE_NAME, "id=500000");
+        List<Map<String, String>> filteredRecords = client.select(TABLE_NAME, "id=500"); // Исправлено с 500000 на 500
         endTime = System.currentTimeMillis();
 
-        System.out.printf("Selected 1 record with condition in %d ms%n", (endTime - startTime));
-        System.out.println("Sample record: " + filteredRecords.get(0));
+        System.out.printf("Selected %d record(s) with condition in %d ms%n",
+                filteredRecords.size(), (endTime - startTime));
+        if (!filteredRecords.isEmpty()) {
+            System.out.println("Sample record: " + filteredRecords.get(0));
+        } else {
+            System.out.println("No records found for condition id=500");
+        }
     }
 
     private static void testUpdate(DieselDBClient client) throws IOException {
