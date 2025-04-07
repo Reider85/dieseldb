@@ -1,5 +1,7 @@
 import java.io.*;
 import java.net.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.AsynchronousFileChannel;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -27,6 +29,8 @@ public class DieselDBServer {
     private static final Map<String, Map<String, String>> tableSchemas = new ConcurrentHashMap<>();
     private static final Map<String, String> primaryKeys = new ConcurrentHashMap<>();
     private static final Map<String, Set<String>> uniqueConstraints = new ConcurrentHashMap<>();
+    // Хранение активных операций записи для ожидания завершения при выключении
+    private static final Map<String, Future<?>> pendingWrites = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
         File dataDir = new File(DATA_DIR);
@@ -45,6 +49,7 @@ public class DieselDBServer {
             flushAllTablesToDisk();
             clientExecutor.shutdown();
             diskExecutor.shutdown();
+            waitForPendingWrites(); // Дожидаемся завершения всех операций записи
             System.out.println("Server shutting down...");
         }));
 
@@ -85,7 +90,6 @@ public class DieselDBServer {
             CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
                 String tableName = file.getName().replace(".ddb", "");
                 try {
-                    // Загрузка данных таблицы
                     byte[] data = Files.readAllBytes(file.toPath());
                     ByteArrayInputStream bais = new ByteArrayInputStream(data);
                     try (ObjectInputStream ois = new ObjectInputStream(bais)) {
@@ -94,8 +98,6 @@ public class DieselDBServer {
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
                         rebuildIndexes(tableName);
                     }
-
-                    // Загрузка схемы
                     Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
                     if (Files.exists(schemaPath)) {
                         byte[] schemaData = Files.readAllBytes(schemaPath);
@@ -158,6 +160,7 @@ public class DieselDBServer {
                     tableSchemas.remove(tableName);
                     primaryKeys.remove(tableName);
                     uniqueConstraints.remove(tableName);
+                    pendingWrites.remove(tableName); // Удаляем завершенные операции
                     System.out.println("Unloaded inactive table from memory: " + tableName);
                 }
             }
@@ -172,7 +175,12 @@ public class DieselDBServer {
             try (ObjectOutputStream oos = new ObjectOutputStream(baos)) {
                 oos.writeObject(tables.get(tableName));
             }
-            Files.write(filePath, baos.toByteArray(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            byte[] data = baos.toByteArray();
+            AsynchronousFileChannel channel = AsynchronousFileChannel.open(
+                    filePath, StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+            Future<Integer> writeFuture = channel.write(buffer, 0);
+            pendingWrites.put(tableName + ".ddb", writeFuture);
 
             // Сохранение схемы
             Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
@@ -182,11 +190,29 @@ public class DieselDBServer {
                 schemaOos.writeObject(primaryKeys.get(tableName));
                 schemaOos.writeObject(uniqueConstraints.get(tableName));
             }
-            Files.write(schemaPath, schemaBaos.toByteArray(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            byte[] schemaData = schemaBaos.toByteArray();
+            AsynchronousFileChannel schemaChannel = AsynchronousFileChannel.open(
+                    schemaPath, StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            ByteBuffer schemaBuffer = ByteBuffer.wrap(schemaData);
+            Future<Integer> schemaWriteFuture = schemaChannel.write(schemaBuffer, 0);
+            pendingWrites.put(tableName + ".schema", schemaWriteFuture);
 
-            System.out.println("Saved table and schema asynchronously: " + tableName);
+            // Асинхронное логирование завершения
+            diskExecutor.submit(() -> {
+                try {
+                    writeFuture.get(); // Ожидание завершения записи данных
+                    schemaWriteFuture.get(); // Ожидание завершения записи схемы
+                    channel.close();
+                    schemaChannel.close();
+                    pendingWrites.remove(tableName + ".ddb");
+                    pendingWrites.remove(tableName + ".schema");
+                    System.out.println("Saved table and schema asynchronously: " + tableName);
+                } catch (Exception e) {
+                    System.err.println("Error completing async write for " + tableName + ": " + e.getMessage());
+                }
+            });
         } catch (IOException e) {
-            System.err.println("Error saving table " + tableName + ": " + e.getMessage());
+            System.err.println("Error initiating async save for " + tableName + ": " + e.getMessage());
         }
     }
 
@@ -197,6 +223,19 @@ public class DieselDBServer {
                 saveTableToDisk(tableName);
             }
         }
+        waitForPendingWrites(); // Дожидаемся завершения всех операций
+    }
+
+    private static void waitForPendingWrites() {
+        for (Map.Entry<String, Future<?>> entry : pendingWrites.entrySet()) {
+            try {
+                entry.getValue().get(5, TimeUnit.SECONDS); // Ожидание до 5 секунд
+                System.out.println("Completed pending write for " + entry.getKey());
+            } catch (Exception e) {
+                System.err.println("Error waiting for write completion of " + entry.getKey() + ": " + e.getMessage());
+            }
+        }
+        pendingWrites.clear();
     }
 
     private static void rebuildIndexes(String tableName) {
@@ -470,7 +509,6 @@ public class DieselDBServer {
                         rebuildIndexes(tableName);
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
 
-                        // Загрузка схемы
                         Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
                         if (Files.exists(schemaPath)) {
                             byte[] schemaData = Files.readAllBytes(schemaPath);
@@ -619,8 +657,7 @@ public class DieselDBServer {
                     if (pkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
                     Map<Object, Set<Map<String, Object>>> pkIndex = hashIndexes.get(tableName).get(pkCol);
                     if (pkIndex != null && pkIndex.containsKey(pkValue)) {
-                        Set<Map<String, Object>> rows = pkIndex.get(pkValue);
-                        if (rows.stream().anyMatch(r -> !deletedRows.contains(r))) {
+                        if (pkIndex.get(pkValue).stream().anyMatch(r -> !deletedRows.contains(r))) {
                             return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
                         }
                     }
@@ -629,13 +666,12 @@ public class DieselDBServer {
                 Set<String> uniqueCols = uniqueConstraints.get(tableName);
                 if (uniqueCols != null) {
                     for (String col : uniqueCols) {
-                        if (!col.equals(pkCol)) { // Пропускаем первичный ключ, уже проверен
+                        if (!col.equals(pkCol)) {
                             Object value = row.get(col);
                             if (value != null) {
                                 Map<Object, Set<Map<String, Object>>> colIndex = hashIndexes.get(tableName).get(col);
                                 if (colIndex != null && colIndex.containsKey(value)) {
-                                    Set<Map<String, Object>> rows = colIndex.get(value);
-                                    if (rows.stream().anyMatch(r -> !deletedRows.contains(r))) {
+                                    if (colIndex.get(value).stream().anyMatch(r -> !deletedRows.contains(r))) {
                                         return "ERROR: Duplicate unique value " + value + " for " + col;
                                     }
                                 }
@@ -705,8 +741,7 @@ public class DieselDBServer {
                             if (newPkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
                             Map<Object, Set<Map<String, Object>>> pkIndex = hashIndexes.get(tableName).get(pkCol);
                             if (pkIndex != null && pkIndex.containsKey(newPkValue)) {
-                                Set<Map<String, Object>> rows = pkIndex.get(newPkValue);
-                                if (rows.stream().anyMatch(r -> !r.equals(row) && !deletedRows.contains(r))) {
+                                if (pkIndex.get(newPkValue).stream().anyMatch(r -> !r.equals(row) && !deletedRows.contains(r))) {
                                     return "ERROR: Duplicate primary key value " + newPkValue + " for " + pkCol;
                                 }
                             }
@@ -719,8 +754,7 @@ public class DieselDBServer {
                                     if (newValue != null) {
                                         Map<Object, Set<Map<String, Object>>> colIndex = hashIndexes.get(tableName).get(col);
                                         if (colIndex != null && colIndex.containsKey(newValue)) {
-                                            Set<Map<String, Object>> rows = colIndex.get(newValue);
-                                            if (rows.stream().anyMatch(r -> !r.equals(row) && !deletedRows.contains(r))) {
+                                            if (colIndex.get(newValue).stream().anyMatch(r -> !r.equals(row) && !deletedRows.contains(r))) {
                                                 return "ERROR: Duplicate unique value " + newValue + " for " + col;
                                             }
                                         }
