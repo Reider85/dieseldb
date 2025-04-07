@@ -19,6 +19,7 @@ public class DieselDBServer {
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
     private static final long MEMORY_THRESHOLD = 512 * 1024 * 1024; // 512 MB
     private static final long INACTIVE_TIMEOUT = 30_000; // 30 секунд
+    private static final int BATCH_SIZE = 1000; // Размер пакета для удаления
 
     private static final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
@@ -126,7 +127,7 @@ public class DieselDBServer {
 
     private static void cleanupInactiveTables() {
         long currentTime = System.currentTimeMillis();
-        for (String tableName : tables.keySet ()) {
+        for (String tableName : tables.keySet()) {
             long lastAccess = lastAccessTimes.getOrDefault(tableName, 0L);
             if (currentTime - lastAccess > INACTIVE_TIMEOUT) {
                 synchronized (tables.get(tableName)) {
@@ -175,7 +176,7 @@ public class DieselDBServer {
 
         synchronized (table) {
             for (Map<String, Object> row : table) {
-                if (!deletedRows.contains(row)) { // Исключаем удалённые строки
+                if (!deletedRows.contains(row)) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
                         Object value = entry.getValue();
@@ -222,7 +223,7 @@ public class DieselDBServer {
                         }
                     }
                 }
-                iterator.remove(); // Удаляем из deletedRows после очистки
+                iterator.remove();
             }
         }
     }
@@ -311,7 +312,7 @@ public class DieselDBServer {
 
                 String[] parts = command.split(DELIMITER, 3);
                 if (parts.length < 2) {
-                    return "ERROR: Invalid command format. Use COMMAND§§§TABLE§§§DATA or PING or CLEAR_MEMORY or BEGIN/COMMIT/ROLLBACK";
+                    return "ERROR: Invalid command format";
                 }
 
                 String cmd = parts[0].toUpperCase();
@@ -375,13 +376,12 @@ public class DieselDBServer {
                 List<Map<String, Object>> tableCopy = new ArrayList<>();
                 synchronized (tables.get(tableName)) {
                     for (Map<String, Object> row : tables.get(tableName)) {
-                        if (!deletedRows.contains(row)) { // Исключаем удалённые строки
+                        if (!deletedRows.contains(row)) {
                             tableCopy.add(new HashMap<>(row));
                         }
                     }
                 }
                 transactionTables.put(tableName, tableCopy);
-
                 Map<String, Map<Object, Set<Map<String, Object>>>> hashCopy = new HashMap<>();
                 Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeCopy = new HashMap<>();
                 rebuildIndexesForTransaction(tableName, tableCopy, hashCopy, btreeCopy);
@@ -513,7 +513,7 @@ public class DieselDBServer {
             }
             synchronized (tables.get(tableName)) {
                 tables.get(tableName).add(row);
-                if (!inTransaction) { // Индексы обновляются только вне транзакции
+                if (!inTransaction) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
                         Object value = entry.getValue();
@@ -549,7 +549,7 @@ public class DieselDBServer {
                     synchronized (tables.get(tableName)) {
                         result = new ArrayList<>();
                         for (Map<String, Object> row : tables.get(tableName)) {
-                            if (!deletedRows.contains(row)) { // Исключаем удалённые строки
+                            if (!deletedRows.contains(row)) {
                                 result.add(row);
                             }
                         }
@@ -560,7 +560,7 @@ public class DieselDBServer {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
-                    result.removeIf(deletedRows::contains); // Фильтруем удалённые строки
+                    result.removeIf(deletedRows::contains);
                 }
 
                 if (orderBy != null) {
@@ -589,7 +589,7 @@ public class DieselDBServer {
                     });
                 }
             } catch (Exception e) {
-                System.err.println("Error in selectRows for table " + tableName + ": " + e.getMessage());
+                System.err.println("Error in selectRows: " + e.getMessage());
                 return "ERROR: Server exception - " + e.getMessage();
             }
 
@@ -623,7 +623,6 @@ public class DieselDBServer {
                     expression = expression.trim();
                     Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression, tables);
                     if (rows == null) {
-                        System.err.println("evaluateSingleCondition returned null for: " + expression);
                         rows = new HashSet<>();
                     }
                     if (candidates == null) {
@@ -644,23 +643,24 @@ public class DieselDBServer {
 
         private Set<Map<String, Object>> evaluateSingleCondition(String tableName, String expression,
                                                                  Map<String, List<Map<String, Object>>> tables) {
+            String[] parts;
             if (expression.contains(">=")) {
-                String[] parts = expression.split(">=");
+                parts = expression.split(">=");
                 return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">=", tables);
             } else if (expression.contains("<=")) {
-                String[] parts = expression.split("<=");
+                parts = expression.split("<=");
                 return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<=", tables);
             } else if (expression.contains(">")) {
-                String[] parts = expression.split(">");
+                parts = expression.split(">");
                 return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">", tables);
             } else if (expression.contains("<")) {
-                String[] parts = expression.split("<");
+                parts = expression.split("<");
                 return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<", tables);
             } else if (expression.contains("!=")) {
-                String[] parts = expression.split("!=");
+                parts = expression.split("!=");
                 return getHashNotEquals(tableName, parts[0].trim(), parts[1].trim(), tables);
             } else if (expression.contains("=")) {
-                String[] parts = expression.split("=");
+                parts = expression.split("=");
                 return getHashEquals(tableName, parts[0].trim(), parts[1].trim(), tables);
             } else {
                 Set<Map<String, Object>> result = new HashSet<>();
@@ -682,7 +682,6 @@ public class DieselDBServer {
             Set<Map<String, Object>> result = new HashSet<>();
 
             if (index == null) {
-                System.err.println("No hash index for column " + column + " in table " + tableName);
                 synchronized (tables.get(tableName)) {
                     for (Map<String, Object> row : tables.get(tableName)) {
                         if (!deletedRows.contains(row) && row.get(column) != null && row.get(column).equals(value)) {
@@ -1017,7 +1016,7 @@ public class DieselDBServer {
             synchronized (tables.get(tableName)) {
                 for (Map<String, Object> row : toUpdate) {
                     if (!deletedRows.contains(row)) {
-                        if (!inTransaction) { // Удаляем старые значения из индексов только вне транзакции
+                        if (!inTransaction) {
                             for (String column : updateMap.keySet()) {
                                 Object oldValue = row.get(column);
                                 if (oldValue != null) {
@@ -1028,7 +1027,7 @@ public class DieselDBServer {
                         }
                         row.putAll(updateMap);
                         updated++;
-                        if (!inTransaction) { // Добавляем новые значения в индексы только вне транзакции
+                        if (!inTransaction) {
                             for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
                                 String column = entry.getKey();
                                 Object newValue = entry.getValue();
@@ -1057,16 +1056,14 @@ public class DieselDBServer {
 
             if (condition == null) {
                 synchronized (table) {
-                    for (Map<String, Object> row : table) {
-                        if (!deletedRows.contains(row)) {
-                            deletedRows.add(row);
-                            deleted++;
-                        }
-                    }
-                    table.clear();
+                    deleted = table.size();
                     if (!inTransaction) {
+                        deletedRows.addAll(table);
+                        table.clear();
                         hashIndexes.get(tableName).clear();
                         btreeIndexes.get(tableName).clear();
+                    } else {
+                        table.clear();
                     }
                 }
             } else {
@@ -1074,19 +1071,44 @@ public class DieselDBServer {
                 if (toDelete.isEmpty()) {
                     return "OK: 0";
                 }
-                synchronized (table) {
-                    for (Map<String, Object> row : toDelete) {
-                        if (!deletedRows.contains(row) && table.remove(row)) {
-                            deletedRows.add(row);
-                            deleted++;
+
+                if (toDelete.size() > BATCH_SIZE && !inTransaction) {
+                    CompletableFuture.runAsync(() -> {
+                        int batchDeleted = 0;
+                        synchronized (table) {
+                            for (int i = 0; i < toDelete.size(); i += BATCH_SIZE) {
+                                int end = Math.min(i + BATCH_SIZE, toDelete.size());
+                                List<Map<String, Object>> batch = toDelete.subList(i, end);
+                                for (Map<String, Object> row : batch) {
+                                    if (!deletedRows.contains(row) && table.remove(row)) {
+                                        deletedRows.add(row);
+                                        batchDeleted++;
+                                    }
+                                }
+                            }
+                            if (batchDeleted > 0) {
+                                dirtyTables.put(tableName, true);
+                            }
+                        }
+                    }, clientExecutor);
+                    deleted = toDelete.size();
+                } else {
+                    synchronized (table) {
+                        for (Map<String, Object> row : toDelete) {
+                            if (!deletedRows.contains(row) && table.remove(row)) {
+                                if (!inTransaction) {
+                                    deletedRows.add(row);
+                                }
+                                deleted++;
+                            }
+                        }
+                        if (!inTransaction && deleted > 0) {
+                            dirtyTables.put(tableName, true);
                         }
                     }
                 }
             }
 
-            if (!inTransaction && deleted > 0) {
-                dirtyTables.put(tableName, true); // Помечаем таблицу для очистки индексов
-            }
             return "OK: " + deleted;
         }
     }
