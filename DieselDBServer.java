@@ -2,17 +2,29 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.nio.file.*;
 
 public class DieselDBServer {
     private static final int PORT = 9090;
     private static final String DELIMITER = "§§§";
+    private static final String DATA_DIR = "dieseldb_data";
     private static final Map<String, List<Map<String, String>>> tables = new ConcurrentHashMap<>();
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     private static volatile boolean isRunning = true;
 
     public static void main(String[] args) {
+        // Create data directory if it doesn't exist
+        File dataDir = new File(DATA_DIR);
+        if (!dataDir.exists()) {
+            dataDir.mkdir();
+        }
+
+        // Load existing data on startup
+        loadTablesFromFiles();
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             isRunning = false;
+            saveTablesToFiles();
             executor.shutdown();
             System.out.println("Server shutting down...");
         }));
@@ -37,6 +49,61 @@ public class DieselDBServer {
         } finally {
             executor.shutdown();
             System.out.println("Server stopped");
+        }
+    }
+
+    private static void loadTablesFromFiles() {
+        File dataDir = new File(DATA_DIR);
+        File[] tableFiles = dataDir.listFiles((dir, name) -> name.endsWith(".ddb"));
+        if (tableFiles == null) return;
+
+        ExecutorService loadExecutor = Executors.newFixedThreadPool(
+                Math.min(tableFiles.length, Runtime.getRuntime().availableProcessors())
+        );
+
+        for (File file : tableFiles) {
+            loadExecutor.submit(() -> {
+                String tableName = file.getName().replace(".ddb", "");
+                try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
+                    List<Map<String, String>> tableData = (List<Map<String, String>>) ois.readObject();
+                    tables.put(tableName, new CopyOnWriteArrayList<>(tableData));
+                    System.out.println("Loaded table: " + tableName);
+                } catch (Exception e) {
+                    System.err.println("Error loading table " + tableName + ": " + e.getMessage());
+                }
+            });
+        }
+
+        loadExecutor.shutdown();
+        try {
+            loadExecutor.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            System.err.println("Error waiting for table loading: " + e.getMessage());
+        }
+    }
+
+    private static void saveTablesToFiles() {
+        ExecutorService saveExecutor = Executors.newFixedThreadPool(
+                Math.min(tables.size(), Runtime.getRuntime().availableProcessors())
+        );
+
+        for (String tableName : tables.keySet()) {
+            saveExecutor.submit(() -> {
+                try (ObjectOutputStream oos = new ObjectOutputStream(
+                        new FileOutputStream(DATA_DIR + "/" + tableName + ".ddb"))) {
+                    oos.writeObject(tables.get(tableName));
+                    System.out.println("Saved table: " + tableName);
+                } catch (IOException e) {
+                    System.err.println("Error saving table " + tableName + ": " + e.getMessage());
+                }
+            });
+        }
+
+        saveExecutor.shutdown();
+        try {
+            saveExecutor.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            System.err.println("Error waiting for table saving: " + e.getMessage());
         }
     }
 
@@ -76,7 +143,6 @@ public class DieselDBServer {
 
         private String processCommand(String command) {
             try {
-                // Special case for PING command
                 if ("PING".equalsIgnoreCase(command.trim())) {
                     return "OK: PONG";
                 }
@@ -90,24 +156,47 @@ public class DieselDBServer {
                 String tableName = parts[1];
                 String data = parts.length > 2 ? parts[2] : null;
 
+                String response;
                 switch (cmd) {
                     case "CREATE":
-                        return createTable(tableName);
+                        response = createTable(tableName);
+                        break;
                     case "INSERT":
-                        return data != null ? insertRow(tableName, data) : "ERROR: Missing data for INSERT";
+                        response = data != null ? insertRow(tableName, data) : "ERROR: Missing data for INSERT";
+                        break;
                     case "SELECT":
-                        return selectRows(tableName, data);
+                        response = selectRows(tableName, data);
+                        break;
                     case "UPDATE":
-                        return data != null ? updateRows(tableName, data) : "ERROR: Missing data for UPDATE";
+                        response = data != null ? updateRows(tableName, data) : "ERROR: Missing data for UPDATE";
+                        break;
                     case "DELETE":
-                        return deleteRows(tableName, data);
+                        response = deleteRows(tableName, data);
+                        break;
                     default:
                         return "ERROR: Unknown command";
                 }
+
+                // Save changes to file after modifying operations
+                if (!cmd.equals("SELECT") && response.startsWith("OK")) {
+                    executor.submit(() -> {
+                        try (ObjectOutputStream oos = new ObjectOutputStream(
+                                new FileOutputStream(DATA_DIR + "/" + tableName + ".ddb"))) {
+                            oos.writeObject(tables.get(tableName));
+                        } catch (IOException e) {
+                            System.err.println("Error saving table " + tableName + ": " + e.getMessage());
+                        }
+                    });
+                }
+                return response;
+
             } catch (Exception e) {
                 return "ERROR: " + e.getMessage();
             }
         }
+
+        // [Rest of the ClientHandler methods remain unchanged: createTable, insertRow, selectRows,
+        // rowMatchesCondition, updateRows, deleteRows]
 
         private String createTable(String tableName) {
             tables.putIfAbsent(tableName, new CopyOnWriteArrayList<>());
