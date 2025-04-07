@@ -1,207 +1,146 @@
-import java.io.*;
-import java.util.*;
-import java.util.concurrent.*;
-import java.text.SimpleDateFormat;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.Random;
 
 public class DieselDBPerformanceTest {
-    private static final int RECORD_COUNT = 1000;
-    private static final int BATCH_SIZE = 10;
-    private static final String TABLE_NAME_1 = "perf_users";
-    private static final String TABLE_NAME_2 = "perf_orders";
-    private static final int THREAD_POOL_SIZE = Runtime.getRuntime().availableProcessors();
-    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+    private static final String HOST = "localhost";
+    private static final int PORT = 9090;
+    private static final String TABLE_USERS = "perf_users";
+    private static final String TABLE_ORDERS = "perf_orders";
+    private static final int NUM_USERS = 10000;
+    private static final int NUM_ORDERS = 20000;
+    private static final Random RANDOM = new Random();
+
+    private final DieselDBClient client;
+
+    public DieselDBPerformanceTest() throws IOException {
+        this.client = new DieselDBClient(HOST, PORT);
+    }
+
+    public void runTests() throws IOException {
+        try {
+            System.out.println("Starting performance tests...");
+
+            testCreateTables();
+            testInsertPerformance();
+            testSelectPerformance();
+            testUpdatePerformance();
+            testDeletePerformance();
+            testJoinPerformance();
+            testMemoryCleanup();
+
+            System.out.println("Performance tests completed.");
+        } finally {
+            client.close();
+        }
+    }
+
+    private void testCreateTables() throws IOException {
+        long startTime = System.currentTimeMillis();
+        client.create(TABLE_USERS);
+        client.create(TABLE_ORDERS);
+        long endTime = System.currentTimeMillis();
+        System.out.println("Table creation time: " + (endTime - startTime) + " ms");
+    }
+
+    private void testInsertPerformance() throws IOException {
+        System.out.println("Testing insert performance...");
+
+        long startTime = System.currentTimeMillis();
+        for (int i = 1; i <= NUM_USERS; i++) {
+            String data = String.format("id:::integer:%d:::name:::string:User%d:::age:::integer:%d",
+                    i, i, 18 + RANDOM.nextInt(50));
+            client.insert(TABLE_USERS, data);
+            if (i % 1000 == 0) {
+                System.out.println("Inserted " + i + " users...");
+            }
+        }
+        long endTimeUsers = System.currentTimeMillis();
+
+        for (int i = 1; i <= NUM_ORDERS; i++) {
+            String data = String.format("order_id:::integer:%d:::user_id:::integer:%d:::amount:::bigdecimal:%s",
+                    i, 1 + RANDOM.nextInt(NUM_USERS), BigDecimal.valueOf(RANDOM.nextDouble() * 1000).setScale(2, BigDecimal.ROUND_HALF_UP));
+            client.insert(TABLE_ORDERS, data);
+            if (i % 1000 == 0) {
+                System.out.println("Inserted " + i + " orders...");
+            }
+        }
+        long endTimeOrders = System.currentTimeMillis();
+
+        System.out.println("Insert " + NUM_USERS + " users time: " + (endTimeUsers - startTime) + " ms");
+        System.out.println("Insert " + NUM_ORDERS + " orders time: " + (endTimeOrders - endTimeUsers) + " ms");
+        System.out.println("Total insert time: " + (endTimeOrders - startTime) + " ms");
+    }
+
+    private void testSelectPerformance() throws IOException {
+        System.out.println("Testing select performance...");
+
+        long startTime = System.currentTimeMillis();
+        String result1 = client.select(TABLE_USERS, "id=" + (NUM_USERS / 2));
+        long endTime1 = System.currentTimeMillis();
+        System.out.println("Select by id time: " + (endTime1 - startTime) + " ms");
+        System.out.println("Result: " + result1);
+
+        startTime = System.currentTimeMillis();
+        String result2 = client.select(TABLE_USERS, "age>=30 AND age<=40");
+        long endTime2 = System.currentTimeMillis();
+        System.out.println("Select by age range time: " + (endTime2 - startTime) + " ms");
+        System.out.println("Result sample: " + (result2.length() > 100 ? result2.substring(0, 100) + "..." : result2));
+    }
+
+    private void testUpdatePerformance() throws IOException {
+        System.out.println("Testing update performance...");
+
+        long startTime = System.currentTimeMillis();
+        client.update(TABLE_USERS, "age>25", "age:::integer:" + (25 + RANDOM.nextInt(10)));
+        long endTime = System.currentTimeMillis();
+        System.out.println("Update users (age > 25) time: " + (endTime - startTime) + " ms");
+
+        String result = client.select(TABLE_USERS, "age>25");
+        System.out.println("Updated users sample: " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
+    }
+
+    private void testDeletePerformance() throws IOException {
+        System.out.println("Testing delete performance...");
+
+        long startTime = System.currentTimeMillis();
+        client.delete(TABLE_ORDERS, "amount<500.00");
+        long endTime = System.currentTimeMillis();
+        System.out.println("Delete orders (amount < 500.00) time: " + (endTime - startTime) + " ms");
+
+        String result = client.select(TABLE_ORDERS, null);
+        System.out.println("Remaining orders sample: " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
+    }
+
+    private void testJoinPerformance() throws IOException {
+        System.out.println("Testing join performance...");
+
+        long startTime = System.currentTimeMillis();
+        String result = client.join(TABLE_USERS, TABLE_ORDERS, "id=user_id", "amount>100.00");
+        long endTime = System.currentTimeMillis();
+        System.out.println("Join users and orders (amount > 100.00) time: " + (endTime - startTime) + " ms");
+        System.out.println("Join result sample: " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
+    }
+
+    private void testMemoryCleanup() throws IOException {
+        System.out.println("Testing memory cleanup...");
+
+        long startTime = System.currentTimeMillis();
+        client.clearMemory();
+        long endTime = System.currentTimeMillis();
+        System.out.println("Memory cleanup time: " + (endTime - startTime) + " ms");
+
+        String result = client.select(TABLE_USERS, "id=1");
+        System.out.println("Select after cleanup: " + result);
+    }
 
     public static void main(String[] args) {
-        DieselDBClient client = new DieselDBClient("localhost", 9090);
-
         try {
-            client.connect();
-            System.out.println("Connected to server");
-
-            // Cleanup existing tables if they exist
-            try {
-                client.delete(TABLE_NAME_1, null);
-            } catch (IOException e) {
-                if (!e.getMessage().contains("Table not found")) {
-                    throw e; // Rethrow if it's not a "Table not found" error
-                }
-                System.out.println("Table " + TABLE_NAME_1 + " didn't exist for cleanup");
-            }
-            try {
-                client.delete(TABLE_NAME_2, null);
-            } catch (IOException e) {
-                if (!e.getMessage().contains("Table not found")) {
-                    throw e;
-                }
-                System.out.println("Table " + TABLE_NAME_2 + " didn't exist for cleanup");
-            }
-
-            // Create tables
-            client.createTable(TABLE_NAME_1);
-            client.createTable(TABLE_NAME_2);
-            System.out.println("Tables created");
-
-            // Run tests
-            testInsert(client);
-            testSelect(client);
-            testJoin(client);
-            testUpdate(client);
-            testDelete(client);
-
+            DieselDBPerformanceTest test = new DieselDBPerformanceTest();
+            test.runTests();
         } catch (IOException e) {
-            System.err.println("Error during test execution: " + e.getMessage());
+            System.err.println("Performance test error: " + e.getMessage());
             e.printStackTrace();
-        } finally {
-            client.disconnect();
-        }
-    }
-
-    private static void testInsert(DieselDBClient client) throws IOException {
-        System.out.println("Starting insert performance test...");
-        long startTime = System.nanoTime();
-
-        ExecutorService executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
-        List<Future<?>> futures = new ArrayList<>();
-
-        for (int i = 0; i < RECORD_COUNT; i += BATCH_SIZE) {
-            final int batchStart = i;
-            futures.add(executor.submit(() -> {
-                try {
-                    for (int j = batchStart; j < batchStart + BATCH_SIZE && j < RECORD_COUNT; j++) {
-                        Map<String, Object> user = new HashMap<>();
-                        user.put("id", j);
-                        user.put("name", "User_" + j);
-                        user.put("balance", new BigDecimal(j * 1.25));
-                        user.put("active", j % 2 == 0);
-                        user.put("join_date", new Date(System.currentTimeMillis() - j * 86400000L));
-                        client.insert(TABLE_NAME_1, user);
-
-                        Map<String, Object> order = new HashMap<>();
-                        order.put("order_id", j);
-                        order.put("user_id", j);
-                        order.put("amount", new BigDecimal(j * 9.99));
-                        order.put("completed", j % 3 == 0);
-                        client.insert(TABLE_NAME_2, order);
-                    }
-                } catch (IOException e) {
-                    Thread.currentThread().interrupt();
-                    e.printStackTrace();
-                }
-            }));
-        }
-
-        awaitFutures(futures);
-        executor.shutdown();
-        awaitTermination(executor);
-
-        long endTime = System.nanoTime();
-        double duration = (endTime - startTime) / 1_000_000_000.0;
-        double recordsPerSec = (RECORD_COUNT * 2) / duration;
-
-        System.out.printf("Inserted %,d records across 2 tables in %.3f seconds (%.2f records/sec)%n",
-                RECORD_COUNT * 2, duration, recordsPerSec);
-    }
-
-    private static void testSelect(DieselDBClient client) throws IOException {
-        System.out.println("Starting select performance test...");
-
-        client.select(TABLE_NAME_1, null); // Warm-up
-
-        long startTime = System.nanoTime();
-        List<Map<String, Object>> complexFilter = client.select(TABLE_NAME_1,
-                "balance>=500.00 AND active=true OR join_date>2024-01-01");
-        long endTime = System.nanoTime();
-
-        double complexDuration = (endTime - startTime) / 1_000_000.0;
-        System.out.printf("Selected %d records with complex condition in %.2f ms%n",
-                complexFilter.size(), complexDuration);
-        if (!complexFilter.isEmpty()) {
-            System.out.println("Sample record: " + complexFilter.get(0));
-        }
-
-        startTime = System.nanoTime();
-        List<Map<String, Object>> rangeFilter = client.select(TABLE_NAME_1,
-                "id>=100 AND id<=200");
-        endTime = System.nanoTime();
-
-        double rangeDuration = (endTime - startTime) / 1_000_000.0;
-        System.out.printf("Selected %d records with range condition in %.2f ms%n",
-                rangeFilter.size(), rangeDuration);
-    }
-
-    private static void testJoin(DieselDBClient client) throws IOException {
-        System.out.println("Starting join performance test...");
-
-        long startTime = System.nanoTime();
-        List<Map<String, Object>> joinedRecords = client.select(TABLE_NAME_1,
-                "JOIN§§§" + TABLE_NAME_2 + "§§§id=user_id§§§amount>100.00 AND completed=false");
-        long endTime = System.nanoTime();
-
-        double joinDuration = (endTime - startTime) / 1_000_000.0;
-        System.out.printf("Joined %d records with condition in %.2f ms%n",
-                joinedRecords.size(), joinDuration);
-        if (!joinedRecords.isEmpty()) {
-            System.out.println("Sample joined record: " + joinedRecords.get(0));
-        }
-    }
-
-    private static void testUpdate(DieselDBClient client) throws IOException {
-        System.out.println("Starting update performance test...");
-        long startTime = System.nanoTime();
-
-        Map<String, Object> updates = new HashMap<>();
-        updates.put("balance", new BigDecimal("999.99"));
-        updates.put("active", false);
-        updates.put("join_date", new Date());
-
-        int updated = client.update(TABLE_NAME_1,
-                "balance<=500.00 AND active=true",
-                updates);
-
-        long endTime = System.nanoTime();
-        double duration = (endTime - startTime) / 1_000_000_000.0;
-        double recordsPerSec = updated > 0 ? updated / duration : 0;
-
-        System.out.printf("Updated %,d records with multiple types in %.3f seconds (%.2f records/sec)%n",
-                updated, duration, recordsPerSec);
-    }
-
-    private static void testDelete(DieselDBClient client) throws IOException {
-        System.out.println("Starting delete performance test...");
-
-        testInsert(client); // Recreate data
-
-        long startTime = System.nanoTime();
-        int deleted = client.delete(TABLE_NAME_2,
-                "amount<500.00 OR completed=true");
-        long endTime = System.nanoTime();
-
-        double duration = (endTime - startTime) / 1_000_000_000.0;
-        double recordsPerSec = deleted > 0 ? deleted / duration : 0;
-
-        System.out.printf("Deleted %,d records with condition in %.3f seconds (%.2f records/sec)%n",
-                deleted, duration, recordsPerSec);
-    }
-
-    private static void awaitFutures(List<Future<?>> futures) {
-        for (Future<?> future : futures) {
-            try {
-                future.get(30, TimeUnit.SECONDS);
-            } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                System.err.println("Task failed: " + e.getMessage());
-            }
-        }
-    }
-
-    private static void awaitTermination(ExecutorService executor) {
-        try {
-            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
         }
     }
 }

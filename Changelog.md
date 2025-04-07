@@ -7,3 +7,4 @@
 0.0.7 Integer,BigDecimal,String,Data,Boolean datatype
 0.0.8 Optimization file save and load
 0.0.9 Memory clear
+0.1.0 Indexes

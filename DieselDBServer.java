@@ -11,14 +11,17 @@ public class DieselDBServer {
     private static final String DELIMITER = "§§§";
     private static final String DATA_DIR = "dieseldb_data";
     private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
-    private static final Map<String, Long> lastAccessTimes = new ConcurrentHashMap<>(); // Время последнего доступа
-    private static final Map<String, Boolean> dirtyTables = new ConcurrentHashMap<>(); // Флаг "грязных" таблиц
+    private static final Map<String, Long> lastAccessTimes = new ConcurrentHashMap<>();
+    private static final Map<String, Boolean> dirtyTables = new ConcurrentHashMap<>();
     private static final ExecutorService clientExecutor = Executors.newCachedThreadPool();
     private static final ScheduledExecutorService diskExecutor = Executors.newScheduledThreadPool(2);
     private static volatile boolean isRunning = true;
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-    private static final long MEMORY_THRESHOLD = 512 * 1024 * 1024; // 512 MB порог памяти
-    private static final long INACTIVE_TIMEOUT = 30_000; // 30 секунд для неактивных таблиц
+    private static final long MEMORY_THRESHOLD = 512 * 1024 * 1024; // 512 MB
+    private static final long INACTIVE_TIMEOUT = 30_000; // 30 секунд
+
+    private static final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
+    private static final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
         File dataDir = new File(DATA_DIR);
@@ -26,11 +29,10 @@ public class DieselDBServer {
             dataDir.mkdir();
         }
 
-        // Асинхронная загрузка таблиц
         loadTablesFromFilesAsync().thenRun(() -> {
             System.out.println("All tables loaded asynchronously");
             startDiskFlushing();
-            startMemoryCleanup(); // Запуск очистки памяти
+            startMemoryCleanup();
         });
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -65,7 +67,6 @@ public class DieselDBServer {
         }
     }
 
-    // Асинхронная загрузка таблиц с диска
     private static CompletableFuture<Void> loadTablesFromFilesAsync() {
         File dataDir = new File(DATA_DIR);
         File[] tableFiles = dataDir.listFiles((dir, name) -> name.endsWith(".ddb"));
@@ -85,6 +86,7 @@ public class DieselDBServer {
                         List<Map<String, Object>> tableData = (List<Map<String, Object>>) ois.readObject();
                         tables.put(tableName, new ArrayList<>(tableData));
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
+                        rebuildIndexes(tableName);
                         System.out.println("Loaded table: " + tableName);
                     }
                 } catch (Exception e) {
@@ -96,7 +98,6 @@ public class DieselDBServer {
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
 
-    // Периодическая асинхронная запись на диск
     private static void startDiskFlushing() {
         diskExecutor.scheduleAtFixedRate(() -> {
             for (String tableName : dirtyTables.keySet()) {
@@ -108,19 +109,17 @@ public class DieselDBServer {
         }, 5, 5, TimeUnit.SECONDS);
     }
 
-    // Периодическая очистка памяти
     private static void startMemoryCleanup() {
         diskExecutor.scheduleAtFixedRate(() -> {
             long usedMemory = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
             if (usedMemory > MEMORY_THRESHOLD) {
                 System.out.println("Memory usage exceeded threshold: " + usedMemory / (1024 * 1024) + " MB");
                 cleanupInactiveTables();
-                System.gc(); // Принудительный вызов сборщика мусора
+                System.gc();
             }
-        }, 10, 10, TimeUnit.SECONDS); // Проверка каждые 10 секунд
+        }, 10, 10, TimeUnit.SECONDS);
     }
 
-    // Очистка неактивных таблиц
     private static void cleanupInactiveTables() {
         long currentTime = System.currentTimeMillis();
         for (String tableName : tables.keySet()) {
@@ -128,10 +127,12 @@ public class DieselDBServer {
             if (currentTime - lastAccess > INACTIVE_TIMEOUT) {
                 synchronized (tables.get(tableName)) {
                     if (dirtyTables.getOrDefault(tableName, false)) {
-                        saveTableToDisk(tableName); // Сохраняем перед удалением
+                        saveTableToDisk(tableName);
                         dirtyTables.put(tableName, false);
                     }
                     tables.remove(tableName);
+                    hashIndexes.remove(tableName);
+                    btreeIndexes.remove(tableName);
                     lastAccessTimes.remove(tableName);
                     System.out.println("Unloaded inactive table from memory: " + tableName);
                 }
@@ -139,7 +140,6 @@ public class DieselDBServer {
         }
     }
 
-    // Сохранение одной таблицы на диск
     private static void saveTableToDisk(String tableName) {
         try {
             Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
@@ -154,10 +154,29 @@ public class DieselDBServer {
         }
     }
 
-    // Принудительное сохранение всех таблиц
     private static void flushAllTablesToDisk() {
         for (String tableName : tables.keySet()) {
             saveTableToDisk(tableName);
+        }
+    }
+
+    private static void rebuildIndexes(String tableName) {
+        hashIndexes.putIfAbsent(tableName, new HashMap<>());
+        btreeIndexes.putIfAbsent(tableName, new HashMap<>());
+        List<Map<String, Object>> table = tables.get(tableName);
+        if (table == null) return;
+
+        synchronized (table) {
+            for (Map<String, Object> row : table) {
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    String column = entry.getKey();
+                    Object value = entry.getValue();
+                    hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                    btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                }
+            }
         }
     }
 
@@ -215,12 +234,11 @@ public class DieselDBServer {
                 String tableName = parts[1];
                 String data = parts.length > 2 ? parts[2] : null;
 
-                // Проверка и загрузка таблицы, если она не в памяти
                 if (!tables.containsKey(tableName) && !cmd.equals("CREATE")) {
                     loadTableFromDisk(tableName);
                 }
 
-                lastAccessTimes.put(tableName, System.currentTimeMillis()); // Обновляем время доступа
+                lastAccessTimes.put(tableName, System.currentTimeMillis());
 
                 String response;
                 switch (cmd) {
@@ -257,7 +275,6 @@ public class DieselDBServer {
             }
         }
 
-        // Загрузка таблицы с диска, если она отсутствует в памяти
         private void loadTableFromDisk(String tableName) {
             Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
             if (Files.exists(filePath)) {
@@ -267,6 +284,7 @@ public class DieselDBServer {
                     try (ObjectInputStream ois = new ObjectInputStream(bais)) {
                         List<Map<String, Object>> tableData = (List<Map<String, Object>>) ois.readObject();
                         tables.put(tableName, new ArrayList<>(tableData));
+                        rebuildIndexes(tableName);
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
                         System.out.println("Reloaded table from disk: " + tableName);
                     }
@@ -280,24 +298,36 @@ public class DieselDBServer {
 
         private Object parseValue(String typedValue) {
             String[] parts = typedValue.split(":", 2);
-            if (parts.length != 2) return parts[0];
-            String type = parts[0];
-            String value = parts[1];
-            switch (type.toLowerCase()) {
-                case "integer": return Integer.parseInt(value);
-                case "bigdecimal": return new BigDecimal(value);
-                case "boolean": return Boolean.parseBoolean(value);
-                case "date":
+            if (parts.length != 2) {
+                // Если тип не указан, пытаемся определить автоматически
+                try {
+                    return Integer.parseInt(parts[0]);
+                } catch (NumberFormatException e1) {
                     try {
-                        return dateFormat.parse(value);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid date format: " + value);
+                        return new BigDecimal(parts[0]);
+                    } catch (NumberFormatException e2) {
+                        return parts[0]; // Возвращаем как строку, если не число
                     }
-                default: return value;
+                }
+            }
+            String type = parts[0].toLowerCase();
+            String value = parts[1];
+            try {
+                switch (type) {
+                    case "integer": return Integer.parseInt(value);
+                    case "bigdecimal": return new BigDecimal(value);
+                    case "boolean": return Boolean.parseBoolean(value);
+                    case "date": return dateFormat.parse(value);
+                    default: return value;
+                }
+            } catch (Exception e) {
+                System.err.println("Error parsing value: " + typedValue + " - " + e.getMessage());
+                return value;
             }
         }
 
         private String formatValue(Object value) {
+            if (value == null) return "NULL";
             if (value instanceof Date) {
                 return dateFormat.format((Date) value);
             }
@@ -306,6 +336,8 @@ public class DieselDBServer {
 
         private String createTable(String tableName) {
             tables.putIfAbsent(tableName, new ArrayList<>());
+            hashIndexes.putIfAbsent(tableName, new HashMap<>());
+            btreeIndexes.putIfAbsent(tableName, new HashMap<>());
             lastAccessTimes.put(tableName, System.currentTimeMillis());
             return "OK: Table '" + tableName + "' created";
         }
@@ -324,6 +356,14 @@ public class DieselDBServer {
             }
             synchronized (tables.get(tableName)) {
                 tables.get(tableName).add(row);
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    String column = entry.getKey();
+                    Object value = entry.getValue();
+                    hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                    btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                }
             }
             return "OK: 1 row inserted";
         }
@@ -332,23 +372,187 @@ public class DieselDBServer {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
-            List<Map<String, Object>> result = new ArrayList<>();
-            synchronized (tables.get(tableName)) {
-                for (Map<String, Object> row : tables.get(tableName)) {
-                    if (condition == null || evaluateWhereCondition(row, condition)) {
-                        result.add(new LinkedHashMap<>(row));
+            List<Map<String, Object>> result;
+            try {
+                if (condition == null) {
+                    synchronized (tables.get(tableName)) {
+                        result = new ArrayList<>(tables.get(tableName));
+                    }
+                } else {
+                    result = evaluateWithIndexes(tableName, condition);
+                    if (result == null) {
+                        System.err.println("evaluateWithIndexes returned null for condition: " + condition);
+                        result = new ArrayList<>();
                     }
                 }
+            } catch (Exception e) {
+                System.err.println("Error in selectRows for table " + tableName + ": " + e.getMessage());
+                return "ERROR: Server exception - " + e.getMessage();
             }
+
             if (result.isEmpty()) {
                 return "OK: 0 rows";
             }
-            StringBuilder response = new StringBuilder("OK: ");
-            response.append(String.join(":::", result.get(0).keySet()));
-            for (Map<String, Object> row : result) {
-                response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
+
+            try {
+                StringBuilder response = new StringBuilder("OK: ");
+                response.append(String.join(":::", result.get(0).keySet()));
+                for (Map<String, Object> row : result) {
+                    response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
+                }
+                return response.toString();
+            } catch (Exception e) {
+                System.err.println("Error formatting select response: " + e.getMessage());
+                return "ERROR: Response formatting failed - " + e.getMessage();
             }
-            return response.toString();
+        }
+
+        private List<Map<String, Object>> evaluateWithIndexes(String tableName, String condition) {
+            List<Map<String, Object>> result = new ArrayList<>();
+            String[] orParts = condition.split("\\s+OR\\s+");
+
+            for (String orPart : orParts) {
+                String[] andParts = orPart.split("\\s+AND\\s+");
+                Set<Map<String, Object>> candidates = null;
+
+                for (String expression : andParts) {
+                    expression = expression.trim();
+                    Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression);
+                    if (rows == null) {
+                        System.err.println("evaluateSingleCondition returned null for: " + expression);
+                        rows = new HashSet<>();
+                    }
+                    if (candidates == null) {
+                        candidates = new HashSet<>(rows);
+                    } else {
+                        candidates.retainAll(rows);
+                    }
+                    if (candidates.isEmpty()) break;
+                }
+
+                if (candidates != null) {
+                    result.addAll(candidates);
+                }
+            }
+
+            return new ArrayList<>(new LinkedHashSet<>(result));
+        }
+
+        private Set<Map<String, Object>> evaluateSingleCondition(String tableName, String expression) {
+            if (expression.contains(">=")) {
+                String[] parts = expression.split(">=");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">=");
+            } else if (expression.contains("<=")) {
+                String[] parts = expression.split("<=");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<=");
+            } else if (expression.contains(">")) {
+                String[] parts = expression.split(">");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">");
+            } else if (expression.contains("<")) {
+                String[] parts = expression.split("<");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<");
+            } else if (expression.contains("!=")) {
+                String[] parts = expression.split("!=");
+                return getHashNotEquals(tableName, parts[0].trim(), parts[1].trim());
+            } else if (expression.contains("=")) {
+                String[] parts = expression.split("=");
+                return getHashEquals(tableName, parts[0].trim(), parts[1].trim());
+            } else {
+                Set<Map<String, Object>> result = new HashSet<>();
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (evaluateWhereCondition(row, expression)) {
+                            result.add(row);
+                        }
+                    }
+                }
+                return result;
+            }
+        }
+
+        private Set<Map<String, Object>> getHashEquals(String tableName, String column, String valueStr) {
+            Object value = parseValue(valueStr); // Без "string:" для гибкости
+            Map<Object, Set<Map<String, Object>>> index = hashIndexes.get(tableName).get(column);
+            Set<Map<String, Object>> result = new HashSet<>();
+
+            if (index == null) {
+                System.err.println("No hash index for column " + column + " in table " + tableName);
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (row.get(column) != null && row.get(column).equals(value)) {
+                            result.add(row);
+                        }
+                    }
+                }
+                return result;
+            }
+
+            Set<Map<String, Object>> rows = index.get(value);
+            if (rows != null) {
+                return new HashSet<>(rows);
+            }
+
+            try {
+                Integer intValue = Integer.parseInt(valueStr);
+                rows = index.get(intValue);
+                if (rows != null) {
+                    return new HashSet<>(rows);
+                }
+            } catch (NumberFormatException ignored) {}
+
+            return result;
+        }
+
+        private Set<Map<String, Object>> getHashNotEquals(String tableName, String column, String valueStr) {
+            Object value = parseValue(valueStr);
+            Set<Map<String, Object>> result = new HashSet<>();
+            Map<Object, Set<Map<String, Object>>> index = hashIndexes.get(tableName).get(column);
+            if (index != null) {
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        Object rowValue = row.get(column);
+                        if (rowValue != null && !rowValue.equals(value)) {
+                            result.add(row);
+                        }
+                    }
+                }
+            }
+            return result;
+        }
+
+        private Set<Map<String, Object>> getBtreeRange(String tableName, String column, String valueStr, String operator) {
+            Object value = parseValue(valueStr);
+            TreeMap<Object, Set<Map<String, Object>>> index = btreeIndexes.get(tableName).get(column);
+            if (index == null) {
+                return evaluateSingleCondition(tableName, column + operator + valueStr);
+            }
+            Set<Map<String, Object>> result = new HashSet<>();
+            switch (operator) {
+                case ">":
+                    index.tailMap(value, false).values().forEach(result::addAll);
+                    break;
+                case ">=":
+                    index.tailMap(value, true).values().forEach(result::addAll);
+                    break;
+                case "<":
+                    index.headMap(value, false).values().forEach(result::addAll);
+                    break;
+                case "<=":
+                    index.headMap(value, true).values().forEach(result::addAll);
+                    break;
+            }
+            if (result.isEmpty()) {
+                try {
+                    Integer intValue = Integer.parseInt(valueStr);
+                    switch (operator) {
+                        case ">": index.tailMap(intValue, false).values().forEach(result::addAll); break;
+                        case ">=": index.tailMap(intValue, true).values().forEach(result::addAll); break;
+                        case "<": index.headMap(intValue, false).values().forEach(result::addAll); break;
+                        case "<=": index.headMap(intValue, true).values().forEach(result::addAll); break;
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+            return result;
         }
 
         private boolean evaluateWhereCondition(Map<String, Object> row, String condition) {
@@ -361,27 +565,33 @@ public class DieselDBServer {
                     if (expression.contains(">=")) {
                         String[] parts = expression.split(">=");
                         Object value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), ">=");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, ">=");
                     } else if (expression.contains("<=")) {
                         String[] parts = expression.split("<=");
                         Object value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), "<=");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, "<=");
                     } else if (expression.contains(">")) {
                         String[] parts = expression.split(">");
                         Object value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), ">");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, ">");
                     } else if (expression.contains("<")) {
                         String[] parts = expression.split("<");
                         Object value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), "<");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, "<");
                     } else if (expression.contains("!=")) {
                         String[] parts = expression.split("!=");
                         Object value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= !value.equals(parseValue("string:" + parts[1].trim()));
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= !Objects.equals(value, conditionValue);
                     } else if (expression.contains("=")) {
                         String[] parts = expression.split("=");
                         Object value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= value.equals(parseValue("string:" + parts[1].trim()));
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= Objects.equals(value, conditionValue);
                     } else {
                         andResult = false;
                     }
@@ -394,6 +604,26 @@ public class DieselDBServer {
 
         private boolean compareValues(Object value1, Object value2, String operator) {
             if (value1 == null || value2 == null) return false;
+
+            // Приведение типов для корректного сравнения
+            if (value1 instanceof Integer && value2 instanceof String) {
+                try {
+                    value2 = Integer.parseInt((String) value2);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            } else if (value1 instanceof String && value2 instanceof Integer) {
+                try {
+                    value1 = Integer.parseInt((String) value1);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            } else if (value1 instanceof Integer && value2 instanceof BigDecimal) {
+                value1 = BigDecimal.valueOf((Integer) value1);
+            } else if (value1 instanceof BigDecimal && value2 instanceof Integer) {
+                value2 = BigDecimal.valueOf((Integer) value2);
+            }
+
             if (value1 instanceof Integer && value2 instanceof Integer) {
                 int v1 = (Integer) value1;
                 int v2 = (Integer) value2;
@@ -425,6 +655,10 @@ public class DieselDBServer {
                     default: return false;
                 }
             } else {
+                // Сравнение как строки только если оба значения — строки
+                if (!(value1 instanceof String && value2 instanceof String)) {
+                    return false; // Избегаем ClassCastException
+                }
                 String v1 = formatValue(value1);
                 String v2 = formatValue(value2);
                 int compare = v1.compareTo(v2);
@@ -457,19 +691,37 @@ public class DieselDBServer {
             String rightKey = keys[1];
 
             List<Map<String, Object>> result = new ArrayList<>();
+            Map<Object, Set<Map<String, Object>>> rightIndex = hashIndexes.get(rightTable).get(rightKey);
+
             synchronized (tables.get(leftTable)) {
                 synchronized (tables.get(rightTable)) {
-                    for (Map<String, Object> leftRow : tables.get(leftTable)) {
-                        Object leftValue = leftRow.get(leftKey);
-                        if (leftValue == null) continue;
-                        for (Map<String, Object> rightRow : tables.get(rightTable)) {
-                            Object rightValue = rightRow.get(rightKey);
-                            if (rightValue != null && leftValue.equals(rightValue)) {
-                                Map<String, Object> joinedRow = new LinkedHashMap<>();
-                                leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                                rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
-                                if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
-                                    result.add(joinedRow);
+                    if (rightIndex != null) {
+                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            Object leftValue = leftRow.get(leftKey);
+                            if (leftValue != null && rightIndex.containsKey(leftValue)) {
+                                for (Map<String, Object> rightRow : rightIndex.get(leftValue)) {
+                                    Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                    leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                    rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                    if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                        result.add(joinedRow);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            Object leftValue = leftRow.get(leftKey);
+                            if (leftValue == null) continue;
+                            for (Map<String, Object> rightRow : tables.get(rightTable)) {
+                                Object rightValue = rightRow.get(rightKey);
+                                if (rightValue != null && leftValue.equals(rightValue)) {
+                                    Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                    leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                    rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                    if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                        result.add(joinedRow);
+                                    }
                                 }
                             }
                         }
@@ -491,18 +743,35 @@ public class DieselDBServer {
             }
             String[] parts = data.split(";;;", 2);
             if (parts.length != 2) return "ERROR: Invalid update format";
-            int updated = 0;
             String condition = parts[0];
             String[] updates = parts[1].split(":::");
+            Map<String, Object> updateMap = new HashMap<>();
+            for (int i = 0; i < updates.length; i += 2) {
+                if (i + 1 < updates.length) {
+                    updateMap.put(updates[i], parseValue(updates[i + 1]));
+                }
+            }
+
+            List<Map<String, Object>> toUpdate = condition.isEmpty() ? tables.get(tableName) : evaluateWithIndexes(tableName, condition);
+            int updated = 0;
             synchronized (tables.get(tableName)) {
-                for (Map<String, Object> row : tables.get(tableName)) {
-                    if (evaluateWhereCondition(row, condition)) {
-                        for (int i = 0; i < updates.length; i += 2) {
-                            if (i + 1 < updates.length) {
-                                row.put(updates[i], parseValue(updates[i + 1]));
-                            }
+                for (Map<String, Object> row : toUpdate) {
+                    for (String column : updateMap.keySet()) {
+                        Object oldValue = row.get(column);
+                        if (oldValue != null) {
+                            hashIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                            btreeIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
                         }
-                        updated++;
+                    }
+                    row.putAll(updateMap);
+                    updated++;
+                    for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
+                        String column = entry.getKey();
+                        Object newValue = entry.getValue();
+                        hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                                .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                        btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                                .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
                     }
                 }
             }
@@ -515,16 +784,24 @@ public class DieselDBServer {
             }
             int deleted = 0;
             synchronized (tables.get(tableName)) {
+                List<Map<String, Object>> toDelete;
                 if (condition == null) {
-                    deleted = tables.get(tableName).size();
+                    toDelete = new ArrayList<>(tables.get(tableName));
                     tables.get(tableName).clear();
+                    hashIndexes.get(tableName).clear();
+                    btreeIndexes.get(tableName).clear();
+                    deleted = toDelete.size();
                 } else {
-                    Iterator<Map<String, Object>> it = tables.get(tableName).iterator();
-                    while (it.hasNext()) {
-                        if (evaluateWhereCondition(it.next(), condition)) {
-                            it.remove();
-                            deleted++;
+                    toDelete = evaluateWithIndexes(tableName, condition);
+                    for (Map<String, Object> row : toDelete) {
+                        tables.get(tableName).remove(row);
+                        for (Map.Entry<String, Object> entry : row.entrySet()) {
+                            String column = entry.getKey();
+                            Object value = entry.getValue();
+                            hashIndexes.get(tableName).get(column).getOrDefault(value, Collections.emptySet()).remove(row);
+                            btreeIndexes.get(tableName).get(column).getOrDefault(value, Collections.emptySet()).remove(row);
                         }
+                        deleted++;
                     }
                 }
             }
