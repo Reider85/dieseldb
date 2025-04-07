@@ -4,3 +4,4 @@
 0.0.4 fix server and client
 0.0.5 add join
 0.0.6 add simple WHERE
+0.0.7 Integer,BigDecimal,String,Data,Boolean datatype

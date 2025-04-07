@@ -3,23 +3,24 @@ import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.nio.file.*;
+import java.text.SimpleDateFormat;
+import java.math.BigDecimal;
 
 public class DieselDBServer {
     private static final int PORT = 9090;
     private static final String DELIMITER = "§§§";
     private static final String DATA_DIR = "dieseldb_data";
-    private static final Map<String, List<Map<String, String>>> tables = new ConcurrentHashMap<>();
+    private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     private static volatile boolean isRunning = true;
+    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
 
     public static void main(String[] args) {
-        // Create data directory if it doesn't exist
         File dataDir = new File(DATA_DIR);
         if (!dataDir.exists()) {
             dataDir.mkdir();
         }
 
-        // Load existing data on startup
         loadTablesFromFiles();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -57,7 +58,7 @@ public class DieselDBServer {
         File[] tableFiles = dataDir.listFiles((dir, name) -> name.endsWith(".ddb"));
         if (tableFiles == null || tableFiles.length == 0) {
             System.out.println("No tables to load from " + DATA_DIR);
-            return; // Нет файлов для загрузки, выходим
+            return;
         }
 
         int threadCount = Math.max(1, Math.min(tableFiles.length, Runtime.getRuntime().availableProcessors()));
@@ -67,7 +68,7 @@ public class DieselDBServer {
             loadExecutor.submit(() -> {
                 String tableName = file.getName().replace(".ddb", "");
                 try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
-                    List<Map<String, String>> tableData = (List<Map<String, String>>) ois.readObject();
+                    List<Map<String, Object>> tableData = (List<Map<String, Object>>) ois.readObject();
                     tables.put(tableName, new CopyOnWriteArrayList<>(tableData));
                     System.out.println("Loaded table: " + tableName);
                 } catch (Exception e) {
@@ -83,6 +84,7 @@ public class DieselDBServer {
             System.err.println("Error waiting for table loading: " + e.getMessage());
         }
     }
+
     private static void saveTablesToFiles() {
         ExecutorService saveExecutor = Executors.newFixedThreadPool(
                 Math.min(tables.size(), Runtime.getRuntime().availableProcessors())
@@ -199,6 +201,185 @@ public class DieselDBServer {
             }
         }
 
+        private Object parseValue(String typedValue) {
+            String[] parts = typedValue.split(":", 2);
+            if (parts.length != 2) return parts[0]; // Default to String if no type specified
+
+            String type = parts[0];
+            String value = parts[1];
+
+            switch (type.toLowerCase()) {
+                case "integer":
+                    return Integer.parseInt(value);
+                case "bigdecimal":
+                    return new BigDecimal(value);
+                case "boolean":
+                    return Boolean.parseBoolean(value);
+                case "date":
+                    try {
+                        return dateFormat.parse(value);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid date format: " + value);
+                    }
+                case "string":
+                default:
+                    return value;
+            }
+        }
+
+        private String formatValue(Object value) {
+            if (value instanceof Date) {
+                return dateFormat.format((Date) value);
+            }
+            return value.toString();
+        }
+
+        private String createTable(String tableName) {
+            tables.putIfAbsent(tableName, new CopyOnWriteArrayList<>());
+            return "OK: Table '" + tableName + "' created";
+        }
+
+        private String insertRow(String tableName, String data) {
+            if (!tables.containsKey(tableName)) {
+                return "ERROR: Table not found";
+            }
+
+            try {
+                Map<String, Object> row = new HashMap<>();
+                String[] pairs = data.split(":::");
+                for (int i = 0; i < pairs.length; i += 2) {
+                    if (i + 1 >= pairs.length) {
+                        return "ERROR: Invalid data format. Use key1:::type:value1:::key2:::type:value2";
+                    }
+                    row.put(pairs[i], parseValue(pairs[i + 1]));
+                }
+
+                tables.get(tableName).add(row);
+                return "OK: 1 row inserted";
+            } catch (Exception e) {
+                return "ERROR: " + e.getMessage();
+            }
+        }
+
+        private String selectRows(String tableName, String condition) {
+            if (!tables.containsKey(tableName)) {
+                return "ERROR: Table not found";
+            }
+
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (Map<String, Object> row : tables.get(tableName)) {
+                if (condition == null || evaluateWhereCondition(row, condition)) {
+                    result.add(new LinkedHashMap<>(row));
+                }
+            }
+
+            if (result.isEmpty()) {
+                return "OK: 0 rows";
+            }
+
+            StringBuilder response = new StringBuilder("OK: ");
+            response.append(String.join(":::", result.get(0).keySet()));
+            for (Map<String, Object> row : result) {
+                List<String> values = new ArrayList<>();
+                for (Object value : row.values()) {
+                    values.add(formatValue(value));
+                }
+                response.append(";;;").append(String.join(":::", values));
+            }
+            return response.toString();
+        }
+
+        private boolean evaluateWhereCondition(Map<String, Object> row, String condition) {
+            String[] orParts = condition.split("\\s+OR\\s+");
+
+            for (String orPart : orParts) {
+                String[] andParts = orPart.split("\\s+AND\\s+");
+                boolean andResult = true;
+
+                for (String expression : andParts) {
+                    expression = expression.trim();
+                    if (expression.contains(">=")) {
+                        String[] parts = expression.split(">=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), ">=");
+                    } else if (expression.contains("<=")) {
+                        String[] parts = expression.split("<=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), "<=");
+                    } else if (expression.contains(">")) {
+                        String[] parts = expression.split(">");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), ">");
+                    } else if (expression.contains("<")) {
+                        String[] parts = expression.split("<");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareValues(value, parseValue("string:" + parts[1].trim()), "<");
+                    } else if (expression.contains("!=")) {
+                        String[] parts = expression.split("!=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= !value.equals(parseValue("string:" + parts[1].trim()));
+                    } else if (expression.contains("=")) {
+                        String[] parts = expression.split("=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= value.equals(parseValue("string:" + parts[1].trim()));
+                    } else {
+                        andResult = false;
+                    }
+                    if (!andResult) break;
+                }
+
+                if (andResult) return true;
+            }
+            return false;
+        }
+
+        private boolean compareValues(Object value1, Object value2, String operator) {
+            if (value1 == null || value2 == null) return false;
+
+            if (value1 instanceof Integer && value2 instanceof Integer) {
+                int v1 = (Integer) value1;
+                int v2 = (Integer) value2;
+                switch (operator) {
+                    case ">": return v1 > v2;
+                    case "<": return v1 < v2;
+                    case ">=": return v1 >= v2;
+                    case "<=": return v1 <= v2;
+                    default: return false;
+                }
+            } else if (value1 instanceof BigDecimal && value2 instanceof BigDecimal) {
+                BigDecimal v1 = (BigDecimal) value1;
+                BigDecimal v2 = (BigDecimal) value2;
+                switch (operator) {
+                    case ">": return v1.compareTo(v2) > 0;
+                    case "<": return v1.compareTo(v2) < 0;
+                    case ">=": return v1.compareTo(v2) >= 0;
+                    case "<=": return v1.compareTo(v2) <= 0;
+                    default: return false;
+                }
+            } else if (value1 instanceof Date && value2 instanceof Date) {
+                Date v1 = (Date) value1;
+                Date v2 = (Date) value2;
+                switch (operator) {
+                    case ">": return v1.compareTo(v2) > 0;
+                    case "<": return v1.compareTo(v2) < 0;
+                    case ">=": return v1.compareTo(v2) >= 0;
+                    case "<=": return v1.compareTo(v2) <= 0;
+                    default: return false;
+                }
+            } else {
+                String v1 = formatValue(value1);
+                String v2 = formatValue(value2);
+                int compare = v1.compareTo(v2);
+                switch (operator) {
+                    case ">": return compare > 0;
+                    case "<": return compare < 0;
+                    case ">=": return compare >= 0;
+                    case "<=": return compare <= 0;
+                    default: return false;
+                }
+            }
+        }
+
         private String handleJoin(String leftTable, String joinData) {
             String[] joinParts = joinData.split("§§§");
             if (joinParts.length < 3) {
@@ -225,7 +406,7 @@ public class DieselDBServer {
             String leftKey = keys[0];
             String rightKey = keys[1];
 
-            List<Map<String, String>> result = joinTables(leftTable, rightTable, leftKey, rightKey, whereCondition);
+            List<Map<String, Object>> result = joinTables(leftTable, rightTable, leftKey, rightKey, whereCondition);
 
             if (result.isEmpty()) {
                 return "OK: 0 rows";
@@ -233,24 +414,28 @@ public class DieselDBServer {
 
             StringBuilder response = new StringBuilder("OK: ");
             response.append(String.join(":::", result.get(0).keySet()));
-            for (Map<String, String> row : result) {
-                response.append(";;;").append(String.join(":::", row.values()));
+            for (Map<String, Object> row : result) {
+                List<String> values = new ArrayList<>();
+                for (Object value : row.values()) {
+                    values.add(formatValue(value));
+                }
+                response.append(";;;").append(String.join(":::", values));
             }
             return response.toString();
         }
 
-        private List<Map<String, String>> joinTables(String leftTable, String rightTable,
+        private List<Map<String, Object>> joinTables(String leftTable, String rightTable,
                                                      String leftKey, String rightKey, String whereCondition) {
-            List<Map<String, String>> result = new ArrayList<>();
+            List<Map<String, Object>> result = new ArrayList<>();
 
-            for (Map<String, String> leftRow : tables.get(leftTable)) {
-                String leftValue = leftRow.get(leftKey);
+            for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                Object leftValue = leftRow.get(leftKey);
                 if (leftValue == null) continue;
 
-                for (Map<String, String> rightRow : tables.get(rightTable)) {
-                    String rightValue = rightRow.get(rightKey);
+                for (Map<String, Object> rightRow : tables.get(rightTable)) {
+                    Object rightValue = rightRow.get(rightKey);
                     if (rightValue != null && leftValue.equals(rightValue)) {
-                        Map<String, String> joinedRow = new LinkedHashMap<>();
+                        Map<String, Object> joinedRow = new LinkedHashMap<>();
                         leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
                         rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
 
@@ -264,141 +449,6 @@ public class DieselDBServer {
             return result;
         }
 
-
-        // [Rest of the ClientHandler methods remain unchanged: createTable, insertRow, selectRows,
-        // rowMatchesCondition, updateRows, deleteRows]
-
-        private String createTable(String tableName) {
-            tables.putIfAbsent(tableName, new CopyOnWriteArrayList<>());
-            return "OK: Table '" + tableName + "' created";
-        }
-
-        private String insertRow(String tableName, String data) {
-            if (!tables.containsKey(tableName)) {
-                return "ERROR: Table not found";
-            }
-
-            try {
-                Map<String, String> row = new HashMap<>();
-                String[] pairs = data.split(":::");
-                for (int i = 0; i < pairs.length; i += 2) {
-                    if (i + 1 >= pairs.length) {
-                        return "ERROR: Invalid data format. Use key1:::value1:::key2:::value2";
-                    }
-                    row.put(pairs[i], pairs[i+1]);
-                }
-
-                tables.get(tableName).add(row);
-                return "OK: 1 row inserted";
-            } catch (Exception e) {
-                return "ERROR: " + e.getMessage();
-            }
-        }
-
-        // Modified selectRows to handle prefixed column names
-        private String selectRows(String tableName, String condition) {
-            if (!tables.containsKey(tableName)) {
-                return "ERROR: Table not found";
-            }
-
-            List<Map<String, String>> result = new ArrayList<>();
-            for (Map<String, String> row : tables.get(tableName)) {
-                if (condition == null || evaluateWhereCondition(row, condition)) {
-                    result.add(new LinkedHashMap<>(row));
-                }
-            }
-
-            if (result.isEmpty()) {
-                return "OK: 0 rows";
-            }
-
-            StringBuilder response = new StringBuilder("OK: ");
-            response.append(String.join(":::", result.get(0).keySet()));
-            for (Map<String, String> row : result) {
-                response.append(";;;").append(String.join(":::", row.values()));
-            }
-            return response.toString();
-        }
-
-        // New method to evaluate complex WHERE conditions
-        private boolean evaluateWhereCondition(Map<String, String> row, String condition) {
-            // Split by AND and OR (assuming they're space-separated)
-            String[] orParts = condition.split("\\s+OR\\s+");
-
-            for (String orPart : orParts) {
-                String[] andParts = orPart.split("\\s+AND\\s+");
-                boolean andResult = true;
-
-                for (String expression : andParts) {
-                    expression = expression.trim();
-                    if (expression.contains(">=")) {
-                        String[] parts = expression.split(">=");
-                        String value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareNumeric(value, parts[1].trim(), ">=");
-                    } else if (expression.contains("<=")) {
-                        String[] parts = expression.split("<=");
-                        String value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareNumeric(value, parts[1].trim(), "<=");
-                    } else if (expression.contains(">")) {
-                        String[] parts = expression.split(">");
-                        String value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareNumeric(value, parts[1].trim(), ">");
-                    } else if (expression.contains("<")) {
-                        String[] parts = expression.split("<");
-                        String value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= compareNumeric(value, parts[1].trim(), "<");
-                    } else if (expression.contains("!=")) {
-                        String[] parts = expression.split("!=");
-                        String value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= !value.equals(parts[1].trim());
-                    } else if (expression.contains("=")) {
-                        String[] parts = expression.split("=");
-                        String value = row.getOrDefault(parts[0].trim(), "");
-                        andResult &= value.equals(parts[1].trim());
-                    } else {
-                        andResult = false;
-                    }
-                    if (!andResult) break;
-                }
-
-                if (andResult) return true;
-            }
-            return false;
-        }
-
-        // Helper method for numeric comparisons
-        private boolean compareNumeric(String value1, String value2, String operator) {
-            try {
-                double v1 = Double.parseDouble(value1);
-                double v2 = Double.parseDouble(value2);
-
-                switch (operator) {
-                    case ">": return v1 > v2;
-                    case "<": return v1 < v2;
-                    case ">=": return v1 >= v2;
-                    case "<=": return v1 <= v2;
-                    default: return false;
-                }
-            } catch (NumberFormatException e) {
-                // If not numeric, fall back to string comparison
-                int compare = value1.compareTo(value2);
-                switch (operator) {
-                    case ">": return compare > 0;
-                    case "<": return compare < 0;
-                    case ">=": return compare >= 0;
-                    case "<=": return compare <= 0;
-                    default: return false;
-                }
-            }
-        }
-
-        // Modified rowMatchesCondition to handle prefixed column names
-        private boolean rowMatchesCondition(Map<String, String> row, String condition) {
-            String[] parts = condition.split("=", 2);
-            if (parts.length != 2) return false;
-            return row.getOrDefault(parts[0], "").equals(parts[1]);
-        }
-
         private String updateRows(String tableName, String data) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
@@ -406,18 +456,18 @@ public class DieselDBServer {
 
             String[] parts = data.split(";;;", 2);
             if (parts.length != 2) {
-                return "ERROR: Invalid update format. Use condition;;;key1:::value1:::key2:::value2";
+                return "ERROR: Invalid update format. Use condition;;;key1:::type:value1:::key2:::type:value2";
             }
 
             int updated = 0;
             String condition = parts[0];
             String[] updates = parts[1].split(":::");
 
-            for (Map<String, String> row : tables.get(tableName)) {
-                if (rowMatchesCondition(row, condition)) {
+            for (Map<String, Object> row : tables.get(tableName)) {
+                if (evaluateWhereCondition(row, condition)) {
                     for (int i = 0; i < updates.length; i += 2) {
                         if (i + 1 < updates.length) {
-                            row.put(updates[i], updates[i+1]);
+                            row.put(updates[i], parseValue(updates[i + 1]));
                         }
                     }
                     updated++;
@@ -438,9 +488,9 @@ public class DieselDBServer {
             }
 
             int deleted = 0;
-            Iterator<Map<String, String>> it = tables.get(tableName).iterator();
+            Iterator<Map<String, Object>> it = tables.get(tableName).iterator();
             while (it.hasNext()) {
-                if (rowMatchesCondition(it.next(), condition)) {
+                if (evaluateWhereCondition(it.next(), condition)) {
                     it.remove();
                     deleted++;
                 }
