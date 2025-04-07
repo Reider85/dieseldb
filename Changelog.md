@@ -5,3 +5,4 @@
 0.0.5 add join
 0.0.6 add simple WHERE
 0.0.7 Integer,BigDecimal,String,Data,Boolean datatype
+0.0.8 Optimization file save and load
