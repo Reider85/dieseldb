@@ -24,11 +24,8 @@ public class DieselDBServer {
     private static final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
     private static final Set<Map<String, Object>> deletedRows = Collections.newSetFromMap(new ConcurrentHashMap<>());
-    // Новая структура для хранения схемы таблицы (имя колонки -> тип:ограничение)
     private static final Map<String, Map<String, String>> tableSchemas = new ConcurrentHashMap<>();
-    // Хранение первичных ключей (таблица -> имя колонки)
     private static final Map<String, String> primaryKeys = new ConcurrentHashMap<>();
-    // Хранение уникальных колонок (таблица -> список имён колонок)
     private static final Map<String, Set<String>> uniqueConstraints = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
@@ -88,6 +85,7 @@ public class DieselDBServer {
             CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
                 String tableName = file.getName().replace(".ddb", "");
                 try {
+                    // Загрузка данных таблицы
                     byte[] data = Files.readAllBytes(file.toPath());
                     ByteArrayInputStream bais = new ByteArrayInputStream(data);
                     try (ObjectInputStream ois = new ObjectInputStream(bais)) {
@@ -95,9 +93,20 @@ public class DieselDBServer {
                         tables.put(tableName, new ArrayList<>(tableData));
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
                         rebuildIndexes(tableName);
-                        // Предполагаем, что схема загружается отдельно или воссоздаётся
-                        System.out.println("Loaded table: " + tableName);
                     }
+
+                    // Загрузка схемы
+                    Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
+                    if (Files.exists(schemaPath)) {
+                        byte[] schemaData = Files.readAllBytes(schemaPath);
+                        ByteArrayInputStream schemaBais = new ByteArrayInputStream(schemaData);
+                        try (ObjectInputStream schemaOis = new ObjectInputStream(schemaBais)) {
+                            tableSchemas.put(tableName, (Map<String, String>) schemaOis.readObject());
+                            primaryKeys.put(tableName, (String) schemaOis.readObject());
+                            uniqueConstraints.put(tableName, (Set<String>) schemaOis.readObject());
+                        }
+                    }
+                    System.out.println("Loaded table and schema: " + tableName);
                 } catch (Exception e) {
                     System.err.println("Error loading table " + tableName + ": " + e.getMessage());
                 }
@@ -157,13 +166,25 @@ public class DieselDBServer {
 
     private static void saveTableToDisk(String tableName) {
         try {
+            // Сохранение данных таблицы
             Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try (ObjectOutputStream oos = new ObjectOutputStream(baos)) {
                 oos.writeObject(tables.get(tableName));
             }
             Files.write(filePath, baos.toByteArray(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            System.out.println("Saved table asynchronously: " + tableName);
+
+            // Сохранение схемы
+            Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
+            ByteArrayOutputStream schemaBaos = new ByteArrayOutputStream();
+            try (ObjectOutputStream schemaOos = new ObjectOutputStream(schemaBaos)) {
+                schemaOos.writeObject(tableSchemas.get(tableName));
+                schemaOos.writeObject(primaryKeys.get(tableName));
+                schemaOos.writeObject(uniqueConstraints.get(tableName));
+            }
+            Files.write(schemaPath, schemaBaos.toByteArray(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+            System.out.println("Saved table and schema asynchronously: " + tableName);
         } catch (IOException e) {
             System.err.println("Error saving table " + tableName + ": " + e.getMessage());
         }
@@ -448,7 +469,19 @@ public class DieselDBServer {
                         tables.put(tableName, new ArrayList<>(tableData));
                         rebuildIndexes(tableName);
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
-                        System.out.println("Reloaded table from disk: " + tableName);
+
+                        // Загрузка схемы
+                        Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
+                        if (Files.exists(schemaPath)) {
+                            byte[] schemaData = Files.readAllBytes(schemaPath);
+                            ByteArrayInputStream schemaBais = new ByteArrayInputStream(schemaData);
+                            try (ObjectInputStream schemaOis = new ObjectInputStream(schemaBais)) {
+                                tableSchemas.put(tableName, (Map<String, String>) schemaOis.readObject());
+                                primaryKeys.put(tableName, (String) schemaOis.readObject());
+                                uniqueConstraints.put(tableName, (Set<String>) schemaOis.readObject());
+                            }
+                        }
+                        System.out.println("Reloaded table and schema from disk: " + tableName);
                     }
                 } catch (Exception e) {
                     System.err.println("Error reloading table " + tableName + ": " + e.getMessage());
@@ -521,7 +554,6 @@ public class DieselDBServer {
                 return "OK: Table '" + tableName + "' created without schema";
             }
 
-            // Парсим схему: "id:integer:primary,name:string:unique,age:integer"
             Map<String, String> schema = new HashMap<>();
             Set<String> uniqueCols = new HashSet<>();
             String primaryKey = null;
@@ -545,7 +577,7 @@ public class DieselDBServer {
             tableSchemas.put(tableName, schema);
             if (primaryKey != null) {
                 primaryKeys.put(tableName, primaryKey);
-                uniqueCols.add(primaryKey); // Первичный ключ всегда уникален
+                uniqueCols.add(primaryKey);
             }
             if (!uniqueCols.isEmpty()) {
                 uniqueConstraints.put(tableName, uniqueCols);
@@ -580,14 +612,15 @@ public class DieselDBServer {
                 row.put(col, value);
             }
 
-            // Проверка первичного ключа и уникальности
             synchronized (tables.get(tableName)) {
                 String pkCol = primaryKeys.get(tableName);
                 if (pkCol != null) {
                     Object pkValue = row.get(pkCol);
                     if (pkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
-                    for (Map<String, Object> existingRow : tables.get(tableName)) {
-                        if (!deletedRows.contains(existingRow) && pkValue.equals(existingRow.get(pkCol))) {
+                    Map<Object, Set<Map<String, Object>>> pkIndex = hashIndexes.get(tableName).get(pkCol);
+                    if (pkIndex != null && pkIndex.containsKey(pkValue)) {
+                        Set<Map<String, Object>> rows = pkIndex.get(pkValue);
+                        if (rows.stream().anyMatch(r -> !deletedRows.contains(r))) {
                             return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
                         }
                     }
@@ -596,11 +629,15 @@ public class DieselDBServer {
                 Set<String> uniqueCols = uniqueConstraints.get(tableName);
                 if (uniqueCols != null) {
                     for (String col : uniqueCols) {
-                        Object value = row.get(col);
-                        if (value != null) {
-                            for (Map<String, Object> existingRow : tables.get(tableName)) {
-                                if (!deletedRows.contains(existingRow) && value.equals(existingRow.get(col))) {
-                                    return "ERROR: Duplicate unique value " + value + " for " + col;
+                        if (!col.equals(pkCol)) { // Пропускаем первичный ключ, уже проверен
+                            Object value = row.get(col);
+                            if (value != null) {
+                                Map<Object, Set<Map<String, Object>>> colIndex = hashIndexes.get(tableName).get(col);
+                                if (colIndex != null && colIndex.containsKey(value)) {
+                                    Set<Map<String, Object>> rows = colIndex.get(value);
+                                    if (rows.stream().anyMatch(r -> !deletedRows.contains(r))) {
+                                        return "ERROR: Duplicate unique value " + value + " for " + col;
+                                    }
                                 }
                             }
                         }
@@ -640,7 +677,6 @@ public class DieselDBServer {
                 }
             }
 
-            // Проверка типов для обновляемых колонок
             Map<String, String> schema = tableSchemas.get(tableName);
             if (schema != null) {
                 for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
@@ -664,27 +700,29 @@ public class DieselDBServer {
                         Map<String, Object> newRow = new HashMap<>(row);
                         newRow.putAll(updateMap);
 
-                        // Проверка первичного ключа
                         if (pkCol != null) {
                             Object newPkValue = newRow.get(pkCol);
                             if (newPkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
-                            for (Map<String, Object> existingRow : tables.get(tableName)) {
-                                if (!deletedRows.contains(existingRow) && !existingRow.equals(row) &&
-                                        newPkValue.equals(existingRow.get(pkCol))) {
+                            Map<Object, Set<Map<String, Object>>> pkIndex = hashIndexes.get(tableName).get(pkCol);
+                            if (pkIndex != null && pkIndex.containsKey(newPkValue)) {
+                                Set<Map<String, Object>> rows = pkIndex.get(newPkValue);
+                                if (rows.stream().anyMatch(r -> !r.equals(row) && !deletedRows.contains(r))) {
                                     return "ERROR: Duplicate primary key value " + newPkValue + " for " + pkCol;
                                 }
                             }
                         }
 
-                        // Проверка уникальности
                         if (uniqueCols != null) {
                             for (String col : uniqueCols) {
-                                Object newValue = newRow.get(col);
-                                if (newValue != null) {
-                                    for (Map<String, Object> existingRow : tables.get(tableName)) {
-                                        if (!deletedRows.contains(existingRow) && !existingRow.equals(row) &&
-                                                newValue.equals(existingRow.get(col))) {
-                                            return "ERROR: Duplicate unique value " + newValue + " for " + col;
+                                if (!col.equals(pkCol)) {
+                                    Object newValue = newRow.get(col);
+                                    if (newValue != null) {
+                                        Map<Object, Set<Map<String, Object>>> colIndex = hashIndexes.get(tableName).get(col);
+                                        if (colIndex != null && colIndex.containsKey(newValue)) {
+                                            Set<Map<String, Object>> rows = colIndex.get(newValue);
+                                            if (rows.stream().anyMatch(r -> !r.equals(row) && !deletedRows.contains(r))) {
+                                                return "ERROR: Duplicate unique value " + newValue + " for " + col;
+                                            }
                                         }
                                     }
                                 }
@@ -717,9 +755,6 @@ public class DieselDBServer {
             }
             return "OK: " + updated;
         }
-
-        // Методы selectRows, deleteRows, handleJoin и вспомогательные остаются без изменений для краткости
-        // Полный код можно взять из предыдущих версий, они не затрагиваются этой идеей
 
         private String selectRows(String tableName, String conditionAndOrder,
                                   Map<String, List<Map<String, Object>>> tables) {
