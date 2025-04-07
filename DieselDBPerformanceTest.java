@@ -11,20 +11,20 @@ public class DieselDBPerformanceTest {
         DieselDBClient client = new DieselDBClient("localhost", 9090);
 
         try {
-            // Создаем таблицу
+            // РЎРѕР·РґР°РµРј С‚Р°Р±Р»РёС†Сѓ
             client.createTable(TABLE_NAME);
             System.out.println("Table created");
 
-            // Тест вставки
+            // РўРµСЃС‚ РІСЃС‚Р°РІРєРё
             testInsert(client);
 
-            // Тест выборки
+            // РўРµСЃС‚ РІС‹Р±РѕСЂРєРё
             testSelect(client);
 
-            // Тест обновления
+            // РўРµСЃС‚ РѕР±РЅРѕРІР»РµРЅРёСЏ
             testUpdate(client);
 
-            // Тест удаления
+            // РўРµСЃС‚ СѓРґР°Р»РµРЅРёСЏ
             testDelete(client);
 
         } catch (IOException e) {
@@ -57,7 +57,7 @@ public class DieselDBPerformanceTest {
             }));
         }
 
-        // Ожидаем завершения всех задач
+        // РћР¶РёРґР°РµРј Р·Р°РІРµСЂС€РµРЅРёСЏ РІСЃРµС… Р·Р°РґР°С‡
         for (Future<?> future : futures) {
             try {
                 future.get();
@@ -79,7 +79,7 @@ public class DieselDBPerformanceTest {
     private static void testSelect(DieselDBClient client) throws IOException {
         System.out.println("Starting select performance test...");
 
-        // Тест выборки всех записей
+        // РўРµСЃС‚ РІС‹Р±РѕСЂРєРё РІСЃРµС… Р·Р°РїРёСЃРµР№
         long startTime = System.currentTimeMillis();
         List<Map<String, String>> allRecords = client.select(TABLE_NAME, null);
         long endTime = System.currentTimeMillis();
@@ -87,7 +87,7 @@ public class DieselDBPerformanceTest {
         System.out.printf("Selected all %,d records in %d ms%n",
                 allRecords.size(), (endTime - startTime));
 
-        // Тест выборки по условию
+        // РўРµСЃС‚ РІС‹Р±РѕСЂРєРё РїРѕ СѓСЃР»РѕРІРёСЋ
         startTime = System.currentTimeMillis();
         List<Map<String, String>> filteredRecords = client.select(TABLE_NAME, "id=500000");
         endTime = System.currentTimeMillis();
