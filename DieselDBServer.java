@@ -200,7 +200,6 @@ public class DieselDBServer {
         }
 
         private String handleJoin(String leftTable, String joinData) {
-            // Expected format: JOIN§§§rightTable§§§leftKey=rightKey[;;;whereCondition]
             String[] joinParts = joinData.split("§§§");
             if (joinParts.length < 3) {
                 return "ERROR: Invalid JOIN format. Use JOIN§§§rightTable§§§leftKey=rightKey[;;;whereCondition]";
@@ -251,16 +250,11 @@ public class DieselDBServer {
                 for (Map<String, String> rightRow : tables.get(rightTable)) {
                     String rightValue = rightRow.get(rightKey);
                     if (rightValue != null && leftValue.equals(rightValue)) {
-                        // Combine the rows
                         Map<String, String> joinedRow = new LinkedHashMap<>();
-
-                        // Add left table fields with prefix
                         leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                        // Add right table fields with prefix
                         rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
 
-                        // Apply where condition if present
-                        if (whereCondition == null || rowMatchesCondition(joinedRow, whereCondition)) {
+                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
                             result.add(joinedRow);
                         }
                     }
@@ -309,7 +303,7 @@ public class DieselDBServer {
 
             List<Map<String, String>> result = new ArrayList<>();
             for (Map<String, String> row : tables.get(tableName)) {
-                if (condition == null || rowMatchesCondition(row, condition)) {
+                if (condition == null || evaluateWhereCondition(row, condition)) {
                     result.add(new LinkedHashMap<>(row));
                 }
             }
@@ -324,6 +318,78 @@ public class DieselDBServer {
                 response.append(";;;").append(String.join(":::", row.values()));
             }
             return response.toString();
+        }
+
+        // New method to evaluate complex WHERE conditions
+        private boolean evaluateWhereCondition(Map<String, String> row, String condition) {
+            // Split by AND and OR (assuming they're space-separated)
+            String[] orParts = condition.split("\\s+OR\\s+");
+
+            for (String orPart : orParts) {
+                String[] andParts = orPart.split("\\s+AND\\s+");
+                boolean andResult = true;
+
+                for (String expression : andParts) {
+                    expression = expression.trim();
+                    if (expression.contains(">=")) {
+                        String[] parts = expression.split(">=");
+                        String value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareNumeric(value, parts[1].trim(), ">=");
+                    } else if (expression.contains("<=")) {
+                        String[] parts = expression.split("<=");
+                        String value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareNumeric(value, parts[1].trim(), "<=");
+                    } else if (expression.contains(">")) {
+                        String[] parts = expression.split(">");
+                        String value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareNumeric(value, parts[1].trim(), ">");
+                    } else if (expression.contains("<")) {
+                        String[] parts = expression.split("<");
+                        String value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= compareNumeric(value, parts[1].trim(), "<");
+                    } else if (expression.contains("!=")) {
+                        String[] parts = expression.split("!=");
+                        String value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= !value.equals(parts[1].trim());
+                    } else if (expression.contains("=")) {
+                        String[] parts = expression.split("=");
+                        String value = row.getOrDefault(parts[0].trim(), "");
+                        andResult &= value.equals(parts[1].trim());
+                    } else {
+                        andResult = false;
+                    }
+                    if (!andResult) break;
+                }
+
+                if (andResult) return true;
+            }
+            return false;
+        }
+
+        // Helper method for numeric comparisons
+        private boolean compareNumeric(String value1, String value2, String operator) {
+            try {
+                double v1 = Double.parseDouble(value1);
+                double v2 = Double.parseDouble(value2);
+
+                switch (operator) {
+                    case ">": return v1 > v2;
+                    case "<": return v1 < v2;
+                    case ">=": return v1 >= v2;
+                    case "<=": return v1 <= v2;
+                    default: return false;
+                }
+            } catch (NumberFormatException e) {
+                // If not numeric, fall back to string comparison
+                int compare = value1.compareTo(value2);
+                switch (operator) {
+                    case ">": return compare > 0;
+                    case "<": return compare < 0;
+                    case ">=": return compare >= 0;
+                    case "<=": return compare <= 0;
+                    default: return false;
+                }
+            }
         }
 
         // Modified rowMatchesCondition to handle prefixed column names
