@@ -299,14 +299,13 @@ public class DieselDBServer {
         private Object parseValue(String typedValue) {
             String[] parts = typedValue.split(":", 2);
             if (parts.length != 2) {
-                // Если тип не указан, пытаемся определить автоматически
                 try {
                     return Integer.parseInt(parts[0]);
                 } catch (NumberFormatException e1) {
                     try {
                         return new BigDecimal(parts[0]);
                     } catch (NumberFormatException e2) {
-                        return parts[0]; // Возвращаем как строку, если не число
+                        return parts[0];
                     }
                 }
             }
@@ -368,13 +367,24 @@ public class DieselDBServer {
             return "OK: 1 row inserted";
         }
 
-        private String selectRows(String tableName, String condition) {
+        private String selectRows(String tableName, String conditionAndOrder) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
+
+            String condition = null;
+            String orderBy = null;
+            if (conditionAndOrder != null) {
+                String[] parts = conditionAndOrder.split("\\s+ORDER\\s+BY\\s+", 2);
+                condition = parts[0].trim();
+                if (parts.length > 1) {
+                    orderBy = parts[1].trim();
+                }
+            }
+
             List<Map<String, Object>> result;
             try {
-                if (condition == null) {
+                if (condition == null || condition.isEmpty()) {
                     synchronized (tables.get(tableName)) {
                         result = new ArrayList<>(tables.get(tableName));
                     }
@@ -384,6 +394,33 @@ public class DieselDBServer {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
+                }
+
+                // Применяем сортировку, если указан ORDER BY
+                if (orderBy != null) {
+                    String[] orderParts = orderBy.split("\\s+");
+                    String column = orderParts[0];
+                    boolean ascending = orderParts.length == 1 || orderParts[1].equalsIgnoreCase("ASC");
+
+                    result.sort((row1, row2) -> {
+                        Object value1 = row1.get(column);
+                        Object value2 = row2.get(column);
+                        if (value1 == null && value2 == null) return 0;
+                        if (value1 == null) return ascending ? -1 : 1;
+                        if (value2 == null) return ascending ? 1 : -1;
+
+                        int comparison;
+                        if (value1 instanceof Integer && value2 instanceof Integer) {
+                            comparison = Integer.compare((Integer) value1, (Integer) value2);
+                        } else if (value1 instanceof BigDecimal && value2 instanceof BigDecimal) {
+                            comparison = ((BigDecimal) value1).compareTo((BigDecimal) value2);
+                        } else if (value1 instanceof Date && value2 instanceof Date) {
+                            comparison = ((Date) value1).compareTo((Date) value2);
+                        } else {
+                            comparison = formatValue(value1).compareTo(formatValue(value2));
+                        }
+                        return ascending ? comparison : -comparison;
+                    });
                 }
             } catch (Exception e) {
                 System.err.println("Error in selectRows for table " + tableName + ": " + e.getMessage());
@@ -471,7 +508,7 @@ public class DieselDBServer {
         }
 
         private Set<Map<String, Object>> getHashEquals(String tableName, String column, String valueStr) {
-            Object value = parseValue(valueStr); // Без "string:" для гибкости
+            Object value = parseValue(valueStr);
             Map<Object, Set<Map<String, Object>>> index = hashIndexes.get(tableName).get(column);
             Set<Map<String, Object>> result = new HashSet<>();
 
@@ -605,7 +642,6 @@ public class DieselDBServer {
         private boolean compareValues(Object value1, Object value2, String operator) {
             if (value1 == null || value2 == null) return false;
 
-            // Приведение типов для корректного сравнения
             if (value1 instanceof Integer && value2 instanceof String) {
                 try {
                     value2 = Integer.parseInt((String) value2);
@@ -655,9 +691,8 @@ public class DieselDBServer {
                     default: return false;
                 }
             } else {
-                // Сравнение как строки только если оба значения — строки
                 if (!(value1 instanceof String && value2 instanceof String)) {
-                    return false; // Избегаем ClassCastException
+                    return false;
                 }
                 String v1 = formatValue(value1);
                 String v2 = formatValue(value2);
@@ -678,7 +713,17 @@ public class DieselDBServer {
             if (!joinParts[0].equals("JOIN")) return "ERROR: JOIN command must start with JOIN";
             String rightTable = joinParts[1];
             String joinCondition = joinParts[2];
-            String whereCondition = joinParts.length > 3 ? joinParts[3] : null;
+            String whereConditionAndOrder = joinParts.length > 3 ? joinParts[3] : null;
+
+            String whereCondition = null;
+            String orderBy = null;
+            if (whereConditionAndOrder != null) {
+                String[] parts = whereConditionAndOrder.split("\\s+ORDER\\s+BY\\s+", 2);
+                whereCondition = parts[0].trim();
+                if (parts.length > 1) {
+                    orderBy = parts[1].trim();
+                }
+            }
 
             if (!tables.containsKey(leftTable)) loadTableFromDisk(leftTable);
             if (!tables.containsKey(rightTable)) loadTableFromDisk(rightTable);
@@ -728,6 +773,33 @@ public class DieselDBServer {
                     }
                 }
             }
+
+            if (orderBy != null) {
+                String[] orderParts = orderBy.split("\\s+");
+                String column = orderParts[0];
+                boolean ascending = orderParts.length == 1 || orderParts[1].equalsIgnoreCase("ASC");
+
+                result.sort((row1, row2) -> {
+                    Object value1 = row1.get(column);
+                    Object value2 = row2.get(column);
+                    if (value1 == null && value2 == null) return 0;
+                    if (value1 == null) return ascending ? -1 : 1;
+                    if (value2 == null) return ascending ? 1 : -1;
+
+                    int comparison;
+                    if (value1 instanceof Integer && value2 instanceof Integer) {
+                        comparison = Integer.compare((Integer) value1, (Integer) value2);
+                    } else if (value1 instanceof BigDecimal && value2 instanceof BigDecimal) {
+                        comparison = ((BigDecimal) value1).compareTo((BigDecimal) value2);
+                    } else if (value1 instanceof Date && value2 instanceof Date) {
+                        comparison = ((Date) value1).compareTo((Date) value2);
+                    } else {
+                        comparison = formatValue(value1).compareTo(formatValue(value2));
+                    }
+                    return ascending ? comparison : -comparison;
+                });
+            }
+
             if (result.isEmpty()) return "OK: 0 rows";
             StringBuilder response = new StringBuilder("OK: ");
             response.append(String.join(":::", result.get(0).keySet()));

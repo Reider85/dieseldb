@@ -8,3 +8,4 @@
 0.0.8 Optimization file save and load
 0.0.9 Memory clear
 0.1.0 Indexes
+0.1.1 Order by

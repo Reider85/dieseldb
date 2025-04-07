@@ -77,8 +77,12 @@ public class DieselDBClient {
         System.out.println("Insert response: " + response);
     }
 
-    public String select(String tableName, String condition) throws IOException {
-        String command = "SELECT§§§" + tableName + (condition != null ? "§§§" + condition : "");
+    public String select(String tableName, String condition, String orderBy) throws IOException {
+        String conditionAndOrder = condition != null ? condition : "";
+        if (orderBy != null && !orderBy.isEmpty()) {
+            conditionAndOrder += " ORDER BY " + orderBy;
+        }
+        String command = "SELECT§§§" + tableName + (conditionAndOrder.isEmpty() ? "" : "§§§" + conditionAndOrder);
         String response = sendCommandWithRetry(command);
         checkResponse(response);
         return response;
@@ -98,9 +102,15 @@ public class DieselDBClient {
         System.out.println("Delete response: " + response);
     }
 
-    public String join(String leftTable, String rightTable, String joinCondition, String whereCondition) throws IOException {
-        String command = "SELECT§§§" + leftTable + "§§§JOIN§§§" + rightTable + "§§§" + joinCondition +
-                (whereCondition != null ? "§§§" + whereCondition : "");
+    public String join(String leftTable, String rightTable, String joinCondition, String whereCondition, String orderBy) throws IOException {
+        String conditionAndOrder = "JOIN§§§" + rightTable + "§§§" + joinCondition;
+        if (whereCondition != null && !whereCondition.isEmpty()) {
+            conditionAndOrder += "§§§" + whereCondition;
+        }
+        if (orderBy != null && !orderBy.isEmpty()) {
+            conditionAndOrder += " ORDER BY " + orderBy;
+        }
+        String command = "SELECT§§§" + leftTable + "§§§" + conditionAndOrder;
         String response = sendCommandWithRetry(command);
         checkResponse(response);
         return response;
@@ -140,19 +150,19 @@ public class DieselDBClient {
         insert(TABLE_NAME_2, "order_id:::integer:101:::user_id:::integer:1:::amount:::bigdecimal:99.99");
         insert(TABLE_NAME_2, "order_id:::integer:102:::user_id:::integer:2:::amount:::bigdecimal:149.50");
 
-        String selectUsers = select(TABLE_NAME_1, "age>=25");
-        System.out.println("Select users (age >= 25): " + selectUsers);
+        String selectUsers = select(TABLE_NAME_1, "age>=25", "age DESC");
+        System.out.println("Select users (age >= 25, ordered by age DESC): " + selectUsers);
 
         update(TABLE_NAME_1, "id=1", "age:::integer:26");
-        String updatedUsers = select(TABLE_NAME_1, "id=1");
+        String updatedUsers = select(TABLE_NAME_1, "id=1", null);
         System.out.println("Updated user: " + updatedUsers);
 
-        String joinResult = join(TABLE_NAME_1, TABLE_NAME_2, "id=user_id", null);
-        System.out.println("Join result: " + joinResult);
+        String joinResult = join(TABLE_NAME_1, TABLE_NAME_2, "id=user_id", null, "users.age ASC");
+        System.out.println("Join result (ordered by users.age ASC): " + joinResult);
 
         delete(TABLE_NAME_2, "order_id=101");
-        String remainingOrders = select(TABLE_NAME_2, null);
-        System.out.println("Remaining orders: " + remainingOrders);
+        String remainingOrders = select(TABLE_NAME_2, null, "amount DESC");
+        System.out.println("Remaining orders (ordered by amount DESC): " + remainingOrders);
 
         clearMemory();
     }

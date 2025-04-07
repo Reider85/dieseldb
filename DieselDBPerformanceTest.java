@@ -76,15 +76,15 @@ public class DieselDBPerformanceTest {
         System.out.println("Testing select performance...");
 
         long startTime = System.currentTimeMillis();
-        String result1 = client.select(TABLE_USERS, "id=" + (NUM_USERS / 2));
+        String result1 = client.select(TABLE_USERS, "id=" + (NUM_USERS / 2), null);
         long endTime1 = System.currentTimeMillis();
         System.out.println("Select by id time: " + (endTime1 - startTime) + " ms");
         System.out.println("Result: " + result1);
 
         startTime = System.currentTimeMillis();
-        String result2 = client.select(TABLE_USERS, "age>=30 AND age<=40");
+        String result2 = client.select(TABLE_USERS, "age>=30 AND age<=40", "age ASC");
         long endTime2 = System.currentTimeMillis();
-        System.out.println("Select by age range time: " + (endTime2 - startTime) + " ms");
+        System.out.println("Select by age range with ORDER BY age ASC time: " + (endTime2 - startTime) + " ms");
         System.out.println("Result sample: " + (result2.length() > 100 ? result2.substring(0, 100) + "..." : result2));
     }
 
@@ -96,8 +96,8 @@ public class DieselDBPerformanceTest {
         long endTime = System.currentTimeMillis();
         System.out.println("Update users (age > 25) time: " + (endTime - startTime) + " ms");
 
-        String result = client.select(TABLE_USERS, "age>25");
-        System.out.println("Updated users sample: " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
+        String result = client.select(TABLE_USERS, "age>25", "age DESC");
+        System.out.println("Updated users sample (ordered by age DESC): " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
     }
 
     private void testDeletePerformance() throws IOException {
@@ -108,17 +108,17 @@ public class DieselDBPerformanceTest {
         long endTime = System.currentTimeMillis();
         System.out.println("Delete orders (amount < 500.00) time: " + (endTime - startTime) + " ms");
 
-        String result = client.select(TABLE_ORDERS, null);
-        System.out.println("Remaining orders sample: " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
+        String result = client.select(TABLE_ORDERS, null, "amount ASC");
+        System.out.println("Remaining orders sample (ordered by amount ASC): " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
     }
 
     private void testJoinPerformance() throws IOException {
         System.out.println("Testing join performance...");
 
         long startTime = System.currentTimeMillis();
-        String result = client.join(TABLE_USERS, TABLE_ORDERS, "id=user_id", "amount>100.00");
+        String result = client.join(TABLE_USERS, TABLE_ORDERS, "id=user_id", "amount>100.00", "perf_users.age DESC");
         long endTime = System.currentTimeMillis();
-        System.out.println("Join users and orders (amount > 100.00) time: " + (endTime - startTime) + " ms");
+        System.out.println("Join users and orders (amount > 100.00, ordered by age DESC) time: " + (endTime - startTime) + " ms");
         System.out.println("Join result sample: " + (result.length() > 100 ? result.substring(0, 100) + "..." : result));
     }
 
@@ -130,7 +130,7 @@ public class DieselDBPerformanceTest {
         long endTime = System.currentTimeMillis();
         System.out.println("Memory cleanup time: " + (endTime - startTime) + " ms");
 
-        String result = client.select(TABLE_USERS, "id=1");
+        String result = client.select(TABLE_USERS, "id=1", null);
         System.out.println("Select after cleanup: " + result);
     }
 
