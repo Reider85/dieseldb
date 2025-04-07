@@ -22,6 +22,7 @@ public class DieselDBServer {
 
     private static final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
+    private static final Set<Map<String, Object>> deletedRows = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     public static void main(String[] args) {
         File dataDir = new File(DATA_DIR);
@@ -102,8 +103,11 @@ public class DieselDBServer {
         diskExecutor.scheduleAtFixedRate(() -> {
             for (String tableName : dirtyTables.keySet()) {
                 if (Boolean.TRUE.equals(dirtyTables.get(tableName))) {
-                    saveTableToDisk(tableName);
-                    dirtyTables.put(tableName, false);
+                    synchronized (tables.get(tableName)) {
+                        cleanIndexes(tableName);
+                        saveTableToDisk(tableName);
+                        dirtyTables.put(tableName, false);
+                    }
                 }
             }
         }, 5, 5, TimeUnit.SECONDS);
@@ -122,7 +126,7 @@ public class DieselDBServer {
 
     private static void cleanupInactiveTables() {
         long currentTime = System.currentTimeMillis();
-        for (String tableName : tables.keySet()) {
+        for (String tableName : tables.keySet ()) {
             long lastAccess = lastAccessTimes.getOrDefault(tableName, 0L);
             if (currentTime - lastAccess > INACTIVE_TIMEOUT) {
                 synchronized (tables.get(tableName)) {
@@ -156,7 +160,10 @@ public class DieselDBServer {
 
     private static void flushAllTablesToDisk() {
         for (String tableName : tables.keySet()) {
-            saveTableToDisk(tableName);
+            synchronized (tables.get(tableName)) {
+                cleanIndexes(tableName);
+                saveTableToDisk(tableName);
+            }
         }
     }
 
@@ -168,14 +175,54 @@ public class DieselDBServer {
 
         synchronized (table) {
             for (Map<String, Object> row : table) {
+                if (!deletedRows.contains(row)) { // Исключаем удалённые строки
+                    for (Map.Entry<String, Object> entry : row.entrySet()) {
+                        String column = entry.getKey();
+                        Object value = entry.getValue();
+                        hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                                .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                        btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                                .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void cleanIndexes(String tableName) {
+        Map<String, Map<Object, Set<Map<String, Object>>>> hashIndex = hashIndexes.get(tableName);
+        Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeIndex = btreeIndexes.get(tableName);
+        if (hashIndex == null || btreeIndex == null) return;
+
+        Iterator<Map<String, Object>> iterator = deletedRows.iterator();
+        while (iterator.hasNext()) {
+            Map<String, Object> row = iterator.next();
+            if (!tables.getOrDefault(tableName, Collections.emptyList()).contains(row)) {
                 for (Map.Entry<String, Object> entry : row.entrySet()) {
                     String column = entry.getKey();
                     Object value = entry.getValue();
-                    hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
-                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
-                    btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
-                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                    Map<Object, Set<Map<String, Object>>> columnHashIndex = hashIndex.get(column);
+                    if (columnHashIndex != null) {
+                        Set<Map<String, Object>> rows = columnHashIndex.get(value);
+                        if (rows != null) {
+                            rows.remove(row);
+                            if (rows.isEmpty()) {
+                                columnHashIndex.remove(value);
+                            }
+                        }
+                    }
+                    TreeMap<Object, Set<Map<String, Object>>> columnBtreeIndex = btreeIndex.get(column);
+                    if (columnBtreeIndex != null) {
+                        Set<Map<String, Object>> btreeRows = columnBtreeIndex.get(value);
+                        if (btreeRows != null) {
+                            btreeRows.remove(row);
+                            if (btreeRows.isEmpty()) {
+                                columnBtreeIndex.remove(value);
+                            }
+                        }
+                    }
                 }
+                iterator.remove(); // Удаляем из deletedRows после очистки
             }
         }
     }
@@ -183,7 +230,7 @@ public class DieselDBServer {
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
         private boolean inTransaction = false;
-        private Map<String, List<Map<String, Object>>> transactionTables; // Буфер изменений
+        private Map<String, List<Map<String, Object>>> transactionTables;
         private Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> transactionHashIndexes;
         private Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> transactionBtreeIndexes;
 
@@ -324,12 +371,13 @@ public class DieselDBServer {
             transactionTables.clear();
             transactionHashIndexes.clear();
             transactionBtreeIndexes.clear();
-            // Копируем текущие таблицы и индексы в буфер транзакции
             for (String tableName : tables.keySet()) {
                 List<Map<String, Object>> tableCopy = new ArrayList<>();
                 synchronized (tables.get(tableName)) {
                     for (Map<String, Object> row : tables.get(tableName)) {
-                        tableCopy.add(new HashMap<>(row));
+                        if (!deletedRows.contains(row)) { // Исключаем удалённые строки
+                            tableCopy.add(new HashMap<>(row));
+                        }
                     }
                 }
                 transactionTables.put(tableName, tableCopy);
@@ -465,13 +513,15 @@ public class DieselDBServer {
             }
             synchronized (tables.get(tableName)) {
                 tables.get(tableName).add(row);
-                for (Map.Entry<String, Object> entry : row.entrySet()) {
-                    String column = entry.getKey();
-                    Object value = entry.getValue();
-                    hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
-                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
-                    btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
-                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                if (!inTransaction) { // Индексы обновляются только вне транзакции
+                    for (Map.Entry<String, Object> entry : row.entrySet()) {
+                        String column = entry.getKey();
+                        Object value = entry.getValue();
+                        hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                                .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                        btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                                .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                    }
                 }
             }
             return "OK: 1 row inserted";
@@ -497,7 +547,12 @@ public class DieselDBServer {
             try {
                 if (condition == null || condition.isEmpty()) {
                     synchronized (tables.get(tableName)) {
-                        result = new ArrayList<>(tables.get(tableName));
+                        result = new ArrayList<>();
+                        for (Map<String, Object> row : tables.get(tableName)) {
+                            if (!deletedRows.contains(row)) { // Исключаем удалённые строки
+                                result.add(row);
+                            }
+                        }
                     }
                 } else {
                     result = evaluateWithIndexes(tableName, condition, tables);
@@ -505,6 +560,7 @@ public class DieselDBServer {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
+                    result.removeIf(deletedRows::contains); // Фильтруем удалённые строки
                 }
 
                 if (orderBy != null) {
@@ -610,7 +666,7 @@ public class DieselDBServer {
                 Set<Map<String, Object>> result = new HashSet<>();
                 synchronized (tables.get(tableName)) {
                     for (Map<String, Object> row : tables.get(tableName)) {
-                        if (evaluateWhereCondition(row, expression)) {
+                        if (!deletedRows.contains(row) && evaluateWhereCondition(row, expression)) {
                             result.add(row);
                         }
                     }
@@ -629,7 +685,7 @@ public class DieselDBServer {
                 System.err.println("No hash index for column " + column + " in table " + tableName);
                 synchronized (tables.get(tableName)) {
                     for (Map<String, Object> row : tables.get(tableName)) {
-                        if (row.get(column) != null && row.get(column).equals(value)) {
+                        if (!deletedRows.contains(row) && row.get(column) != null && row.get(column).equals(value)) {
                             result.add(row);
                         }
                     }
@@ -639,14 +695,16 @@ public class DieselDBServer {
 
             Set<Map<String, Object>> rows = index.get(value);
             if (rows != null) {
-                return new HashSet<>(rows);
+                result.addAll(rows);
+                result.removeIf(deletedRows::contains);
             }
 
             try {
                 Integer intValue = Integer.parseInt(valueStr);
                 rows = index.get(intValue);
                 if (rows != null) {
-                    return new HashSet<>(rows);
+                    result.addAll(rows);
+                    result.removeIf(deletedRows::contains);
                 }
             } catch (NumberFormatException ignored) {}
 
@@ -661,9 +719,11 @@ public class DieselDBServer {
             if (index != null) {
                 synchronized (tables.get(tableName)) {
                     for (Map<String, Object> row : tables.get(tableName)) {
-                        Object rowValue = row.get(column);
-                        if (rowValue != null && !rowValue.equals(value)) {
-                            result.add(row);
+                        if (!deletedRows.contains(row)) {
+                            Object rowValue = row.get(column);
+                            if (rowValue != null && !rowValue.equals(value)) {
+                                result.add(row);
+                            }
                         }
                     }
                 }
@@ -681,27 +741,29 @@ public class DieselDBServer {
             Set<Map<String, Object>> result = new HashSet<>();
             switch (operator) {
                 case ">":
-                    index.tailMap(value, false).values().forEach(result::addAll);
+                    index.tailMap(value, false).values().forEach(s -> result.addAll(s));
                     break;
                 case ">=":
-                    index.tailMap(value, true).values().forEach(result::addAll);
+                    index.tailMap(value, true).values().forEach(s -> result.addAll(s));
                     break;
                 case "<":
-                    index.headMap(value, false).values().forEach(result::addAll);
+                    index.headMap(value, false).values().forEach(s -> result.addAll(s));
                     break;
                 case "<=":
-                    index.headMap(value, true).values().forEach(result::addAll);
+                    index.headMap(value, true).values().forEach(s -> result.addAll(s));
                     break;
             }
+            result.removeIf(deletedRows::contains);
             if (result.isEmpty()) {
                 try {
                     Integer intValue = Integer.parseInt(valueStr);
                     switch (operator) {
-                        case ">": index.tailMap(intValue, false).values().forEach(result::addAll); break;
-                        case ">=": index.tailMap(intValue, true).values().forEach(result::addAll); break;
-                        case "<": index.headMap(intValue, false).values().forEach(result::addAll); break;
-                        case "<=": index.headMap(intValue, true).values().forEach(result::addAll); break;
+                        case ">": index.tailMap(intValue, false).values().forEach(s -> result.addAll(s)); break;
+                        case ">=": index.tailMap(intValue, true).values().forEach(s -> result.addAll(s)); break;
+                        case "<": index.headMap(intValue, false).values().forEach(s -> result.addAll(s)); break;
+                        case "<=": index.headMap(intValue, true).values().forEach(s -> result.addAll(s)); break;
                     }
+                    result.removeIf(deletedRows::contains);
                 } catch (NumberFormatException ignored) {}
             }
             return result;
@@ -859,30 +921,36 @@ public class DieselDBServer {
                 synchronized (tables.get(rightTable)) {
                     if (rightIndex != null) {
                         for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            if (deletedRows.contains(leftRow)) continue;
                             Object leftValue = leftRow.get(leftKey);
                             if (leftValue != null && rightIndex.containsKey(leftValue)) {
                                 for (Map<String, Object> rightRow : rightIndex.get(leftValue)) {
-                                    Map<String, Object> joinedRow = new LinkedHashMap<>();
-                                    leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                                    rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
-                                    if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
-                                        result.add(joinedRow);
+                                    if (!deletedRows.contains(rightRow)) {
+                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                            result.add(joinedRow);
+                                        }
                                     }
                                 }
                             }
                         }
                     } else {
                         for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            if (deletedRows.contains(leftRow)) continue;
                             Object leftValue = leftRow.get(leftKey);
                             if (leftValue == null) continue;
                             for (Map<String, Object> rightRow : tables.get(rightTable)) {
-                                Object rightValue = rightRow.get(rightKey);
-                                if (rightValue != null && leftValue.equals(rightValue)) {
-                                    Map<String, Object> joinedRow = new LinkedHashMap<>();
-                                    leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                                    rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
-                                    if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
-                                        result.add(joinedRow);
+                                if (!deletedRows.contains(rightRow)) {
+                                    Object rightValue = rightRow.get(rightKey);
+                                    if (rightValue != null && leftValue.equals(rightValue)) {
+                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                            result.add(joinedRow);
+                                        }
                                     }
                                 }
                             }
@@ -948,22 +1016,28 @@ public class DieselDBServer {
             int updated = 0;
             synchronized (tables.get(tableName)) {
                 for (Map<String, Object> row : toUpdate) {
-                    for (String column : updateMap.keySet()) {
-                        Object oldValue = row.get(column);
-                        if (oldValue != null) {
-                            hashIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
-                            btreeIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                    if (!deletedRows.contains(row)) {
+                        if (!inTransaction) { // Удаляем старые значения из индексов только вне транзакции
+                            for (String column : updateMap.keySet()) {
+                                Object oldValue = row.get(column);
+                                if (oldValue != null) {
+                                    hashIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                                    btreeIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                                }
+                            }
                         }
-                    }
-                    row.putAll(updateMap);
-                    updated++;
-                    for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
-                        String column = entry.getKey();
-                        Object newValue = entry.getValue();
-                        hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
-                                .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
-                        btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
-                                .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                        row.putAll(updateMap);
+                        updated++;
+                        if (!inTransaction) { // Добавляем новые значения в индексы только вне транзакции
+                            for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
+                                String column = entry.getKey();
+                                Object newValue = entry.getValue();
+                                hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                                btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                            }
+                        }
                     }
                 }
             }
@@ -982,55 +1056,37 @@ public class DieselDBServer {
             int deleted = 0;
 
             if (condition == null) {
-                // Удаление всей таблицы
                 synchronized (table) {
-                    deleted = table.size();
+                    for (Map<String, Object> row : table) {
+                        if (!deletedRows.contains(row)) {
+                            deletedRows.add(row);
+                            deleted++;
+                        }
+                    }
                     table.clear();
-                    hashIndexes.get(tableName).clear();
-                    btreeIndexes.get(tableName).clear();
+                    if (!inTransaction) {
+                        hashIndexes.get(tableName).clear();
+                        btreeIndexes.get(tableName).clear();
+                    }
                 }
             } else {
-                // Удаление по условию с использованием индексов
                 List<Map<String, Object>> toDelete = evaluateWithIndexes(tableName, condition, tables);
                 if (toDelete.isEmpty()) {
                     return "OK: 0";
                 }
-
-                // Оптимизированное удаление
                 synchronized (table) {
                     for (Map<String, Object> row : toDelete) {
-                        if (table.remove(row)) { // Удаляем только если строка всё ещё в таблице
+                        if (!deletedRows.contains(row) && table.remove(row)) {
+                            deletedRows.add(row);
                             deleted++;
-                            // Обновляем индексы
-                            for (Map.Entry<String, Object> entry : row.entrySet()) {
-                                String column = entry.getKey();
-                                Object value = entry.getValue();
-                                Map<Object, Set<Map<String, Object>>> hashIndex = hashIndexes.get(tableName).get(column);
-                                if (hashIndex != null) {
-                                    Set<Map<String, Object>> rows = hashIndex.get(value);
-                                    if (rows != null) {
-                                        rows.remove(row);
-                                        if (rows.isEmpty()) {
-                                            hashIndex.remove(value);
-                                        }
-                                    }
-                                }
-                                TreeMap<Object, Set<Map<String, Object>>> btreeIndex = btreeIndexes.get(tableName).get(column);
-                                if (btreeIndex != null) {
-                                    Set<Map<String, Object>> btreeRows = btreeIndex.get(value);
-                                    if (btreeRows != null) {
-                                        btreeRows.remove(row);
-                                        if (btreeRows.isEmpty()) {
-                                            btreeIndex.remove(value);
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
                 }
             }
 
+            if (!inTransaction && deleted > 0) {
+                dirtyTables.put(tableName, true); // Помечаем таблицу для очистки индексов
+            }
             return "OK: " + deleted;
         }
     }
