@@ -182,9 +182,16 @@ public class DieselDBServer {
 
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
+        private boolean inTransaction = false;
+        private Map<String, List<Map<String, Object>>> transactionTables; // Буфер изменений
+        private Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> transactionHashIndexes;
+        private Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> transactionBtreeIndexes;
 
         ClientHandler(Socket socket) {
             this.clientSocket = socket;
+            this.transactionTables = new HashMap<>();
+            this.transactionHashIndexes = new HashMap<>();
+            this.transactionBtreeIndexes = new HashMap<>();
         }
 
         public void run() {
@@ -203,8 +210,14 @@ public class DieselDBServer {
                 }
             } catch (SocketException e) {
                 System.out.println("Client disconnected: " + e.getMessage());
+                if (inTransaction) {
+                    rollbackTransaction();
+                }
             } catch (IOException e) {
                 System.err.println("Client error: " + e.getMessage());
+                if (inTransaction) {
+                    rollbackTransaction();
+                }
             } finally {
                 try {
                     clientSocket.close();
@@ -220,58 +233,149 @@ public class DieselDBServer {
                     return "OK: PONG";
                 }
                 if ("CLEAR_MEMORY".equalsIgnoreCase(command.trim())) {
+                    if (inTransaction) {
+                        return "ERROR: Cannot clear memory during transaction";
+                    }
                     cleanupInactiveTables();
                     System.gc();
                     return "OK: Memory cleanup triggered";
                 }
+                if ("BEGIN".equalsIgnoreCase(command.trim())) {
+                    if (inTransaction) {
+                        return "ERROR: Transaction already in progress";
+                    }
+                    beginTransaction();
+                    return "OK: Transaction started";
+                }
+                if ("COMMIT".equalsIgnoreCase(command.trim())) {
+                    if (!inTransaction) {
+                        return "ERROR: No transaction in progress";
+                    }
+                    commitTransaction();
+                    return "OK: Transaction committed";
+                }
+                if ("ROLLBACK".equalsIgnoreCase(command.trim())) {
+                    if (!inTransaction) {
+                        return "ERROR: No transaction in progress";
+                    }
+                    rollbackTransaction();
+                    return "OK: Transaction rolled back";
+                }
 
                 String[] parts = command.split(DELIMITER, 3);
                 if (parts.length < 2) {
-                    return "ERROR: Invalid command format. Use COMMAND§§§TABLE§§§DATA or PING or CLEAR_MEMORY";
+                    return "ERROR: Invalid command format. Use COMMAND§§§TABLE§§§DATA or PING or CLEAR_MEMORY or BEGIN/COMMIT/ROLLBACK";
                 }
 
                 String cmd = parts[0].toUpperCase();
                 String tableName = parts[1];
                 String data = parts.length > 2 ? parts[2] : null;
 
-                if (!tables.containsKey(tableName) && !cmd.equals("CREATE")) {
+                if (!inTransaction && !tables.containsKey(tableName) && !cmd.equals("CREATE")) {
                     loadTableFromDisk(tableName);
                 }
 
                 lastAccessTimes.put(tableName, System.currentTimeMillis());
 
+                Map<String, List<Map<String, Object>>> workingTables = inTransaction ? transactionTables : tables;
+                Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> workingHashIndexes = inTransaction ? transactionHashIndexes : hashIndexes;
+                Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> workingBtreeIndexes = inTransaction ? transactionBtreeIndexes : btreeIndexes;
+
                 String response;
                 switch (cmd) {
                     case "CREATE":
-                        response = createTable(tableName);
+                        response = createTable(tableName, workingTables, workingHashIndexes, workingBtreeIndexes);
                         break;
                     case "INSERT":
-                        response = data != null ? insertRow(tableName, data) : "ERROR: Missing data for INSERT";
+                        response = data != null ? insertRow(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) : "ERROR: Missing data for INSERT";
                         break;
                     case "SELECT":
                         if (data != null && data.startsWith("JOIN")) {
-                            response = handleJoin(tableName, data);
+                            response = handleJoin(tableName, data, workingTables, workingHashIndexes);
                         } else {
-                            response = selectRows(tableName, data);
+                            response = selectRows(tableName, data, workingTables);
                         }
                         break;
                     case "UPDATE":
-                        response = data != null ? updateRows(tableName, data) : "ERROR: Missing data for UPDATE";
+                        response = data != null ? updateRows(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) : "ERROR: Missing data for UPDATE";
                         break;
                     case "DELETE":
-                        response = deleteRows(tableName, data);
+                        response = deleteRows(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes);
                         break;
                     default:
                         return "ERROR: Unknown command";
                 }
 
-                if (!cmd.equals("SELECT") && response.startsWith("OK")) {
+                if (!cmd.equals("SELECT") && response.startsWith("OK") && !inTransaction) {
                     dirtyTables.put(tableName, true);
                 }
                 return response;
 
             } catch (Exception e) {
+                if (inTransaction) {
+                    rollbackTransaction();
+                }
                 return "ERROR: " + e.getMessage();
+            }
+        }
+
+        private void beginTransaction() {
+            inTransaction = true;
+            transactionTables.clear();
+            transactionHashIndexes.clear();
+            transactionBtreeIndexes.clear();
+            // Копируем текущие таблицы и индексы в буфер транзакции
+            for (String tableName : tables.keySet()) {
+                List<Map<String, Object>> tableCopy = new ArrayList<>();
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        tableCopy.add(new HashMap<>(row));
+                    }
+                }
+                transactionTables.put(tableName, tableCopy);
+
+                Map<String, Map<Object, Set<Map<String, Object>>>> hashCopy = new HashMap<>();
+                Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeCopy = new HashMap<>();
+                rebuildIndexesForTransaction(tableName, tableCopy, hashCopy, btreeCopy);
+                transactionHashIndexes.put(tableName, hashCopy);
+                transactionBtreeIndexes.put(tableName, btreeCopy);
+            }
+        }
+
+        private void commitTransaction() {
+            synchronized (tables) {
+                for (String tableName : transactionTables.keySet()) {
+                    tables.put(tableName, new ArrayList<>(transactionTables.get(tableName)));
+                    hashIndexes.put(tableName, new HashMap<>(transactionHashIndexes.get(tableName)));
+                    btreeIndexes.put(tableName, new HashMap<>(transactionBtreeIndexes.get(tableName)));
+                    dirtyTables.put(tableName, true);
+                }
+            }
+            inTransaction = false;
+            transactionTables.clear();
+            transactionHashIndexes.clear();
+            transactionBtreeIndexes.clear();
+        }
+
+        private void rollbackTransaction() {
+            inTransaction = false;
+            transactionTables.clear();
+            transactionHashIndexes.clear();
+            transactionBtreeIndexes.clear();
+        }
+
+        private void rebuildIndexesForTransaction(String tableName, List<Map<String, Object>> table,
+                                                  Map<String, Map<Object, Set<Map<String, Object>>>> hashIndex,
+                                                  Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeIndex) {
+            for (Map<String, Object> row : table) {
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    String column = entry.getKey();
+                    Object value = entry.getValue();
+                    hashIndex.computeIfAbsent(column, k -> new HashMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                    btreeIndex.computeIfAbsent(column, k -> new TreeMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                }
             }
         }
 
@@ -333,7 +437,10 @@ public class DieselDBServer {
             return value.toString();
         }
 
-        private String createTable(String tableName) {
+        private String createTable(String tableName,
+                                   Map<String, List<Map<String, Object>>> tables,
+                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                   Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
             tables.putIfAbsent(tableName, new ArrayList<>());
             hashIndexes.putIfAbsent(tableName, new HashMap<>());
             btreeIndexes.putIfAbsent(tableName, new HashMap<>());
@@ -341,7 +448,10 @@ public class DieselDBServer {
             return "OK: Table '" + tableName + "' created";
         }
 
-        private String insertRow(String tableName, String data) {
+        private String insertRow(String tableName, String data,
+                                 Map<String, List<Map<String, Object>>> tables,
+                                 Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                 Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
@@ -367,7 +477,8 @@ public class DieselDBServer {
             return "OK: 1 row inserted";
         }
 
-        private String selectRows(String tableName, String conditionAndOrder) {
+        private String selectRows(String tableName, String conditionAndOrder,
+                                  Map<String, List<Map<String, Object>>> tables) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
@@ -389,14 +500,13 @@ public class DieselDBServer {
                         result = new ArrayList<>(tables.get(tableName));
                     }
                 } else {
-                    result = evaluateWithIndexes(tableName, condition);
+                    result = evaluateWithIndexes(tableName, condition, tables);
                     if (result == null) {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
                 }
 
-                // Применяем сортировку, если указан ORDER BY
                 if (orderBy != null) {
                     String[] orderParts = orderBy.split("\\s+");
                     String column = orderParts[0];
@@ -444,7 +554,8 @@ public class DieselDBServer {
             }
         }
 
-        private List<Map<String, Object>> evaluateWithIndexes(String tableName, String condition) {
+        private List<Map<String, Object>> evaluateWithIndexes(String tableName, String condition,
+                                                              Map<String, List<Map<String, Object>>> tables) {
             List<Map<String, Object>> result = new ArrayList<>();
             String[] orParts = condition.split("\\s+OR\\s+");
 
@@ -454,7 +565,7 @@ public class DieselDBServer {
 
                 for (String expression : andParts) {
                     expression = expression.trim();
-                    Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression);
+                    Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression, tables);
                     if (rows == null) {
                         System.err.println("evaluateSingleCondition returned null for: " + expression);
                         rows = new HashSet<>();
@@ -475,25 +586,26 @@ public class DieselDBServer {
             return new ArrayList<>(new LinkedHashSet<>(result));
         }
 
-        private Set<Map<String, Object>> evaluateSingleCondition(String tableName, String expression) {
+        private Set<Map<String, Object>> evaluateSingleCondition(String tableName, String expression,
+                                                                 Map<String, List<Map<String, Object>>> tables) {
             if (expression.contains(">=")) {
                 String[] parts = expression.split(">=");
-                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">=");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">=", tables);
             } else if (expression.contains("<=")) {
                 String[] parts = expression.split("<=");
-                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<=");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<=", tables);
             } else if (expression.contains(">")) {
                 String[] parts = expression.split(">");
-                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">", tables);
             } else if (expression.contains("<")) {
                 String[] parts = expression.split("<");
-                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<", tables);
             } else if (expression.contains("!=")) {
                 String[] parts = expression.split("!=");
-                return getHashNotEquals(tableName, parts[0].trim(), parts[1].trim());
+                return getHashNotEquals(tableName, parts[0].trim(), parts[1].trim(), tables);
             } else if (expression.contains("=")) {
                 String[] parts = expression.split("=");
-                return getHashEquals(tableName, parts[0].trim(), parts[1].trim());
+                return getHashEquals(tableName, parts[0].trim(), parts[1].trim(), tables);
             } else {
                 Set<Map<String, Object>> result = new HashSet<>();
                 synchronized (tables.get(tableName)) {
@@ -507,9 +619,10 @@ public class DieselDBServer {
             }
         }
 
-        private Set<Map<String, Object>> getHashEquals(String tableName, String column, String valueStr) {
+        private Set<Map<String, Object>> getHashEquals(String tableName, String column, String valueStr,
+                                                       Map<String, List<Map<String, Object>>> tables) {
             Object value = parseValue(valueStr);
-            Map<Object, Set<Map<String, Object>>> index = hashIndexes.get(tableName).get(column);
+            Map<Object, Set<Map<String, Object>>> index = (inTransaction ? transactionHashIndexes : hashIndexes).get(tableName).get(column);
             Set<Map<String, Object>> result = new HashSet<>();
 
             if (index == null) {
@@ -540,10 +653,11 @@ public class DieselDBServer {
             return result;
         }
 
-        private Set<Map<String, Object>> getHashNotEquals(String tableName, String column, String valueStr) {
+        private Set<Map<String, Object>> getHashNotEquals(String tableName, String column, String valueStr,
+                                                          Map<String, List<Map<String, Object>>> tables) {
             Object value = parseValue(valueStr);
             Set<Map<String, Object>> result = new HashSet<>();
-            Map<Object, Set<Map<String, Object>>> index = hashIndexes.get(tableName).get(column);
+            Map<Object, Set<Map<String, Object>>> index = (inTransaction ? transactionHashIndexes : hashIndexes).get(tableName).get(column);
             if (index != null) {
                 synchronized (tables.get(tableName)) {
                     for (Map<String, Object> row : tables.get(tableName)) {
@@ -557,11 +671,12 @@ public class DieselDBServer {
             return result;
         }
 
-        private Set<Map<String, Object>> getBtreeRange(String tableName, String column, String valueStr, String operator) {
+        private Set<Map<String, Object>> getBtreeRange(String tableName, String column, String valueStr, String operator,
+                                                       Map<String, List<Map<String, Object>>> tables) {
             Object value = parseValue(valueStr);
-            TreeMap<Object, Set<Map<String, Object>>> index = btreeIndexes.get(tableName).get(column);
+            TreeMap<Object, Set<Map<String, Object>>> index = (inTransaction ? transactionBtreeIndexes : btreeIndexes).get(tableName).get(column);
             if (index == null) {
-                return evaluateSingleCondition(tableName, column + operator + valueStr);
+                return evaluateSingleCondition(tableName, column + operator + valueStr, tables);
             }
             Set<Map<String, Object>> result = new HashSet<>();
             switch (operator) {
@@ -707,7 +822,9 @@ public class DieselDBServer {
             }
         }
 
-        private String handleJoin(String leftTable, String joinData) {
+        private String handleJoin(String leftTable, String joinData,
+                                  Map<String, List<Map<String, Object>>> tables,
+                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes) {
             String[] joinParts = joinData.split("§§§");
             if (joinParts.length < 3) return "ERROR: Invalid JOIN format";
             if (!joinParts[0].equals("JOIN")) return "ERROR: JOIN command must start with JOIN";
@@ -809,7 +926,10 @@ public class DieselDBServer {
             return response.toString();
         }
 
-        private String updateRows(String tableName, String data) {
+        private String updateRows(String tableName, String data,
+                                  Map<String, List<Map<String, Object>>> tables,
+                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                  Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
@@ -824,7 +944,7 @@ public class DieselDBServer {
                 }
             }
 
-            List<Map<String, Object>> toUpdate = condition.isEmpty() ? tables.get(tableName) : evaluateWithIndexes(tableName, condition);
+            List<Map<String, Object>> toUpdate = condition.isEmpty() ? tables.get(tableName) : evaluateWithIndexes(tableName, condition, tables);
             int updated = 0;
             synchronized (tables.get(tableName)) {
                 for (Map<String, Object> row : toUpdate) {
@@ -850,7 +970,10 @@ public class DieselDBServer {
             return "OK: " + updated;
         }
 
-        private String deleteRows(String tableName, String condition) {
+        private String deleteRows(String tableName, String condition,
+                                  Map<String, List<Map<String, Object>>> tables,
+                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                  Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
@@ -864,7 +987,7 @@ public class DieselDBServer {
                     btreeIndexes.get(tableName).clear();
                     deleted = toDelete.size();
                 } else {
-                    toDelete = evaluateWithIndexes(tableName, condition);
+                    toDelete = evaluateWithIndexes(tableName, condition, tables);
                     for (Map<String, Object> row : toDelete) {
                         tables.get(tableName).remove(row);
                         for (Map.Entry<String, Object> entry : row.entrySet()) {

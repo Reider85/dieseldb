@@ -63,6 +63,24 @@ public class DieselDBClient {
         connect();
     }
 
+    public void beginTransaction() throws IOException {
+        String response = sendCommandWithRetry("BEGIN");
+        checkResponse(response);
+        System.out.println("Begin transaction: " + response);
+    }
+
+    public void commitTransaction() throws IOException {
+        String response = sendCommandWithRetry("COMMIT");
+        checkResponse(response);
+        System.out.println("Commit transaction: " + response);
+    }
+
+    public void rollbackTransaction() throws IOException {
+        String response = sendCommandWithRetry("ROLLBACK");
+        checkResponse(response);
+        System.out.println("Rollback transaction: " + response);
+    }
+
     public void create(String tableName) throws IOException {
         String command = "CREATE§§§" + tableName;
         String response = sendCommandWithRetry(command);
@@ -144,19 +162,36 @@ public class DieselDBClient {
         create(TABLE_NAME_1);
         create(TABLE_NAME_2);
 
+        // Тест без транзакции
         insert(TABLE_NAME_1, "id:::integer:1:::name:::string:Alice:::age:::integer:25");
         insert(TABLE_NAME_1, "id:::integer:2:::name:::string:Bob:::age:::integer:30");
-
-        insert(TABLE_NAME_2, "order_id:::integer:101:::user_id:::integer:1:::amount:::bigdecimal:99.99");
-        insert(TABLE_NAME_2, "order_id:::integer:102:::user_id:::integer:2:::amount:::bigdecimal:149.50");
 
         String selectUsers = select(TABLE_NAME_1, "age>=25", "age DESC");
         System.out.println("Select users (age >= 25, ordered by age DESC): " + selectUsers);
 
-        update(TABLE_NAME_1, "id=1", "age:::integer:26");
-        String updatedUsers = select(TABLE_NAME_1, "id=1", null);
-        System.out.println("Updated user: " + updatedUsers);
+        // Тест с успешной транзакцией
+        beginTransaction();
+        insert(TABLE_NAME_2, "order_id:::integer:101:::user_id:::integer:1:::amount:::bigdecimal:99.99");
+        insert(TABLE_NAME_2, "order_id:::integer:102:::user_id:::integer:2:::amount:::bigdecimal:149.50");
+        String ordersBeforeCommit = select(TABLE_NAME_2, null, "amount ASC");
+        System.out.println("Orders in transaction (before commit): " + ordersBeforeCommit);
+        commitTransaction();
 
+        String ordersAfterCommit = select(TABLE_NAME_2, null, "amount ASC");
+        System.out.println("Orders after commit: " + ordersAfterCommit);
+
+        // Тест с откатом транзакции
+        beginTransaction();
+        insert(TABLE_NAME_1, "id:::integer:3:::name:::string:Charlie:::age:::integer:35");
+        update(TABLE_NAME_1, "id=1", "age:::integer:26");
+        String usersInTransaction = select(TABLE_NAME_1, null, "age ASC");
+        System.out.println("Users in transaction (before rollback): " + usersInTransaction);
+        rollbackTransaction();
+
+        String usersAfterRollback = select(TABLE_NAME_1, null, "age ASC");
+        System.out.println("Users after rollback: " + usersAfterRollback);
+
+        // Тест с объединением
         String joinResult = join(TABLE_NAME_1, TABLE_NAME_2, "id=user_id", null, "users.age ASC");
         System.out.println("Join result (ordered by users.age ASC): " + joinResult);
 
