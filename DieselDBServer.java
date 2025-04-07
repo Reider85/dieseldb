@@ -24,6 +24,12 @@ public class DieselDBServer {
     private static final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
     private static final Set<Map<String, Object>> deletedRows = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    // Новая структура для хранения схемы таблицы (имя колонки -> тип:ограничение)
+    private static final Map<String, Map<String, String>> tableSchemas = new ConcurrentHashMap<>();
+    // Хранение первичных ключей (таблица -> имя колонки)
+    private static final Map<String, String> primaryKeys = new ConcurrentHashMap<>();
+    // Хранение уникальных колонок (таблица -> список имён колонок)
+    private static final Map<String, Set<String>> uniqueConstraints = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
         File dataDir = new File(DATA_DIR);
@@ -89,6 +95,7 @@ public class DieselDBServer {
                         tables.put(tableName, new ArrayList<>(tableData));
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
                         rebuildIndexes(tableName);
+                        // Предполагаем, что схема загружается отдельно или воссоздаётся
                         System.out.println("Loaded table: " + tableName);
                     }
                 } catch (Exception e) {
@@ -139,6 +146,9 @@ public class DieselDBServer {
                     hashIndexes.remove(tableName);
                     btreeIndexes.remove(tableName);
                     lastAccessTimes.remove(tableName);
+                    tableSchemas.remove(tableName);
+                    primaryKeys.remove(tableName);
+                    uniqueConstraints.remove(tableName);
                     System.out.println("Unloaded inactive table from memory: " + tableName);
                 }
             }
@@ -332,7 +342,7 @@ public class DieselDBServer {
                 String response;
                 switch (cmd) {
                     case "CREATE":
-                        response = createTable(tableName, workingTables, workingHashIndexes, workingBtreeIndexes);
+                        response = createTable(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes);
                         break;
                     case "INSERT":
                         response = data != null ? insertRow(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) : "ERROR: Missing data for INSERT";
@@ -485,15 +495,64 @@ public class DieselDBServer {
             return value.toString();
         }
 
-        private String createTable(String tableName,
+        private boolean isValidType(Object value, String type) {
+            switch (type.toLowerCase()) {
+                case "integer": return value instanceof Integer;
+                case "bigdecimal": return value instanceof BigDecimal;
+                case "boolean": return value instanceof Boolean;
+                case "date": return value instanceof Date;
+                case "string": return value instanceof String;
+                default: return true;
+            }
+        }
+
+        private String createTable(String tableName, String schemaDefinition,
                                    Map<String, List<Map<String, Object>>> tables,
                                    Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
                                    Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
-            tables.putIfAbsent(tableName, new ArrayList<>());
-            hashIndexes.putIfAbsent(tableName, new HashMap<>());
-            btreeIndexes.putIfAbsent(tableName, new HashMap<>());
+            if (tables.containsKey(tableName)) {
+                return "ERROR: Table already exists";
+            }
+            tables.put(tableName, new ArrayList<>());
+            hashIndexes.put(tableName, new HashMap<>());
+            btreeIndexes.put(tableName, new HashMap<>());
+
+            if (schemaDefinition == null || schemaDefinition.isEmpty()) {
+                return "OK: Table '" + tableName + "' created without schema";
+            }
+
+            // Парсим схему: "id:integer:primary,name:string:unique,age:integer"
+            Map<String, String> schema = new HashMap<>();
+            Set<String> uniqueCols = new HashSet<>();
+            String primaryKey = null;
+
+            String[] columns = schemaDefinition.split(",");
+            for (String col : columns) {
+                String[] parts = col.split(":");
+                if (parts.length < 2) return "ERROR: Invalid schema format";
+                String colName = parts[0];
+                String type = parts[1];
+                String constraint = parts.length > 2 ? parts[2].toLowerCase() : "";
+
+                schema.put(colName, type + (constraint.isEmpty() ? "" : ":" + constraint));
+                if ("primary".equals(constraint)) {
+                    if (primaryKey != null) return "ERROR: Multiple primary keys defined";
+                    primaryKey = colName;
+                } else if ("unique".equals(constraint)) {
+                    uniqueCols.add(colName);
+                }
+            }
+            tableSchemas.put(tableName, schema);
+            if (primaryKey != null) {
+                primaryKeys.put(tableName, primaryKey);
+                uniqueCols.add(primaryKey); // Первичный ключ всегда уникален
+            }
+            if (!uniqueCols.isEmpty()) {
+                uniqueConstraints.put(tableName, uniqueCols);
+            }
+
             lastAccessTimes.put(tableName, System.currentTimeMillis());
-            return "OK: Table '" + tableName + "' created";
+            return "OK: Table '" + tableName + "' created with schema";
         }
 
         private String insertRow(String tableName, String data,
@@ -503,15 +562,51 @@ public class DieselDBServer {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
+            Map<String, String> schema = tableSchemas.get(tableName);
             Map<String, Object> row = new HashMap<>();
             String[] pairs = data.split(":::");
             for (int i = 0; i < pairs.length; i += 2) {
                 if (i + 1 >= pairs.length) {
                     return "ERROR: Invalid data format";
                 }
-                row.put(pairs[i], parseValue(pairs[i + 1]));
+                String col = pairs[i];
+                Object value = parseValue(pairs[i + 1]);
+                if (schema != null) {
+                    String colDef = schema.get(col);
+                    if (colDef == null) return "ERROR: Unknown column " + col;
+                    String[] defParts = colDef.split(":");
+                    if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col;
+                }
+                row.put(col, value);
             }
+
+            // Проверка первичного ключа и уникальности
             synchronized (tables.get(tableName)) {
+                String pkCol = primaryKeys.get(tableName);
+                if (pkCol != null) {
+                    Object pkValue = row.get(pkCol);
+                    if (pkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
+                    for (Map<String, Object> existingRow : tables.get(tableName)) {
+                        if (!deletedRows.contains(existingRow) && pkValue.equals(existingRow.get(pkCol))) {
+                            return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
+                        }
+                    }
+                }
+
+                Set<String> uniqueCols = uniqueConstraints.get(tableName);
+                if (uniqueCols != null) {
+                    for (String col : uniqueCols) {
+                        Object value = row.get(col);
+                        if (value != null) {
+                            for (Map<String, Object> existingRow : tables.get(tableName)) {
+                                if (!deletedRows.contains(existingRow) && value.equals(existingRow.get(col))) {
+                                    return "ERROR: Duplicate unique value " + value + " for " + col;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 tables.get(tableName).add(row);
                 if (!inTransaction) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
@@ -526,6 +621,105 @@ public class DieselDBServer {
             }
             return "OK: 1 row inserted";
         }
+
+        private String updateRows(String tableName, String data,
+                                  Map<String, List<Map<String, Object>>> tables,
+                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                  Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
+            if (!tables.containsKey(tableName)) {
+                return "ERROR: Table not found";
+            }
+            String[] parts = data.split(";;;", 2);
+            if (parts.length != 2) return "ERROR: Invalid update format";
+            String condition = parts[0];
+            String[] updates = parts[1].split(":::");
+            Map<String, Object> updateMap = new HashMap<>();
+            for (int i = 0; i < updates.length; i += 2) {
+                if (i + 1 < updates.length) {
+                    updateMap.put(updates[i], parseValue(updates[i + 1]));
+                }
+            }
+
+            // Проверка типов для обновляемых колонок
+            Map<String, String> schema = tableSchemas.get(tableName);
+            if (schema != null) {
+                for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
+                    String col = entry.getKey();
+                    Object value = entry.getValue();
+                    String colDef = schema.get(col);
+                    if (colDef == null) return "ERROR: Unknown column " + col;
+                    String[] defParts = colDef.split(":");
+                    if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col;
+                }
+            }
+
+            List<Map<String, Object>> toUpdate = condition.isEmpty() ? tables.get(tableName) : evaluateWithIndexes(tableName, condition, tables);
+            int updated = 0;
+            synchronized (tables.get(tableName)) {
+                String pkCol = primaryKeys.get(tableName);
+                Set<String> uniqueCols = uniqueConstraints.get(tableName);
+
+                for (Map<String, Object> row : toUpdate) {
+                    if (!deletedRows.contains(row)) {
+                        Map<String, Object> newRow = new HashMap<>(row);
+                        newRow.putAll(updateMap);
+
+                        // Проверка первичного ключа
+                        if (pkCol != null) {
+                            Object newPkValue = newRow.get(pkCol);
+                            if (newPkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
+                            for (Map<String, Object> existingRow : tables.get(tableName)) {
+                                if (!deletedRows.contains(existingRow) && !existingRow.equals(row) &&
+                                        newPkValue.equals(existingRow.get(pkCol))) {
+                                    return "ERROR: Duplicate primary key value " + newPkValue + " for " + pkCol;
+                                }
+                            }
+                        }
+
+                        // Проверка уникальности
+                        if (uniqueCols != null) {
+                            for (String col : uniqueCols) {
+                                Object newValue = newRow.get(col);
+                                if (newValue != null) {
+                                    for (Map<String, Object> existingRow : tables.get(tableName)) {
+                                        if (!deletedRows.contains(existingRow) && !existingRow.equals(row) &&
+                                                newValue.equals(existingRow.get(col))) {
+                                            return "ERROR: Duplicate unique value " + newValue + " for " + col;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!inTransaction) {
+                            for (String column : updateMap.keySet()) {
+                                Object oldValue = row.get(column);
+                                if (oldValue != null) {
+                                    hashIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                                    btreeIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                                }
+                            }
+                        }
+                        row.putAll(updateMap);
+                        updated++;
+                        if (!inTransaction) {
+                            for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
+                                String column = entry.getKey();
+                                Object newValue = entry.getValue();
+                                hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                                btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                            }
+                        }
+                    }
+                }
+            }
+            return "OK: " + updated;
+        }
+
+        // Методы selectRows, deleteRows, handleJoin и вспомогательные остаются без изменений для краткости
+        // Полный код можно взять из предыдущих версий, они не затрагиваются этой идеей
 
         private String selectRows(String tableName, String conditionAndOrder,
                                   Map<String, List<Map<String, Object>>> tables) {
@@ -991,56 +1185,6 @@ public class DieselDBServer {
                 response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
             }
             return response.toString();
-        }
-
-        private String updateRows(String tableName, String data,
-                                  Map<String, List<Map<String, Object>>> tables,
-                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
-                                  Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
-            if (!tables.containsKey(tableName)) {
-                return "ERROR: Table not found";
-            }
-            String[] parts = data.split(";;;", 2);
-            if (parts.length != 2) return "ERROR: Invalid update format";
-            String condition = parts[0];
-            String[] updates = parts[1].split(":::");
-            Map<String, Object> updateMap = new HashMap<>();
-            for (int i = 0; i < updates.length; i += 2) {
-                if (i + 1 < updates.length) {
-                    updateMap.put(updates[i], parseValue(updates[i + 1]));
-                }
-            }
-
-            List<Map<String, Object>> toUpdate = condition.isEmpty() ? tables.get(tableName) : evaluateWithIndexes(tableName, condition, tables);
-            int updated = 0;
-            synchronized (tables.get(tableName)) {
-                for (Map<String, Object> row : toUpdate) {
-                    if (!deletedRows.contains(row)) {
-                        if (!inTransaction) {
-                            for (String column : updateMap.keySet()) {
-                                Object oldValue = row.get(column);
-                                if (oldValue != null) {
-                                    hashIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
-                                    btreeIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
-                                }
-                            }
-                        }
-                        row.putAll(updateMap);
-                        updated++;
-                        if (!inTransaction) {
-                            for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
-                                String column = entry.getKey();
-                                Object newValue = entry.getValue();
-                                hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
-                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
-                                btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
-                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
-                            }
-                        }
-                    }
-                }
-            }
-            return "OK: " + updated;
         }
 
         private String deleteRows(String tableName, String condition,

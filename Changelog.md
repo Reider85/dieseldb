@@ -13,3 +13,4 @@
 0.1.3 Delete optimization
 0.1.4 Lazy clean indexes
 0.1.5 Delete optimization
+0.1.6 Unique keys
