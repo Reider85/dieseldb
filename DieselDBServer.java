@@ -1,50 +1,182 @@
 import java.io.*;
-import java.math.BigDecimal;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.net.*;
+import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.text.SimpleDateFormat;
+import java.math.BigDecimal;
 
 public class DieselDBServer {
-    private static final int PORT = DieselDBConfig.PORT;
-    private static final String DATA_DIR = "data";
-    private final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, String>> tableSchemas = new ConcurrentHashMap<>();
-    private final Map<String, String> primaryKeys = new ConcurrentHashMap<>();
-    private final Map<String, Set<String>> uniqueConstraints = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
-    private final Map<String, Boolean> dirtyTables = new ConcurrentHashMap<>();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private static final int PORT = 9090;
+    private static final String DELIMITER = "§§§";
+    private static final String DATA_DIR = "dieseldb_data";
+    private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
+    private static final Map<String, Long> lastAccessTimes = new ConcurrentHashMap<>();
+    private static final Map<String, Boolean> dirtyTables = new ConcurrentHashMap<>();
+    private static final ExecutorService clientExecutor = Executors.newCachedThreadPool();
+    private static final ScheduledExecutorService diskExecutor = Executors.newScheduledThreadPool(2);
+    private static volatile boolean isRunning = true;
+    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+    private static final long MEMORY_THRESHOLD = 512 * 1024 * 1024; // 512 MB
+    private static final long INACTIVE_TIMEOUT = 30_000; // 30 секунд
+    private static final int BATCH_SIZE = 1000; // Размер пакета для удаления
 
-    public DieselDBServer() {
-        new File(DATA_DIR).mkdirs();
-        loadTablesAndSchemas();
+    private static final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
+    private static final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
+    private static final Set<Map<String, Object>> deletedRows = Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+    public static void main(String[] args) {
+        File dataDir = new File(DATA_DIR);
+        if (!dataDir.exists()) {
+            dataDir.mkdir();
+        }
+
+        loadTablesFromFilesAsync().thenRun(() -> {
+            System.out.println("All tables loaded asynchronously");
+            startDiskFlushing();
+            startMemoryCleanup();
+        });
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            isRunning = false;
+            flushAllTablesToDisk();
+            clientExecutor.shutdown();
+            diskExecutor.shutdown();
+            System.out.println("Server shutting down...");
+        }));
+
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            serverSocket.setReuseAddress(true);
+            System.out.println("DieselDB server started on port " + PORT);
+
+            while (isRunning) {
+                try {
+                    Socket clientSocket = serverSocket.accept();
+                    clientSocket.setKeepAlive(true);
+                    clientExecutor.submit(new ClientHandler(clientSocket));
+                } catch (IOException e) {
+                    if (isRunning) {
+                        System.err.println("Error accepting client connection: " + e.getMessage());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Server error: " + e.getMessage());
+        } finally {
+            clientExecutor.shutdown();
+            diskExecutor.shutdown();
+            System.out.println("Server stopped");
+        }
     }
 
-    public void start() throws IOException {
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("DieselDB Server started on port " + PORT);
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                executor.submit(new ClientHandler(clientSocket));
+    private static CompletableFuture<Void> loadTablesFromFilesAsync() {
+        File dataDir = new File(DATA_DIR);
+        File[] tableFiles = dataDir.listFiles((dir, name) -> name.endsWith(".ddb"));
+        if (tableFiles == null || tableFiles.length == 0) {
+            System.out.println("No tables to load from " + DATA_DIR);
+            return CompletableFuture.completedFuture(null);
+        }
+
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (File file : tableFiles) {
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                String tableName = file.getName().replace(".ddb", "");
+                try {
+                    byte[] data = Files.readAllBytes(file.toPath());
+                    ByteArrayInputStream bais = new ByteArrayInputStream(data);
+                    try (ObjectInputStream ois = new ObjectInputStream(bais)) {
+                        List<Map<String, Object>> tableData = (List<Map<String, Object>>) ois.readObject();
+                        tables.put(tableName, new ArrayList<>(tableData));
+                        lastAccessTimes.put(tableName, System.currentTimeMillis());
+                        rebuildIndexes(tableName);
+                        System.out.println("Loaded table: " + tableName);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error loading table " + tableName + ": " + e.getMessage());
+                }
+            }, clientExecutor);
+            futures.add(future);
+        }
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+    }
+
+    private static void startDiskFlushing() {
+        diskExecutor.scheduleAtFixedRate(() -> {
+            for (String tableName : dirtyTables.keySet()) {
+                if (Boolean.TRUE.equals(dirtyTables.get(tableName))) {
+                    synchronized (tables.get(tableName)) {
+                        cleanIndexes(tableName);
+                        saveTableToDisk(tableName);
+                        dirtyTables.put(tableName, false);
+                    }
+                }
+            }
+        }, 5, 5, TimeUnit.SECONDS);
+    }
+
+    private static void startMemoryCleanup() {
+        diskExecutor.scheduleAtFixedRate(() -> {
+            long usedMemory = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+            if (usedMemory > MEMORY_THRESHOLD) {
+                System.out.println("Memory usage exceeded threshold: " + usedMemory / (1024 * 1024) + " MB");
+                cleanupInactiveTables();
+                System.gc();
+            }
+        }, 10, 10, TimeUnit.SECONDS);
+    }
+
+    private static void cleanupInactiveTables() {
+        long currentTime = System.currentTimeMillis();
+        for (String tableName : tables.keySet()) {
+            long lastAccess = lastAccessTimes.getOrDefault(tableName, 0L);
+            if (currentTime - lastAccess > INACTIVE_TIMEOUT) {
+                synchronized (tables.get(tableName)) {
+                    if (dirtyTables.getOrDefault(tableName, false)) {
+                        saveTableToDisk(tableName);
+                        dirtyTables.put(tableName, false);
+                    }
+                    tables.remove(tableName);
+                    hashIndexes.remove(tableName);
+                    btreeIndexes.remove(tableName);
+                    lastAccessTimes.remove(tableName);
+                    System.out.println("Unloaded inactive table from memory: " + tableName);
+                }
             }
         }
     }
 
-    private void loadTablesAndSchemas() {
-        File dir = new File(DATA_DIR);
-        for (File file : dir.listFiles(f -> f.getName().endsWith(".dat"))) {
-            String tableName = file.getName().replace(".dat", "");
-            try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
-                List<Map<String, Object>> table = (List<Map<String, Object>>) ois.readObject();
-                tables.put(tableName, table);
-                hashIndexes.put(tableName, new ConcurrentHashMap<>());
-                btreeIndexes.put(tableName, new ConcurrentHashMap<>());
-                for (Map<String, Object> row : table) {
+    private static void saveTableToDisk(String tableName) {
+        try {
+            Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            try (ObjectOutputStream oos = new ObjectOutputStream(baos)) {
+                oos.writeObject(tables.get(tableName));
+            }
+            Files.write(filePath, baos.toByteArray(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            System.out.println("Saved table asynchronously: " + tableName);
+        } catch (IOException e) {
+            System.err.println("Error saving table " + tableName + ": " + e.getMessage());
+        }
+    }
+
+    private static void flushAllTablesToDisk() {
+        for (String tableName : tables.keySet()) {
+            synchronized (tables.get(tableName)) {
+                cleanIndexes(tableName);
+                saveTableToDisk(tableName);
+            }
+        }
+    }
+
+    private static void rebuildIndexes(String tableName) {
+        hashIndexes.putIfAbsent(tableName, new HashMap<>());
+        btreeIndexes.putIfAbsent(tableName, new HashMap<>());
+        List<Map<String, Object>> table = tables.get(tableName);
+        if (table == null) return;
+
+        synchronized (table) {
+            for (Map<String, Object> row : table) {
+                if (!deletedRows.contains(row)) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
                         Object value = entry.getValue();
@@ -54,110 +186,89 @@ public class DieselDBServer {
                                 .computeIfAbsent(value, k -> new HashSet<>()).add(row);
                     }
                 }
-            } catch (IOException | ClassNotFoundException e) {
-                System.err.println("Error loading table " + tableName + ": " + e.getMessage());
-            }
-        }
-        for (File file : dir.listFiles(f -> f.getName().endsWith(".schema"))) {
-            String tableName = file.getName().replace(".schema", "");
-            try (BufferedReader br = new BufferedReader(new FileReader(file))) {
-                Map<String, String> schema = new HashMap<>();
-                String line;
-                while ((line = br.readLine()) != null) {
-                    String[] parts = line.split("=");
-                    if (parts.length == 2) {
-                        schema.put(parts[0], parts[1]);
-                    }
-                }
-                tableSchemas.put(tableName, schema);
-                String pk = schema.get("primaryKey");
-                if (pk != null) primaryKeys.put(tableName, pk);
-                String uniqueCols = schema.get("uniqueConstraints");
-                if (uniqueCols != null) {
-                    uniqueConstraints.put(tableName, new HashSet<>(Arrays.asList(uniqueCols.split(","))));
-                }
-            } catch (IOException e) {
-                System.err.println("Error loading schema for " + tableName + ": " + e.getMessage());
             }
         }
     }
 
-    private void saveTablesAndSchemasAsync() {
-        for (String tableName : dirtyTables.keySet()) {
-            if (dirtyTables.get(tableName)) {
-                executor.submit(() -> {
-                    try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(DATA_DIR + "/" + tableName + ".dat"))) {
-                        oos.writeObject(tables.get(tableName));
-                        System.out.println("Saved table and schema asynchronously: " + tableName);
-                    } catch (IOException e) {
-                        System.err.println("Error saving table " + tableName + ": " + e.getMessage());
-                    }
-                    try (BufferedWriter bw = new BufferedWriter(new FileWriter(DATA_DIR + "/" + tableName + ".schema"))) {
-                        Map<String, String> schema = tableSchemas.get(tableName);
-                        if (schema != null) {
-                            for (Map.Entry<String, String> entry : schema.entrySet()) {
-                                bw.write(entry.getKey() + "=" + entry.getValue());
-                                bw.newLine();
+    private static void cleanIndexes(String tableName) {
+        Map<String, Map<Object, Set<Map<String, Object>>>> hashIndex = hashIndexes.get(tableName);
+        Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeIndex = btreeIndexes.get(tableName);
+        if (hashIndex == null || btreeIndex == null) return;
+
+        Iterator<Map<String, Object>> iterator = deletedRows.iterator();
+        while (iterator.hasNext()) {
+            Map<String, Object> row = iterator.next();
+            if (!tables.getOrDefault(tableName, Collections.emptyList()).contains(row)) {
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    String column = entry.getKey();
+                    Object value = entry.getValue();
+                    Map<Object, Set<Map<String, Object>>> columnHashIndex = hashIndex.get(column);
+                    if (columnHashIndex != null) {
+                        Set<Map<String, Object>> rows = columnHashIndex.get(value);
+                        if (rows != null) {
+                            rows.remove(row);
+                            if (rows.isEmpty()) {
+                                columnHashIndex.remove(value);
                             }
                         }
-                        String pk = primaryKeys.get(tableName);
-                        if (pk != null) {
-                            bw.write("primaryKey=" + pk);
-                            bw.newLine();
-                        }
-                        Set<String> uniques = uniqueConstraints.get(tableName);
-                        if (uniques != null && !uniques.isEmpty()) {
-                            bw.write("uniqueConstraints=" + String.join(",", uniques));
-                            bw.newLine();
-                        }
-                    } catch (IOException e) {
-                        System.err.println("Error saving schema for " + tableName + ": " + e.getMessage());
                     }
-                });
-                dirtyTables.put(tableName, false);
+                    TreeMap<Object, Set<Map<String, Object>>> columnBtreeIndex = btreeIndex.get(column);
+                    if (columnBtreeIndex != null) {
+                        Set<Map<String, Object>> btreeRows = columnBtreeIndex.get(value);
+                        if (btreeRows != null) {
+                            btreeRows.remove(row);
+                            if (btreeRows.isEmpty()) {
+                                columnBtreeIndex.remove(value);
+                            }
+                        }
+                    }
+                }
+                iterator.remove();
             }
         }
     }
 
-    public static void main(String[] args) throws IOException {
-        new DieselDBServer().start();
-    }
-
-    enum IsolationLevel {
-        READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE
-    }
-
-    class ClientHandler implements Runnable {
-        private final Socket socket;
-        private IsolationLevel isolationLevel = IsolationLevel.READ_COMMITTED;
+    private static class ClientHandler implements Runnable {
+        private final Socket clientSocket;
         private boolean inTransaction = false;
-        private final Map<String, List<Map<String, Object>>> transactionTables = new ConcurrentHashMap<>();
-        private final Set<Map<String, Object>> transactionDirtyRows = ConcurrentHashMap.newKeySet();
-        private final Set<Map<String, Object>> deletedRows = ConcurrentHashMap.newKeySet();
-        private final Set<Map<String, Object>> uncommittedInserts = ConcurrentHashMap.newKeySet();
+        private Map<String, List<Map<String, Object>>> transactionTables;
+        private Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> transactionHashIndexes;
+        private Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> transactionBtreeIndexes;
 
-        public ClientHandler(Socket socket) {
-            this.socket = socket;
+        ClientHandler(Socket socket) {
+            this.clientSocket = socket;
+            this.transactionTables = new HashMap<>();
+            this.transactionHashIndexes = new HashMap<>();
+            this.transactionBtreeIndexes = new HashMap<>();
         }
 
-        @Override
         public void run() {
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                 PrintWriter out = new PrintWriter(socket.getOutputStream(), true)) {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                 PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
+
                 out.println("OK: Welcome to DieselDB Server");
-                String command;
-                while ((command = in.readLine()) != null) {
-                    System.out.println("Processing command: " + command);
-                    String response = processCommand(command);
+                out.flush();
+
+                String inputLine;
+                while ((inputLine = in.readLine()) != null) {
+                    System.out.println("Processing command: " + inputLine);
+                    String response = processCommand(inputLine);
                     out.println(response);
-                    System.out.println("Response sent: " + response);
+                    out.flush();
+                }
+            } catch (SocketException e) {
+                System.out.println("Client disconnected: " + e.getMessage());
+                if (inTransaction) {
+                    rollbackTransaction();
                 }
             } catch (IOException e) {
-                System.err.println("Client disconnected: " + e.getMessage());
+                System.err.println("Client error: " + e.getMessage());
+                if (inTransaction) {
+                    rollbackTransaction();
+                }
             } finally {
                 try {
-                    socket.close();
-                    saveTablesAndSchemasAsync();
+                    clientSocket.close();
                 } catch (IOException e) {
                     System.err.println("Error closing client socket: " + e.getMessage());
                 }
@@ -165,109 +276,226 @@ public class DieselDBServer {
         }
 
         private String processCommand(String command) {
-            System.out.println("Received: " + command);
             try {
-                String[] parts = command.split("\\s+", 2);
-                String cmd = parts[0].toUpperCase();
-                String args = parts.length > 1 ? parts[1] : "";
+                if ("PING".equalsIgnoreCase(command.trim())) {
+                    return "OK: PONG";
+                }
+                if ("CLEAR_MEMORY".equalsIgnoreCase(command.trim())) {
+                    if (inTransaction) {
+                        return "ERROR: Cannot clear memory during transaction";
+                    }
+                    cleanupInactiveTables();
+                    System.gc();
+                    return "OK: Memory cleanup triggered";
+                }
+                if ("BEGIN".equalsIgnoreCase(command.trim())) {
+                    if (inTransaction) {
+                        return "ERROR: Transaction already in progress";
+                    }
+                    beginTransaction();
+                    return "OK: Transaction started";
+                }
+                if ("COMMIT".equalsIgnoreCase(command.trim())) {
+                    if (!inTransaction) {
+                        return "ERROR: No transaction in progress";
+                    }
+                    commitTransaction();
+                    return "OK: Transaction committed";
+                }
+                if ("ROLLBACK".equalsIgnoreCase(command.trim())) {
+                    if (!inTransaction) {
+                        return "ERROR: No transaction in progress";
+                    }
+                    rollbackTransaction();
+                    return "OK: Transaction rolled back";
+                }
 
+                String[] parts = command.split(DELIMITER, 3);
+                if (parts.length < 2) {
+                    return "ERROR: Invalid command format";
+                }
+
+                String cmd = parts[0].toUpperCase();
+                String tableName = parts[1];
+                String data = parts.length > 2 ? parts[2] : null;
+
+                if (!inTransaction && !tables.containsKey(tableName) && !cmd.equals("CREATE")) {
+                    loadTableFromDisk(tableName);
+                }
+
+                lastAccessTimes.put(tableName, System.currentTimeMillis());
+
+                Map<String, List<Map<String, Object>>> workingTables = inTransaction ? transactionTables : tables;
+                Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> workingHashIndexes = inTransaction ? transactionHashIndexes : hashIndexes;
+                Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> workingBtreeIndexes = inTransaction ? transactionBtreeIndexes : btreeIndexes;
+
+                String response;
                 switch (cmd) {
                     case "CREATE":
-                        String[] createParts = args.split("\\s+", 2);
-                        if (createParts.length < 1) {
-                            return "ERROR: Invalid CREATE syntax - missing table name";
-                        }
-                        String tableName = createParts[0];
-                        String schemaDef = createParts.length > 1 ? createParts[1] : "";
-                        return createTable(tableName + " " + schemaDef);
+                        response = createTable(tableName, workingTables, workingHashIndexes, workingBtreeIndexes);
+                        break;
                     case "INSERT":
-                        if (!args.startsWith("INTO ")) {
-                            return "ERROR: Invalid INSERT syntax - missing INTO";
-                        }
-                        String[] insertParts = args.substring(5).split("\\s+VALUES\\s+", 2);
-                        if (insertParts.length < 2) {
-                            return "ERROR: Invalid INSERT syntax - missing VALUES";
-                        }
-                        String tablePart = insertParts[0].trim();
-                        String valuesPart = insertParts[1].trim();
-                        String insertTableName = tablePart.split("\\s+", 2)[0];
-                        return insertRow(insertTableName, tablePart.substring(insertTableName.length()).trim() + " VALUES " + valuesPart,
-                                getWorkingTables(cmd), hashIndexes, btreeIndexes);
+                        response = data != null ? insertRow(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) : "ERROR: Missing data for INSERT";
+                        break;
                     case "SELECT":
-                        String[] selectParts = args.split("\\s+", 2);
-                        return selectRows(selectParts[0], selectParts.length > 1 && (args.contains("WHERE") || args.contains("ORDER")) ? selectParts[1] : null,
-                                getWorkingTables(cmd));
+                        if (data != null && data.startsWith("JOIN")) {
+                            response = handleJoin(tableName, data, workingTables, workingHashIndexes);
+                        } else {
+                            response = selectRows(tableName, data, workingTables);
+                        }
+                        break;
                     case "UPDATE":
-                        if (!args.contains("SET")) {
-                            return "ERROR: Invalid UPDATE syntax - missing SET";
-                        }
-                        String[] updateParts = args.split("\\s+SET\\s+", 2);
-                        if (updateParts.length < 2) {
-                            return "ERROR: Invalid UPDATE syntax - missing SET clause";
-                        }
-                        String tableNameUpdate = updateParts[0].trim();
-                        return updateRows(tableNameUpdate, updateParts[1],
-                                getWorkingTables(cmd), hashIndexes, btreeIndexes);
+                        response = data != null ? updateRows(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) : "ERROR: Missing data for UPDATE";
+                        break;
                     case "DELETE":
-                        if (!args.startsWith("FROM ")) {
-                            return "ERROR: Invalid DELETE syntax - missing FROM";
-                        }
-                        String[] deleteParts = args.substring(5).split("\\s+WHERE\\s+", 2);
-                        String deleteTableName = deleteParts[0].trim();
-                        String condition = deleteParts.length > 1 ? deleteParts[1].trim() : null;
-                        return deleteRows(deleteTableName, condition, getWorkingTables(cmd));
-                    case "BEGIN":
-                        return beginTransaction();
-                    case "COMMIT":
-                        return commitTransaction();
-                    case "ROLLBACK":
-                        return rollbackTransaction();
-                    case "SET_ISOLATION":
-                        return setIsolationLevel(args);
+                        response = deleteRows(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes);
+                        break;
                     default:
-                        return "ERROR: Unknown command - " + cmd;
+                        return "ERROR: Unknown command";
                 }
+
+                if (!cmd.equals("SELECT") && response.startsWith("OK") && !inTransaction) {
+                    dirtyTables.put(tableName, true);
+                }
+                return response;
+
             } catch (Exception e) {
+                if (inTransaction) {
+                    rollbackTransaction();
+                }
                 return "ERROR: " + e.getMessage();
             }
         }
-        private String createTable(String args) {
-            String[] parts = args.trim().split("\\s+", 2);
-            if (parts.length < 1) {
-                return "ERROR: Invalid CREATE syntax - missing table name";
-            }
-            String tableName = parts[0];
-            if (tables.containsKey(tableName)) {
-                return "ERROR: Table already exists";
-            }
-            String schemaDef = parts.length > 1 ? parts[1] : "";
-            Map<String, String> schema = new HashMap<>();
-            if (!schemaDef.isEmpty()) {
-                if (!schemaDef.startsWith("(") || !schemaDef.endsWith(")")) {
-                    return "ERROR: Invalid schema syntax - use (column type [constraints], ...)";
-                }
-                String[] columns = schemaDef.substring(1, schemaDef.length() - 1).split(",");
-                for (String col : columns) {
-                    String[] colParts = col.trim().split("\\s+");
-                    if (colParts.length < 2) {
-                        return "ERROR: Invalid column definition - " + col;
-                    }
-                    schema.put(colParts[0], colParts[1]);
-                    if (colParts.length > 2 && colParts[2].equalsIgnoreCase("PRIMARY")) {
-                        primaryKeys.put(tableName, colParts[0]);
-                    }
-                    if (colParts.length > 2 && colParts[2].equalsIgnoreCase("UNIQUE")) {
-                        uniqueConstraints.computeIfAbsent(tableName, k -> new HashSet<>()).add(colParts[0]);
+
+        private void beginTransaction() {
+            inTransaction = true;
+            transactionTables.clear();
+            transactionHashIndexes.clear();
+            transactionBtreeIndexes.clear();
+            for (String tableName : tables.keySet()) {
+                List<Map<String, Object>> tableCopy = new ArrayList<>();
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (!deletedRows.contains(row)) {
+                            tableCopy.add(new HashMap<>(row));
+                        }
                     }
                 }
+                transactionTables.put(tableName, tableCopy);
+                Map<String, Map<Object, Set<Map<String, Object>>>> hashCopy = new HashMap<>();
+                Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeCopy = new HashMap<>();
+                rebuildIndexesForTransaction(tableName, tableCopy, hashCopy, btreeCopy);
+                transactionHashIndexes.put(tableName, hashCopy);
+                transactionBtreeIndexes.put(tableName, btreeCopy);
             }
-            tables.put(tableName, new ArrayList<>());
-            tableSchemas.put(tableName, schema);
-            hashIndexes.put(tableName, new ConcurrentHashMap<>());
-            btreeIndexes.put(tableName, new ConcurrentHashMap<>());
-            dirtyTables.put(tableName, true);
-            return "OK: Table '" + tableName + "' created with schema";
         }
+
+        private void commitTransaction() {
+            synchronized (tables) {
+                for (String tableName : transactionTables.keySet()) {
+                    tables.put(tableName, new ArrayList<>(transactionTables.get(tableName)));
+                    hashIndexes.put(tableName, new HashMap<>(transactionHashIndexes.get(tableName)));
+                    btreeIndexes.put(tableName, new HashMap<>(transactionBtreeIndexes.get(tableName)));
+                    dirtyTables.put(tableName, true);
+                }
+            }
+            inTransaction = false;
+            transactionTables.clear();
+            transactionHashIndexes.clear();
+            transactionBtreeIndexes.clear();
+        }
+
+        private void rollbackTransaction() {
+            inTransaction = false;
+            transactionTables.clear();
+            transactionHashIndexes.clear();
+            transactionBtreeIndexes.clear();
+        }
+
+        private void rebuildIndexesForTransaction(String tableName, List<Map<String, Object>> table,
+                                                  Map<String, Map<Object, Set<Map<String, Object>>>> hashIndex,
+                                                  Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeIndex) {
+            for (Map<String, Object> row : table) {
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    String column = entry.getKey();
+                    Object value = entry.getValue();
+                    hashIndex.computeIfAbsent(column, k -> new HashMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                    btreeIndex.computeIfAbsent(column, k -> new TreeMap<>())
+                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                }
+            }
+        }
+
+        private void loadTableFromDisk(String tableName) {
+            Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
+            if (Files.exists(filePath)) {
+                try {
+                    byte[] data = Files.readAllBytes(filePath);
+                    ByteArrayInputStream bais = new ByteArrayInputStream(data);
+                    try (ObjectInputStream ois = new ObjectInputStream(bais)) {
+                        List<Map<String, Object>> tableData = (List<Map<String, Object>>) ois.readObject();
+                        tables.put(tableName, new ArrayList<>(tableData));
+                        rebuildIndexes(tableName);
+                        lastAccessTimes.put(tableName, System.currentTimeMillis());
+                        System.out.println("Reloaded table from disk: " + tableName);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error reloading table " + tableName + ": " + e.getMessage());
+                }
+            } else if (!tables.containsKey(tableName)) {
+                throw new IllegalStateException("Table " + tableName + " not found on disk or in memory");
+            }
+        }
+
+        private Object parseValue(String typedValue) {
+            String[] parts = typedValue.split(":", 2);
+            if (parts.length != 2) {
+                try {
+                    return Integer.parseInt(parts[0]);
+                } catch (NumberFormatException e1) {
+                    try {
+                        return new BigDecimal(parts[0]);
+                    } catch (NumberFormatException e2) {
+                        return parts[0];
+                    }
+                }
+            }
+            String type = parts[0].toLowerCase();
+            String value = parts[1];
+            try {
+                switch (type) {
+                    case "integer": return Integer.parseInt(value);
+                    case "bigdecimal": return new BigDecimal(value);
+                    case "boolean": return Boolean.parseBoolean(value);
+                    case "date": return dateFormat.parse(value);
+                    default: return value;
+                }
+            } catch (Exception e) {
+                System.err.println("Error parsing value: " + typedValue + " - " + e.getMessage());
+                return value;
+            }
+        }
+
+        private String formatValue(Object value) {
+            if (value == null) return "NULL";
+            if (value instanceof Date) {
+                return dateFormat.format((Date) value);
+            }
+            return value.toString();
+        }
+
+        private String createTable(String tableName,
+                                   Map<String, List<Map<String, Object>>> tables,
+                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                   Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
+            tables.putIfAbsent(tableName, new ArrayList<>());
+            hashIndexes.putIfAbsent(tableName, new HashMap<>());
+            btreeIndexes.putIfAbsent(tableName, new HashMap<>());
+            lastAccessTimes.put(tableName, System.currentTimeMillis());
+            return "OK: Table '" + tableName + "' created";
+        }
+
         private String insertRow(String tableName, String data,
                                  Map<String, List<Map<String, Object>>> tables,
                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
@@ -275,98 +503,17 @@ public class DieselDBServer {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
-
-            String trimmedData = data.trim();
-            String[] parts = trimmedData.split("\\s+VALUES\\s+", 2);
-            if (parts.length != 2) {
-                return "ERROR: Invalid INSERT format - missing VALUES clause";
-            }
-
-            String columnsPart = parts[0].trim();
-            if (!columnsPart.startsWith("(") || !columnsPart.endsWith(")")) {
-                return "ERROR: Invalid columns specification - use (column1, column2, ...)";
-            }
-            String columnsStr = columnsPart.substring(1, columnsPart.length() - 1).trim();
-            String[] columns = columnsStr.split("\\s*,\\s*");
-            if (columns.length == 0 || columns[0].isEmpty()) {
-                return "ERROR: No columns specified";
-            }
-
-            String valuesPart = parts[1].trim();
-            if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
-                return "ERROR: Invalid values specification - use (value1, value2, ...)";
-            }
-            String valuesStr = valuesPart.substring(1, valuesPart.length() - 1).trim();
-            String[] values = valuesStr.split("\\s*,\\s*");
-            if (values.length == 0 || values[0].isEmpty()) {
-                return "ERROR: No values specified";
-            }
-
-            if (columns.length != values.length) {
-                return "ERROR: Number of columns and values must match";
-            }
-
-            Map<String, String> schema = tableSchemas.get(tableName);
             Map<String, Object> row = new HashMap<>();
-
-            for (int i = 0; i < columns.length; i++) {
-                String col = columns[i].trim();
-                String valueStr = values[i].trim();
-                Object value = parseValue(valueStr);
-
-                if (schema != null) {
-                    String colDef = schema.get(col);
-                    if (colDef == null) return "ERROR: Unknown column " + col;
-                    String[] defParts = colDef.split(":");
-                    if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col;
+            String[] pairs = data.split(":::");
+            for (int i = 0; i < pairs.length; i += 2) {
+                if (i + 1 >= pairs.length) {
+                    return "ERROR: Invalid data format";
                 }
-                row.put(col, value);
+                row.put(pairs[i], parseValue(pairs[i + 1]));
             }
-
-            Map<String, List<Map<String, Object>>> targetTables = inTransaction && isolationLevel != IsolationLevel.READ_UNCOMMITTED
-                    ? transactionTables
-                    : tables;
-
             synchronized (tables.get(tableName)) {
-                String pkCol = primaryKeys.get(tableName);
-                if (pkCol != null) {
-                    Object pkValue = row.get(pkCol);
-                    if (pkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
-                    Map<Object, Set<Map<String, Object>>> pkIndex = hashIndexes.get(tableName).get(pkCol);
-                    if (pkIndex != null && pkIndex.containsKey(pkValue)) {
-                        if (pkIndex.get(pkValue).stream().anyMatch(r -> !deletedRows.contains(r))) {
-                            return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
-                        }
-                    }
-                }
-
-                Set<String> uniqueCols = uniqueConstraints.get(tableName);
-                if (uniqueCols != null) {
-                    for (String col : uniqueCols) {
-                        if (!col.equals(pkCol)) {
-                            Object value = row.get(col);
-                            if (value != null) {
-                                Map<Object, Set<Map<String, Object>>> colIndex = hashIndexes.get(tableName).get(col);
-                                if (colIndex != null && colIndex.containsKey(value)) {
-                                    if (colIndex.get(value).stream().anyMatch(r -> !deletedRows.contains(r))) {
-                                        return "ERROR: Duplicate unique value " + value + " for " + col;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                targetTables.computeIfAbsent(tableName, k -> new ArrayList<>()).add(row);
-                System.out.println("Inserted row into " + tableName + ": " + row);
-
-                if (inTransaction && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
-                    uncommittedInserts.add(row);
-                    System.out.println("Added to uncommittedInserts: " + row);
-                    System.out.println("Current uncommittedInserts: " + uncommittedInserts);
-                }
-
-                if (!inTransaction || isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
+                tables.get(tableName).add(row);
+                if (!inTransaction) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
                         Object value = entry.getValue();
@@ -375,13 +522,8 @@ public class DieselDBServer {
                         btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
                                 .computeIfAbsent(value, k -> new HashSet<>()).add(row);
                     }
-                } else {
-                    transactionDirtyRows.add(row);
-                    transactionTables.computeIfAbsent(tableName, k -> new ArrayList<>());
                 }
             }
-
-            dirtyTables.put(tableName, true);
             return "OK: 1 row inserted";
         }
 
@@ -389,12 +531,6 @@ public class DieselDBServer {
                                   Map<String, List<Map<String, Object>>> tables) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
-            }
-
-            if (isolationLevel == IsolationLevel.READ_COMMITTED && !inTransaction) {
-                synchronized (tables.get(tableName)) {
-                    cleanIndexes(tableName);
-                }
             }
 
             String condition = null;
@@ -408,12 +544,14 @@ public class DieselDBServer {
             }
 
             List<Map<String, Object>> result;
-            synchronized (tables.get(tableName)) {
+            try {
                 if (condition == null || condition.isEmpty()) {
-                    result = new ArrayList<>();
-                    for (Map<String, Object> row : tables.get(tableName)) {
-                        if (!deletedRows.contains(row)) {
-                            result.add(row);
+                    synchronized (tables.get(tableName)) {
+                        result = new ArrayList<>();
+                        for (Map<String, Object> row : tables.get(tableName)) {
+                            if (!deletedRows.contains(row)) {
+                                result.add(row);
+                            }
                         }
                     }
                 } else {
@@ -450,10 +588,10 @@ public class DieselDBServer {
                         return ascending ? comparison : -comparison;
                     });
                 }
+            } catch (Exception e) {
+                System.err.println("Error in selectRows: " + e.getMessage());
+                return "ERROR: Server exception - " + e.getMessage();
             }
-
-            System.out.println("Selecting from " + tableName + " with condition: " + conditionAndOrder);
-            System.out.println("Result rows: " + result);
 
             if (result.isEmpty()) {
                 return "OK: 0 rows";
@@ -465,319 +603,11 @@ public class DieselDBServer {
                 for (Map<String, Object> row : result) {
                     response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
                 }
-                System.out.println("Select response: " + response);
                 return response.toString();
             } catch (Exception e) {
                 System.err.println("Error formatting select response: " + e.getMessage());
                 return "ERROR: Response formatting failed - " + e.getMessage();
             }
-        }
-
-        private String updateRows(String tableName, String setAndWhere,
-                                  Map<String, List<Map<String, Object>>> tables,
-                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
-                                  Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
-            if (!tables.containsKey(tableName)) {
-                return "ERROR: Table not found";
-            }
-
-            String[] parts = setAndWhere.split("\\s+WHERE\\s+", 2);
-            String setClause = parts[0].trim();
-            String condition = parts.length > 1 ? parts[1].trim() : null;
-
-            Map<String, Object> updates = new HashMap<>();
-            for (String set : setClause.split(",")) {
-                String[] kv = set.split("=");
-                if (kv.length != 2) {
-                    return "ERROR: Invalid SET clause - use column=value";
-                }
-                updates.put(kv[0].trim(), parseValue(kv[1].trim()));
-            }
-
-            List<Map<String, Object>> rowsToUpdate;
-            synchronized (tables.get(tableName)) {
-                if (condition == null) {
-                    rowsToUpdate = new ArrayList<>(tables.get(tableName));
-                } else {
-                    rowsToUpdate = evaluateWithIndexes(tableName, condition, tables);
-                }
-                if (rowsToUpdate == null) rowsToUpdate = new ArrayList<>();
-                rowsToUpdate.removeIf(deletedRows::contains);
-
-                int updated = 0;
-                for (Map<String, Object> row : rowsToUpdate) {
-                    if (!deletedRows.contains(row)) {
-                        for (Map.Entry<String, Object> update : updates.entrySet()) {
-                            String column = update.getKey();
-                            Object newValue = update.getValue();
-                            Object oldValue = row.get(column);
-                            if (oldValue != null && !oldValue.equals(newValue)) {
-                                Map<Object, Set<Map<String, Object>>> hashIndex = hashIndexes.get(tableName).get(column);
-                                if (hashIndex != null && hashIndex.get(oldValue) != null) {
-                                    hashIndex.get(oldValue).remove(row);
-                                    if (hashIndex.get(oldValue).isEmpty()) {
-                                        hashIndex.remove(oldValue);
-                                    }
-                                }
-                                TreeMap<Object, Set<Map<String, Object>>> btreeIndex = btreeIndexes.get(tableName).get(column);
-                                if (btreeIndex != null && btreeIndex.get(oldValue) != null) {
-                                    btreeIndex.get(oldValue).remove(row);
-                                    if (btreeIndex.get(oldValue).isEmpty()) {
-                                        btreeIndex.remove(oldValue);
-                                    }
-                                }
-                            }
-                            row.put(column, newValue);
-                            hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
-                                    .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
-                            btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
-                                    .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
-                        }
-                        updated++;
-                        if (inTransaction && isolationLevel != IsolationLevel.READ_UNCOMMITTED) {
-                            transactionDirtyRows.add(row);
-                        }
-                    }
-                }
-                if (updated > 0) {
-                    dirtyTables.put(tableName, true);
-                }
-                return "OK: " + updated + " rows updated";
-            }
-        }
-
-        private String deleteRows(String tableName, String condition,
-                                  Map<String, List<Map<String, Object>>> tables) {
-            if (!tables.containsKey(tableName)) {
-                return "ERROR: Table not found";
-            }
-
-            List<Map<String, Object>> rowsToDelete;
-            synchronized (tables.get(tableName)) {
-                if (condition == null) {
-                    rowsToDelete = new ArrayList<>(tables.get(tableName));
-                } else {
-                    rowsToDelete = evaluateWithIndexes(tableName, condition, tables);
-                }
-                if (rowsToDelete == null) rowsToDelete = new ArrayList<>();
-                rowsToDelete.removeIf(deletedRows::contains);
-
-                int deleted = 0;
-                for (Map<String, Object> row : rowsToDelete) {
-                    if (!deletedRows.contains(row)) {
-                        if (inTransaction && isolationLevel != IsolationLevel.READ_UNCOMMITTED) {
-                            deletedRows.add(row);
-                        } else {
-                            tables.get(tableName).remove(row);
-                            for (Map.Entry<String, Object> entry : row.entrySet()) {
-                                String column = entry.getKey();
-                                Object value = entry.getValue();
-                                hashIndexes.get(tableName).get(column).get(value).remove(row);
-                                btreeIndexes.get(tableName).get(column).get(value).remove(row);
-                            }
-                        }
-                        deleted++;
-                    }
-                }
-                if (deleted > 0) {
-                    dirtyTables.put(tableName, true);
-                }
-                return "OK: " + deleted + " rows deleted";
-            }
-        }
-
-        private String beginTransaction() {
-            if (inTransaction) {
-                return "ERROR: Already in transaction";
-            }
-            inTransaction = true;
-            return "OK: Transaction begun";
-        }
-
-        private String commitTransaction() {
-            if (!inTransaction) {
-                return "ERROR: No transaction in progress";
-            }
-            commitTransactionImpl();
-            return "OK: Transaction committed";
-        }
-
-        private void commitTransactionImpl() {
-            if (isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
-                synchronized (tables) {
-                    System.out.println("Committing transaction for READ_UNCOMMITTED");
-                    System.out.println("Uncommitted inserts to commit: " + uncommittedInserts);
-                    for (String tableName : tables.keySet()) {
-                        List<Map<String, Object>> table = tables.get(tableName);
-                        System.out.println("Table " + tableName + " before commit: " + table);
-                        for (Map<String, Object> row : uncommittedInserts) {
-                            if (table.contains(row)) {
-                                for (Map.Entry<String, Object> entry : row.entrySet()) {
-                                    String column = entry.getKey();
-                                    Object value = entry.getValue();
-                                    hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
-                                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
-                                    btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
-                                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
-                                }
-                            }
-                        }
-                        System.out.println("Table " + tableName + " after commit: " + table);
-                    }
-                    uncommittedInserts.clear();
-                    System.out.println("Uncommitted inserts cleared after commit");
-                }
-            } else {
-                synchronized (tables) {
-                    System.out.println("Committing transaction for " + isolationLevel);
-                    for (String tableName : transactionTables.keySet()) {
-                        List<Map<String, Object>> transTable = transactionTables.get(tableName);
-                        List<Map<String, Object>> mainTable = tables.computeIfAbsent(tableName, k -> new ArrayList<>());
-                        for (Map<String, Object> row : transTable) {
-                            if (!deletedRows.contains(row) && !mainTable.contains(row)) {
-                                mainTable.add(row);
-                                for (Map.Entry<String, Object> entry : row.entrySet()) {
-                                    String column = entry.getKey();
-                                    Object value = entry.getValue();
-                                    hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
-                                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
-                                    btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
-                                            .computeIfAbsent(value, k -> new HashSet<>()).add(row);
-                                }
-                            }
-                        }
-                        dirtyTables.put(tableName, true);
-                    }
-                    transactionTables.clear();
-                    transactionDirtyRows.clear();
-                    deletedRows.clear();
-                }
-            }
-            inTransaction = false;
-            System.out.println("Transaction committed, inTransaction set to false");
-        }
-
-        private String rollbackTransaction() {
-            if (!inTransaction) {
-                return "ERROR: No transaction in progress";
-            }
-            rollbackTransactionImpl();
-            return "OK: Transaction rolled back";
-        }
-
-        private void rollbackTransactionImpl() {
-            if (isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
-                synchronized (tables) {
-                    System.out.println("Starting rollback for READ_UNCOMMITTED");
-                    System.out.println("Uncommitted inserts: " + uncommittedInserts);
-                    for (String tableName : tables.keySet()) {
-                        List<Map<String, Object>> table = tables.get(tableName);
-                        System.out.println("Table " + tableName + " before rollback: " + table);
-                        Iterator<Map<String, Object>> iterator = table.iterator();
-                        int removedCount = 0;
-                        while (iterator.hasNext()) {
-                            Map<String, Object> row = iterator.next();
-                            if (uncommittedInserts.contains(row)) {
-                                System.out.println("Removing row: " + row);
-                                iterator.remove();
-                                removedCount++;
-                                for (Map.Entry<String, Object> entry : row.entrySet()) {
-                                    String column = entry.getKey();
-                                    Object value = entry.getValue();
-                                    Map<Object, Set<Map<String, Object>>> hashIndex = hashIndexes.get(tableName).get(column);
-                                    if (hashIndex != null && hashIndex.get(value) != null) {
-                                        hashIndex.get(value).remove(row);
-                                        if (hashIndex.get(value).isEmpty()) {
-                                            hashIndex.remove(value);
-                                        }
-                                    }
-                                    TreeMap<Object, Set<Map<String, Object>>> btreeIndex = btreeIndexes.get(tableName).get(column);
-                                    if (btreeIndex != null && btreeIndex.get(value) != null) {
-                                        btreeIndex.get(value).remove(row);
-                                        if (btreeIndex.get(value).isEmpty()) {
-                                            btreeIndex.remove(value);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (removedCount > 0) {
-                            dirtyTables.put(tableName, true);
-                        }
-                        System.out.println("Removed " + removedCount + " rows from " + tableName);
-                        System.out.println("Table " + tableName + " after rollback: " + table);
-                    }
-                    uncommittedInserts.clear();
-                    System.out.println("Uncommitted inserts cleared");
-                }
-            }
-            inTransaction = false;
-            cleanupTransaction();
-        }
-
-        private void cleanupTransaction() {
-            transactionTables.clear();
-            transactionDirtyRows.clear();
-            deletedRows.clear();
-            uncommittedInserts.clear();
-        }
-
-        private String setIsolationLevel(String level) {
-            try {
-                isolationLevel = IsolationLevel.valueOf(level.trim());
-                return "OK: Isolation level set to " + isolationLevel;
-            } catch (IllegalArgumentException e) {
-                return "ERROR: Invalid isolation level - " + level;
-            }
-        }
-
-        private Map<String, List<Map<String, Object>>> getWorkingTables(String cmd) {
-            if (!inTransaction) {
-                return tables;
-            }
-            if (cmd.equals("SELECT") && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
-                return tables;
-            }
-            return transactionTables;
-        }
-
-        private Object parseValue(String value) {
-            try {
-                if (value.startsWith("'") && value.endsWith("'")) {
-                    return value.substring(1, value.length() - 1);
-                }
-                if (value.contains(".")) {
-                    return new BigDecimal(value);
-                }
-                return Integer.parseInt(value);
-            } catch (NumberFormatException e) {
-                try {
-                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-                    return sdf.parse(value);
-                } catch (Exception ex) {
-                    return value;
-                }
-            }
-        }
-
-        private boolean isValidType(Object value, String type) {
-            switch (type.toUpperCase()) {
-                case "INT": return value instanceof Integer;
-                case "DECIMAL": return value instanceof BigDecimal;
-                case "VARCHAR": return value instanceof String;
-                case "DATE": return value instanceof Date;
-                default: return false;
-            }
-        }
-
-        private String formatValue(Object value) {
-            if (value == null) return "NULL";
-            if (value instanceof String) return "'" + value + "'";
-            if (value instanceof Date) {
-                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-                return sdf.format((Date) value);
-            }
-            return value.toString();
         }
 
         private List<Map<String, Object>> evaluateWithIndexes(String tableName, String condition,
@@ -792,7 +622,6 @@ public class DieselDBServer {
                 for (String expression : andParts) {
                     expression = expression.trim();
                     Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression, tables);
-                    System.out.println("Condition: " + expression + ", Rows: " + rows);
                     if (rows == null) {
                         rows = new HashSet<>();
                     }
@@ -809,42 +638,478 @@ public class DieselDBServer {
                 }
             }
 
-            System.out.println("Final result from evaluateWithIndexes: " + result);
             return new ArrayList<>(new LinkedHashSet<>(result));
         }
 
         private Set<Map<String, Object>> evaluateSingleCondition(String tableName, String expression,
                                                                  Map<String, List<Map<String, Object>>> tables) {
-            String[] parts = expression.split("=");
-            if (parts.length != 2) return null;
-
-            String column = parts[0].trim();
-            Object value = parseValue(parts[1].trim());
-            Map<Object, Set<Map<String, Object>>> hashIndex = hashIndexes.get(tableName).get(column);
-            if (hashIndex != null && hashIndex.containsKey(value)) {
-                return new HashSet<>(hashIndex.get(value));
+            String[] parts;
+            if (expression.contains(">=")) {
+                parts = expression.split(">=");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">=", tables);
+            } else if (expression.contains("<=")) {
+                parts = expression.split("<=");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<=", tables);
+            } else if (expression.contains(">")) {
+                parts = expression.split(">");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), ">", tables);
+            } else if (expression.contains("<")) {
+                parts = expression.split("<");
+                return getBtreeRange(tableName, parts[0].trim(), parts[1].trim(), "<", tables);
+            } else if (expression.contains("!=")) {
+                parts = expression.split("!=");
+                return getHashNotEquals(tableName, parts[0].trim(), parts[1].trim(), tables);
+            } else if (expression.contains("=")) {
+                parts = expression.split("=");
+                return getHashEquals(tableName, parts[0].trim(), parts[1].trim(), tables);
+            } else {
+                Set<Map<String, Object>> result = new HashSet<>();
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (!deletedRows.contains(row) && evaluateWhereCondition(row, expression)) {
+                            result.add(row);
+                        }
+                    }
+                }
+                return result;
             }
-            TreeMap<Object, Set<Map<String, Object>>> btreeIndex = btreeIndexes.get(tableName).get(column);
-            if (btreeIndex != null && btreeIndex.containsKey(value)) {
-                return new HashSet<>(btreeIndex.get(value));
-            }
+        }
 
+        private Set<Map<String, Object>> getHashEquals(String tableName, String column, String valueStr,
+                                                       Map<String, List<Map<String, Object>>> tables) {
+            Object value = parseValue(valueStr);
+            Map<Object, Set<Map<String, Object>>> index = (inTransaction ? transactionHashIndexes : hashIndexes).get(tableName).get(column);
             Set<Map<String, Object>> result = new HashSet<>();
-            for (Map<String, Object> row : tables.get(tableName)) {
-                if (!deletedRows.contains(row) && value.equals(row.get(column))) {
-                    result.add(row);
+
+            if (index == null) {
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (!deletedRows.contains(row) && row.get(column) != null && row.get(column).equals(value)) {
+                            result.add(row);
+                        }
+                    }
+                }
+                return result;
+            }
+
+            Set<Map<String, Object>> rows = index.get(value);
+            if (rows != null) {
+                result.addAll(rows);
+                result.removeIf(deletedRows::contains);
+            }
+
+            try {
+                Integer intValue = Integer.parseInt(valueStr);
+                rows = index.get(intValue);
+                if (rows != null) {
+                    result.addAll(rows);
+                    result.removeIf(deletedRows::contains);
+                }
+            } catch (NumberFormatException ignored) {}
+
+            return result;
+        }
+
+        private Set<Map<String, Object>> getHashNotEquals(String tableName, String column, String valueStr,
+                                                          Map<String, List<Map<String, Object>>> tables) {
+            Object value = parseValue(valueStr);
+            Set<Map<String, Object>> result = new HashSet<>();
+            Map<Object, Set<Map<String, Object>>> index = (inTransaction ? transactionHashIndexes : hashIndexes).get(tableName).get(column);
+            if (index != null) {
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (!deletedRows.contains(row)) {
+                            Object rowValue = row.get(column);
+                            if (rowValue != null && !rowValue.equals(value)) {
+                                result.add(row);
+                            }
+                        }
+                    }
                 }
             }
             return result;
         }
 
-        private void cleanIndexes(String tableName) {
-            for (Map<String, ? extends Map<Object, Set<Map<String, Object>>>> index : Arrays.asList(hashIndexes.get(tableName), btreeIndexes.get(tableName))) {
-                for (Map<Object, Set<Map<String, Object>>> colIndex : index.values()) {
-                    colIndex.values().forEach(set -> set.removeIf(deletedRows::contains));
-                    colIndex.entrySet().removeIf(e -> e.getValue().isEmpty());
+        private Set<Map<String, Object>> getBtreeRange(String tableName, String column, String valueStr, String operator,
+                                                       Map<String, List<Map<String, Object>>> tables) {
+            Object value = parseValue(valueStr);
+            TreeMap<Object, Set<Map<String, Object>>> index = (inTransaction ? transactionBtreeIndexes : btreeIndexes).get(tableName).get(column);
+            if (index == null) {
+                return evaluateSingleCondition(tableName, column + operator + valueStr, tables);
+            }
+            Set<Map<String, Object>> result = new HashSet<>();
+            switch (operator) {
+                case ">":
+                    index.tailMap(value, false).values().forEach(s -> result.addAll(s));
+                    break;
+                case ">=":
+                    index.tailMap(value, true).values().forEach(s -> result.addAll(s));
+                    break;
+                case "<":
+                    index.headMap(value, false).values().forEach(s -> result.addAll(s));
+                    break;
+                case "<=":
+                    index.headMap(value, true).values().forEach(s -> result.addAll(s));
+                    break;
+            }
+            result.removeIf(deletedRows::contains);
+            if (result.isEmpty()) {
+                try {
+                    Integer intValue = Integer.parseInt(valueStr);
+                    switch (operator) {
+                        case ">": index.tailMap(intValue, false).values().forEach(s -> result.addAll(s)); break;
+                        case ">=": index.tailMap(intValue, true).values().forEach(s -> result.addAll(s)); break;
+                        case "<": index.headMap(intValue, false).values().forEach(s -> result.addAll(s)); break;
+                        case "<=": index.headMap(intValue, true).values().forEach(s -> result.addAll(s)); break;
+                    }
+                    result.removeIf(deletedRows::contains);
+                } catch (NumberFormatException ignored) {}
+            }
+            return result;
+        }
+
+        private boolean evaluateWhereCondition(Map<String, Object> row, String condition) {
+            String[] orParts = condition.split("\\s+OR\\s+");
+            for (String orPart : orParts) {
+                String[] andParts = orPart.split("\\s+AND\\s+");
+                boolean andResult = true;
+                for (String expression : andParts) {
+                    expression = expression.trim();
+                    if (expression.contains(">=")) {
+                        String[] parts = expression.split(">=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, ">=");
+                    } else if (expression.contains("<=")) {
+                        String[] parts = expression.split("<=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, "<=");
+                    } else if (expression.contains(">")) {
+                        String[] parts = expression.split(">");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, ">");
+                    } else if (expression.contains("<")) {
+                        String[] parts = expression.split("<");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= compareValues(value, conditionValue, "<");
+                    } else if (expression.contains("!=")) {
+                        String[] parts = expression.split("!=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= !Objects.equals(value, conditionValue);
+                    } else if (expression.contains("=")) {
+                        String[] parts = expression.split("=");
+                        Object value = row.getOrDefault(parts[0].trim(), "");
+                        Object conditionValue = parseValue(parts[1].trim());
+                        andResult &= Objects.equals(value, conditionValue);
+                    } else {
+                        andResult = false;
+                    }
+                    if (!andResult) break;
+                }
+                if (andResult) return true;
+            }
+            return false;
+        }
+
+        private boolean compareValues(Object value1, Object value2, String operator) {
+            if (value1 == null || value2 == null) return false;
+
+            if (value1 instanceof Integer && value2 instanceof String) {
+                try {
+                    value2 = Integer.parseInt((String) value2);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            } else if (value1 instanceof String && value2 instanceof Integer) {
+                try {
+                    value1 = Integer.parseInt((String) value1);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            } else if (value1 instanceof Integer && value2 instanceof BigDecimal) {
+                value1 = BigDecimal.valueOf((Integer) value1);
+            } else if (value1 instanceof BigDecimal && value2 instanceof Integer) {
+                value2 = BigDecimal.valueOf((Integer) value2);
+            }
+
+            if (value1 instanceof Integer && value2 instanceof Integer) {
+                int v1 = (Integer) value1;
+                int v2 = (Integer) value2;
+                switch (operator) {
+                    case ">": return v1 > v2;
+                    case "<": return v1 < v2;
+                    case ">=": return v1 >= v2;
+                    case "<=": return v1 <= v2;
+                    default: return false;
+                }
+            } else if (value1 instanceof BigDecimal && value2 instanceof BigDecimal) {
+                BigDecimal v1 = (BigDecimal) value1;
+                BigDecimal v2 = (BigDecimal) value2;
+                switch (operator) {
+                    case ">": return v1.compareTo(v2) > 0;
+                    case "<": return v1.compareTo(v2) < 0;
+                    case ">=": return v1.compareTo(v2) >= 0;
+                    case "<=": return v1.compareTo(v2) <= 0;
+                    default: return false;
+                }
+            } else if (value1 instanceof Date && value2 instanceof Date) {
+                Date v1 = (Date) value1;
+                Date v2 = (Date) value2;
+                switch (operator) {
+                    case ">": return v1.compareTo(v2) > 0;
+                    case "<": return v1.compareTo(v2) < 0;
+                    case ">=": return v1.compareTo(v2) >= 0;
+                    case "<=": return v1.compareTo(v2) <= 0;
+                    default: return false;
+                }
+            } else {
+                if (!(value1 instanceof String && value2 instanceof String)) {
+                    return false;
+                }
+                String v1 = formatValue(value1);
+                String v2 = formatValue(value2);
+                int compare = v1.compareTo(v2);
+                switch (operator) {
+                    case ">": return compare > 0;
+                    case "<": return compare < 0;
+                    case ">=": return compare >= 0;
+                    case "<=": return compare <= 0;
+                    default: return false;
                 }
             }
+        }
+
+        private String handleJoin(String leftTable, String joinData,
+                                  Map<String, List<Map<String, Object>>> tables,
+                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes) {
+            String[] joinParts = joinData.split("§§§");
+            if (joinParts.length < 3) return "ERROR: Invalid JOIN format";
+            if (!joinParts[0].equals("JOIN")) return "ERROR: JOIN command must start with JOIN";
+            String rightTable = joinParts[1];
+            String joinCondition = joinParts[2];
+            String whereConditionAndOrder = joinParts.length > 3 ? joinParts[3] : null;
+
+            String whereCondition = null;
+            String orderBy = null;
+            if (whereConditionAndOrder != null) {
+                String[] parts = whereConditionAndOrder.split("\\s+ORDER\\s+BY\\s+", 2);
+                whereCondition = parts[0].trim();
+                if (parts.length > 1) {
+                    orderBy = parts[1].trim();
+                }
+            }
+
+            if (!tables.containsKey(leftTable)) loadTableFromDisk(leftTable);
+            if (!tables.containsKey(rightTable)) loadTableFromDisk(rightTable);
+
+            lastAccessTimes.put(rightTable, System.currentTimeMillis());
+
+            String[] keys = joinCondition.split("=");
+            if (keys.length != 2) return "ERROR: Invalid join condition";
+            String leftKey = keys[0];
+            String rightKey = keys[1];
+
+            List<Map<String, Object>> result = new ArrayList<>();
+            Map<Object, Set<Map<String, Object>>> rightIndex = hashIndexes.get(rightTable).get(rightKey);
+
+            synchronized (tables.get(leftTable)) {
+                synchronized (tables.get(rightTable)) {
+                    if (rightIndex != null) {
+                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            if (deletedRows.contains(leftRow)) continue;
+                            Object leftValue = leftRow.get(leftKey);
+                            if (leftValue != null && rightIndex.containsKey(leftValue)) {
+                                for (Map<String, Object> rightRow : rightIndex.get(leftValue)) {
+                                    if (!deletedRows.contains(rightRow)) {
+                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                            result.add(joinedRow);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            if (deletedRows.contains(leftRow)) continue;
+                            Object leftValue = leftRow.get(leftKey);
+                            if (leftValue == null) continue;
+                            for (Map<String, Object> rightRow : tables.get(rightTable)) {
+                                if (!deletedRows.contains(rightRow)) {
+                                    Object rightValue = rightRow.get(rightKey);
+                                    if (rightValue != null && leftValue.equals(rightValue)) {
+                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                            result.add(joinedRow);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (orderBy != null) {
+                String[] orderParts = orderBy.split("\\s+");
+                String column = orderParts[0];
+                boolean ascending = orderParts.length == 1 || orderParts[1].equalsIgnoreCase("ASC");
+
+                result.sort((row1, row2) -> {
+                    Object value1 = row1.get(column);
+                    Object value2 = row2.get(column);
+                    if (value1 == null && value2 == null) return 0;
+                    if (value1 == null) return ascending ? -1 : 1;
+                    if (value2 == null) return ascending ? 1 : -1;
+
+                    int comparison;
+                    if (value1 instanceof Integer && value2 instanceof Integer) {
+                        comparison = Integer.compare((Integer) value1, (Integer) value2);
+                    } else if (value1 instanceof BigDecimal && value2 instanceof BigDecimal) {
+                        comparison = ((BigDecimal) value1).compareTo((BigDecimal) value2);
+                    } else if (value1 instanceof Date && value2 instanceof Date) {
+                        comparison = ((Date) value1).compareTo((Date) value2);
+                    } else {
+                        comparison = formatValue(value1).compareTo(formatValue(value2));
+                    }
+                    return ascending ? comparison : -comparison;
+                });
+            }
+
+            if (result.isEmpty()) return "OK: 0 rows";
+            StringBuilder response = new StringBuilder("OK: ");
+            response.append(String.join(":::", result.get(0).keySet()));
+            for (Map<String, Object> row : result) {
+                response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
+            }
+            return response.toString();
+        }
+
+        private String updateRows(String tableName, String data,
+                                  Map<String, List<Map<String, Object>>> tables,
+                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                  Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
+            if (!tables.containsKey(tableName)) {
+                return "ERROR: Table not found";
+            }
+            String[] parts = data.split(";;;", 2);
+            if (parts.length != 2) return "ERROR: Invalid update format";
+            String condition = parts[0];
+            String[] updates = parts[1].split(":::");
+            Map<String, Object> updateMap = new HashMap<>();
+            for (int i = 0; i < updates.length; i += 2) {
+                if (i + 1 < updates.length) {
+                    updateMap.put(updates[i], parseValue(updates[i + 1]));
+                }
+            }
+
+            List<Map<String, Object>> toUpdate = condition.isEmpty() ? tables.get(tableName) : evaluateWithIndexes(tableName, condition, tables);
+            int updated = 0;
+            synchronized (tables.get(tableName)) {
+                for (Map<String, Object> row : toUpdate) {
+                    if (!deletedRows.contains(row)) {
+                        if (!inTransaction) {
+                            for (String column : updateMap.keySet()) {
+                                Object oldValue = row.get(column);
+                                if (oldValue != null) {
+                                    hashIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                                    btreeIndexes.get(tableName).get(column).getOrDefault(oldValue, Collections.emptySet()).remove(row);
+                                }
+                            }
+                        }
+                        row.putAll(updateMap);
+                        updated++;
+                        if (!inTransaction) {
+                            for (Map.Entry<String, Object> entry : updateMap.entrySet()) {
+                                String column = entry.getKey();
+                                Object newValue = entry.getValue();
+                                hashIndexes.get(tableName).computeIfAbsent(column, k -> new HashMap<>())
+                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                                btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
+                                        .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
+                            }
+                        }
+                    }
+                }
+            }
+            return "OK: " + updated;
+        }
+
+        private String deleteRows(String tableName, String condition,
+                                  Map<String, List<Map<String, Object>>> tables,
+                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
+                                  Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes) {
+            if (!tables.containsKey(tableName)) {
+                return "ERROR: Table not found";
+            }
+
+            List<Map<String, Object>> table = tables.get(tableName);
+            int deleted = 0;
+
+            if (condition == null) {
+                synchronized (table) {
+                    deleted = table.size();
+                    if (!inTransaction) {
+                        deletedRows.addAll(table);
+                        table.clear();
+                        hashIndexes.get(tableName).clear();
+                        btreeIndexes.get(tableName).clear();
+                    } else {
+                        table.clear();
+                    }
+                }
+            } else {
+                List<Map<String, Object>> toDelete = evaluateWithIndexes(tableName, condition, tables);
+                if (toDelete.isEmpty()) {
+                    return "OK: 0";
+                }
+
+                if (toDelete.size() > BATCH_SIZE && !inTransaction) {
+                    CompletableFuture.runAsync(() -> {
+                        int batchDeleted = 0;
+                        synchronized (table) {
+                            for (int i = 0; i < toDelete.size(); i += BATCH_SIZE) {
+                                int end = Math.min(i + BATCH_SIZE, toDelete.size());
+                                List<Map<String, Object>> batch = toDelete.subList(i, end);
+                                for (Map<String, Object> row : batch) {
+                                    if (!deletedRows.contains(row) && table.remove(row)) {
+                                        deletedRows.add(row);
+                                        batchDeleted++;
+                                    }
+                                }
+                            }
+                            if (batchDeleted > 0) {
+                                dirtyTables.put(tableName, true);
+                            }
+                        }
+                    }, clientExecutor);
+                    deleted = toDelete.size();
+                } else {
+                    synchronized (table) {
+                        for (Map<String, Object> row : toDelete) {
+                            if (!deletedRows.contains(row) && table.remove(row)) {
+                                if (!inTransaction) {
+                                    deletedRows.add(row);
+                                }
+                                deleted++;
+                            }
+                        }
+                        if (!inTransaction && deleted > 0) {
+                            dirtyTables.put(tableName, true);
+                        }
+                    }
+                }
+            }
+
+            return "OK: " + deleted;
         }
     }
 }
