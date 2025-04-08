@@ -34,7 +34,25 @@ public class DieselDBClient {
     }
 
     public String create(String tableName, String schema) throws IOException {
-        out.println("CREATE " + tableName + " " + schema);
+        // Преобразуем схему из "id:integer:primary,name:string:unique" в "(id INT PRIMARY, name VARCHAR UNIQUE, ...)"
+        String[] columns = schema.split(",");
+        StringBuilder formattedSchema = new StringBuilder("(");
+        for (int i = 0; i < columns.length; i++) {
+            String[] parts = columns[i].trim().split(":");
+            String columnName = parts[0];
+            String type = parts[1].toUpperCase().replace("INTEGER", "INT").replace("STRING", "VARCHAR");
+            String constraint = parts.length > 2 ? parts[2].toUpperCase() : "";
+            formattedSchema.append(columnName).append(" ").append(type);
+            if (!constraint.isEmpty()) {
+                formattedSchema.append(" ").append(constraint);
+            }
+            if (i < columns.length - 1) {
+                formattedSchema.append(", ");
+            }
+        }
+        formattedSchema.append(")");
+        String command = "CREATE " + tableName + " " + formattedSchema.toString();
+        out.println(command);
         return in.readLine();
     }
 
@@ -44,8 +62,10 @@ public class DieselDBClient {
     }
 
     public String select(String tableName, String condition, String orderBy) throws IOException {
-        String query = condition != null ? condition : "";
-        if (orderBy != null) query += " ORDER BY " + orderBy;
+        String query = condition != null && !condition.isEmpty() ? "WHERE " + condition : "";
+        if (orderBy != null && !orderBy.isEmpty()) {
+            query += (query.isEmpty() ? "" : " ") + "ORDER BY " + orderBy;
+        }
         out.println("SELECT " + tableName + " " + query);
         return in.readLine();
     }
@@ -56,7 +76,11 @@ public class DieselDBClient {
     }
 
     public String delete(String tableName, String condition) throws IOException {
-        out.println("DELETE " + tableName + " " + condition);
+        String command = "DELETE FROM " + tableName;
+        if (condition != null && !condition.isEmpty()) {
+            command += " WHERE " + condition;
+        }
+        out.println(command);
         return in.readLine();
     }
 

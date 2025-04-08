@@ -172,20 +172,45 @@ public class DieselDBServer {
 
                 switch (cmd) {
                     case "CREATE":
-                        return createTable(args);
+                        String[] createParts = args.split("\\s+", 2);
+                        if (createParts.length < 1) {
+                            return "ERROR: Invalid CREATE syntax - missing table name";
+                        }
+                        String tableName = createParts[0];
+                        String schemaDef = createParts.length > 1 ? createParts[1] : "";
+                        return createTable(tableName + " " + schemaDef);
                     case "INSERT":
-                        return insertRow(args.split("\\s+INTO\\s+", 2)[1].split("\\s+", 2)[0], args.split("\\s+VALUES\\s+", 2)[1],
+                        String[] insertParts = args.split("\\s+INTO\\s+", 2);
+                        if (insertParts.length < 2) {
+                            return "ERROR: Invalid INSERT syntax - missing INTO";
+                        }
+                        String[] tableAndData = insertParts[1].split("\\s+VALUES\\s+", 2);
+                        if (tableAndData.length < 2) {
+                            return "ERROR: Invalid INSERT syntax - missing VALUES";
+                        }
+                        return insertRow(tableAndData[0].split("\\s+", 2)[0], tableAndData[1],
                                 getWorkingTables(cmd), hashIndexes, btreeIndexes);
                     case "SELECT":
-                        return selectRows(args.split("\\s+", 2)[0], args.contains("WHERE") || args.contains("ORDER") ? args.split("\\s+", 2)[1] : null,
+                        String[] selectParts = args.split("\\s+", 2);
+                        return selectRows(selectParts[0], selectParts.length > 1 && (args.contains("WHERE") || args.contains("ORDER")) ? selectParts[1] : null,
                                 getWorkingTables(cmd));
                     case "UPDATE":
-                        return updateRows(args.split("\\s+", 2)[0], args.split("\\s+SET\\s+", 2)[1],
+                        String[] updateParts = args.split("\\s+SET\\s+", 2);
+                        if (updateParts.length < 2) {
+                            return "ERROR: Invalid UPDATE syntax - missing SET";
+                        }
+                        return updateRows(updateParts[0], updateParts[1],
                                 getWorkingTables(cmd), hashIndexes, btreeIndexes);
                     case "DELETE":
-                        return deleteRows(args.split("\\s+FROM\\s+", 2)[1].split("\\s+", 2)[0],
-                                args.contains("WHERE") ? args.split("\\s+WHERE\\s+", 2)[1] : null,
-                                getWorkingTables(cmd));
+                        String[] deleteParts = args.split("\\s+FROM\\s+", 2);
+                        if (deleteParts.length < 2) {
+                            return "ERROR: Invalid DELETE syntax - missing FROM";
+                        }
+                        String tableAndCondition = deleteParts[1];
+                        String[] tableParts = tableAndCondition.split("\\s+", 2);
+                        String deleteTableName = tableParts[0];
+                        String condition = tableParts.length > 1 && args.contains("WHERE") ? tableAndCondition.split("\\s+WHERE\\s+", 2)[1] : null;
+                        return deleteRows(deleteTableName, condition, getWorkingTables(cmd));
                     case "BEGIN":
                         return beginTransaction();
                     case "COMMIT":
@@ -201,9 +226,11 @@ public class DieselDBServer {
                 return "ERROR: " + e.getMessage();
             }
         }
-
         private String createTable(String args) {
-            String[] parts = args.split("\\s+", 2);
+            String[] parts = args.trim().split("\\s+", 2);
+            if (parts.length < 1) {
+                return "ERROR: Invalid CREATE syntax - missing table name";
+            }
             String tableName = parts[0];
             if (tables.containsKey(tableName)) {
                 return "ERROR: Table already exists";
@@ -211,9 +238,15 @@ public class DieselDBServer {
             String schemaDef = parts.length > 1 ? parts[1] : "";
             Map<String, String> schema = new HashMap<>();
             if (!schemaDef.isEmpty()) {
+                if (!schemaDef.startsWith("(") || !schemaDef.endsWith(")")) {
+                    return "ERROR: Invalid schema syntax - use (column type [constraints], ...)";
+                }
                 String[] columns = schemaDef.substring(1, schemaDef.length() - 1).split(",");
                 for (String col : columns) {
                     String[] colParts = col.trim().split("\\s+");
+                    if (colParts.length < 2) {
+                        return "ERROR: Invalid column definition - " + col;
+                    }
                     schema.put(colParts[0], colParts[1]);
                     if (colParts.length > 2 && colParts[2].equalsIgnoreCase("PRIMARY")) {
                         primaryKeys.put(tableName, colParts[0]);
@@ -230,7 +263,6 @@ public class DieselDBServer {
             dirtyTables.put(tableName, true);
             return "OK: Table '" + tableName + "' created with schema";
         }
-
         private String insertRow(String tableName, String data,
                                  Map<String, List<Map<String, Object>>> tables,
                                  Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
