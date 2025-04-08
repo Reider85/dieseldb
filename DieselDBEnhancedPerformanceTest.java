@@ -49,6 +49,8 @@ public class DieselDBEnhancedPerformanceTest {
 
     private void testBasicInsert(int numRecords) throws IOException {
         System.out.println("\nTesting basic INSERT for " + numRecords + " records...");
+        // Дополнительная очистка перед вставкой
+        client.delete(TABLE_USERS, "id>" + numRecords); // Удаляем записи с id > numRecords
         long startTime = System.currentTimeMillis();
         for (int i = numRecords + 1; i <= numRecords * 2; i++) {
             String values = i + ", InsertTest" + String.format("%05d", i) + ", " + (20 + (i % 60));

@@ -37,3 +37,4 @@
 0.2.9.6.3 read uncommited fix retry
 0.2.9.6.4 read uncommited fix retry
 0.2.9.6.5 read uncommited fix retry
+0.2.9.6.6 read uncommited fix retry

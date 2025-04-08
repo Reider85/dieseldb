@@ -165,6 +165,7 @@ public class DieselDBServer {
         }
 
         private String processCommand(String command) {
+            System.out.println("Received: " + command);
             try {
                 String[] parts = command.split("\\s+", 2);
                 String cmd = parts[0].toUpperCase();
@@ -183,13 +184,13 @@ public class DieselDBServer {
                         if (!args.startsWith("INTO ")) {
                             return "ERROR: Invalid INSERT syntax - missing INTO";
                         }
-                        String[] insertParts = args.substring(5).split("\\s+VALUES\\s+", 2); // Пропускаем "INTO "
+                        String[] insertParts = args.substring(5).split("\\s+VALUES\\s+", 2);
                         if (insertParts.length < 2) {
                             return "ERROR: Invalid INSERT syntax - missing VALUES";
                         }
-                        String tablePart = insertParts[0].trim(); // "users (id, name, age)"
-                        String valuesPart = insertParts[1].trim(); // "(101, InsertTest00101, 21)"
-                        String insertTableName = tablePart.split("\\s+", 2)[0]; // "users"
+                        String tablePart = insertParts[0].trim();
+                        String valuesPart = insertParts[1].trim();
+                        String insertTableName = tablePart.split("\\s+", 2)[0];
                         return insertRow(insertTableName, tablePart.substring(insertTableName.length()).trim() + " VALUES " + valuesPart,
                                 getWorkingTables(cmd), hashIndexes, btreeIndexes);
                     case "SELECT":
@@ -197,21 +198,23 @@ public class DieselDBServer {
                         return selectRows(selectParts[0], selectParts.length > 1 && (args.contains("WHERE") || args.contains("ORDER")) ? selectParts[1] : null,
                                 getWorkingTables(cmd));
                     case "UPDATE":
-                        String[] updateParts = args.split("\\s+SET\\s+", 2);
-                        if (updateParts.length < 2) {
+                        if (!args.contains("SET")) {
                             return "ERROR: Invalid UPDATE syntax - missing SET";
                         }
-                        return updateRows(updateParts[0], updateParts[1],
+                        String[] updateParts = args.split("\\s+SET\\s+", 2);
+                        if (updateParts.length < 2) {
+                            return "ERROR: Invalid UPDATE syntax - missing SET clause";
+                        }
+                        String tableNameUpdate = updateParts[0].trim();
+                        return updateRows(tableNameUpdate, updateParts[1],
                                 getWorkingTables(cmd), hashIndexes, btreeIndexes);
                     case "DELETE":
-                        String[] deleteParts = args.split("\\s+FROM\\s+", 2);
-                        if (deleteParts.length < 2) {
+                        if (!args.startsWith("FROM ")) {
                             return "ERROR: Invalid DELETE syntax - missing FROM";
                         }
-                        String tableAndCondition = deleteParts[1];
-                        String[] tableParts = tableAndCondition.split("\\s+", 2);
-                        String deleteTableName = tableParts[0];
-                        String condition = tableParts.length > 1 && args.contains("WHERE") ? tableAndCondition.split("\\s+WHERE\\s+", 2)[1] : null;
+                        String[] deleteParts = args.substring(5).split("\\s+WHERE\\s+", 2);
+                        String deleteTableName = deleteParts[0].trim();
+                        String condition = deleteParts.length > 1 ? deleteParts[1].trim() : null;
                         return deleteRows(deleteTableName, condition, getWorkingTables(cmd));
                     case "BEGIN":
                         return beginTransaction();
