@@ -25,6 +25,7 @@ public class DieselDBServer {
     private static final Map<String, String> primaryKeys = new ConcurrentHashMap<>();
     private static final Map<String, Set<String>> uniqueConstraints = new ConcurrentHashMap<>();
     private static final Map<String, Future<?>> pendingWrites = new ConcurrentHashMap<>();
+    private static final Map<String, AtomicInteger> autoincrementValues = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
         File dataDir = new File(DieselDBConfig.DATA_DIR);
@@ -40,7 +41,7 @@ public class DieselDBServer {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             isRunning = false;
-            flushAllTablesToDisk();
+            flushAllTablesToDisk(); // Сначала записываем все данные
             clientExecutor.shutdown();
             diskExecutor.shutdown();
             waitForPendingWrites();
@@ -67,6 +68,12 @@ public class DieselDBServer {
         } finally {
             clientExecutor.shutdown();
             diskExecutor.shutdown();
+            try {
+                clientExecutor.awaitTermination(5, TimeUnit.SECONDS);
+                diskExecutor.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             System.out.println("Server stopped");
         }
     }
@@ -100,6 +107,21 @@ public class DieselDBServer {
                             tableSchemas.put(tableName, (Map<String, String>) schemaOis.readObject());
                             primaryKeys.put(tableName, (String) schemaOis.readObject());
                             uniqueConstraints.put(tableName, (Set<String>) schemaOis.readObject());
+
+                            Map<String, String> schema = tableSchemas.get(tableName);
+                            for (Map.Entry<String, String> entry : schema.entrySet()) {
+                                String col = entry.getKey();
+                                String colDef = entry.getValue();
+                                if (colDef.startsWith("integer") &&
+                                        !autoincrementValues.containsKey(tableName + "." + col)) {
+                                    List<Map<String, Object>> table = tables.get(tableName);
+                                    int maxValue = table.stream()
+                                            .map(row -> (Integer) row.getOrDefault(col, 0))
+                                            .max(Integer::compare)
+                                            .orElse(0);
+                                    autoincrementValues.put(tableName + "." + col, new AtomicInteger(maxValue));
+                                }
+                            }
                         }
                     }
                     System.out.println("Loaded table and schema: " + tableName);
@@ -155,6 +177,7 @@ public class DieselDBServer {
                     primaryKeys.remove(tableName);
                     uniqueConstraints.remove(tableName);
                     pendingWrites.remove(tableName);
+                    autoincrementValues.entrySet().removeIf(e -> e.getKey().startsWith(tableName + "."));
                     System.out.println("Unloaded inactive table from memory: " + tableName);
                 }
             }
@@ -189,21 +212,31 @@ public class DieselDBServer {
             Future<Integer> schemaWriteFuture = schemaChannel.write(schemaBuffer, 0);
             pendingWrites.put(tableName + ".schema", schemaWriteFuture);
 
-            diskExecutor.submit(() -> {
-                try {
-                    writeFuture.get();
-                    schemaWriteFuture.get();
-                    channel.close();
-                    schemaChannel.close();
-                    pendingWrites.remove(tableName + ".ddb");
-                    pendingWrites.remove(tableName + ".schema");
-                    System.out.println("Saved table and schema asynchronously: " + tableName);
-                } catch (Exception e) {
-                    System.err.println("Error completing async write for " + tableName + ": " + e.getMessage());
-                }
-            });
-        } catch (IOException e) {
-            System.err.println("Error initiating async save for " + tableName + ": " + e.getMessage());
+            if (!diskExecutor.isShutdown()) {
+                diskExecutor.submit(() -> {
+                    try {
+                        writeFuture.get();
+                        schemaWriteFuture.get();
+                        channel.close();
+                        schemaChannel.close();
+                        pendingWrites.remove(tableName + ".ddb");
+                        pendingWrites.remove(tableName + ".schema");
+                        System.out.println("Saved table and schema asynchronously: " + tableName);
+                    } catch (Exception e) {
+                        System.err.println("Error completing async write for " + tableName + ": " + e.getMessage());
+                    }
+                });
+            } else {
+                writeFuture.get();
+                schemaWriteFuture.get();
+                channel.close();
+                schemaChannel.close();
+                pendingWrites.remove(tableName + ".ddb");
+                pendingWrites.remove(tableName + ".schema");
+                System.out.println("Saved table and schema synchronously: " + tableName);
+            }
+        } catch (Exception e) {
+            System.err.println("Error saving table " + tableName + ": " + e.getMessage());
         }
     }
 
@@ -697,14 +730,27 @@ public class DieselDBServer {
             Map<String, String> schema = new HashMap<>();
             Set<String> uniqueCols = new HashSet<>();
             String primaryKey = null;
+            boolean hasAutoincrement = false;
 
             String[] columns = schemaDefinition.split(",");
             for (String col : columns) {
                 String[] parts = col.split(":");
                 if (parts.length < 2) return "ERROR: Invalid schema format";
-                String colName = parts[0];
-                String type = parts[1];
+                String colName = parts[0].trim();
+                String type = parts[1].trim().toLowerCase();
                 String constraint = parts.length > 2 ? parts[2].toLowerCase() : "";
+
+                if (!type.equals("integer") && !type.equals("bigdecimal") &&
+                        !type.equals("boolean") && !type.equals("date") &&
+                        !type.equals("string") && !type.equals("autoincrement")) {
+                    return "ERROR: Invalid column type: " + type;
+                }
+
+                if (type.equals("autoincrement")) {
+                    type = "integer";
+                    hasAutoincrement = true;
+                    autoincrementValues.put(tableName + "." + colName, new AtomicInteger(0));
+                }
 
                 schema.put(colName, type + (constraint.isEmpty() ? "" : ":" + constraint));
                 if ("primary".equals(constraint)) {
@@ -724,7 +770,8 @@ public class DieselDBServer {
             }
 
             lastAccessTimes.put(tableName, System.currentTimeMillis());
-            return "OK: Table '" + tableName + "' created with schema";
+            return "OK: Table '" + tableName + "' created with schema" +
+                    (hasAutoincrement ? " (includes autoincrement)" : "");
         }
 
         private String insertRow(String tableName, String data,
@@ -765,16 +812,16 @@ public class DieselDBServer {
                 return "ERROR: No values specified";
             }
 
-            if (columns.length != values.length) {
-                return "ERROR: Number of columns and values must match";
-            }
-
             Map<String, String> schema = tableSchemas.get(tableName);
             Map<String, Object> row = new HashMap<>();
 
-            for (int i = 0; i < columns.length; i++) {
-                String col = columns[i].trim();
-                String valueStr = values[i].trim();
+            int valueIndex = 0;
+            for (String col : columns) {
+                col = col.trim();
+                if (valueIndex >= values.length) {
+                    return "ERROR: Number of columns and values must match";
+                }
+                String valueStr = values[valueIndex++].trim();
                 Object value = parseValue(valueStr);
 
                 if (schema != null) {
@@ -784,6 +831,18 @@ public class DieselDBServer {
                     if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col;
                 }
                 row.put(col, value);
+            }
+
+            if (schema != null) {
+                for (Map.Entry<String, String> entry : schema.entrySet()) {
+                    String col = entry.getKey();
+                    String colDef = entry.getValue();
+                    if (!row.containsKey(col) && colDef.startsWith("integer") &&
+                            autoincrementValues.containsKey(tableName + "." + col)) {
+                        int nextValue = autoincrementValues.get(tableName + "." + col).incrementAndGet();
+                        row.put(col, nextValue);
+                    }
+                }
             }
 
             synchronized (tables.get(tableName)) {
@@ -1336,12 +1395,12 @@ public class DieselDBServer {
             List<Map<String, Object>> filteredRightRows = whereCondition != null ?
                     filterRows(rightTable, rightRows, whereCondition) : rightRows;
 
-            final StringBuilder response = new StringBuilder("OK: "); // Теперь final
+            final StringBuilder response = new StringBuilder("OK: ");
             final AtomicInteger resultCount = new AtomicInteger(0);
             boolean[] headerSet = {false};
             ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
             List<CompletableFuture<Void>> futures = new ArrayList<>();
-            ConcurrentLinkedQueue<StringBuilder> resultParts = new ConcurrentLinkedQueue<>(); // Для накопления результатов
+            ConcurrentLinkedQueue<StringBuilder> resultParts = new ConcurrentLinkedQueue<>();
 
             boolean useLeftAsBase = filteredLeftRows.size() < filteredRightRows.size();
 
@@ -1432,7 +1491,6 @@ public class DieselDBServer {
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             executor.shutdown();
 
-            // Собираем результаты из resultParts в response
             for (StringBuilder part : resultParts) {
                 response.append(part);
             }
@@ -1469,7 +1527,7 @@ public class DieselDBServer {
                     return ascending ? comparison : -comparison;
                 });
 
-                response.setLength(0); // Очищаем и перестраиваем response
+                response.setLength(0);
                 response.append("OK: ");
                 response.append(String.join(":::", resultList.get(0).keySet()));
                 for (Map<String, Object> row : resultList) {
