@@ -7,6 +7,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.text.SimpleDateFormat;
 import java.math.BigDecimal;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class DieselDBServer {
     private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
@@ -403,7 +404,6 @@ public class DieselDBServer {
                 String data = null;
 
                 if (cmd.equals("INSERT") && rest.toUpperCase().startsWith("INTO")) {
-                    // Обрабатываем INSERT INTO отдельно
                     String[] insertParts = rest.split("\\s+", 3);
                     if (insertParts.length < 3 || !insertParts[0].equalsIgnoreCase("INTO")) {
                         return "ERROR: Invalid INSERT format - use INSERT INTO tableName (columns) VALUES (values)";
@@ -832,6 +832,7 @@ public class DieselDBServer {
             }
             return "OK: 1 row inserted";
         }
+
         private String updateRows(String tableName, String data,
                                   Map<String, List<Map<String, Object>>> tables,
                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
@@ -1301,14 +1302,15 @@ public class DieselDBServer {
             String joinCondition = joinParts[2];
             String whereConditionAndOrder = joinParts.length > 3 ? joinParts[3] : null;
 
-            String whereCondition = null;
-            String orderBy = null;
+            final String whereCondition;
+            final String orderBy;
             if (whereConditionAndOrder != null) {
                 String[] parts = whereConditionAndOrder.split("\\s+ORDER\\s+BY\\s+", 2);
                 whereCondition = parts[0].trim();
-                if (parts.length > 1) {
-                    orderBy = parts[1].trim();
-                }
+                orderBy = parts.length > 1 ? parts[1].trim() : null;
+            } else {
+                whereCondition = null;
+                orderBy = null;
             }
 
             if (!tables.containsKey(leftTable)) loadTableFromDisk(leftTable);
@@ -1321,57 +1323,133 @@ public class DieselDBServer {
             String leftKey = keys[0];
             String rightKey = keys[1];
 
-            List<Map<String, Object>> result = new ArrayList<>();
+            ensureIndex(leftTable, leftKey, tables, hashIndexes);
+            ensureIndex(rightTable, rightKey, tables, hashIndexes);
+
+            List<Map<String, Object>> leftRows = tables.get(leftTable);
+            List<Map<String, Object>> rightRows = tables.get(rightTable);
+            Map<Object, Set<Map<String, Object>>> leftIndex = hashIndexes.get(leftTable).get(leftKey);
             Map<Object, Set<Map<String, Object>>> rightIndex = hashIndexes.get(rightTable).get(rightKey);
 
-            synchronized (tables.get(leftTable)) {
-                synchronized (tables.get(rightTable)) {
-                    if (rightIndex != null) {
-                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
-                            if (deletedRows.contains(leftRow)) continue;
-                            Object leftValue = leftRow.get(leftKey);
-                            if (leftValue != null && rightIndex.containsKey(leftValue)) {
-                                for (Map<String, Object> rightRow : rightIndex.get(leftValue)) {
-                                    if (!deletedRows.contains(rightRow)) {
-                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
-                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
-                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
-                                            result.add(joinedRow);
+            List<Map<String, Object>> filteredLeftRows = whereCondition != null ?
+                    filterRows(leftTable, leftRows, whereCondition) : leftRows;
+            List<Map<String, Object>> filteredRightRows = whereCondition != null ?
+                    filterRows(rightTable, rightRows, whereCondition) : rightRows;
+
+            final StringBuilder response = new StringBuilder("OK: "); // Теперь final
+            final AtomicInteger resultCount = new AtomicInteger(0);
+            boolean[] headerSet = {false};
+            ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            ConcurrentLinkedQueue<StringBuilder> resultParts = new ConcurrentLinkedQueue<>(); // Для накопления результатов
+
+            boolean useLeftAsBase = filteredLeftRows.size() < filteredRightRows.size();
+
+            synchronized (leftRows) {
+                synchronized (rightRows) {
+                    if (useLeftAsBase) {
+                        int chunkSize = Math.max(1, filteredRightRows.size() / Runtime.getRuntime().availableProcessors());
+                        for (int i = 0; i < filteredRightRows.size(); i += chunkSize) {
+                            int end = Math.min(i + chunkSize, filteredRightRows.size());
+                            List<Map<String, Object>> rightChunk = filteredRightRows.subList(i, end);
+
+                            futures.add(CompletableFuture.runAsync(() -> {
+                                StringBuilder localResponse = new StringBuilder();
+                                for (Map<String, Object> rightRow : rightChunk) {
+                                    if (deletedRows.contains(rightRow)) continue;
+                                    Object rightValue = rightRow.get(rightKey);
+                                    if (rightValue != null && leftIndex.containsKey(rightValue)) {
+                                        for (Map<String, Object> leftRow : leftIndex.get(rightValue)) {
+                                            if (!deletedRows.contains(leftRow)) {
+                                                Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                                leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                                rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                                if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                                    synchronized (localResponse) {
+                                                        if (resultCount.get() < DieselDBConfig.MAX_JOIN_RESULTS) {
+                                                            if (!headerSet[0]) {
+                                                                localResponse.append(String.join(":::", joinedRow.keySet()));
+                                                                headerSet[0] = true;
+                                                            }
+                                                            localResponse.append(";;;").append(String.join(":::",
+                                                                    joinedRow.values().stream().map(this::formatValue).toArray(String[]::new)));
+                                                            resultCount.incrementAndGet();
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
+                                if (localResponse.length() > 0) {
+                                    resultParts.add(localResponse);
+                                }
+                            }, executor));
                         }
                     } else {
-                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
-                            if (deletedRows.contains(leftRow)) continue;
-                            Object leftValue = leftRow.get(leftKey);
-                            if (leftValue == null) continue;
-                            for (Map<String, Object> rightRow : tables.get(rightTable)) {
-                                if (!deletedRows.contains(rightRow)) {
-                                    Object rightValue = rightRow.get(rightKey);
-                                    if (rightValue != null && leftValue.equals(rightValue)) {
-                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
-                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
-                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
-                                            result.add(joinedRow);
+                        int chunkSize = Math.max(1, filteredLeftRows.size() / Runtime.getRuntime().availableProcessors());
+                        for (int i = 0; i < filteredLeftRows.size(); i += chunkSize) {
+                            int end = Math.min(i + chunkSize, filteredLeftRows.size());
+                            List<Map<String, Object>> leftChunk = filteredLeftRows.subList(i, end);
+
+                            futures.add(CompletableFuture.runAsync(() -> {
+                                StringBuilder localResponse = new StringBuilder();
+                                for (Map<String, Object> leftRow : leftChunk) {
+                                    if (deletedRows.contains(leftRow)) continue;
+                                    Object leftValue = leftRow.get(leftKey);
+                                    if (leftValue != null && rightIndex.containsKey(leftValue)) {
+                                        for (Map<String, Object> rightRow : rightIndex.get(leftValue)) {
+                                            if (!deletedRows.contains(rightRow)) {
+                                                Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                                leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                                rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                                if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                                    synchronized (localResponse) {
+                                                        if (resultCount.get() < DieselDBConfig.MAX_JOIN_RESULTS) {
+                                                            if (!headerSet[0]) {
+                                                                localResponse.append(String.join(":::", joinedRow.keySet()));
+                                                                headerSet[0] = true;
+                                                            }
+                                                            localResponse.append(";;;").append(String.join(":::",
+                                                                    joinedRow.values().stream().map(this::formatValue).toArray(String[]::new)));
+                                                            resultCount.incrementAndGet();
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
+                                if (localResponse.length() > 0) {
+                                    resultParts.add(localResponse);
+                                }
+                            }, executor));
                         }
                     }
                 }
             }
 
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            executor.shutdown();
+
+            // Собираем результаты из resultParts в response
+            for (StringBuilder part : resultParts) {
+                response.append(part);
+            }
+
+            if (resultCount.get() >= DieselDBConfig.MAX_JOIN_RESULTS) {
+                System.out.println("Warning: JOIN result truncated to " + DieselDBConfig.MAX_JOIN_RESULTS + " rows");
+            }
+
+            if (resultCount.get() == 0) return "OK: 0 rows";
+
             if (orderBy != null) {
+                List<Map<String, Object>> resultList = parseResponseToList(response.toString());
                 String[] orderParts = orderBy.split("\\s+");
                 String column = orderParts[0];
                 boolean ascending = orderParts.length == 1 || orderParts[1].equalsIgnoreCase("ASC");
 
-                result.sort((row1, row2) -> {
+                resultList.sort((row1, row2) -> {
                     Object value1 = row1.get(column);
                     Object value2 = row2.get(column);
                     if (value1 == null && value2 == null) return 0;
@@ -1390,15 +1468,65 @@ public class DieselDBServer {
                     }
                     return ascending ? comparison : -comparison;
                 });
+
+                response.setLength(0); // Очищаем и перестраиваем response
+                response.append("OK: ");
+                response.append(String.join(":::", resultList.get(0).keySet()));
+                for (Map<String, Object> row : resultList) {
+                    response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
+                }
             }
 
-            if (result.isEmpty()) return "OK: 0 rows";
-            StringBuilder response = new StringBuilder("OK: ");
-            response.append(String.join(":::", result.get(0).keySet()));
-            for (Map<String, Object> row : result) {
-                response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
-            }
             return response.toString();
+        }
+
+        private void ensureIndex(String tableName, String key,
+                                 Map<String, List<Map<String, Object>>> tables,
+                                 Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes) {
+            Map<String, Map<Object, Set<Map<String, Object>>>> tableIndexes = hashIndexes.get(tableName);
+            if (!tableIndexes.containsKey(key)) {
+                Map<Object, Set<Map<String, Object>>> index = new HashMap<>();
+                synchronized (tables.get(tableName)) {
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (!deletedRows.contains(row)) {
+                            Object value = row.get(key);
+                            if (value != null) {
+                                index.computeIfAbsent(value, k -> new HashSet<>()).add(row);
+                            }
+                        }
+                    }
+                    tableIndexes.put(key, index);
+                }
+            }
+        }
+
+        private List<Map<String, Object>> filterRows(String tableName, List<Map<String, Object>> rows, String whereCondition) {
+            List<Map<String, Object>> filtered = new ArrayList<>();
+            for (Map<String, Object> row : rows) {
+                if (!deletedRows.contains(row)) {
+                    Map<String, Object> prefixedRow = new HashMap<>();
+                    row.forEach((k, v) -> prefixedRow.put(tableName + "." + k, v));
+                    if (evaluateWhereCondition(prefixedRow, whereCondition)) {
+                        filtered.add(row);
+                    }
+                }
+            }
+            return filtered;
+        }
+
+        private List<Map<String, Object>> parseResponseToList(String response) {
+            List<Map<String, Object>> result = new ArrayList<>();
+            String[] parts = response.split(";;;");
+            String[] headers = parts[0].replace("OK: ", "").split(":::");
+            for (int i = 1; i < parts.length; i++) {
+                String[] values = parts[i].split(":::");
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (int j = 0; j < headers.length; j++) {
+                    row.put(headers[j], parseValue(values[j]));
+                }
+                result.add(row);
+            }
+            return result;
         }
 
         private String deleteRows(String tableName, String condition,

@@ -19,3 +19,5 @@
 0.1.9 Transaction isolation levels
 0.2.0 Config class
 0.2.1 whitespaces
+0.2.2 INSERT format
+0.2.3 JOIN optimization
