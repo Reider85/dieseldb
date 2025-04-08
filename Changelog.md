@@ -21,3 +21,5 @@
 0.2.1 whitespaces
 0.2.2 INSERT format
 0.2.3 JOIN optimization
+0.2.4 Autoincrement keys
+0.2.5 Performance test
