@@ -786,7 +786,11 @@ public class DieselDBServer {
                 row.put(col, value);
             }
 
-            synchronized (tables.get(tableName)) {
+            // Выбираем целевую таблицу в зависимости от состояния транзакции
+            Map<String, List<Map<String, Object>>> targetTables = inTransaction ? transactionTables : tables;
+
+            synchronized (tables.get(tableName)) { // Синхронизация на основной таблице для консистентности
+                // Проверка первичного ключа
                 String pkCol = primaryKeys.get(tableName);
                 if (pkCol != null) {
                     Object pkValue = row.get(pkCol);
@@ -799,6 +803,7 @@ public class DieselDBServer {
                     }
                 }
 
+                // Проверка уникальных ограничений
                 Set<String> uniqueCols = uniqueConstraints.get(tableName);
                 if (uniqueCols != null) {
                     for (String col : uniqueCols) {
@@ -816,7 +821,10 @@ public class DieselDBServer {
                     }
                 }
 
-                tables.get(tableName).add(row);
+                // Добавляем запись в целевую таблицу
+                targetTables.computeIfAbsent(tableName, k -> new ArrayList<>()).add(row);
+
+                // Обновляем индексы только если не в транзакции
                 if (!inTransaction) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
@@ -827,9 +835,13 @@ public class DieselDBServer {
                                 .computeIfAbsent(value, k -> new HashSet<>()).add(row);
                     }
                 } else {
+                    // Отмечаем строку как "грязную" для транзакции
                     transactionDirtyRows.add(row);
+                    // Убеждаемся, что таблица инициализирована в transactionTables
+                    transactionTables.computeIfAbsent(tableName, k -> new ArrayList<>());
                 }
             }
+
             return "OK: 1 row inserted";
         }
         private String updateRows(String tableName, String data,

@@ -11,13 +11,13 @@ public class DieselDBEnhancedPerformanceTest {
     }
 
     private void createTables() throws IOException {
-        // Попытка удалить данные из таблиц
+        // РџРѕРїС‹С‚РєР° СѓРґР°Р»РёС‚СЊ РґР°РЅРЅС‹Рµ РёР· С‚Р°Р±Р»РёС†
         String deleteUsers = client.delete(TABLE_USERS, null);
         String deleteOrders = client.delete(TABLE_ORDERS, null);
         System.out.println("Cleanup: Deleting users table data: " + deleteUsers);
         System.out.println("Cleanup: Deleting orders table data: " + deleteOrders);
 
-        // Создание таблиц, игнорируя "already exists"
+        // РЎРѕР·РґР°РЅРёРµ С‚Р°Р±Р»РёС†, РёРіРЅРѕСЂРёСЂСѓСЏ "already exists"
         String userSchema = "id:integer:primary,name:string:unique,age:integer";
         String orderSchema = "order_id:integer:primary,user_id:integer,amount:bigdecimal";
         String userResponse = client.create(TABLE_USERS, userSchema);
@@ -109,15 +109,15 @@ public class DieselDBEnhancedPerformanceTest {
             String setResponse = client.setIsolation(level);
             assertResponseOK(setResponse, "Failed to set isolation level " + level);
 
-            // Начало транзакции
+            // РќР°С‡Р°Р»Рѕ С‚СЂР°РЅР·Р°РєС†РёРё
             String beginResponse = client.begin();
             assertResponseOK(beginResponse, "Begin transaction failed for " + level);
 
-            // Вставка в транзакции
+            // Р’СЃС‚Р°РІРєР° РІ С‚СЂР°РЅР·Р°РєС†РёРё
             String insertResponse = client.insert(TABLE_USERS, "id, name, age", "9999, TransTest, 40");
             assertResponseOK(insertResponse, "Insert in transaction failed for " + level);
 
-            // Проверка видимости в другой сессии
+            // РџСЂРѕРІРµСЂРєР° РІРёРґРёРјРѕСЃС‚Рё РІ РґСЂСѓРіРѕР№ СЃРµСЃСЃРёРё
             DieselDBClient otherClient = new DieselDBClient("localhost", DieselDBConfig.PORT);
             String selectBefore = otherClient.select(TABLE_USERS, "id=9999", null);
             if (level.equals("READ_UNCOMMITTED")) {
@@ -131,17 +131,17 @@ public class DieselDBEnhancedPerformanceTest {
             }
             otherClient.close();
 
-            // Откат транзакции
+            // РћС‚РєР°С‚ С‚СЂР°РЅР·Р°РєС†РёРё
             String rollbackResponse = client.rollback();
             assertResponseOK(rollbackResponse, "Rollback failed for " + level);
 
-            // Проверка после отката
+            // РџСЂРѕРІРµСЂРєР° РїРѕСЃР»Рµ РѕС‚РєР°С‚Р°
             String selectAfter = client.select(TABLE_USERS, "id=9999", null);
             if (countRows(selectAfter) != 0) {
                 throw new AssertionError("Rollback failed - data persists for " + level);
             }
 
-            // Новая транзакция с коммитом
+            // РќРѕРІР°СЏ С‚СЂР°РЅР·Р°РєС†РёСЏ СЃ РєРѕРјРјРёС‚РѕРј
             client.begin();
             client.insert(TABLE_USERS, "id, name, age", "9999, TransTest, 40");
             String commitResponse = client.commit();
@@ -151,13 +151,13 @@ public class DieselDBEnhancedPerformanceTest {
             if (countRows(finalSelect) != 1) {
                 throw new AssertionError("Commit failed - data not persisted for " + level);
             }
-            client.delete(TABLE_USERS, "id=9999"); // Очистка
+            client.delete(TABLE_USERS, "id=9999"); // РћС‡РёСЃС‚РєР°
         }
         System.out.println("All transaction tests passed");
     }
 
     private void runEnhancedTests() throws IOException {
-        // Убедимся, что начнем с чистого состояния
+        // РЈР±РµРґРёРјСЃСЏ, С‡С‚Рѕ РЅР°С‡РЅРµРј СЃ С‡РёСЃС‚РѕРіРѕ СЃРѕСЃС‚РѕСЏРЅРёСЏ
         createTables();
 
         int[] testSizes = {100, 1000, 10000};
@@ -171,7 +171,7 @@ public class DieselDBEnhancedPerformanceTest {
             testSelectWithWhereAndOrder(size);
             testJoinPerformance(size);
 
-            // Очистка перед следующим тестом
+            // РћС‡РёСЃС‚РєР° РїРµСЂРµРґ СЃР»РµРґСѓСЋС‰РёРј С‚РµСЃС‚РѕРј
             client.delete(TABLE_USERS, null);
             client.delete(TABLE_ORDERS, null);
         }
@@ -195,7 +195,7 @@ public class DieselDBEnhancedPerformanceTest {
         if (response.equals("OK: 0 rows")) return 0;
         if (!response.startsWith("OK: ")) return -1;
         String[] parts = response.split(";;;");
-        return parts.length - 1; // Вычитаем заголовок
+        return parts.length - 1; // Р’С‹С‡РёС‚Р°РµРј Р·Р°РіРѕР»РѕРІРѕРє
     }
 
     private void verifyOrder(String response, String column, boolean ascending) throws IOException {
@@ -223,7 +223,7 @@ public class DieselDBEnhancedPerformanceTest {
                 } else if (prev instanceof BigDecimal && current instanceof BigDecimal) {
                     comparison = ((BigDecimal) prev).compareTo((BigDecimal) current);
                 } else {
-                    // Приведение к строке как fallback
+                    // РџСЂРёРІРµРґРµРЅРёРµ Рє СЃС‚СЂРѕРєРµ РєР°Рє fallback
                     String prevStr = String.valueOf(prev);
                     String currStr = String.valueOf(current);
                     comparison = prevStr.compareTo(currStr);
@@ -245,7 +245,7 @@ public class DieselDBEnhancedPerformanceTest {
             try {
                 return new BigDecimal(value);
             } catch (NumberFormatException e2) {
-                return value; // Возвращаем строку как есть
+                return value; // Р’РѕР·РІСЂР°С‰Р°РµРј СЃС‚СЂРѕРєСѓ РєР°Рє РµСЃС‚СЊ
             }
         }
     }

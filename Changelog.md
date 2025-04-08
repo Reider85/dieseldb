@@ -30,3 +30,4 @@
 0.2.9.1 where condition fix
 0.2.9.2 revert 0.2.2
 0.2.9.3 enhanced tests
+0.2.9.4 enhanced tests
