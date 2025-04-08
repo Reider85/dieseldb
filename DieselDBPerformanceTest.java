@@ -244,23 +244,30 @@ public class DieselDBPerformanceTest {
         printResults(totalTime, successfulOps, startTime);
     }
 
-    private static void testWherePerformance() throws InterruptedException {
+    private static void testWherePerformance() throws InterruptedException, IOException {
         System.out.println("\n=== WHERE Performance Test ===");
+        client.delete("users", null);
+        System.out.println("Tables cleared");
+
+        for (int i = 1; i <= TOTAL_OPERATIONS; i++) {
+            client.insert("users", "name,age", "User_" + i + "," + (20 + i % 80));
+        }
+        System.out.println("Inserted " + TOTAL_OPERATIONS + " users");
+
+        Thread.sleep(2000);
+
         ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         AtomicLong totalTime = new AtomicLong(0);
         AtomicLong successfulOps = new AtomicLong(0);
-        Random random = new Random();
 
         long startTime = System.currentTimeMillis();
-
         for (int i = 0; i < THREAD_COUNT; i++) {
             futures.add(CompletableFuture.runAsync(() -> {
                 try {
                     for (int j = 0; j < OPERATIONS_PER_THREAD; j++) {
-                        String condition = "age>" + (20 + random.nextInt(60));
                         long start = System.nanoTime();
-                        List<Map<String, String>> result = client.select("users", condition, null);
+                        List<Map<String, String>> result = client.select("users", "age>30", null);
                         long end = System.nanoTime();
                         totalTime.addAndGet(end - start);
                         successfulOps.incrementAndGet();
@@ -278,17 +285,56 @@ public class DieselDBPerformanceTest {
 
     private static void testJoinPerformance() throws InterruptedException, IOException {
         System.out.println("\n=== JOIN Performance Test ===");
+
+        String clearUsers = client.delete("users", null);
+        String clearOrders = client.delete("orders", null);
+        System.out.println("Tables cleared: " + clearUsers + ", " + clearOrders);
+
+        int usersInserted = 0;
         for (int i = 1; i <= TOTAL_OPERATIONS; i++) {
-            client.insert("orders", "user_id,amount", i + "," + (i * 10));
+            String response = client.insert("users", "name,age", "User_" + i + "," + (20 + i % 80));
+            System.out.println("Insert user " + i + " response: " + response);
+            if (response.equals("OK: 1 row inserted")) usersInserted++;
+            else System.err.println("Failed to insert user " + i + ": " + response);
         }
+        System.out.println("Inserted " + usersInserted + " users (expected " + TOTAL_OPERATIONS + ")");
+
+        String rawUsersResponse = client.sendCommand("SELECT users WHERE null ORDER BY id ASC");
+        System.out.println("Raw SELECT users response: " + rawUsersResponse);
+        List<Map<String, String>> usersImmediate = client.select("users", null, "id ASC");
+        System.out.println("Users count immediately after insert: " + usersImmediate.size());
+
+        int ordersInserted = 0;
+        for (int i = 1; i <= TOTAL_OPERATIONS; i++) {
+            String amountValue = "bigdecimal:" + (i * 10);
+            String response = client.insert("orders", "user_id,amount", i + "," + amountValue);
+            System.out.println("Insert order " + i + " response: " + response);
+            if (response.equals("OK: 1 row inserted")) ordersInserted++;
+            else System.err.println("Failed to insert order " + i + ": " + response);
+        }
+        System.out.println("Inserted " + ordersInserted + " orders (expected " + TOTAL_OPERATIONS + ")");
+
+        String rawOrdersResponse = client.sendCommand("SELECT orders WHERE null ORDER BY order_id ASC");
+        System.out.println("Raw SELECT orders response: " + rawOrdersResponse);
+        List<Map<String, String>> ordersImmediate = client.select("orders", null, "order_id ASC");
+        System.out.println("Orders count immediately after insert: " + ordersImmediate.size());
+
+        Thread.sleep(5000);
+
+        List<Map<String, String>> users = client.select("users", null, "id ASC");
+        List<Map<String, String>> orders = client.select("orders", null, "order_id ASC");
+        System.out.println("Users count after delay: " + users.size());
+        System.out.println("Orders count after delay: " + orders.size());
+        System.out.println("Sample users (first 5): " + client.select("users", "id<=5", "id ASC"));
+        System.out.println("Sample orders (first 5): " + client.select("orders", "order_id<=5", "order_id ASC"));
 
         ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         AtomicLong totalTime = new AtomicLong(0);
         AtomicLong successfulOps = new AtomicLong(0);
+        AtomicLong totalRowsFetched = new AtomicLong(0);
 
         long startTime = System.currentTimeMillis();
-
         for (int i = 0; i < THREAD_COUNT; i++) {
             futures.add(CompletableFuture.runAsync(() -> {
                 try {
@@ -299,18 +345,20 @@ public class DieselDBPerformanceTest {
                         long end = System.nanoTime();
                         totalTime.addAndGet(end - start);
                         successfulOps.incrementAndGet();
+                        totalRowsFetched.addAndGet(result.size());
                     }
                 } catch (IOException e) {
                     System.err.println("JOIN error: " + e.getMessage());
                 }
             }, executor));
         }
-
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         executor.shutdown();
         printResults(totalTime, successfulOps, startTime);
+        System.out.println("Total rows fetched by JOIN: " + totalRowsFetched.get());
+        System.out.println("Average rows per JOIN: " +
+                String.format("%.2f", totalRowsFetched.get() / (double) successfulOps.get()));
     }
-
     private static void testTransactionPerformance() throws InterruptedException, IOException {
         System.out.println("\n=== Transaction Performance Test ===");
         String[] isolationLevels = {"READ_UNCOMMITTED", "READ_COMMITTED", "REPEATABLE_READ", "SERIALIZABLE"};

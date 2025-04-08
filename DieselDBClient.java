@@ -32,13 +32,19 @@ public class DieselDBClient {
         }
     }
 
-    public String sendCommand(String command) throws IOException {
-        if (socket.isClosed()) {
-            connect();
+    String sendCommand(String command) throws IOException {
+        Socket socket = new Socket(host, port);
+        try (PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+            out.println(command);
+            String response = in.readLine();
+            if (response == null) {
+                throw new IOException("No response from server for command: " + command);
+            }
+            return response;
+        } finally {
+            socket.close();
         }
-        out.println(command);
-        out.flush();
-        return in.readLine();
     }
 
     // Создание таблицы (поддерживает autoincrement)
@@ -109,20 +115,23 @@ public class DieselDBClient {
     }
 
     private List<Map<String, String>> parseResponse(String response) throws IOException {
-        if (!response.startsWith("OK")) {
-            throw new IOException(response);
+        if (response == null) {
+            throw new IOException("Server returned null response");
         }
-        if (response.equals("OK: 0 rows")) {
-            return Collections.emptyList();
+        if (!response.startsWith("OK: ")) {
+            throw new IOException("Server error: " + response);
         }
-
-        String[] parts = response.split(";;;");
-        String[] headers = parts[0].replace("OK: ", "").split(":::");
+        String data = response.substring(4);
+        if (data.equals("0 rows")) {
+            return new ArrayList<>();
+        }
+        // Логика парсинга результата (например, split на ";;;" и ":::")
         List<Map<String, String>> result = new ArrayList<>();
-
-        for (int i = 1; i < parts.length; i++) {
-            String[] values = parts[i].split(":::");
-            Map<String, String> row = new LinkedHashMap<>();
+        String[] rows = data.split(";;;");
+        String[] headers = rows[0].split(":::");
+        for (int i = 1; i < rows.length; i++) {
+            String[] values = rows[i].split(":::");
+            Map<String, String> row = new HashMap<>();
             for (int j = 0; j < headers.length; j++) {
                 row.put(headers[j], values[j]);
             }

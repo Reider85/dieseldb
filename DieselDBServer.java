@@ -8,6 +8,7 @@ import java.util.concurrent.*;
 import java.text.SimpleDateFormat;
 import java.math.BigDecimal;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 public class DieselDBServer {
     private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
@@ -782,6 +783,7 @@ public class DieselDBServer {
                 return "ERROR: Table not found";
             }
 
+            // Ожидаем формат "(columns) VALUES (values)"
             String trimmedData = data.trim();
             if (!trimmedData.contains("VALUES")) {
                 return "ERROR: Invalid INSERT format - use (columns) VALUES (values)";
@@ -792,6 +794,7 @@ public class DieselDBServer {
                 return "ERROR: Invalid INSERT format - missing VALUES clause";
             }
 
+            // Парсим колонки
             String columnsPart = parts[0].trim();
             if (!columnsPart.startsWith("(") || !columnsPart.endsWith(")")) {
                 return "ERROR: Invalid columns specification - use (column1, column2, ...)";
@@ -802,6 +805,7 @@ public class DieselDBServer {
                 return "ERROR: No columns specified";
             }
 
+            // Парсим значения
             String valuesPart = parts[1].trim();
             if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
                 return "ERROR: Invalid values specification - use (value1, value2, ...)";
@@ -811,71 +815,70 @@ public class DieselDBServer {
             if (values.length == 0 || values[0].isEmpty()) {
                 return "ERROR: No values specified";
             }
+            if (columns.length != values.length) {
+                return "ERROR: Number of columns (" + columns.length + ") and values (" + values.length + ") must match";
+            }
 
             Map<String, String> schema = tableSchemas.get(tableName);
             Map<String, Object> row = new HashMap<>();
 
-            int valueIndex = 0;
-            for (String col : columns) {
-                col = col.trim();
-                if (valueIndex >= values.length) {
-                    return "ERROR: Number of columns and values must match";
-                }
-                String valueStr = values[valueIndex++].trim();
+            // Заполняем строку данными из запроса
+            for (int i = 0; i < columns.length; i++) {
+                String col = columns[i].trim();
+                String valueStr = values[i].trim();
                 Object value = parseValue(valueStr);
 
                 if (schema != null) {
                     String colDef = schema.get(col);
                     if (colDef == null) return "ERROR: Unknown column " + col;
                     String[] defParts = colDef.split(":");
-                    if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col;
+                    if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col + ": expected " + defParts[0] + ", got " + value.getClass().getSimpleName();
                 }
                 row.put(col, value);
             }
 
+            // Добавляем autoincrement поля, если они есть в схеме и не указаны в columns
             if (schema != null) {
                 for (Map.Entry<String, String> entry : schema.entrySet()) {
                     String col = entry.getKey();
                     String colDef = entry.getValue();
-                    if (!row.containsKey(col) && colDef.startsWith("integer") &&
-                            autoincrementValues.containsKey(tableName + "." + col)) {
-                        int nextValue = autoincrementValues.get(tableName + "." + col).incrementAndGet();
+                    if (!row.containsKey(col) && colDef.contains("autoincrement")) {
+                        int nextValue = autoincrementValues.computeIfAbsent(tableName + "." + col, k -> new AtomicInteger(0)).incrementAndGet();
                         row.put(col, nextValue);
                     }
                 }
             }
 
             synchronized (tables.get(tableName)) {
+                List<Map<String, Object>> table = tables.get(tableName);
+
+                // Проверка первичного ключа
                 String pkCol = primaryKeys.get(tableName);
                 if (pkCol != null) {
                     Object pkValue = row.get(pkCol);
                     if (pkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
-                    Map<Object, Set<Map<String, Object>>> pkIndex = hashIndexes.get(tableName).get(pkCol);
-                    if (pkIndex != null && pkIndex.containsKey(pkValue)) {
-                        if (pkIndex.get(pkValue).stream().anyMatch(r -> !deletedRows.contains(r))) {
-                            return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
-                        }
+                    if (table.stream().anyMatch(r -> r.get(pkCol).equals(pkValue) && !deletedRows.contains(r))) {
+                        return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
                     }
                 }
 
+                // Проверка уникальных ограничений
                 Set<String> uniqueCols = uniqueConstraints.get(tableName);
                 if (uniqueCols != null) {
                     for (String col : uniqueCols) {
-                        if (!col.equals(pkCol)) {
-                            Object value = row.get(col);
-                            if (value != null) {
-                                Map<Object, Set<Map<String, Object>>> colIndex = hashIndexes.get(tableName).get(col);
-                                if (colIndex != null && colIndex.containsKey(value)) {
-                                    if (colIndex.get(value).stream().anyMatch(r -> !deletedRows.contains(r))) {
-                                        return "ERROR: Duplicate unique value " + value + " for " + col;
-                                    }
-                                }
-                            }
+                        Object value = row.get(col);
+                        if (value != null && table.stream().anyMatch(r -> r.get(col).equals(value) && !deletedRows.contains(r))) {
+                            return "ERROR: Duplicate unique value " + value + " for " + col;
                         }
                     }
                 }
 
-                tables.get(tableName).add(row);
+                // Добавляем строку
+                table.add(row);
+                System.out.println("Inserted into " + tableName + ": " + row); // Отладка
+                System.out.println("Table " + tableName + " size after insert: " + table.size()); // Отладка
+
+                // Обновляем индексы
                 if (!inTransaction) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
@@ -888,6 +891,11 @@ public class DieselDBServer {
                 } else {
                     transactionDirtyRows.add(row);
                 }
+            }
+
+            lastAccessTimes.put(tableName, System.currentTimeMillis());
+            if (!inTransaction) {
+                dirtyTables.put(tableName, true);
             }
             return "OK: 1 row inserted";
         }
@@ -1012,14 +1020,15 @@ public class DieselDBServer {
             }
 
             List<Map<String, Object>> result;
-            try {
+            synchronized (tables.get(tableName)) {
+                List<Map<String, Object>> table = tables.get(tableName);
+                System.out.println("Selecting from " + tableName + ", size: " + table.size());
+
                 if (condition == null || condition.isEmpty()) {
-                    synchronized (tables.get(tableName)) {
-                        result = new ArrayList<>();
-                        for (Map<String, Object> row : tables.get(tableName)) {
-                            if (!deletedRows.contains(row)) {
-                                result.add(row);
-                            }
+                    result = new ArrayList<>();
+                    for (Map<String, Object> row : table) {
+                        if (!deletedRows.contains(row)) {
+                            result.add(new HashMap<>(row));
                         }
                     }
                 } else {
@@ -1028,7 +1037,10 @@ public class DieselDBServer {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
-                    result.removeIf(deletedRows::contains);
+                    result = result.stream()
+                            .filter(row -> !deletedRows.contains(row))
+                            .map(row -> new HashMap<>(row))
+                            .collect(Collectors.toList());
                 }
 
                 if (orderBy != null) {
@@ -1056,9 +1068,6 @@ public class DieselDBServer {
                         return ascending ? comparison : -comparison;
                     });
                 }
-            } catch (Exception e) {
-                System.err.println("Error in selectRows: " + e.getMessage());
-                return "ERROR: Server exception - " + e.getMessage();
             }
 
             if (result.isEmpty()) {
@@ -1077,7 +1086,6 @@ public class DieselDBServer {
                 return "ERROR: Response formatting failed - " + e.getMessage();
             }
         }
-
         private List<Map<String, Object>> evaluateWithIndexes(String tableName, String condition,
                                                               Map<String, List<Map<String, Object>>> tables) {
             List<Map<String, Object>> result = new ArrayList<>();
@@ -1091,6 +1099,7 @@ public class DieselDBServer {
                     expression = expression.trim();
                     Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression, tables);
                     if (rows == null) {
+                        System.err.println("evaluateSingleCondition returned null for: " + expression);
                         rows = new HashSet<>();
                     }
                     if (candidates == null) {
