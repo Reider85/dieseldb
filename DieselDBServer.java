@@ -7,8 +7,6 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.text.SimpleDateFormat;
 import java.math.BigDecimal;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 public class DieselDBServer {
     private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
@@ -26,7 +24,6 @@ public class DieselDBServer {
     private static final Map<String, String> primaryKeys = new ConcurrentHashMap<>();
     private static final Map<String, Set<String>> uniqueConstraints = new ConcurrentHashMap<>();
     private static final Map<String, Future<?>> pendingWrites = new ConcurrentHashMap<>();
-    private static final Map<String, AtomicInteger> autoincrementValues = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
         File dataDir = new File(DieselDBConfig.DATA_DIR);
@@ -42,7 +39,7 @@ public class DieselDBServer {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             isRunning = false;
-            flushAllTablesToDisk(); // Сначала записываем все данные
+            flushAllTablesToDisk();
             clientExecutor.shutdown();
             diskExecutor.shutdown();
             waitForPendingWrites();
@@ -69,12 +66,6 @@ public class DieselDBServer {
         } finally {
             clientExecutor.shutdown();
             diskExecutor.shutdown();
-            try {
-                clientExecutor.awaitTermination(5, TimeUnit.SECONDS);
-                diskExecutor.awaitTermination(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
             System.out.println("Server stopped");
         }
     }
@@ -108,21 +99,6 @@ public class DieselDBServer {
                             tableSchemas.put(tableName, (Map<String, String>) schemaOis.readObject());
                             primaryKeys.put(tableName, (String) schemaOis.readObject());
                             uniqueConstraints.put(tableName, (Set<String>) schemaOis.readObject());
-
-                            Map<String, String> schema = tableSchemas.get(tableName);
-                            for (Map.Entry<String, String> entry : schema.entrySet()) {
-                                String col = entry.getKey();
-                                String colDef = entry.getValue();
-                                if (colDef.startsWith("integer") &&
-                                        !autoincrementValues.containsKey(tableName + "." + col)) {
-                                    List<Map<String, Object>> table = tables.get(tableName);
-                                    int maxValue = table.stream()
-                                            .map(row -> (Integer) row.getOrDefault(col, 0))
-                                            .max(Integer::compare)
-                                            .orElse(0);
-                                    autoincrementValues.put(tableName + "." + col, new AtomicInteger(maxValue));
-                                }
-                            }
                         }
                     }
                     System.out.println("Loaded table and schema: " + tableName);
@@ -178,7 +154,6 @@ public class DieselDBServer {
                     primaryKeys.remove(tableName);
                     uniqueConstraints.remove(tableName);
                     pendingWrites.remove(tableName);
-                    autoincrementValues.entrySet().removeIf(e -> e.getKey().startsWith(tableName + "."));
                     System.out.println("Unloaded inactive table from memory: " + tableName);
                 }
             }
@@ -213,31 +188,21 @@ public class DieselDBServer {
             Future<Integer> schemaWriteFuture = schemaChannel.write(schemaBuffer, 0);
             pendingWrites.put(tableName + ".schema", schemaWriteFuture);
 
-            if (!diskExecutor.isShutdown()) {
-                diskExecutor.submit(() -> {
-                    try {
-                        writeFuture.get();
-                        schemaWriteFuture.get();
-                        channel.close();
-                        schemaChannel.close();
-                        pendingWrites.remove(tableName + ".ddb");
-                        pendingWrites.remove(tableName + ".schema");
-                        System.out.println("Saved table and schema asynchronously: " + tableName);
-                    } catch (Exception e) {
-                        System.err.println("Error completing async write for " + tableName + ": " + e.getMessage());
-                    }
-                });
-            } else {
-                writeFuture.get();
-                schemaWriteFuture.get();
-                channel.close();
-                schemaChannel.close();
-                pendingWrites.remove(tableName + ".ddb");
-                pendingWrites.remove(tableName + ".schema");
-                System.out.println("Saved table and schema synchronously: " + tableName);
-            }
-        } catch (Exception e) {
-            System.err.println("Error saving table " + tableName + ": " + e.getMessage());
+            diskExecutor.submit(() -> {
+                try {
+                    writeFuture.get();
+                    schemaWriteFuture.get();
+                    channel.close();
+                    schemaChannel.close();
+                    pendingWrites.remove(tableName + ".ddb");
+                    pendingWrites.remove(tableName + ".schema");
+                    System.out.println("Saved table and schema asynchronously: " + tableName);
+                } catch (Exception e) {
+                    System.err.println("Error completing async write for " + tableName + ": " + e.getMessage());
+                }
+            });
+        } catch (IOException e) {
+            System.err.println("Error initiating async save for " + tableName + ": " + e.getMessage());
         }
     }
 
@@ -438,6 +403,7 @@ public class DieselDBServer {
                 String data = null;
 
                 if (cmd.equals("INSERT") && rest.toUpperCase().startsWith("INTO")) {
+                    // Обрабатываем INSERT INTO отдельно
                     String[] insertParts = rest.split("\\s+", 3);
                     if (insertParts.length < 3 || !insertParts[0].equalsIgnoreCase("INTO")) {
                         return "ERROR: Invalid INSERT format - use INSERT INTO tableName (columns) VALUES (values)";
@@ -731,27 +697,14 @@ public class DieselDBServer {
             Map<String, String> schema = new HashMap<>();
             Set<String> uniqueCols = new HashSet<>();
             String primaryKey = null;
-            boolean hasAutoincrement = false;
 
             String[] columns = schemaDefinition.split(",");
             for (String col : columns) {
                 String[] parts = col.split(":");
                 if (parts.length < 2) return "ERROR: Invalid schema format";
-                String colName = parts[0].trim();
-                String type = parts[1].trim().toLowerCase();
+                String colName = parts[0];
+                String type = parts[1];
                 String constraint = parts.length > 2 ? parts[2].toLowerCase() : "";
-
-                if (!type.equals("integer") && !type.equals("bigdecimal") &&
-                        !type.equals("boolean") && !type.equals("date") &&
-                        !type.equals("string") && !type.equals("autoincrement")) {
-                    return "ERROR: Invalid column type: " + type;
-                }
-
-                if (type.equals("autoincrement")) {
-                    type = "integer";
-                    hasAutoincrement = true;
-                    autoincrementValues.put(tableName + "." + colName, new AtomicInteger(0));
-                }
 
                 schema.put(colName, type + (constraint.isEmpty() ? "" : ":" + constraint));
                 if ("primary".equals(constraint)) {
@@ -771,8 +724,7 @@ public class DieselDBServer {
             }
 
             lastAccessTimes.put(tableName, System.currentTimeMillis());
-            return "OK: Table '" + tableName + "' created with schema" +
-                    (hasAutoincrement ? " (includes autoincrement)" : "");
+            return "OK: Table '" + tableName + "' created with schema";
         }
 
         private String insertRow(String tableName, String data,
@@ -783,7 +735,6 @@ public class DieselDBServer {
                 return "ERROR: Table not found";
             }
 
-            // Ожидаем формат "(columns) VALUES (values)"
             String trimmedData = data.trim();
             if (!trimmedData.contains("VALUES")) {
                 return "ERROR: Invalid INSERT format - use (columns) VALUES (values)";
@@ -794,7 +745,6 @@ public class DieselDBServer {
                 return "ERROR: Invalid INSERT format - missing VALUES clause";
             }
 
-            // Парсим колонки
             String columnsPart = parts[0].trim();
             if (!columnsPart.startsWith("(") || !columnsPart.endsWith(")")) {
                 return "ERROR: Invalid columns specification - use (column1, column2, ...)";
@@ -805,7 +755,6 @@ public class DieselDBServer {
                 return "ERROR: No columns specified";
             }
 
-            // Парсим значения
             String valuesPart = parts[1].trim();
             if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
                 return "ERROR: Invalid values specification - use (value1, value2, ...)";
@@ -815,14 +764,14 @@ public class DieselDBServer {
             if (values.length == 0 || values[0].isEmpty()) {
                 return "ERROR: No values specified";
             }
+
             if (columns.length != values.length) {
-                return "ERROR: Number of columns (" + columns.length + ") and values (" + values.length + ") must match";
+                return "ERROR: Number of columns and values must match";
             }
 
             Map<String, String> schema = tableSchemas.get(tableName);
             Map<String, Object> row = new HashMap<>();
 
-            // Заполняем строку данными из запроса
             for (int i = 0; i < columns.length; i++) {
                 String col = columns[i].trim();
                 String valueStr = values[i].trim();
@@ -832,53 +781,42 @@ public class DieselDBServer {
                     String colDef = schema.get(col);
                     if (colDef == null) return "ERROR: Unknown column " + col;
                     String[] defParts = colDef.split(":");
-                    if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col + ": expected " + defParts[0] + ", got " + value.getClass().getSimpleName();
+                    if (!isValidType(value, defParts[0])) return "ERROR: Type mismatch for " + col;
                 }
                 row.put(col, value);
             }
 
-            // Добавляем autoincrement поля, если они есть в схеме и не указаны в columns
-            if (schema != null) {
-                for (Map.Entry<String, String> entry : schema.entrySet()) {
-                    String col = entry.getKey();
-                    String colDef = entry.getValue();
-                    if (!row.containsKey(col) && colDef.contains("autoincrement")) {
-                        int nextValue = autoincrementValues.computeIfAbsent(tableName + "." + col, k -> new AtomicInteger(0)).incrementAndGet();
-                        row.put(col, nextValue);
-                    }
-                }
-            }
-
             synchronized (tables.get(tableName)) {
-                List<Map<String, Object>> table = tables.get(tableName);
-
-                // Проверка первичного ключа
                 String pkCol = primaryKeys.get(tableName);
                 if (pkCol != null) {
                     Object pkValue = row.get(pkCol);
                     if (pkValue == null) return "ERROR: Primary key " + pkCol + " cannot be null";
-                    if (table.stream().anyMatch(r -> r.get(pkCol).equals(pkValue) && !deletedRows.contains(r))) {
-                        return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
-                    }
-                }
-
-                // Проверка уникальных ограничений
-                Set<String> uniqueCols = uniqueConstraints.get(tableName);
-                if (uniqueCols != null) {
-                    for (String col : uniqueCols) {
-                        Object value = row.get(col);
-                        if (value != null && table.stream().anyMatch(r -> r.get(col).equals(value) && !deletedRows.contains(r))) {
-                            return "ERROR: Duplicate unique value " + value + " for " + col;
+                    Map<Object, Set<Map<String, Object>>> pkIndex = hashIndexes.get(tableName).get(pkCol);
+                    if (pkIndex != null && pkIndex.containsKey(pkValue)) {
+                        if (pkIndex.get(pkValue).stream().anyMatch(r -> !deletedRows.contains(r))) {
+                            return "ERROR: Duplicate primary key value " + pkValue + " for " + pkCol;
                         }
                     }
                 }
 
-                // Добавляем строку
-                table.add(row);
-                System.out.println("Inserted into " + tableName + ": " + row); // Отладка
-                System.out.println("Table " + tableName + " size after insert: " + table.size()); // Отладка
+                Set<String> uniqueCols = uniqueConstraints.get(tableName);
+                if (uniqueCols != null) {
+                    for (String col : uniqueCols) {
+                        if (!col.equals(pkCol)) {
+                            Object value = row.get(col);
+                            if (value != null) {
+                                Map<Object, Set<Map<String, Object>>> colIndex = hashIndexes.get(tableName).get(col);
+                                if (colIndex != null && colIndex.containsKey(value)) {
+                                    if (colIndex.get(value).stream().anyMatch(r -> !deletedRows.contains(r))) {
+                                        return "ERROR: Duplicate unique value " + value + " for " + col;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
-                // Обновляем индексы
+                tables.get(tableName).add(row);
                 if (!inTransaction) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
@@ -892,14 +830,8 @@ public class DieselDBServer {
                     transactionDirtyRows.add(row);
                 }
             }
-
-            lastAccessTimes.put(tableName, System.currentTimeMillis());
-            if (!inTransaction) {
-                dirtyTables.put(tableName, true);
-            }
             return "OK: 1 row inserted";
         }
-
         private String updateRows(String tableName, String data,
                                   Map<String, List<Map<String, Object>>> tables,
                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
@@ -1020,15 +952,14 @@ public class DieselDBServer {
             }
 
             List<Map<String, Object>> result;
-            synchronized (tables.get(tableName)) {
-                List<Map<String, Object>> table = tables.get(tableName);
-                System.out.println("Selecting from " + tableName + ", size: " + table.size());
-
+            try {
                 if (condition == null || condition.isEmpty()) {
-                    result = new ArrayList<>();
-                    for (Map<String, Object> row : table) {
-                        if (!deletedRows.contains(row)) {
-                            result.add(new HashMap<>(row));
+                    synchronized (tables.get(tableName)) {
+                        result = new ArrayList<>();
+                        for (Map<String, Object> row : tables.get(tableName)) {
+                            if (!deletedRows.contains(row)) {
+                                result.add(row);
+                            }
                         }
                     }
                 } else {
@@ -1037,10 +968,7 @@ public class DieselDBServer {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
-                    result = result.stream()
-                            .filter(row -> !deletedRows.contains(row))
-                            .map(row -> new HashMap<>(row))
-                            .collect(Collectors.toList());
+                    result.removeIf(deletedRows::contains);
                 }
 
                 if (orderBy != null) {
@@ -1068,6 +996,9 @@ public class DieselDBServer {
                         return ascending ? comparison : -comparison;
                     });
                 }
+            } catch (Exception e) {
+                System.err.println("Error in selectRows: " + e.getMessage());
+                return "ERROR: Server exception - " + e.getMessage();
             }
 
             if (result.isEmpty()) {
@@ -1086,6 +1017,7 @@ public class DieselDBServer {
                 return "ERROR: Response formatting failed - " + e.getMessage();
             }
         }
+
         private List<Map<String, Object>> evaluateWithIndexes(String tableName, String condition,
                                                               Map<String, List<Map<String, Object>>> tables) {
             List<Map<String, Object>> result = new ArrayList<>();
@@ -1099,7 +1031,6 @@ public class DieselDBServer {
                     expression = expression.trim();
                     Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression, tables);
                     if (rows == null) {
-                        System.err.println("evaluateSingleCondition returned null for: " + expression);
                         rows = new HashSet<>();
                     }
                     if (candidates == null) {
@@ -1370,15 +1301,14 @@ public class DieselDBServer {
             String joinCondition = joinParts[2];
             String whereConditionAndOrder = joinParts.length > 3 ? joinParts[3] : null;
 
-            final String whereCondition;
-            final String orderBy;
+            String whereCondition = null;
+            String orderBy = null;
             if (whereConditionAndOrder != null) {
                 String[] parts = whereConditionAndOrder.split("\\s+ORDER\\s+BY\\s+", 2);
                 whereCondition = parts[0].trim();
-                orderBy = parts.length > 1 ? parts[1].trim() : null;
-            } else {
-                whereCondition = null;
-                orderBy = null;
+                if (parts.length > 1) {
+                    orderBy = parts[1].trim();
+                }
             }
 
             if (!tables.containsKey(leftTable)) loadTableFromDisk(leftTable);
@@ -1391,132 +1321,57 @@ public class DieselDBServer {
             String leftKey = keys[0];
             String rightKey = keys[1];
 
-            ensureIndex(leftTable, leftKey, tables, hashIndexes);
-            ensureIndex(rightTable, rightKey, tables, hashIndexes);
-
-            List<Map<String, Object>> leftRows = tables.get(leftTable);
-            List<Map<String, Object>> rightRows = tables.get(rightTable);
-            Map<Object, Set<Map<String, Object>>> leftIndex = hashIndexes.get(leftTable).get(leftKey);
+            List<Map<String, Object>> result = new ArrayList<>();
             Map<Object, Set<Map<String, Object>>> rightIndex = hashIndexes.get(rightTable).get(rightKey);
 
-            List<Map<String, Object>> filteredLeftRows = whereCondition != null ?
-                    filterRows(leftTable, leftRows, whereCondition) : leftRows;
-            List<Map<String, Object>> filteredRightRows = whereCondition != null ?
-                    filterRows(rightTable, rightRows, whereCondition) : rightRows;
-
-            final StringBuilder response = new StringBuilder("OK: ");
-            final AtomicInteger resultCount = new AtomicInteger(0);
-            boolean[] headerSet = {false};
-            ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-            List<CompletableFuture<Void>> futures = new ArrayList<>();
-            ConcurrentLinkedQueue<StringBuilder> resultParts = new ConcurrentLinkedQueue<>();
-
-            boolean useLeftAsBase = filteredLeftRows.size() < filteredRightRows.size();
-
-            synchronized (leftRows) {
-                synchronized (rightRows) {
-                    if (useLeftAsBase) {
-                        int chunkSize = Math.max(1, filteredRightRows.size() / Runtime.getRuntime().availableProcessors());
-                        for (int i = 0; i < filteredRightRows.size(); i += chunkSize) {
-                            int end = Math.min(i + chunkSize, filteredRightRows.size());
-                            List<Map<String, Object>> rightChunk = filteredRightRows.subList(i, end);
-
-                            futures.add(CompletableFuture.runAsync(() -> {
-                                StringBuilder localResponse = new StringBuilder();
-                                for (Map<String, Object> rightRow : rightChunk) {
-                                    if (deletedRows.contains(rightRow)) continue;
-                                    Object rightValue = rightRow.get(rightKey);
-                                    if (rightValue != null && leftIndex.containsKey(rightValue)) {
-                                        for (Map<String, Object> leftRow : leftIndex.get(rightValue)) {
-                                            if (!deletedRows.contains(leftRow)) {
-                                                Map<String, Object> joinedRow = new LinkedHashMap<>();
-                                                leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                                                rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
-                                                if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
-                                                    synchronized (localResponse) {
-                                                        if (resultCount.get() < DieselDBConfig.MAX_JOIN_RESULTS) {
-                                                            if (!headerSet[0]) {
-                                                                localResponse.append(String.join(":::", joinedRow.keySet()));
-                                                                headerSet[0] = true;
-                                                            }
-                                                            localResponse.append(";;;").append(String.join(":::",
-                                                                    joinedRow.values().stream().map(this::formatValue).toArray(String[]::new)));
-                                                            resultCount.incrementAndGet();
-                                                        }
-                                                    }
-                                                }
-                                            }
+            synchronized (tables.get(leftTable)) {
+                synchronized (tables.get(rightTable)) {
+                    if (rightIndex != null) {
+                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            if (deletedRows.contains(leftRow)) continue;
+                            Object leftValue = leftRow.get(leftKey);
+                            if (leftValue != null && rightIndex.containsKey(leftValue)) {
+                                for (Map<String, Object> rightRow : rightIndex.get(leftValue)) {
+                                    if (!deletedRows.contains(rightRow)) {
+                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                            result.add(joinedRow);
                                         }
                                     }
                                 }
-                                if (localResponse.length() > 0) {
-                                    resultParts.add(localResponse);
-                                }
-                            }, executor));
+                            }
                         }
                     } else {
-                        int chunkSize = Math.max(1, filteredLeftRows.size() / Runtime.getRuntime().availableProcessors());
-                        for (int i = 0; i < filteredLeftRows.size(); i += chunkSize) {
-                            int end = Math.min(i + chunkSize, filteredLeftRows.size());
-                            List<Map<String, Object>> leftChunk = filteredLeftRows.subList(i, end);
-
-                            futures.add(CompletableFuture.runAsync(() -> {
-                                StringBuilder localResponse = new StringBuilder();
-                                for (Map<String, Object> leftRow : leftChunk) {
-                                    if (deletedRows.contains(leftRow)) continue;
-                                    Object leftValue = leftRow.get(leftKey);
-                                    if (leftValue != null && rightIndex.containsKey(leftValue)) {
-                                        for (Map<String, Object> rightRow : rightIndex.get(leftValue)) {
-                                            if (!deletedRows.contains(rightRow)) {
-                                                Map<String, Object> joinedRow = new LinkedHashMap<>();
-                                                leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
-                                                rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
-                                                if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
-                                                    synchronized (localResponse) {
-                                                        if (resultCount.get() < DieselDBConfig.MAX_JOIN_RESULTS) {
-                                                            if (!headerSet[0]) {
-                                                                localResponse.append(String.join(":::", joinedRow.keySet()));
-                                                                headerSet[0] = true;
-                                                            }
-                                                            localResponse.append(";;;").append(String.join(":::",
-                                                                    joinedRow.values().stream().map(this::formatValue).toArray(String[]::new)));
-                                                            resultCount.incrementAndGet();
-                                                        }
-                                                    }
-                                                }
-                                            }
+                        for (Map<String, Object> leftRow : tables.get(leftTable)) {
+                            if (deletedRows.contains(leftRow)) continue;
+                            Object leftValue = leftRow.get(leftKey);
+                            if (leftValue == null) continue;
+                            for (Map<String, Object> rightRow : tables.get(rightTable)) {
+                                if (!deletedRows.contains(rightRow)) {
+                                    Object rightValue = rightRow.get(rightKey);
+                                    if (rightValue != null && leftValue.equals(rightValue)) {
+                                        Map<String, Object> joinedRow = new LinkedHashMap<>();
+                                        leftRow.forEach((k, v) -> joinedRow.put(leftTable + "." + k, v));
+                                        rightRow.forEach((k, v) -> joinedRow.put(rightTable + "." + k, v));
+                                        if (whereCondition == null || evaluateWhereCondition(joinedRow, whereCondition)) {
+                                            result.add(joinedRow);
                                         }
                                     }
                                 }
-                                if (localResponse.length() > 0) {
-                                    resultParts.add(localResponse);
-                                }
-                            }, executor));
+                            }
                         }
                     }
                 }
             }
 
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-            executor.shutdown();
-
-            for (StringBuilder part : resultParts) {
-                response.append(part);
-            }
-
-            if (resultCount.get() >= DieselDBConfig.MAX_JOIN_RESULTS) {
-                System.out.println("Warning: JOIN result truncated to " + DieselDBConfig.MAX_JOIN_RESULTS + " rows");
-            }
-
-            if (resultCount.get() == 0) return "OK: 0 rows";
-
             if (orderBy != null) {
-                List<Map<String, Object>> resultList = parseResponseToList(response.toString());
                 String[] orderParts = orderBy.split("\\s+");
                 String column = orderParts[0];
                 boolean ascending = orderParts.length == 1 || orderParts[1].equalsIgnoreCase("ASC");
 
-                resultList.sort((row1, row2) -> {
+                result.sort((row1, row2) -> {
                     Object value1 = row1.get(column);
                     Object value2 = row2.get(column);
                     if (value1 == null && value2 == null) return 0;
@@ -1535,65 +1390,15 @@ public class DieselDBServer {
                     }
                     return ascending ? comparison : -comparison;
                 });
-
-                response.setLength(0);
-                response.append("OK: ");
-                response.append(String.join(":::", resultList.get(0).keySet()));
-                for (Map<String, Object> row : resultList) {
-                    response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
-                }
             }
 
+            if (result.isEmpty()) return "OK: 0 rows";
+            StringBuilder response = new StringBuilder("OK: ");
+            response.append(String.join(":::", result.get(0).keySet()));
+            for (Map<String, Object> row : result) {
+                response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
+            }
             return response.toString();
-        }
-
-        private void ensureIndex(String tableName, String key,
-                                 Map<String, List<Map<String, Object>>> tables,
-                                 Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes) {
-            Map<String, Map<Object, Set<Map<String, Object>>>> tableIndexes = hashIndexes.get(tableName);
-            if (!tableIndexes.containsKey(key)) {
-                Map<Object, Set<Map<String, Object>>> index = new HashMap<>();
-                synchronized (tables.get(tableName)) {
-                    for (Map<String, Object> row : tables.get(tableName)) {
-                        if (!deletedRows.contains(row)) {
-                            Object value = row.get(key);
-                            if (value != null) {
-                                index.computeIfAbsent(value, k -> new HashSet<>()).add(row);
-                            }
-                        }
-                    }
-                    tableIndexes.put(key, index);
-                }
-            }
-        }
-
-        private List<Map<String, Object>> filterRows(String tableName, List<Map<String, Object>> rows, String whereCondition) {
-            List<Map<String, Object>> filtered = new ArrayList<>();
-            for (Map<String, Object> row : rows) {
-                if (!deletedRows.contains(row)) {
-                    Map<String, Object> prefixedRow = new HashMap<>();
-                    row.forEach((k, v) -> prefixedRow.put(tableName + "." + k, v));
-                    if (evaluateWhereCondition(prefixedRow, whereCondition)) {
-                        filtered.add(row);
-                    }
-                }
-            }
-            return filtered;
-        }
-
-        private List<Map<String, Object>> parseResponseToList(String response) {
-            List<Map<String, Object>> result = new ArrayList<>();
-            String[] parts = response.split(";;;");
-            String[] headers = parts[0].replace("OK: ", "").split(":::");
-            for (int i = 1; i < parts.length; i++) {
-                String[] values = parts[i].split(":::");
-                Map<String, Object> row = new LinkedHashMap<>();
-                for (int j = 0; j < headers.length; j++) {
-                    row.put(headers[j], parseValue(values[j]));
-                }
-                result.add(row);
-            }
-            return result;
         }
 
         private String deleteRows(String tableName, String condition,
