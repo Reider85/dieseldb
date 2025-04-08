@@ -9,9 +9,6 @@ import java.text.SimpleDateFormat;
 import java.math.BigDecimal;
 
 public class DieselDBServer {
-    private static final int PORT = 9090;
-    private static final String DELIMITER = "§§§";
-    private static final String DATA_DIR = "dieseldb_data";
     private static final Map<String, List<Map<String, Object>>> tables = new ConcurrentHashMap<>();
     private static final Map<String, Long> lastAccessTimes = new ConcurrentHashMap<>();
     private static final Map<String, Boolean> dirtyTables = new ConcurrentHashMap<>();
@@ -19,9 +16,6 @@ public class DieselDBServer {
     private static final ScheduledExecutorService diskExecutor = Executors.newScheduledThreadPool(2);
     private static volatile boolean isRunning = true;
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-    private static final long MEMORY_THRESHOLD = 512 * 1024 * 1024; // 512 MB
-    private static final long INACTIVE_TIMEOUT = 30_000; // 30 секунд
-    private static final int BATCH_SIZE = 1000; // Размер пакета для удаления
 
     private static final Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> btreeIndexes = new ConcurrentHashMap<>();
@@ -32,7 +26,7 @@ public class DieselDBServer {
     private static final Map<String, Future<?>> pendingWrites = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
-        File dataDir = new File(DATA_DIR);
+        File dataDir = new File(DieselDBConfig.DATA_DIR);
         if (!dataDir.exists()) {
             dataDir.mkdir();
         }
@@ -52,9 +46,9 @@ public class DieselDBServer {
             System.out.println("Server shutting down...");
         }));
 
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+        try (ServerSocket serverSocket = new ServerSocket(DieselDBConfig.PORT)) {
             serverSocket.setReuseAddress(true);
-            System.out.println("DieselDB server started on port " + PORT);
+            System.out.println("DieselDB server started on port " + DieselDBConfig.PORT);
 
             while (isRunning) {
                 try {
@@ -77,10 +71,10 @@ public class DieselDBServer {
     }
 
     private static CompletableFuture<Void> loadTablesFromFilesAsync() {
-        File dataDir = new File(DATA_DIR);
+        File dataDir = new File(DieselDBConfig.DATA_DIR);
         File[] tableFiles = dataDir.listFiles((dir, name) -> name.endsWith(".ddb"));
         if (tableFiles == null || tableFiles.length == 0) {
-            System.out.println("No tables to load from " + DATA_DIR);
+            System.out.println("No tables to load from " + DieselDBConfig.DATA_DIR);
             return CompletableFuture.completedFuture(null);
         }
 
@@ -97,7 +91,7 @@ public class DieselDBServer {
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
                         rebuildIndexes(tableName);
                     }
-                    Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
+                    Path schemaPath = Paths.get(DieselDBConfig.DATA_DIR, tableName + ".schema");
                     if (Files.exists(schemaPath)) {
                         byte[] schemaData = Files.readAllBytes(schemaPath);
                         ByteArrayInputStream schemaBais = new ByteArrayInputStream(schemaData);
@@ -128,25 +122,25 @@ public class DieselDBServer {
                     }
                 }
             }
-        }, 5, 5, TimeUnit.SECONDS);
+        }, DieselDBConfig.DISK_FLUSH_INTERVAL_SECONDS, DieselDBConfig.DISK_FLUSH_INTERVAL_SECONDS, TimeUnit.SECONDS);
     }
 
     private static void startMemoryCleanup() {
         diskExecutor.scheduleAtFixedRate(() -> {
             long usedMemory = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-            if (usedMemory > MEMORY_THRESHOLD) {
+            if (usedMemory > DieselDBConfig.MEMORY_THRESHOLD) {
                 System.out.println("Memory usage exceeded threshold: " + usedMemory / (1024 * 1024) + " MB");
                 cleanupInactiveTables();
                 System.gc();
             }
-        }, 10, 10, TimeUnit.SECONDS);
+        }, DieselDBConfig.MEMORY_CLEANUP_INTERVAL_SECONDS, DieselDBConfig.MEMORY_CLEANUP_INTERVAL_SECONDS, TimeUnit.SECONDS);
     }
 
     private static void cleanupInactiveTables() {
         long currentTime = System.currentTimeMillis();
         for (String tableName : tables.keySet()) {
             long lastAccess = lastAccessTimes.getOrDefault(tableName, 0L);
-            if (currentTime - lastAccess > INACTIVE_TIMEOUT) {
+            if (currentTime - lastAccess > DieselDBConfig.INACTIVE_TIMEOUT) {
                 synchronized (tables.get(tableName)) {
                     if (dirtyTables.getOrDefault(tableName, false)) {
                         saveTableToDisk(tableName);
@@ -168,7 +162,7 @@ public class DieselDBServer {
 
     private static void saveTableToDisk(String tableName) {
         try {
-            Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
+            Path filePath = Paths.get(DieselDBConfig.DATA_DIR, tableName + ".ddb");
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try (ObjectOutputStream oos = new ObjectOutputStream(baos)) {
                 oos.writeObject(tables.get(tableName));
@@ -180,7 +174,7 @@ public class DieselDBServer {
             Future<Integer> writeFuture = channel.write(buffer, 0);
             pendingWrites.put(tableName + ".ddb", writeFuture);
 
-            Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
+            Path schemaPath = Paths.get(DieselDBConfig.DATA_DIR, tableName + ".schema");
             ByteArrayOutputStream schemaBaos = new ByteArrayOutputStream();
             try (ObjectOutputStream schemaOos = new ObjectOutputStream(schemaBaos)) {
                 schemaOos.writeObject(tableSchemas.get(tableName));
@@ -225,7 +219,7 @@ public class DieselDBServer {
     private static void waitForPendingWrites() {
         for (Map.Entry<String, Future<?>> entry : pendingWrites.entrySet()) {
             try {
-                entry.getValue().get(5, TimeUnit.SECONDS);
+                entry.getValue().get(DieselDBConfig.MAX_WRITE_WAIT_SECONDS, TimeUnit.SECONDS);
                 System.out.println("Completed pending write for " + entry.getKey());
             } catch (Exception e) {
                 System.err.println("Error waiting for write completion of " + entry.getKey() + ": " + e.getMessage());
@@ -297,11 +291,11 @@ public class DieselDBServer {
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
         private boolean inTransaction = false;
-        private IsolationLevel isolationLevel = IsolationLevel.READ_COMMITTED; // Уровень изоляции по умолчанию
+        private IsolationLevel isolationLevel = IsolationLevel.READ_COMMITTED;
         private Map<String, List<Map<String, Object>>> transactionTables;
         private Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> transactionHashIndexes;
         private Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> transactionBtreeIndexes;
-        private Set<Map<String, Object>> transactionDirtyRows; // Для отслеживания измененных строк
+        private Set<Map<String, Object>> transactionDirtyRows;
 
         private enum IsolationLevel {
             READ_UNCOMMITTED,
@@ -395,7 +389,7 @@ public class DieselDBServer {
                     return "OK: Transaction rolled back";
                 }
 
-                String[] parts = command.split(DELIMITER, 3);
+                String[] parts = command.split(DieselDBConfig.DELIMITER, 3);
                 if (parts.length < 2) {
                     return "ERROR: Invalid command format";
                 }
@@ -461,7 +455,7 @@ public class DieselDBServer {
                 return tables;
             }
             if (cmd.equals("SELECT") && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
-                return tables; // Видим грязные данные
+                return tables;
             }
             return transactionTables;
         }
@@ -575,7 +569,7 @@ public class DieselDBServer {
         }
 
         private void loadTableFromDisk(String tableName) {
-            Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
+            Path filePath = Paths.get(DieselDBConfig.DATA_DIR, tableName + ".ddb");
             if (Files.exists(filePath)) {
                 try {
                     byte[] data = Files.readAllBytes(filePath);
@@ -586,7 +580,7 @@ public class DieselDBServer {
                         rebuildIndexes(tableName);
                         lastAccessTimes.put(tableName, System.currentTimeMillis());
 
-                        Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
+                        Path schemaPath = Paths.get(DieselDBConfig.DATA_DIR, tableName + ".schema");
                         if (Files.exists(schemaPath)) {
                             byte[] schemaData = Files.readAllBytes(schemaPath);
                             ByteArrayInputStream schemaBais = new ByteArrayInputStream(schemaData);
@@ -1236,7 +1230,7 @@ public class DieselDBServer {
         private String handleJoin(String leftTable, String joinData,
                                   Map<String, List<Map<String, Object>>> tables,
                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes) {
-            String[] joinParts = joinData.split("§§§");
+            String[] joinParts = joinData.split(DieselDBConfig.DELIMITER);
             if (joinParts.length < 3) return "ERROR: Invalid JOIN format";
             if (!joinParts[0].equals("JOIN")) return "ERROR: JOIN command must start with JOIN";
             String rightTable = joinParts[1];
@@ -1373,12 +1367,12 @@ public class DieselDBServer {
                     return "OK: 0";
                 }
 
-                if (toDelete.size() > BATCH_SIZE && !inTransaction) {
+                if (toDelete.size() > DieselDBConfig.BATCH_SIZE && !inTransaction) {
                     CompletableFuture.runAsync(() -> {
                         int batchDeleted = 0;
                         synchronized (table) {
-                            for (int i = 0; i < toDelete.size(); i += BATCH_SIZE) {
-                                int end = Math.min(i + BATCH_SIZE, toDelete.size());
+                            for (int i = 0; i < toDelete.size(); i += DieselDBConfig.BATCH_SIZE) {
+                                int end = Math.min(i + DieselDBConfig.BATCH_SIZE, toDelete.size());
                                 List<Map<String, Object>> batch = toDelete.subList(i, end);
                                 for (Map<String, Object> row : batch) {
                                     if (!deletedRows.contains(row) && table.remove(row)) {
