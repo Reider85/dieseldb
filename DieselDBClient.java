@@ -14,29 +14,29 @@ public class DieselDBClient {
     }
 
     public String create(String tableName, String schema) throws IOException {
-        out.println("CREATE" + "§§§" + tableName + "§§§" + schema);
+        out.println("CREATE " + tableName + " " + schema);
         return in.readLine();
     }
 
     public String insert(String tableName, String data) throws IOException {
-        out.println("INSERT" + "§§§" + tableName + "§§§" + data);
+        out.println("INSERT " + tableName + " " + data);
         return in.readLine();
     }
 
     public String select(String tableName, String condition, String orderBy) throws IOException {
         String query = condition != null ? condition : "";
         if (orderBy != null) query += " ORDER BY " + orderBy;
-        out.println("SELECT" + "§§§" + tableName + "§§§" + query);
+        out.println("SELECT " + tableName + " " + query);
         return in.readLine();
     }
 
     public String update(String tableName, String condition, String updates) throws IOException {
-        out.println("UPDATE" + "§§§" + tableName + "§§§" + condition + ";;;" + updates);
+        out.println("UPDATE " + tableName + " " + condition + ";;;" + updates);
         return in.readLine();
     }
 
     public String delete(String tableName, String condition) throws IOException {
-        out.println("DELETE" + "§§§" + tableName + "§§§" + condition);
+        out.println("DELETE " + tableName + " " + condition);
         return in.readLine();
     }
 
@@ -53,7 +53,7 @@ public class DieselDBClient {
 
     public static void main(String[] args) {
         try {
-            DieselDBClient client = new DieselDBClient("localhost", 9090);
+            DieselDBClient client = new DieselDBClient("localhost", DieselDBConfig.PORT);
             System.out.println(client.create("users", "id:integer:primary,name:string:unique,age:integer"));
             System.out.println(client.insert("users", "id:::integer:1:::name:::string:Alice:::age:::integer:25"));
             System.out.println(client.insert("users", "id:::integer:2:::name:::string:Bob:::age:::integer:30"));

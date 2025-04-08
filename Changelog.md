@@ -18,3 +18,4 @@
 0.1.8 async write to disk
 0.1.9 Transaction isolation levels
 0.2.0 Config class
+0.2.1 whitespaces

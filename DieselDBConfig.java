@@ -1,6 +1,6 @@
 public class DieselDBConfig {
     public static final int PORT = 9090;
-    public static final String DELIMITER = "§§§";
+    // DELIMITER убран, так как теперь используются пробелы
     public static final String DATA_DIR = "dieseldb_data";
     public static final long MEMORY_THRESHOLD = 512 * 1024 * 1024; // 512 MB
     public static final long INACTIVE_TIMEOUT = 30_000; // 30 секунд

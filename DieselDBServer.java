@@ -347,10 +347,11 @@ public class DieselDBServer {
 
         private String processCommand(String command) {
             try {
-                if ("PING".equalsIgnoreCase(command.trim())) {
+                String trimmedCommand = command.trim();
+                if ("PING".equalsIgnoreCase(trimmedCommand)) {
                     return "OK: PONG";
                 }
-                if ("CLEAR_MEMORY".equalsIgnoreCase(command.trim())) {
+                if ("CLEAR_MEMORY".equalsIgnoreCase(trimmedCommand)) {
                     if (inTransaction) {
                         return "ERROR: Cannot clear memory during transaction";
                     }
@@ -358,8 +359,10 @@ public class DieselDBServer {
                     System.gc();
                     return "OK: Memory cleanup triggered";
                 }
-                if ("SET_ISOLATION".equalsIgnoreCase(command.split(" ")[0].trim())) {
-                    String level = command.split(" ", 2)[1].trim().toUpperCase();
+                if (trimmedCommand.toUpperCase().startsWith("SET_ISOLATION")) {
+                    String[] parts = trimmedCommand.split("\\s+", 2);
+                    if (parts.length < 2) return "ERROR: Missing isolation level";
+                    String level = parts[1].trim().toUpperCase();
                     try {
                         isolationLevel = IsolationLevel.valueOf(level);
                         return "OK: Isolation level set to " + level;
@@ -367,21 +370,21 @@ public class DieselDBServer {
                         return "ERROR: Invalid isolation level. Use: READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE";
                     }
                 }
-                if ("BEGIN".equalsIgnoreCase(command.trim())) {
+                if ("BEGIN".equalsIgnoreCase(trimmedCommand)) {
                     if (inTransaction) {
                         return "ERROR: Transaction already in progress";
                     }
                     beginTransaction();
                     return "OK: Transaction started with " + isolationLevel;
                 }
-                if ("COMMIT".equalsIgnoreCase(command.trim())) {
+                if ("COMMIT".equalsIgnoreCase(trimmedCommand)) {
                     if (!inTransaction) {
                         return "ERROR: No transaction in progress";
                     }
                     commitTransaction();
                     return "OK: Transaction committed";
                 }
-                if ("ROLLBACK".equalsIgnoreCase(command.trim())) {
+                if ("ROLLBACK".equalsIgnoreCase(trimmedCommand)) {
                     if (!inTransaction) {
                         return "ERROR: No transaction in progress";
                     }
@@ -389,14 +392,28 @@ public class DieselDBServer {
                     return "OK: Transaction rolled back";
                 }
 
-                String[] parts = command.split(DieselDBConfig.DELIMITER, 3);
+                // Разбиваем команду по пробелам, игнорируя лишние
+                String[] parts = trimmedCommand.split("\\s+", 2);
                 if (parts.length < 2) {
-                    return "ERROR: Invalid command format";
+                    return "ERROR: Invalid command format - command and table name required";
                 }
 
                 String cmd = parts[0].toUpperCase();
-                String tableName = parts[1];
-                String data = parts.length > 2 ? parts[2] : null;
+                String rest = parts[1];
+                String tableName;
+                String data = null;
+
+                // Извлекаем имя таблицы и данные
+                if (cmd.equals("CREATE") || cmd.equals("INSERT") || cmd.equals("SELECT") ||
+                        cmd.equals("UPDATE") || cmd.equals("DELETE")) {
+                    String[] tableAndData = rest.split("\\s+", 2);
+                    tableName = tableAndData[0];
+                    if (tableAndData.length > 1) {
+                        data = tableAndData[1];
+                    }
+                } else {
+                    return "ERROR: Unknown command";
+                }
 
                 if (!inTransaction && !tables.containsKey(tableName) && !cmd.equals("CREATE")) {
                     loadTableFromDisk(tableName);
@@ -420,7 +437,7 @@ public class DieselDBServer {
                                 "ERROR: Missing data for INSERT";
                         break;
                     case "SELECT":
-                        if (data != null && data.startsWith("JOIN")) {
+                        if (data != null && data.toUpperCase().startsWith("JOIN")) {
                             response = handleJoin(tableName, data, workingTables, workingHashIndexes);
                         } else {
                             response = selectRows(tableName, data, workingTables);
@@ -1230,9 +1247,10 @@ public class DieselDBServer {
         private String handleJoin(String leftTable, String joinData,
                                   Map<String, List<Map<String, Object>>> tables,
                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes) {
-            String[] joinParts = joinData.split(DieselDBConfig.DELIMITER);
+            // Разбиваем joinData по пробелам вместо DELIMITER
+            String[] joinParts = joinData.trim().split("\\s+", 3);
             if (joinParts.length < 3) return "ERROR: Invalid JOIN format";
-            if (!joinParts[0].equals("JOIN")) return "ERROR: JOIN command must start with JOIN";
+            if (!joinParts[0].equalsIgnoreCase("JOIN")) return "ERROR: JOIN command must start with JOIN";
             String rightTable = joinParts[1];
             String joinCondition = joinParts[2];
             String whereConditionAndOrder = joinParts.length > 3 ? joinParts[3] : null;

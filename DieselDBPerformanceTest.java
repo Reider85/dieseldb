@@ -5,17 +5,16 @@ public class DieselDBPerformanceTest {
     private final DieselDBClient client;
 
     public DieselDBPerformanceTest() throws IOException {
-        client = new DieselDBClient("localhost", 9090);
+        client = new DieselDBClient("localhost", DieselDBConfig.PORT);
     }
 
     private void populateLargeTable() throws IOException {
-        // Создаём таблицу с первичным ключом и уникальным полем
         String schema = "order_id:integer:primary,order_code:string:unique,amount:bigdecimal";
         System.out.println("Creating table: " + client.create(TABLE_ORDERS, schema));
 
         long startTime = System.currentTimeMillis();
         for (int i = 1; i <= 20000; i++) {
-            String orderCode = "ORD" + String.format("%05d", i); // Уникальный код
+            String orderCode = "ORD" + String.format("%05d", i);
             String data = "order_id:::integer:" + i + ":::order_code:::string:" + orderCode + ":::amount:::bigdecimal:" + (i % 1000) + ".00";
             String response = client.insert(TABLE_ORDERS, data);
             if (!response.startsWith("OK")) {
@@ -33,30 +32,25 @@ public class DieselDBPerformanceTest {
     private void testDeletePerformance() throws IOException, InterruptedException {
         System.out.println("Testing delete performance...");
 
-        // Проверяем исходное количество строк
         String initialSelect = client.select(TABLE_ORDERS, null, "order_id ASC");
         int initialRows = countRows(initialSelect);
         System.out.println("Initial row count: " + initialRows);
 
-        // Выполняем DELETE и замеряем время
         long startTime = System.currentTimeMillis();
         String deleteResponse = client.delete(TABLE_ORDERS, "amount<500.00");
         long endTime = System.currentTimeMillis();
         System.out.println("Delete response: " + deleteResponse);
         System.out.println("Delete orders (amount < 500.00) response time: " + (endTime - startTime) + " ms");
 
-        // Проверяем результат сразу после DELETE
         String immediateSelect = client.select(TABLE_ORDERS, null, "order_id ASC");
         int immediateRows = countRows(immediateSelect);
         System.out.println("Rows remaining immediately after delete: " + immediateRows);
         System.out.println("Sample of remaining orders: " +
                 (immediateSelect.length() > 100 ? immediateSelect.substring(0, 100) + "..." : immediateSelect));
 
-        // Ждём завершения асинхронной очистки (5-6 секунд)
         System.out.println("Waiting 6 seconds for index cleanup...");
         Thread.sleep(6000);
 
-        // Проверяем результат после очистки
         String finalSelect = client.select(TABLE_ORDERS, null, "order_id ASC");
         int finalRows = countRows(finalSelect);
         System.out.println("Rows remaining after cleanup: " + finalRows);
