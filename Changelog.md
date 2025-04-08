@@ -26,3 +26,4 @@
 0.2.6 JOIN fix
 0.2.7 revert 0.2.4
 0.2.8 base tests
+0.2.9 base tests autoincrement
