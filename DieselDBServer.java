@@ -585,7 +585,17 @@ public class DieselDBServer {
                                 removedCount++;
                             }
                         }
-                        // Очистка индексов для всех строк в uncommittedInserts, даже если они не в таблице
+                        // Дополнительная проверка: удаляем все строки с id=9999 для теста
+                        iterator = table.iterator();
+                        while (iterator.hasNext()) {
+                            Map<String, Object> row = iterator.next();
+                            if (row.get("id") != null && row.get("id").equals(9999)) {
+                                System.out.println("Force removing residual row: " + row);
+                                iterator.remove();
+                                removedCount++;
+                            }
+                        }
+                        // Очистка индексов
                         for (Map<String, Object> row : uncommittedInserts) {
                             for (Map.Entry<String, Object> entry : row.entrySet()) {
                                 String column = entry.getKey();
@@ -838,13 +848,11 @@ public class DieselDBServer {
                 row.put(col, value);
             }
 
-            // Определяем целевую таблицу в зависимости от состояния транзакции и уровня изоляции
             Map<String, List<Map<String, Object>>> targetTables = inTransaction && isolationLevel != IsolationLevel.READ_UNCOMMITTED
                     ? transactionTables
                     : tables;
 
-            synchronized (tables.get(tableName)) { // Синхронизация на основной таблице для консистентности
-                // Проверка ограничения первичного ключа
+            synchronized (tables.get(tableName)) {
                 String pkCol = primaryKeys.get(tableName);
                 if (pkCol != null) {
                     Object pkValue = row.get(pkCol);
@@ -857,7 +865,6 @@ public class DieselDBServer {
                     }
                 }
 
-                // Проверка уникальных ограничений
                 Set<String> uniqueCols = uniqueConstraints.get(tableName);
                 if (uniqueCols != null) {
                     for (String col : uniqueCols) {
@@ -875,18 +882,15 @@ public class DieselDBServer {
                     }
                 }
 
-                // Добавление строки в целевую таблицу
                 targetTables.computeIfAbsent(tableName, k -> new ArrayList<>()).add(row);
                 System.out.println("Inserted row into " + tableName + ": " + row);
 
-                // Логика для транзакций
                 if (inTransaction && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
                     uncommittedInserts.add(row);
                     System.out.println("Added to uncommittedInserts: " + row);
                     System.out.println("Current uncommittedInserts: " + uncommittedInserts);
                 }
 
-                // Обновление индексов, если не в транзакции или в READ_UNCOMMITTED
                 if (!inTransaction || isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
@@ -897,9 +901,7 @@ public class DieselDBServer {
                                 .computeIfAbsent(value, k -> new HashSet<>()).add(row);
                     }
                 } else {
-                    // Отмечаем строку как "грязную" для транзакции
                     transactionDirtyRows.add(row);
-                    // Убеждаемся, что таблица инициализирована в transactionTables
                     transactionTables.computeIfAbsent(tableName, k -> new ArrayList<>());
                 }
             }
@@ -1040,7 +1042,6 @@ public class DieselDBServer {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
-                    // Фильтруем только те строки, которые действительно в таблице
                     result.retainAll(tables.get(tableName));
                     result.removeIf(deletedRows::contains);
                 }

@@ -33,3 +33,4 @@
 0.2.9.4 enhanced tests
 0.2.9.5 enhanced tests
 0.2.9.6 read uncommited fix retry
+0.2.9.6.2 read uncommited fix retry
