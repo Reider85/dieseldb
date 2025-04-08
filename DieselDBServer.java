@@ -392,7 +392,6 @@ public class DieselDBServer {
                     return "OK: Transaction rolled back";
                 }
 
-                // Разбиваем команду по пробелам, игнорируя лишние
                 String[] parts = trimmedCommand.split("\\s+", 2);
                 if (parts.length < 2) {
                     return "ERROR: Invalid command format - command and table name required";
@@ -403,9 +402,15 @@ public class DieselDBServer {
                 String tableName;
                 String data = null;
 
-                // Извлекаем имя таблицы и данные
-                if (cmd.equals("CREATE") || cmd.equals("INSERT") || cmd.equals("SELECT") ||
-                        cmd.equals("UPDATE") || cmd.equals("DELETE")) {
+                if (cmd.equals("INSERT") && rest.toUpperCase().startsWith("INTO")) {
+                    // Обрабатываем INSERT INTO отдельно
+                    String[] insertParts = rest.split("\\s+", 3);
+                    if (insertParts.length < 3 || !insertParts[0].equalsIgnoreCase("INTO")) {
+                        return "ERROR: Invalid INSERT format - use INSERT INTO tableName (columns) VALUES (values)";
+                    }
+                    tableName = insertParts[1];
+                    data = insertParts[2];
+                } else if (cmd.equals("CREATE") || cmd.equals("SELECT") || cmd.equals("UPDATE") || cmd.equals("DELETE")) {
                     String[] tableAndData = rest.split("\\s+", 2);
                     tableName = tableAndData[0];
                     if (tableAndData.length > 1) {
@@ -617,32 +622,41 @@ public class DieselDBServer {
             }
         }
 
-        private Object parseValue(String typedValue) {
-            String[] parts = typedValue.split(":", 2);
-            if (parts.length != 2) {
+        private Object parseValue(String valueStr) {
+            String trimmedValue = valueStr.trim();
+            if (trimmedValue.contains(":")) {
+                String[] parts = trimmedValue.split(":", 2);
+                String type = parts[0].toLowerCase();
+                String value = parts[1];
                 try {
-                    return Integer.parseInt(parts[0]);
-                } catch (NumberFormatException e1) {
-                    try {
-                        return new BigDecimal(parts[0]);
-                    } catch (NumberFormatException e2) {
-                        return parts[0];
+                    switch (type) {
+                        case "integer": return Integer.parseInt(value);
+                        case "bigdecimal": return new BigDecimal(value);
+                        case "boolean": return Boolean.parseBoolean(value);
+                        case "date": return dateFormat.parse(value);
+                        default: return value;
                     }
+                } catch (Exception e) {
+                    System.err.println("Error parsing typed value: " + trimmedValue + " - " + e.getMessage());
+                    return value;
                 }
             }
-            String type = parts[0].toLowerCase();
-            String value = parts[1];
+
             try {
-                switch (type) {
-                    case "integer": return Integer.parseInt(value);
-                    case "bigdecimal": return new BigDecimal(value);
-                    case "boolean": return Boolean.parseBoolean(value);
-                    case "date": return dateFormat.parse(value);
-                    default: return value;
+                return Integer.parseInt(trimmedValue);
+            } catch (NumberFormatException e1) {
+                try {
+                    return new BigDecimal(trimmedValue);
+                } catch (NumberFormatException e2) {
+                    if (trimmedValue.equalsIgnoreCase("true") || trimmedValue.equalsIgnoreCase("false")) {
+                        return Boolean.parseBoolean(trimmedValue);
+                    }
+                    try {
+                        return dateFormat.parse(trimmedValue);
+                    } catch (Exception e3) {
+                        return trimmedValue;
+                    }
                 }
-            } catch (Exception e) {
-                System.err.println("Error parsing value: " + typedValue + " - " + e.getMessage());
-                return value;
             }
         }
 
@@ -720,15 +734,49 @@ public class DieselDBServer {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
             }
+
+            String trimmedData = data.trim();
+            if (!trimmedData.contains("VALUES")) {
+                return "ERROR: Invalid INSERT format - use (columns) VALUES (values)";
+            }
+
+            String[] parts = trimmedData.split("\\s+VALUES\\s+", 2);
+            if (parts.length != 2) {
+                return "ERROR: Invalid INSERT format - missing VALUES clause";
+            }
+
+            String columnsPart = parts[0].trim();
+            if (!columnsPart.startsWith("(") || !columnsPart.endsWith(")")) {
+                return "ERROR: Invalid columns specification - use (column1, column2, ...)";
+            }
+            String columnsStr = columnsPart.substring(1, columnsPart.length() - 1).trim();
+            String[] columns = columnsStr.split("\\s*,\\s*");
+            if (columns.length == 0 || columns[0].isEmpty()) {
+                return "ERROR: No columns specified";
+            }
+
+            String valuesPart = parts[1].trim();
+            if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
+                return "ERROR: Invalid values specification - use (value1, value2, ...)";
+            }
+            String valuesStr = valuesPart.substring(1, valuesPart.length() - 1).trim();
+            String[] values = valuesStr.split("\\s*,\\s*");
+            if (values.length == 0 || values[0].isEmpty()) {
+                return "ERROR: No values specified";
+            }
+
+            if (columns.length != values.length) {
+                return "ERROR: Number of columns and values must match";
+            }
+
             Map<String, String> schema = tableSchemas.get(tableName);
             Map<String, Object> row = new HashMap<>();
-            String[] pairs = data.split(":::");
-            for (int i = 0; i < pairs.length; i += 2) {
-                if (i + 1 >= pairs.length) {
-                    return "ERROR: Invalid data format";
-                }
-                String col = pairs[i];
-                Object value = parseValue(pairs[i + 1]);
+
+            for (int i = 0; i < columns.length; i++) {
+                String col = columns[i].trim();
+                String valueStr = values[i].trim();
+                Object value = parseValue(valueStr);
+
                 if (schema != null) {
                     String colDef = schema.get(col);
                     if (colDef == null) return "ERROR: Unknown column " + col;
@@ -784,7 +832,6 @@ public class DieselDBServer {
             }
             return "OK: 1 row inserted";
         }
-
         private String updateRows(String tableName, String data,
                                   Map<String, List<Map<String, Object>>> tables,
                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes,
@@ -1247,7 +1294,6 @@ public class DieselDBServer {
         private String handleJoin(String leftTable, String joinData,
                                   Map<String, List<Map<String, Object>>> tables,
                                   Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> hashIndexes) {
-            // Разбиваем joinData по пробелам вместо DELIMITER
             String[] joinParts = joinData.trim().split("\\s+", 3);
             if (joinParts.length < 3) return "ERROR: Invalid JOIN format";
             if (!joinParts[0].equalsIgnoreCase("JOIN")) return "ERROR: JOIN command must start with JOIN";

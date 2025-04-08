@@ -1,6 +1,7 @@
 import java.io.IOException;
 
 public class DieselDBPerformanceTest {
+    private static final String TABLE_USERS = "users";
     private static final String TABLE_ORDERS = "orders";
     private final DieselDBClient client;
 
@@ -8,76 +9,127 @@ public class DieselDBPerformanceTest {
         client = new DieselDBClient("localhost", DieselDBConfig.PORT);
     }
 
-    private void populateLargeTable() throws IOException {
-        String schema = "order_id:integer:primary,order_code:string:unique,amount:bigdecimal";
-        System.out.println("Creating table: " + client.create(TABLE_ORDERS, schema));
+    private void createTables() throws IOException {
+        String userSchema = "id:integer:primary,name:string:unique,age:integer";
+        String orderSchema = "order_id:integer:primary,user_id:integer,amount:bigdecimal";
+        System.out.println("Creating table users: " + client.create(TABLE_USERS, userSchema));
+        System.out.println("Creating table orders: " + client.create(TABLE_ORDERS, orderSchema));
+    }
 
+    private void populateTables(int numRecords) throws IOException {
         long startTime = System.currentTimeMillis();
-        for (int i = 1; i <= 20000; i++) {
-            String orderCode = "ORD" + String.format("%05d", i);
-            String data = "order_id:::integer:" + i + ":::order_code:::string:" + orderCode + ":::amount:::bigdecimal:" + (i % 1000) + ".00";
-            String response = client.insert(TABLE_ORDERS, data);
+        for (int i = 1; i <= numRecords; i++) {
+            String userColumns = "id, name, age";
+            String userValues = i + ", User" + String.format("%05d", i) + ", " + (20 + (i % 60));
+            client.insert(TABLE_USERS, userColumns, userValues);
+
+            String orderColumns = "order_id, user_id, amount";
+            String orderValues = i + ", " + i + ", " + (i % 1000) + ".00";
+            client.insert(TABLE_ORDERS, orderColumns, orderValues);
+        }
+        long endTime = System.currentTimeMillis();
+        System.out.println("Populated " + numRecords + " records in both tables in " + (endTime - startTime) + " ms");
+    }
+
+    private void testInsertPerformance(int numRecords) throws IOException {
+        System.out.println("\nTesting INSERT performance for " + numRecords + " records...");
+        long startTime = System.currentTimeMillis();
+        for (int i = numRecords + 1; i <= numRecords * 2; i++) {
+            String columns = "id, name, age";
+            String values = i + ", InsertTest" + String.format("%05d", i) + ", " + (20 + (i % 60));
+            String response = client.insert(TABLE_USERS, columns, values);
             if (!response.startsWith("OK")) {
                 System.err.println("Insert failed at row " + i + ": " + response);
                 break;
             }
-            if (i % 5000 == 0) {
-                System.out.println("Inserted " + i + " rows...");
-            }
         }
         long endTime = System.currentTimeMillis();
-        System.out.println("Populated table with 20,000 rows in " + (endTime - startTime) + " ms");
+        System.out.println("Inserted " + numRecords + " records in " + (endTime - startTime) + " ms");
     }
 
-    private void testDeletePerformance() throws IOException, InterruptedException {
-        System.out.println("Testing delete performance...");
-
-        String initialSelect = client.select(TABLE_ORDERS, null, "order_id ASC");
-        int initialRows = countRows(initialSelect);
-        System.out.println("Initial row count: " + initialRows);
-
+    private void testSelectPerformance(int numRecords) throws IOException {
+        System.out.println("\nTesting SELECT performance for " + numRecords + " records...");
         long startTime = System.currentTimeMillis();
-        String deleteResponse = client.delete(TABLE_ORDERS, "amount<500.00");
+        String response = client.select(TABLE_USERS, "id<=" + numRecords, "id ASC");
         long endTime = System.currentTimeMillis();
-        System.out.println("Delete response: " + deleteResponse);
-        System.out.println("Delete orders (amount < 500.00) response time: " + (endTime - startTime) + " ms");
-
-        String immediateSelect = client.select(TABLE_ORDERS, null, "order_id ASC");
-        int immediateRows = countRows(immediateSelect);
-        System.out.println("Rows remaining immediately after delete: " + immediateRows);
-        System.out.println("Sample of remaining orders: " +
-                (immediateSelect.length() > 100 ? immediateSelect.substring(0, 100) + "..." : immediateSelect));
-
-        System.out.println("Waiting 6 seconds for index cleanup...");
-        Thread.sleep(6000);
-
-        String finalSelect = client.select(TABLE_ORDERS, null, "order_id ASC");
-        int finalRows = countRows(finalSelect);
-        System.out.println("Rows remaining after cleanup: " + finalRows);
-        System.out.println("Sample of remaining orders after cleanup: " +
-                (finalSelect.length() > 100 ? finalSelect.substring(0, 100) + "..." : finalSelect));
+        int rows = countRows(response);
+        System.out.println("Selected " + rows + " records in " + (endTime - startTime) + " ms");
     }
 
-    private int countRows(String selectResponse) {
-        if (selectResponse.equals("OK: 0 rows")) {
+    private void testDeletePerformance(int numRecords) throws IOException {
+        System.out.println("\nTesting DELETE performance for " + numRecords + " records...");
+        long startTime = System.currentTimeMillis();
+        String response = client.delete(TABLE_USERS, "id<=" + numRecords);
+        long endTime = System.currentTimeMillis();
+        System.out.println("Delete response: " + response);
+        System.out.println("Deleted " + numRecords + " records in " + (endTime - startTime) + " ms");
+    }
+
+    private void testJoinPerformance(int numRecords) throws IOException {
+        System.out.println("\nTesting JOIN performance for " + numRecords + " x " + numRecords + " records...");
+        long startTime = System.currentTimeMillis();
+        String response = client.select(TABLE_USERS, "JOIN " + TABLE_ORDERS + " id=user_id", null);
+        long endTime = System.currentTimeMillis();
+        int rows = countRows(response);
+        System.out.println("Joined " + rows + " records in " + (endTime - startTime) + " ms");
+    }
+
+    private int countRows(String response) {
+        if (response.equals("OK: 0 rows")) {
             return 0;
         }
-        if (!selectResponse.startsWith("OK: ")) {
-            System.err.println("Unexpected select response: " + selectResponse);
+        if (!response.startsWith("OK: ")) {
+            System.err.println("Unexpected response: " + response);
             return -1;
         }
-        String[] parts = selectResponse.split(";;;");
+        String[] parts = response.split(";;;");
         return parts.length - 1; // Вычитаем заголовок
+    }
+
+    private void runTests() throws IOException {
+        // Создаем таблицы
+        createTables();
+
+        // Тесты для 100 записей
+        System.out.println("\n=== Testing with 100 records ===");
+        populateTables(100);
+        testInsertPerformance(100);
+        testSelectPerformance(100);
+        testJoinPerformance(100);
+        testDeletePerformance(100);
+
+        // Очистка перед следующим тестом
+        client.delete(TABLE_USERS, null);
+        client.delete(TABLE_ORDERS, null);
+
+        // Тесты для 1000 записей
+        System.out.println("\n=== Testing with 1000 records ===");
+        populateTables(1000);
+        testInsertPerformance(1000);
+        testSelectPerformance(1000);
+        testJoinPerformance(1000);
+        testDeletePerformance(1000);
+
+        // Очистка перед следующим тестом
+        client.delete(TABLE_USERS, null);
+        client.delete(TABLE_ORDERS, null);
+
+        // Тесты для 10000 записей
+        System.out.println("\n=== Testing with 10000 records ===");
+        populateTables(10000);
+        testInsertPerformance(10000);
+        testSelectPerformance(10000);
+        testJoinPerformance(10000);
+        testDeletePerformance(10000);
     }
 
     public static void main(String[] args) {
         try {
             DieselDBPerformanceTest test = new DieselDBPerformanceTest();
-            test.populateLargeTable();
-            test.testDeletePerformance();
+            test.runTests();
             test.client.close();
-            System.out.println("Test completed successfully");
-        } catch (IOException | InterruptedException e) {
+            System.out.println("Performance tests completed successfully");
+        } catch (IOException e) {
             System.err.println("Error during test: " + e.getMessage());
             e.printStackTrace();
         }

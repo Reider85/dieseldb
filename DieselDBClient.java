@@ -18,8 +18,8 @@ public class DieselDBClient {
         return in.readLine();
     }
 
-    public String insert(String tableName, String data) throws IOException {
-        out.println("INSERT " + tableName + " " + data);
+    public String insert(String tableName, String columns, String values) throws IOException {
+        out.println("INSERT INTO " + tableName + " (" + columns + ") VALUES (" + values + ")");
         return in.readLine();
     }
 
@@ -55,10 +55,10 @@ public class DieselDBClient {
         try {
             DieselDBClient client = new DieselDBClient("localhost", DieselDBConfig.PORT);
             System.out.println(client.create("users", "id:integer:primary,name:string:unique,age:integer"));
-            System.out.println(client.insert("users", "id:::integer:1:::name:::string:Alice:::age:::integer:25"));
-            System.out.println(client.insert("users", "id:::integer:2:::name:::string:Bob:::age:::integer:30"));
-            System.out.println(client.insert("users", "id:::integer:1:::name:::string:Charlie:::age:::integer:35")); // Ошибка: дубликат PK
-            System.out.println(client.insert("users", "id:::integer:3:::name:::string:Bob:::age:::integer:40")); // Ошибка: дубликат unique
+            System.out.println(client.insert("users", "id, name, age", "1, Alice, 25"));
+            System.out.println(client.insert("users", "id, name, age", "2, Bob, 30"));
+            System.out.println(client.insert("users", "id, name, age", "1, Charlie, 35")); // Ошибка: дубликат PK
+            System.out.println(client.insert("users", "id, name, age", "3, Bob, 40")); // Ошибка: дубликат unique
             System.out.println(client.select("users", null, "id ASC"));
             System.out.println(client.update("users", "id=1", "name:::string:Bob")); // Ошибка: дубликат unique
             client.close();
