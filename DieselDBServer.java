@@ -296,6 +296,7 @@ public class DieselDBServer {
         private Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> transactionHashIndexes;
         private Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> transactionBtreeIndexes;
         private Set<Map<String, Object>> transactionDirtyRows;
+        private Set<Map<String, Object>> uncommittedInserts = new HashSet<>();
 
         private enum IsolationLevel {
             READ_UNCOMMITTED,
@@ -477,7 +478,7 @@ public class DieselDBServer {
                 return tables;
             }
             if (cmd.equals("SELECT") && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
-                return tables;
+                return tables; // READ_UNCOMMITTED sees main tables
             }
             return transactionTables;
         }
@@ -517,7 +518,10 @@ public class DieselDBServer {
 
         private void commitTransaction() {
             synchronized (tables) {
-                if (isolationLevel == IsolationLevel.SERIALIZABLE || isolationLevel == IsolationLevel.REPEATABLE_READ) {
+                if (isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
+                    uncommittedInserts.clear(); // Clear tracked inserts as they are now committed
+                } else if (isolationLevel == IsolationLevel.SERIALIZABLE || isolationLevel == IsolationLevel.REPEATABLE_READ) {
+                    // ... existing SERIALIZABLE/REPEATABLE_READ logic ...
                     for (String tableName : transactionTables.keySet()) {
                         List<Map<String, Object>> origTable = tables.get(tableName);
                         List<Map<String, Object>> transTable = transactionTables.get(tableName);
@@ -525,10 +529,14 @@ public class DieselDBServer {
                             throw new RuntimeException("Concurrent modification detected");
                         }
                     }
-                }
-
-                for (String tableName : transactionTables.keySet()) {
-                    if (isolationLevel != IsolationLevel.SERIALIZABLE) {
+                    for (String tableName : transactionTables.keySet()) {
+                        tables.put(tableName, new ArrayList<>(transactionTables.get(tableName)));
+                        hashIndexes.put(tableName, new HashMap<>(transactionHashIndexes.get(tableName)));
+                        btreeIndexes.put(tableName, new HashMap<>(transactionBtreeIndexes.get(tableName)));
+                        dirtyTables.put(tableName, true);
+                    }
+                } else {
+                    for (String tableName : transactionTables.keySet()) {
                         List<Map<String, Object>> mainTable = tables.get(tableName);
                         List<Map<String, Object>> transTable = transactionTables.get(tableName);
                         for (Map<String, Object> row : transTable) {
@@ -537,12 +545,8 @@ public class DieselDBServer {
                             }
                         }
                         rebuildIndexes(tableName);
-                    } else {
-                        tables.put(tableName, new ArrayList<>(transactionTables.get(tableName)));
-                        hashIndexes.put(tableName, new HashMap<>(transactionHashIndexes.get(tableName)));
-                        btreeIndexes.put(tableName, new HashMap<>(transactionBtreeIndexes.get(tableName)));
+                        dirtyTables.put(tableName, true);
                     }
-                    dirtyTables.put(tableName, true);
                 }
             }
             inTransaction = false;
@@ -564,6 +568,26 @@ public class DieselDBServer {
         }
 
         private void rollbackTransaction() {
+            if (isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
+                synchronized (tables) {
+                    for (String tableName : tables.keySet()) {
+                        List<Map<String, Object>> table = tables.get(tableName);
+                        for (Map<String, Object> row : uncommittedInserts) {
+                            if (table.remove(row)) {
+                                // Clean up indexes
+                                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                                    String column = entry.getKey();
+                                    Object value = entry.getValue();
+                                    hashIndexes.get(tableName).get(column).get(value).remove(row);
+                                    btreeIndexes.get(tableName).get(column).get(value).remove(row);
+                                }
+                                dirtyTables.put(tableName, true);
+                            }
+                        }
+                    }
+                }
+                uncommittedInserts.clear();
+            }
             inTransaction = false;
             cleanupTransaction();
         }
@@ -786,11 +810,13 @@ public class DieselDBServer {
                 row.put(col, value);
             }
 
-            // Выбираем целевую таблицу в зависимости от состояния транзакции
-            Map<String, List<Map<String, Object>>> targetTables = inTransaction ? transactionTables : tables;
+            // Determine the target table based on transaction state and isolation level
+            Map<String, List<Map<String, Object>>> targetTables = inTransaction && isolationLevel != IsolationLevel.READ_UNCOMMITTED
+                    ? transactionTables
+                    : tables;
 
-            synchronized (tables.get(tableName)) { // Синхронизация на основной таблице для консистентности
-                // Проверка первичного ключа
+            synchronized (tables.get(tableName)) { // Synchronize on the main table for consistency
+                // Check primary key constraint
                 String pkCol = primaryKeys.get(tableName);
                 if (pkCol != null) {
                     Object pkValue = row.get(pkCol);
@@ -803,7 +829,7 @@ public class DieselDBServer {
                     }
                 }
 
-                // Проверка уникальных ограничений
+                // Check unique constraints
                 Set<String> uniqueCols = uniqueConstraints.get(tableName);
                 if (uniqueCols != null) {
                     for (String col : uniqueCols) {
@@ -821,11 +847,16 @@ public class DieselDBServer {
                     }
                 }
 
-                // Добавляем запись в целевую таблицу
+                // Add the row to the target table
                 targetTables.computeIfAbsent(tableName, k -> new ArrayList<>()).add(row);
 
-                // Обновляем индексы только если не в транзакции
-                if (!inTransaction) {
+                // Handle transaction-specific logic
+                if (inTransaction && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
+                    uncommittedInserts.add(row); // Track inserts into main tables for rollback
+                }
+
+                // Update indexes if not in a transaction or if READ_UNCOMMITTED
+                if (!inTransaction || isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
                         Object value = entry.getValue();
@@ -835,9 +866,9 @@ public class DieselDBServer {
                                 .computeIfAbsent(value, k -> new HashSet<>()).add(row);
                     }
                 } else {
-                    // Отмечаем строку как "грязную" для транзакции
+                    // Mark the row as dirty for the transaction
                     transactionDirtyRows.add(row);
-                    // Убеждаемся, что таблица инициализирована в transactionTables
+                    // Ensure the table is initialized in transactionTables
                     transactionTables.computeIfAbsent(tableName, k -> new ArrayList<>());
                 }
             }
