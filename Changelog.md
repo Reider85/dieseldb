@@ -25,3 +25,4 @@
 0.2.5 Performance test
 0.2.6 JOIN fix
 0.2.7 revert 0.2.4
+0.2.8 base tests
