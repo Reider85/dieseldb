@@ -13,6 +13,26 @@ public class DieselDBClient {
         System.out.println(in.readLine()); // Welcome message
     }
 
+    public String setIsolation(String level) throws IOException {
+        out.println("SET_ISOLATION " + level);
+        return in.readLine();
+    }
+
+    public String begin() throws IOException {
+        out.println("BEGIN");
+        return in.readLine();
+    }
+
+    public String commit() throws IOException {
+        out.println("COMMIT");
+        return in.readLine();
+    }
+
+    public String rollback() throws IOException {
+        out.println("ROLLBACK");
+        return in.readLine();
+    }
+
     public String create(String tableName, String schema) throws IOException {
         out.println("CREATE " + tableName + " " + schema);
         return in.readLine();
