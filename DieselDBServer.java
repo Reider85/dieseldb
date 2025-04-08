@@ -180,15 +180,17 @@ public class DieselDBServer {
                         String schemaDef = createParts.length > 1 ? createParts[1] : "";
                         return createTable(tableName + " " + schemaDef);
                     case "INSERT":
-                        String[] insertParts = args.split("\\s+INTO\\s+", 2);
-                        if (insertParts.length < 2) {
+                        if (!args.startsWith("INTO ")) {
                             return "ERROR: Invalid INSERT syntax - missing INTO";
                         }
-                        String[] tableAndData = insertParts[1].split("\\s+VALUES\\s+", 2);
-                        if (tableAndData.length < 2) {
+                        String[] insertParts = args.substring(5).split("\\s+VALUES\\s+", 2); // Пропускаем "INTO "
+                        if (insertParts.length < 2) {
                             return "ERROR: Invalid INSERT syntax - missing VALUES";
                         }
-                        return insertRow(tableAndData[0].split("\\s+", 2)[0], tableAndData[1],
+                        String tablePart = insertParts[0].trim(); // "users (id, name, age)"
+                        String valuesPart = insertParts[1].trim(); // "(101, InsertTest00101, 21)"
+                        String insertTableName = tablePart.split("\\s+", 2)[0]; // "users"
+                        return insertRow(insertTableName, tablePart.substring(insertTableName.length()).trim() + " VALUES " + valuesPart,
                                 getWorkingTables(cmd), hashIndexes, btreeIndexes);
                     case "SELECT":
                         String[] selectParts = args.split("\\s+", 2);
@@ -272,10 +274,6 @@ public class DieselDBServer {
             }
 
             String trimmedData = data.trim();
-            if (!trimmedData.contains("VALUES")) {
-                return "ERROR: Invalid INSERT format - use (columns) VALUES (values)";
-            }
-
             String[] parts = trimmedData.split("\\s+VALUES\\s+", 2);
             if (parts.length != 2) {
                 return "ERROR: Invalid INSERT format - missing VALUES clause";
@@ -487,6 +485,9 @@ public class DieselDBServer {
             Map<String, Object> updates = new HashMap<>();
             for (String set : setClause.split(",")) {
                 String[] kv = set.split("=");
+                if (kv.length != 2) {
+                    return "ERROR: Invalid SET clause - use column=value";
+                }
                 updates.put(kv[0].trim(), parseValue(kv[1].trim()));
             }
 

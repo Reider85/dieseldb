@@ -73,11 +73,10 @@ public class DieselDBEnhancedPerformanceTest {
         long startTime = System.currentTimeMillis();
         String response = client.update(TABLE_USERS, "age>30", "age:::integer:35");
         long endTime = System.currentTimeMillis();
+        assertResponseOK(response, "Update failed");
         int updated = extractCount(response);
         System.out.println("Updated " + updated + " records in " + (endTime - startTime) + " ms");
-        assertResponseOK(response, "Update failed");
     }
-
     private void testSelectWithWhereAndOrder(int numRecords) throws IOException {
         System.out.println("\nTesting SELECT with WHERE and ORDER BY...");
         long startTime = System.currentTimeMillis();
@@ -187,10 +186,12 @@ public class DieselDBEnhancedPerformanceTest {
 
     private int extractCount(String response) {
         if (response.equals("OK: 0 rows") || response.equals("OK: 0")) return 0;
+        if (!response.startsWith("OK: ")) {
+            throw new AssertionError("Invalid response: " + response);
+        }
         String[] parts = response.split("\\s+");
         return Integer.parseInt(parts[1]);
     }
-
     private int countRows(String response) {
         if (response.equals("OK: 0 rows")) return 0;
         if (!response.startsWith("OK: ")) return -1;

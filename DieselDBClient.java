@@ -71,7 +71,18 @@ public class DieselDBClient {
     }
 
     public String update(String tableName, String condition, String updates) throws IOException {
-        out.println("UPDATE " + tableName + " " + condition + ";;;" + updates);
+        String[] updateParts = updates.split(":::");
+        if (updateParts.length < 3) {
+            return "ERROR: Invalid update format - use column:::type:value";
+        }
+        String column = updateParts[0];
+        String value = updateParts[2];
+        String setClause = column + "=" + value;
+        String command = "UPDATE " + tableName + " SET " + setClause;
+        if (condition != null && !condition.isEmpty()) {
+            command += " WHERE " + condition;
+        }
+        out.println(command);
         return in.readLine();
     }
 
