@@ -16,3 +16,4 @@
 0.1.6 Unique keys
 0.1.7 Unique keys by indexes
 0.1.8 async write to disk
+0.1.9 Transaction isolation levels

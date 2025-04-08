@@ -29,7 +29,6 @@ public class DieselDBServer {
     private static final Map<String, Map<String, String>> tableSchemas = new ConcurrentHashMap<>();
     private static final Map<String, String> primaryKeys = new ConcurrentHashMap<>();
     private static final Map<String, Set<String>> uniqueConstraints = new ConcurrentHashMap<>();
-    // Хранение активных операций записи для ожидания завершения при выключении
     private static final Map<String, Future<?>> pendingWrites = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
@@ -49,7 +48,7 @@ public class DieselDBServer {
             flushAllTablesToDisk();
             clientExecutor.shutdown();
             diskExecutor.shutdown();
-            waitForPendingWrites(); // Дожидаемся завершения всех операций записи
+            waitForPendingWrites();
             System.out.println("Server shutting down...");
         }));
 
@@ -160,7 +159,7 @@ public class DieselDBServer {
                     tableSchemas.remove(tableName);
                     primaryKeys.remove(tableName);
                     uniqueConstraints.remove(tableName);
-                    pendingWrites.remove(tableName); // Удаляем завершенные операции
+                    pendingWrites.remove(tableName);
                     System.out.println("Unloaded inactive table from memory: " + tableName);
                 }
             }
@@ -169,7 +168,6 @@ public class DieselDBServer {
 
     private static void saveTableToDisk(String tableName) {
         try {
-            // Сохранение данных таблицы
             Path filePath = Paths.get(DATA_DIR, tableName + ".ddb");
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try (ObjectOutputStream oos = new ObjectOutputStream(baos)) {
@@ -182,7 +180,6 @@ public class DieselDBServer {
             Future<Integer> writeFuture = channel.write(buffer, 0);
             pendingWrites.put(tableName + ".ddb", writeFuture);
 
-            // Сохранение схемы
             Path schemaPath = Paths.get(DATA_DIR, tableName + ".schema");
             ByteArrayOutputStream schemaBaos = new ByteArrayOutputStream();
             try (ObjectOutputStream schemaOos = new ObjectOutputStream(schemaBaos)) {
@@ -197,11 +194,10 @@ public class DieselDBServer {
             Future<Integer> schemaWriteFuture = schemaChannel.write(schemaBuffer, 0);
             pendingWrites.put(tableName + ".schema", schemaWriteFuture);
 
-            // Асинхронное логирование завершения
             diskExecutor.submit(() -> {
                 try {
-                    writeFuture.get(); // Ожидание завершения записи данных
-                    schemaWriteFuture.get(); // Ожидание завершения записи схемы
+                    writeFuture.get();
+                    schemaWriteFuture.get();
                     channel.close();
                     schemaChannel.close();
                     pendingWrites.remove(tableName + ".ddb");
@@ -223,13 +219,13 @@ public class DieselDBServer {
                 saveTableToDisk(tableName);
             }
         }
-        waitForPendingWrites(); // Дожидаемся завершения всех операций
+        waitForPendingWrites();
     }
 
     private static void waitForPendingWrites() {
         for (Map.Entry<String, Future<?>> entry : pendingWrites.entrySet()) {
             try {
-                entry.getValue().get(5, TimeUnit.SECONDS); // Ожидание до 5 секунд
+                entry.getValue().get(5, TimeUnit.SECONDS);
                 System.out.println("Completed pending write for " + entry.getKey());
             } catch (Exception e) {
                 System.err.println("Error waiting for write completion of " + entry.getKey() + ": " + e.getMessage());
@@ -301,15 +297,25 @@ public class DieselDBServer {
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
         private boolean inTransaction = false;
+        private IsolationLevel isolationLevel = IsolationLevel.READ_COMMITTED; // Уровень изоляции по умолчанию
         private Map<String, List<Map<String, Object>>> transactionTables;
         private Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> transactionHashIndexes;
         private Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> transactionBtreeIndexes;
+        private Set<Map<String, Object>> transactionDirtyRows; // Для отслеживания измененных строк
+
+        private enum IsolationLevel {
+            READ_UNCOMMITTED,
+            READ_COMMITTED,
+            REPEATABLE_READ,
+            SERIALIZABLE
+        }
 
         ClientHandler(Socket socket) {
             this.clientSocket = socket;
             this.transactionTables = new HashMap<>();
             this.transactionHashIndexes = new HashMap<>();
             this.transactionBtreeIndexes = new HashMap<>();
+            this.transactionDirtyRows = new HashSet<>();
         }
 
         public void run() {
@@ -358,12 +364,21 @@ public class DieselDBServer {
                     System.gc();
                     return "OK: Memory cleanup triggered";
                 }
+                if ("SET_ISOLATION".equalsIgnoreCase(command.split(" ")[0].trim())) {
+                    String level = command.split(" ", 2)[1].trim().toUpperCase();
+                    try {
+                        isolationLevel = IsolationLevel.valueOf(level);
+                        return "OK: Isolation level set to " + level;
+                    } catch (IllegalArgumentException e) {
+                        return "ERROR: Invalid isolation level. Use: READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE";
+                    }
+                }
                 if ("BEGIN".equalsIgnoreCase(command.trim())) {
                     if (inTransaction) {
                         return "ERROR: Transaction already in progress";
                     }
                     beginTransaction();
-                    return "OK: Transaction started";
+                    return "OK: Transaction started with " + isolationLevel;
                 }
                 if ("COMMIT".equalsIgnoreCase(command.trim())) {
                     if (!inTransaction) {
@@ -395,9 +410,11 @@ public class DieselDBServer {
 
                 lastAccessTimes.put(tableName, System.currentTimeMillis());
 
-                Map<String, List<Map<String, Object>>> workingTables = inTransaction ? transactionTables : tables;
-                Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> workingHashIndexes = inTransaction ? transactionHashIndexes : hashIndexes;
-                Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> workingBtreeIndexes = inTransaction ? transactionBtreeIndexes : btreeIndexes;
+                Map<String, List<Map<String, Object>>> workingTables = getWorkingTables(cmd);
+                Map<String, Map<String, Map<Object, Set<Map<String, Object>>>>> workingHashIndexes =
+                        inTransaction ? transactionHashIndexes : hashIndexes;
+                Map<String, Map<String, TreeMap<Object, Set<Map<String, Object>>>>> workingBtreeIndexes =
+                        inTransaction ? transactionBtreeIndexes : btreeIndexes;
 
                 String response;
                 switch (cmd) {
@@ -405,7 +422,8 @@ public class DieselDBServer {
                         response = createTable(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes);
                         break;
                     case "INSERT":
-                        response = data != null ? insertRow(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) : "ERROR: Missing data for INSERT";
+                        response = data != null ? insertRow(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) :
+                                "ERROR: Missing data for INSERT";
                         break;
                     case "SELECT":
                         if (data != null && data.startsWith("JOIN")) {
@@ -415,7 +433,8 @@ public class DieselDBServer {
                         }
                         break;
                     case "UPDATE":
-                        response = data != null ? updateRows(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) : "ERROR: Missing data for UPDATE";
+                        response = data != null ? updateRows(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes) :
+                                "ERROR: Missing data for UPDATE";
                         break;
                     case "DELETE":
                         response = deleteRows(tableName, data, workingTables, workingHashIndexes, workingBtreeIndexes);
@@ -437,49 +456,107 @@ public class DieselDBServer {
             }
         }
 
+        private Map<String, List<Map<String, Object>>> getWorkingTables(String cmd) {
+            if (!inTransaction) {
+                return tables;
+            }
+            if (cmd.equals("SELECT") && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
+                return tables; // Видим грязные данные
+            }
+            return transactionTables;
+        }
+
         private void beginTransaction() {
             inTransaction = true;
             transactionTables.clear();
             transactionHashIndexes.clear();
             transactionBtreeIndexes.clear();
-            for (String tableName : tables.keySet()) {
-                List<Map<String, Object>> tableCopy = new ArrayList<>();
-                synchronized (tables.get(tableName)) {
-                    for (Map<String, Object> row : tables.get(tableName)) {
-                        if (!deletedRows.contains(row)) {
-                            tableCopy.add(new HashMap<>(row));
+            transactionDirtyRows.clear();
+
+            if (isolationLevel == IsolationLevel.SERIALIZABLE) {
+                synchronized (tables) {
+                    for (String tableName : tables.keySet()) {
+                        List<Map<String, Object>> tableCopy = new ArrayList<>();
+                        for (Map<String, Object> row : tables.get(tableName)) {
+                            if (!deletedRows.contains(row)) {
+                                tableCopy.add(new HashMap<>(row));
+                            }
                         }
+                        transactionTables.put(tableName, tableCopy);
+                        Map<String, Map<Object, Set<Map<String, Object>>>> hashCopy = new HashMap<>();
+                        Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeCopy = new HashMap<>();
+                        rebuildIndexesForTransaction(tableName, tableCopy, hashCopy, btreeCopy);
+                        transactionHashIndexes.put(tableName, hashCopy);
+                        transactionBtreeIndexes.put(tableName, btreeCopy);
                     }
                 }
-                transactionTables.put(tableName, tableCopy);
-                Map<String, Map<Object, Set<Map<String, Object>>>> hashCopy = new HashMap<>();
-                Map<String, TreeMap<Object, Set<Map<String, Object>>>> btreeCopy = new HashMap<>();
-                rebuildIndexesForTransaction(tableName, tableCopy, hashCopy, btreeCopy);
-                transactionHashIndexes.put(tableName, hashCopy);
-                transactionBtreeIndexes.put(tableName, btreeCopy);
+            } else {
+                for (String tableName : tables.keySet()) {
+                    transactionTables.put(tableName, new ArrayList<>());
+                    transactionHashIndexes.put(tableName, new HashMap<>());
+                    transactionBtreeIndexes.put(tableName, new HashMap<>());
+                }
             }
         }
 
         private void commitTransaction() {
             synchronized (tables) {
+                if (isolationLevel == IsolationLevel.SERIALIZABLE || isolationLevel == IsolationLevel.REPEATABLE_READ) {
+                    for (String tableName : transactionTables.keySet()) {
+                        List<Map<String, Object>> origTable = tables.get(tableName);
+                        List<Map<String, Object>> transTable = transactionTables.get(tableName);
+                        if (!checkForConflicts(tableName, origTable, transTable)) {
+                            throw new RuntimeException("Concurrent modification detected");
+                        }
+                    }
+                }
+
                 for (String tableName : transactionTables.keySet()) {
-                    tables.put(tableName, new ArrayList<>(transactionTables.get(tableName)));
-                    hashIndexes.put(tableName, new HashMap<>(transactionHashIndexes.get(tableName)));
-                    btreeIndexes.put(tableName, new HashMap<>(transactionBtreeIndexes.get(tableName)));
+                    if (isolationLevel != IsolationLevel.SERIALIZABLE) {
+                        List<Map<String, Object>> mainTable = tables.get(tableName);
+                        List<Map<String, Object>> transTable = transactionTables.get(tableName);
+                        for (Map<String, Object> row : transTable) {
+                            if (!mainTable.contains(row)) {
+                                mainTable.add(row);
+                            }
+                        }
+                        rebuildIndexes(tableName);
+                    } else {
+                        tables.put(tableName, new ArrayList<>(transactionTables.get(tableName)));
+                        hashIndexes.put(tableName, new HashMap<>(transactionHashIndexes.get(tableName)));
+                        btreeIndexes.put(tableName, new HashMap<>(transactionBtreeIndexes.get(tableName)));
+                    }
                     dirtyTables.put(tableName, true);
                 }
             }
             inTransaction = false;
-            transactionTables.clear();
-            transactionHashIndexes.clear();
-            transactionBtreeIndexes.clear();
+            cleanupTransaction();
+        }
+
+        private boolean checkForConflicts(String tableName, List<Map<String, Object>> original, List<Map<String, Object>> transaction) {
+            if (isolationLevel == IsolationLevel.REPEATABLE_READ) {
+                for (Map<String, Object> transRow : transactionDirtyRows) {
+                    if (original.contains(transRow) && !transaction.contains(transRow)) {
+                        return false;
+                    }
+                }
+                return true;
+            } else if (isolationLevel == IsolationLevel.SERIALIZABLE) {
+                return original.equals(transaction);
+            }
+            return true;
         }
 
         private void rollbackTransaction() {
             inTransaction = false;
+            cleanupTransaction();
+        }
+
+        private void cleanupTransaction() {
             transactionTables.clear();
             transactionHashIndexes.clear();
             transactionBtreeIndexes.clear();
+            transactionDirtyRows.clear();
         }
 
         private void rebuildIndexesForTransaction(String tableName, List<Map<String, Object>> table,
@@ -690,6 +767,8 @@ public class DieselDBServer {
                         btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
                                 .computeIfAbsent(value, k -> new HashSet<>()).add(row);
                     }
+                } else {
+                    transactionDirtyRows.add(row);
                 }
             }
             return "OK: 1 row inserted";
@@ -783,6 +862,8 @@ public class DieselDBServer {
                                 btreeIndexes.get(tableName).computeIfAbsent(column, k -> new TreeMap<>())
                                         .computeIfAbsent(newValue, k -> new HashSet<>()).add(row);
                             }
+                        } else {
+                            transactionDirtyRows.add(row);
                         }
                     }
                 }
@@ -794,6 +875,12 @@ public class DieselDBServer {
                                   Map<String, List<Map<String, Object>>> tables) {
             if (!tables.containsKey(tableName)) {
                 return "ERROR: Table not found";
+            }
+
+            if (isolationLevel == IsolationLevel.READ_COMMITTED && !inTransaction) {
+                synchronized (tables.get(tableName)) {
+                    cleanIndexes(tableName);
+                }
             }
 
             String condition = null;
@@ -1277,6 +1364,7 @@ public class DieselDBServer {
                         btreeIndexes.get(tableName).clear();
                     } else {
                         table.clear();
+                        transactionDirtyRows.addAll(table);
                     }
                 }
             } else {
@@ -1311,6 +1399,8 @@ public class DieselDBServer {
                             if (!deletedRows.contains(row) && table.remove(row)) {
                                 if (!inTransaction) {
                                     deletedRows.add(row);
+                                } else {
+                                    transactionDirtyRows.add(row);
                                 }
                                 deleted++;
                             }
