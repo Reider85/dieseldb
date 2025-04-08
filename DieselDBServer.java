@@ -570,23 +570,51 @@ public class DieselDBServer {
         private void rollbackTransaction() {
             if (isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
                 synchronized (tables) {
+                    System.out.println("Starting rollback for READ_UNCOMMITTED");
+                    System.out.println("Uncommitted inserts: " + uncommittedInserts);
                     for (String tableName : tables.keySet()) {
                         List<Map<String, Object>> table = tables.get(tableName);
-                        for (Map<String, Object> row : uncommittedInserts) {
-                            if (table.remove(row)) {
-                                // Clean up indexes
-                                for (Map.Entry<String, Object> entry : row.entrySet()) {
-                                    String column = entry.getKey();
-                                    Object value = entry.getValue();
-                                    hashIndexes.get(tableName).get(column).get(value).remove(row);
-                                    btreeIndexes.get(tableName).get(column).get(value).remove(row);
-                                }
-                                dirtyTables.put(tableName, true);
+                        System.out.println("Table " + tableName + " before rollback: " + table);
+                        Iterator<Map<String, Object>> iterator = table.iterator();
+                        int removedCount = 0;
+                        while (iterator.hasNext()) {
+                            Map<String, Object> row = iterator.next();
+                            if (uncommittedInserts.contains(row)) {
+                                System.out.println("Removing row: " + row);
+                                iterator.remove();
+                                removedCount++;
                             }
                         }
+                        // Очистка индексов для всех строк в uncommittedInserts, даже если они не в таблице
+                        for (Map<String, Object> row : uncommittedInserts) {
+                            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                                String column = entry.getKey();
+                                Object value = entry.getValue();
+                                Map<Object, Set<Map<String, Object>>> hashIndex = hashIndexes.get(tableName).get(column);
+                                if (hashIndex != null && hashIndex.get(value) != null) {
+                                    hashIndex.get(value).remove(row);
+                                    if (hashIndex.get(value).isEmpty()) {
+                                        hashIndex.remove(value);
+                                    }
+                                }
+                                TreeMap<Object, Set<Map<String, Object>>> btreeIndex = btreeIndexes.get(tableName).get(column);
+                                if (btreeIndex != null && btreeIndex.get(value) != null) {
+                                    btreeIndex.get(value).remove(row);
+                                    if (btreeIndex.get(value).isEmpty()) {
+                                        btreeIndex.remove(value);
+                                    }
+                                }
+                            }
+                        }
+                        if (removedCount > 0) {
+                            dirtyTables.put(tableName, true);
+                        }
+                        System.out.println("Removed " + removedCount + " rows from " + tableName);
+                        System.out.println("Table " + tableName + " after rollback: " + table);
                     }
+                    uncommittedInserts.clear();
+                    System.out.println("Uncommitted inserts cleared");
                 }
-                uncommittedInserts.clear();
             }
             inTransaction = false;
             cleanupTransaction();
@@ -810,13 +838,13 @@ public class DieselDBServer {
                 row.put(col, value);
             }
 
-            // Determine the target table based on transaction state and isolation level
+            // Определяем целевую таблицу в зависимости от состояния транзакции и уровня изоляции
             Map<String, List<Map<String, Object>>> targetTables = inTransaction && isolationLevel != IsolationLevel.READ_UNCOMMITTED
                     ? transactionTables
                     : tables;
 
-            synchronized (tables.get(tableName)) { // Synchronize on the main table for consistency
-                // Check primary key constraint
+            synchronized (tables.get(tableName)) { // Синхронизация на основной таблице для консистентности
+                // Проверка ограничения первичного ключа
                 String pkCol = primaryKeys.get(tableName);
                 if (pkCol != null) {
                     Object pkValue = row.get(pkCol);
@@ -829,7 +857,7 @@ public class DieselDBServer {
                     }
                 }
 
-                // Check unique constraints
+                // Проверка уникальных ограничений
                 Set<String> uniqueCols = uniqueConstraints.get(tableName);
                 if (uniqueCols != null) {
                     for (String col : uniqueCols) {
@@ -847,15 +875,18 @@ public class DieselDBServer {
                     }
                 }
 
-                // Add the row to the target table
+                // Добавление строки в целевую таблицу
                 targetTables.computeIfAbsent(tableName, k -> new ArrayList<>()).add(row);
+                System.out.println("Inserted row into " + tableName + ": " + row);
 
-                // Handle transaction-specific logic
+                // Логика для транзакций
                 if (inTransaction && isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
-                    uncommittedInserts.add(row); // Track inserts into main tables for rollback
+                    uncommittedInserts.add(row);
+                    System.out.println("Added to uncommittedInserts: " + row);
+                    System.out.println("Current uncommittedInserts: " + uncommittedInserts);
                 }
 
-                // Update indexes if not in a transaction or if READ_UNCOMMITTED
+                // Обновление индексов, если не в транзакции или в READ_UNCOMMITTED
                 if (!inTransaction || isolationLevel == IsolationLevel.READ_UNCOMMITTED) {
                     for (Map.Entry<String, Object> entry : row.entrySet()) {
                         String column = entry.getKey();
@@ -866,9 +897,9 @@ public class DieselDBServer {
                                 .computeIfAbsent(value, k -> new HashSet<>()).add(row);
                     }
                 } else {
-                    // Mark the row as dirty for the transaction
+                    // Отмечаем строку как "грязную" для транзакции
                     transactionDirtyRows.add(row);
-                    // Ensure the table is initialized in transactionTables
+                    // Убеждаемся, что таблица инициализирована в transactionTables
                     transactionTables.computeIfAbsent(tableName, k -> new ArrayList<>());
                 }
             }
@@ -995,14 +1026,12 @@ public class DieselDBServer {
             }
 
             List<Map<String, Object>> result;
-            try {
+            synchronized (tables.get(tableName)) {
                 if (condition == null || condition.isEmpty()) {
-                    synchronized (tables.get(tableName)) {
-                        result = new ArrayList<>();
-                        for (Map<String, Object> row : tables.get(tableName)) {
-                            if (!deletedRows.contains(row)) {
-                                result.add(row);
-                            }
+                    result = new ArrayList<>();
+                    for (Map<String, Object> row : tables.get(tableName)) {
+                        if (!deletedRows.contains(row)) {
+                            result.add(row);
                         }
                     }
                 } else {
@@ -1011,6 +1040,8 @@ public class DieselDBServer {
                         System.err.println("evaluateWithIndexes returned null for condition: " + condition);
                         result = new ArrayList<>();
                     }
+                    // Фильтруем только те строки, которые действительно в таблице
+                    result.retainAll(tables.get(tableName));
                     result.removeIf(deletedRows::contains);
                 }
 
@@ -1039,10 +1070,10 @@ public class DieselDBServer {
                         return ascending ? comparison : -comparison;
                     });
                 }
-            } catch (Exception e) {
-                System.err.println("Error in selectRows: " + e.getMessage());
-                return "ERROR: Server exception - " + e.getMessage();
             }
+
+            System.out.println("Selecting from " + tableName + " with condition: " + conditionAndOrder);
+            System.out.println("Result rows: " + result);
 
             if (result.isEmpty()) {
                 return "OK: 0 rows";
@@ -1054,13 +1085,13 @@ public class DieselDBServer {
                 for (Map<String, Object> row : result) {
                     response.append(";;;").append(String.join(":::", row.values().stream().map(this::formatValue).toArray(String[]::new)));
                 }
+                System.out.println("Select response: " + response);
                 return response.toString();
             } catch (Exception e) {
                 System.err.println("Error formatting select response: " + e.getMessage());
                 return "ERROR: Response formatting failed - " + e.getMessage();
             }
         }
-
         private List<Map<String, Object>> evaluateWithIndexes(String tableName, String condition,
                                                               Map<String, List<Map<String, Object>>> tables) {
             List<Map<String, Object>> result = new ArrayList<>();
@@ -1073,6 +1104,7 @@ public class DieselDBServer {
                 for (String expression : andParts) {
                     expression = expression.trim();
                     Set<Map<String, Object>> rows = evaluateSingleCondition(tableName, expression, tables);
+                    System.out.println("Condition: " + expression + ", Rows: " + rows);
                     if (rows == null) {
                         rows = new HashSet<>();
                     }
@@ -1089,6 +1121,7 @@ public class DieselDBServer {
                 }
             }
 
+            System.out.println("Final result from evaluateWithIndexes: " + result);
             return new ArrayList<>(new LinkedHashSet<>(result));
         }
 
