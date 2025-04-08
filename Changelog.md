@@ -23,3 +23,4 @@
 0.2.3 JOIN optimization
 0.2.4 Autoincrement keys
 0.2.5 Performance test
+0.2.6 JOIN fix

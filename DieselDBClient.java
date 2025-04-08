@@ -3,123 +3,49 @@ import java.net.Socket;
 import java.util.*;
 
 public class DieselDBClient {
-    private final String host;
-    private final int port;
-    private Socket socket;
-    private PrintWriter out;
-    private BufferedReader in;
+    private final Socket socket;
+    private final PrintWriter out;
+    private final BufferedReader in;
 
     public DieselDBClient(String host, int port) throws IOException {
-        this.host = host;
-        this.port = port;
-        connect();
-    }
-
-    private void connect() throws IOException {
         socket = new Socket(host, port);
         out = new PrintWriter(socket.getOutputStream(), true);
         in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
         String welcome = in.readLine();
-        if (!welcome.startsWith("OK")) {
-            throw new IOException("Failed to connect: " + welcome);
+        if (welcome == null || !welcome.startsWith("OK:")) {
+            throw new IOException("Failed to connect to server: " + welcome);
         }
         System.out.println(welcome);
     }
 
-    public void close() throws IOException {
-        if (socket != null && !socket.isClosed()) {
-            socket.close();
-        }
-    }
-
-    public String sendCommand(String command) throws IOException {
-        if (socket.isClosed()) {
-            connect();
-        }
-        out.println(command);
+    public String create(String tableName, String schema) throws IOException {
+        out.println("CREATE " + tableName + " " + schema);
         out.flush();
         return in.readLine();
     }
 
-    // Создание таблицы (поддерживает autoincrement)
-    public String create(String tableName, String schemaDefinition) throws IOException {
-        String command = "CREATE " + tableName;
-        if (schemaDefinition != null && !schemaDefinition.isEmpty()) {
-            command += " " + schemaDefinition;
-        }
-        return sendCommand(command);
-    }
-
-    // Вставка строки (autoincrement автоматически обрабатывается сервером)
     public String insert(String tableName, String columns, String values) throws IOException {
-        return sendCommand("INSERT INTO " + tableName + " (" + columns + ") VALUES (" + values + ")");
+        out.println("INSERT INTO " + tableName + " (" + columns + ") VALUES (" + values + ")");
+        out.flush();
+        return in.readLine();
     }
 
-    // Выборка строк
     public List<Map<String, String>> select(String tableName, String condition, String orderBy) throws IOException {
-        String command = "SELECT " + tableName;
-        if (condition != null && !condition.isEmpty()) {
-            command += " " + condition;
-        }
-        if (orderBy != null && !orderBy.isEmpty()) {
-            command += " ORDER BY " + orderBy;
-        }
-        String response = sendCommand(command);
-        return parseResponse(response);
-    }
-
-    // Обновление строк
-    public String update(String tableName, String condition, Map<String, String> updates) throws IOException {
-        StringBuilder updateStr = new StringBuilder();
-        for (Map.Entry<String, String> entry : updates.entrySet()) {
-            if (updateStr.length() > 0) updateStr.append(":::");
-            updateStr.append(entry.getKey()).append(":::").append(entry.getValue());
-        }
-        String command = "UPDATE " + tableName + " " + condition + ";;;" + updateStr;
-        return sendCommand(command);
-    }
-
-    // Удаление строк
-    public String delete(String tableName, String condition) throws IOException {
-        String command = "DELETE " + tableName;
-        if (condition != null && !condition.isEmpty()) {
-            command += " " + condition;
-        }
-        return sendCommand(command);
-    }
-
-    // Начать транзакцию
-    public String begin() throws IOException {
-        return sendCommand("BEGIN");
-    }
-
-    // Завершить транзакцию
-    public String commit() throws IOException {
-        return sendCommand("COMMIT");
-    }
-
-    // Откатить транзакцию
-    public String rollback() throws IOException {
-        return sendCommand("ROLLBACK");
-    }
-
-    // Установить уровень изоляции
-    public String setIsolation(String level) throws IOException {
-        return sendCommand("SET_ISOLATION " + level);
-    }
-
-    private List<Map<String, String>> parseResponse(String response) throws IOException {
-        if (!response.startsWith("OK")) {
-            throw new IOException(response);
+        String command = "SELECT " + tableName + (condition != null ? " " + condition : "") + (orderBy != null ? " ORDER BY " + orderBy : "");
+        System.out.println("Sending command: " + command);
+        out.println(command);
+        out.flush();
+        String response = in.readLine();
+        System.out.println("Received response: " + response);
+        if (response == null || !response.startsWith("OK: ")) {
+            throw new IOException("Select failed: " + response);
         }
         if (response.equals("OK: 0 rows")) {
-            return Collections.emptyList();
+            return new ArrayList<>();
         }
-
-        String[] parts = response.split(";;;");
-        String[] headers = parts[0].replace("OK: ", "").split(":::");
+        String[] parts = response.substring(4).split(";;;");
+        String[] headers = parts[0].split(":::");
         List<Map<String, String>> result = new ArrayList<>();
-
         for (int i = 1; i < parts.length; i++) {
             String[] values = parts[i].split(":::");
             Map<String, String> row = new LinkedHashMap<>();
@@ -131,40 +57,30 @@ public class DieselDBClient {
         return result;
     }
 
-    // Тестирование клиента
-    public static void main(String[] args) throws IOException {
-        DieselDBClient client = new DieselDBClient("localhost", DieselDBConfig.PORT);
-
-        // Создаем таблицу с автоинкрементным первичным ключом
-        System.out.println(client.create("users", "id:autoincrement:primary,name:string,age:integer"));
-
-        // Вставляем строки (id автоматически увеличивается)
-        System.out.println(client.insert("users", "name,age", "Alice,25"));
-        System.out.println(client.insert("users", "name,age", "Bob,30"));
-        System.out.println(client.insert("users", "name,age", "Charlie,35"));
-
-        // Выборка всех строк
-        List<Map<String, String>> users = client.select("users", null, "id ASC");
-        System.out.println("Users:");
-        for (Map<String, String> user : users) {
-            System.out.println(user);
+    public String update(String tableName, String condition, Map<String, String> updates) throws IOException {
+        StringBuilder command = new StringBuilder("UPDATE " + tableName + " " + condition);
+        command.append(";;;");
+        boolean first = true;
+        for (Map.Entry<String, String> entry : updates.entrySet()) {
+            if (!first) command.append(":::");
+            command.append(entry.getKey()).append(":::").append(entry.getValue());
+            first = false;
         }
+        out.println(command.toString());
+        out.flush();
+        return in.readLine();
+    }
 
-        // Обновление строки
-        Map<String, String> updates = new HashMap<>();
-        updates.put("age", "26");
-        System.out.println(client.update("users", "id=1", updates));
+    public String delete(String tableName, String condition) throws IOException {
+        String command = "DELETE " + tableName + (condition != null ? " " + condition : "");
+        out.println(command);
+        out.flush();
+        return in.readLine();
+    }
 
-        // Удаление строки
-        System.out.println(client.delete("users", "id=2"));
-
-        // Выборка после изменений
-        users = client.select("users", null, "id ASC");
-        System.out.println("Users after update and delete:");
-        for (Map<String, String> user : users) {
-            System.out.println(user);
-        }
-
-        client.close();
+    public void close() throws IOException {
+        if (out != null) out.close();
+        if (in != null) in.close();
+        if (socket != null) socket.close();
     }
 }
