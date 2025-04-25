@@ -5,3 +5,4 @@
 0.0.5 UPDATE
 0.0.6 save data at files
 0.0.7 improve write on disc
+0.0.8 Client and Server

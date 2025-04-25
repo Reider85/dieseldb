@@ -68,7 +68,9 @@ class Table implements TableStorage {
             // Read header
             String header = reader.readLine();
             if (header == null || !header.equals(String.join(",", columns))) {
-                throw new RuntimeException("Invalid header in table file: " + tableName);
+                String errorMsg = String.format("Invalid header in table file: %s. Expected: %s, Found: %s",
+                        tableName, String.join(",", columns), header == null ? "null" : header);
+                throw new RuntimeException(errorMsg);
             }
             // Read rows
             String line;
