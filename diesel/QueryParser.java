@@ -79,15 +79,25 @@ class QueryParser {
         String tableAndCondition = parts[1].trim();
         String tableName = tableAndCondition.split(" ")[0].trim();
         String conditionColumn = null;
-        String conditionValue = null;
+        Object conditionValue = null;
 
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
             String condition = tableCondition[1].trim();
             String[] conditionParts = condition.split("=");
-            if (conditionParts.length == 2) {
-                conditionColumn = conditionParts[0].trim();
-                conditionValue = conditionParts[1].trim().replace("'", "");
+            if (conditionParts.length != 2) {
+                throw new IllegalArgumentException("Invalid WHERE clause");
+            }
+            conditionColumn = conditionParts[0].trim();
+            String valueStr = conditionParts[1].trim();
+            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
+                conditionValue = valueStr.substring(1, valueStr.length() - 1);
+            } else {
+                try {
+                    conditionValue = Integer.parseInt(valueStr);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid condition value: " + valueStr);
+                }
             }
         }
 
@@ -117,9 +127,20 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid VALUES syntax");
         }
         valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
-        List<String> values = Arrays.stream(valuesPart.split(","))
-                .map(val -> val.trim().replace("'", ""))
-                .collect(Collectors.toList());
+        String[] valueStrings = valuesPart.split(",");
+        List<Object> values = new ArrayList<>();
+        for (String val : valueStrings) {
+            val = val.trim();
+            if (val.startsWith("'") && val.endsWith("'")) {
+                values.add(val.substring(1, val.length() - 1)); // Сохраняем как строку
+            } else {
+                try {
+                    values.add(Integer.parseInt(val)); // Преобразуем в Integer
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid integer value: " + val);
+                }
+            }
+        }
 
         LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, values={2}",
                 new Object[]{tableName, columns, values});
@@ -139,31 +160,51 @@ class QueryParser {
         String setAndWhere = parts[1].trim();
         String setPart;
         String conditionColumn = null;
-        String conditionValue = null;
+        Object conditionValue = null;
 
         if (setAndWhere.contains("WHERE")) {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
             String condition = setWhereParts[1].trim();
             String[] conditionParts = condition.split("=");
-            if (conditionParts.length == 2) {
-                conditionColumn = conditionParts[0].trim();
-                conditionValue = conditionParts[1].trim().replace("'", "");
+            if (conditionParts.length != 2) {
+                throw new IllegalArgumentException("Invalid WHERE clause");
+            }
+            conditionColumn = conditionParts[0].trim();
+            String valueStr = conditionParts[1].trim();
+            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
+                conditionValue = valueStr.substring(1, valueStr.length() - 1);
+            } else {
+                try {
+                    conditionValue = Integer.parseInt(valueStr);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid condition value: " + valueStr);
+                }
             }
         } else {
             setPart = setAndWhere;
         }
 
         String[] assignments = setPart.split(",");
-        Map<String, String> updates = new HashMap<>();
+        Map<String, Object> updates = new HashMap<>();
         for (String assignment : assignments) {
             String[] kv = assignment.split("=");
             if (kv.length != 2) {
                 throw new IllegalArgumentException("Invalid SET clause");
             }
             String column = kv[0].trim();
-            String valueStr = kv[1].trim().replace("'", "");
-            updates.put(column, valueStr);
+            String valueStr = kv[1].trim();
+            Object value;
+            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
+                value = valueStr.substring(1, valueStr.length() - 1);
+            } else {
+                try {
+                    value = Integer.parseInt(valueStr);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid integer value: " + valueStr);
+                }
+            }
+            updates.put(column, value);
         }
 
         LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}={3}",

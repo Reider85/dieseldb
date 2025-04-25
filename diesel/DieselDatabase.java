@@ -18,7 +18,7 @@ public class DieselDatabase {
         }
 
         // Insert data via query
-        String insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('1', 'Alice', '25')";
+        String insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('1', 'Alice', 25)";
         try {
             db.executeQuery(insertQuery);
         } catch (Exception e) {
@@ -26,7 +26,7 @@ public class DieselDatabase {
         }
 
         // Insert more data via query
-        insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('2', 'Bob', '30')";
+        insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('2', 'Bob', 30)";
         try {
             db.executeQuery(insertQuery);
         } catch (Exception e) {
@@ -34,7 +34,7 @@ public class DieselDatabase {
         }
 
         // Update data via query
-        String updateQuery = "UPDATE USERS SET AGE = '26' WHERE ID = '1'";
+        String updateQuery = "UPDATE USERS SET AGE = 26 WHERE ID = '1'";
         try {
             db.executeQuery(updateQuery);
             LOGGER.log(Level.INFO, "Update query executed: {0}", new Object[]{updateQuery});

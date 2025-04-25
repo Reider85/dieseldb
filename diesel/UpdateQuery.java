@@ -2,11 +2,11 @@ package diesel;
 import java.util.*;
 
 class UpdateQuery implements Query<Void> {
-    private final Map<String, String> updates;
+    private final Map<String, Object> updates;
     private final String conditionColumn;
-    private final String conditionValue;
+    private final Object conditionValue;
 
-    public UpdateQuery(Map<String, String> updates, String conditionColumn, String conditionValue) {
+    public UpdateQuery(Map<String, Object> updates, String conditionColumn, Object conditionValue) {
         this.updates = updates;
         this.conditionColumn = conditionColumn;
         this.conditionValue = conditionValue;
@@ -18,30 +18,28 @@ class UpdateQuery implements Query<Void> {
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         Map<String, Object> validatedUpdates = new HashMap<>();
 
-        // Validate and convert update values
-        for (Map.Entry<String, String> entry : updates.entrySet()) {
+        for (Map.Entry<String, Object> entry : updates.entrySet()) {
             String column = entry.getKey();
-            String value = entry.getValue();
+            Object value = entry.getValue();
             Class<?> expectedType = columnTypes.get(column);
             if (expectedType == null) {
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
-            if (expectedType == Integer.class) {
+            if (expectedType == Integer.class && !(value instanceof Integer)) {
                 try {
-                    validatedUpdates.put(column, Integer.parseInt(value));
+                    value = Integer.parseInt(value.toString());
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException(
                             String.format("Invalid value '%s' for column %s: expected INTEGER", value, column));
                 }
-            } else if (expectedType == String.class) {
-                validatedUpdates.put(column, value);
-            } else {
-                throw new IllegalArgumentException("Unsupported column type for column " + column);
+            } else if (expectedType == String.class && !(value instanceof String)) {
+                value = value.toString();
             }
+            validatedUpdates.put(column, value);
         }
 
         for (Map<String, Object> row : rows) {
-            if (conditionColumn == null || String.valueOf(row.get(conditionColumn)).equals(conditionValue)) {
+            if (conditionColumn == null || String.valueOf(row.get(conditionColumn)).equals(String.valueOf(conditionValue))) {
                 validatedUpdates.forEach(row::put);
             }
         }

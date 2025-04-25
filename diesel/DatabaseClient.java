@@ -50,7 +50,7 @@ public class DatabaseClient {
 
     public void disconnect() {
         try {
-            out.writeObject("EXIT"); // Исправлено
+            out.writeObject("EXIT");
             out.flush();
             if (in != null) in.close();
             if (out != null) out.close();
@@ -71,15 +71,15 @@ public class DatabaseClient {
             client.executeQuery(createTable);
 
             // Insert data
-            String insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('1', 'Alice', '25')";
+            String insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('1', 'Alice', 25)";
             client.executeQuery(insertQuery);
 
             // Insert more data
-            insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('2', 'Bob', '30')";
+            insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('2', 'Bob', 30)";
             client.executeQuery(insertQuery);
 
             // Update data
-            String updateQuery = "UPDATE USERS SET AGE = '26' WHERE ID = '1'";
+            String updateQuery = "UPDATE USERS SET AGE = 26 WHERE ID = '1'";
             client.executeQuery(updateQuery);
 
             // Select data
