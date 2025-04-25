@@ -12,6 +12,7 @@ class QueryParser {
     private static final Logger LOGGER = Logger.getLogger(QueryParser.class.getName());
     private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
     public Query<?> parse(String query) {
         try {
@@ -80,6 +81,9 @@ class QueryParser {
                 case "CHAR":
                     columnTypes.put(colName, Character.class);
                     break;
+                case "UUID":
+                    columnTypes.put(colName, UUID.class);
+                    break;
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
                     break;
@@ -146,6 +150,12 @@ class QueryParser {
                         conditionValue = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
+                    }
+                } else if (strippedValue.matches(UUID_PATTERN)) {
+                    try {
+                        conditionValue = UUID.fromString(strippedValue);
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
                     }
                 } else if (strippedValue.length() == 1) {
                     conditionValue = strippedValue.charAt(0);
@@ -237,6 +247,12 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
+                } else if (strippedValue.matches(UUID_PATTERN)) {
+                    try {
+                        values.add(UUID.fromString(strippedValue));
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
+                    }
                 } else if (strippedValue.length() == 1) {
                     values.add(strippedValue.charAt(0));
                 } else {
@@ -327,6 +343,12 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
+                } else if (strippedValue.matches(UUID_PATTERN)) {
+                    try {
+                        conditionValue = UUID.fromString(strippedValue);
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
+                    }
                 } else if (strippedValue.length() == 1) {
                     conditionValue = strippedValue.charAt(0);
                 } else {
@@ -398,6 +420,12 @@ class QueryParser {
                         value = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
+                    }
+                } else if (strippedValue.matches(UUID_PATTERN)) {
+                    try {
+                        value = UUID.fromString(strippedValue);
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
                     }
                 } else if (strippedValue.length() == 1) {
                     value = strippedValue.charAt(0);

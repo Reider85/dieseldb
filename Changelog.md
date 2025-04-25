@@ -22,3 +22,4 @@
 0.2.2 add type Float
 0.2.3 add type Double
 0.2.4 add type Char
+0.2.5 add type UUID

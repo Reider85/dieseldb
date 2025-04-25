@@ -87,6 +87,13 @@ class InsertQuery implements Query<Void> {
                     throw new IllegalArgumentException(
                             String.format("Invalid value '%s' for column %s: expected CHAR", value, column));
                 }
+            } else if (expectedType == UUID.class && !(value instanceof UUID)) {
+                try {
+                    value = UUID.fromString(value.toString());
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException(
+                            String.format("Invalid value '%s' for column %s: expected UUID", value, column));
+                }
             } else if (expectedType == String.class && !(value instanceof String)) {
                 value = value.toString();
             } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
