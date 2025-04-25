@@ -13,23 +13,26 @@ public class DieselDatabase {
         List<String> columns = Arrays.asList("ID", "NAME", "AGE");
         db.createTable("USERS", columns);
 
-        // Insert data
-        Map<String, String> row1 = new HashMap<>();
-        row1.put("ID", "1");
-        row1.put("NAME", "Alice");
-        row1.put("AGE", "25");
-        db.insert("USERS", row1);
-
-        Map<String, String> row2 = new HashMap<>();
-        row2.put("ID", "2");
-        row2.put("NAME", "Bob");
-        row2.put("AGE", "30");
-        db.insert("USERS", row2);
-
-        // Execute query
-        String query = "SELECT NAME, AGE FROM USERS WHERE AGE = '25'";
+        // Insert data via query
+        String insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('1', 'Alice', '25')";
         try {
-            List<Map<String, String>> result = db.executeQuery(query);
+            db.executeQuery(insertQuery);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Insert query failed: {0}", new Object[]{e.getMessage()});
+        }
+
+        // Insert more data via query
+        insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('2', 'Bob', '30')";
+        try {
+            db.executeQuery(insertQuery);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Insert query failed: {0}", new Object[]{e.getMessage()});
+        }
+
+        // Execute select query
+        String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE = '25'";
+        try {
+            List<Map<String, String>> result = db.executeQuery(selectQuery);
             LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});
             System.out.println("Query Result:");
             for (Map<String, String> row : result) {

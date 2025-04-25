@@ -23,17 +23,22 @@ class Database {
         }
     }
 
-    public List<Map<String, String>> executeQuery(String query) {
+    @SuppressWarnings("unchecked")
+    public <T> T executeQuery(String query) {
         try {
             LOGGER.log(Level.INFO, "Executing query: {0}", query);
-            Query parsedQuery = parser.parse(query);
+            Query<T> parsedQuery = (Query<T>) parser.parse(query);
             String tableName = extractTableName(query);
             Table table = tables.get(tableName);
             if (table == null) {
                 throw new IllegalArgumentException("Table not found: " + tableName);
             }
-            List<Map<String, String>> result = parsedQuery.execute(table);
-            LOGGER.log(Level.INFO, "Query returned {0} rows", new Object[]{result.size()});
+            T result = parsedQuery.execute(table);
+            if (result instanceof List) {
+                LOGGER.log(Level.INFO, "Query returned {0} rows", new Object[]{((List<?>) result).size()});
+            } else {
+                LOGGER.log(Level.INFO, "Insert query executed successfully");
+            }
             return result;
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}", new Object[]{query, e.getMessage()});
@@ -42,12 +47,26 @@ class Database {
     }
 
     private String extractTableName(String query) {
-        String normalized = query.toUpperCase();
-        String[] parts = normalized.split("FROM");
-        if (parts.length < 2) {
-            return "";
+        String normalized = query.toUpperCase().trim();
+
+        if (normalized.startsWith("INSERT INTO")) {
+            // For INSERT queries, extract table name between "INSERT INTO" and the column list
+            String afterInsert = normalized.replace("INSERT INTO", "").trim();
+            int parenIndex = afterInsert.indexOf("(");
+            if (parenIndex == -1) {
+                return "";
+            }
+            return afterInsert.substring(0, parenIndex).trim();
+        } else if (normalized.contains("FROM")) {
+            // For SELECT queries, extract table name after "FROM"
+            String[] parts = normalized.split("FROM");
+            if (parts.length < 2) {
+                return "";
+            }
+            String tablePart = parts[1].trim();
+            return tablePart.split(" ")[0].trim();
         }
-        String tablePart = parts[1].trim();
-        return tablePart.split(" ")[0].trim();
+
+        return "";
     }
 }

@@ -9,6 +9,7 @@ class Table implements TableStorage {
         this.columns = new ArrayList<>(columns);
     }
 
+    @Override
     public void addRow(Map<String, String> row) {
         if (row.keySet().containsAll(columns)) {
             rows.add(new HashMap<>(row));

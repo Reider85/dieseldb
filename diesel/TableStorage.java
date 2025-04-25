@@ -1,6 +1,7 @@
 package diesel;
 import java.util.*;
-public interface TableStorage {
+interface TableStorage {
     List<Map<String, String>> getRows();
     List<String> getColumns();
+    void addRow(Map<String, String> row);
 }
