@@ -43,7 +43,7 @@ class InsertQuery implements Query<Void> {
                         String.format("Invalid value '%s' for column %s: expected DATE", value, column));
             } else if (expectedType == LocalDateTime.class && !(value instanceof LocalDateTime)) {
                 throw new IllegalArgumentException(
-                        String.format("Invalid value '%s' for column %s: expected DATETIME", value, column));
+                        String.format("Invalid value '%s' for column %s: expected DATETIME or DATETIME_MS", value, column));
             }
             row.put(column, value);
         }
