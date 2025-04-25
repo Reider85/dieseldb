@@ -24,7 +24,7 @@ class QueryParser {
         }
     }
 
-    private Query<List<Map<String, String>>> parseSelectQuery(String normalized, String original) {
+    private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original) {
         String[] parts = normalized.split("FROM");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid SELECT query format");
@@ -51,10 +51,6 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, condition={2}={3}",
-                new Object[]{columns, tableName, conditionColumn != null ? conditionColumn : "none",
-                        conditionValue != null ? conditionValue : "none"});
-
         return new SelectQuery(columns, conditionColumn, conditionValue);
     }
 
@@ -77,12 +73,16 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid VALUES syntax");
         }
         valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
-        List<String> values = Arrays.stream(valuesPart.split(","))
-                .map(val -> val.trim().replace("'", ""))
-                .collect(Collectors.toList());
-
-        LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, values={2}",
-                new Object[]{tableName, columns, values});
+        String[] valueStrings = valuesPart.split(",");
+        List<Object> values = new ArrayList<>();
+        for (String val : valueStrings) {
+            val = val.trim().replace("'", "");
+            try {
+                values.add(Integer.parseInt(val)); // Пытаемся преобразовать в Integer
+            } catch (NumberFormatException e) {
+                values.add(val); // Если не удалось, оставляем как String
+            }
+        }
 
         return new InsertQuery(columns, values);
     }
@@ -115,20 +115,22 @@ class QueryParser {
         }
 
         String[] assignments = setPart.split(",");
-        Map<String, String> updates = new HashMap<>();
+        Map<String, Object> updates = new HashMap<>();
         for (String assignment : assignments) {
             String[] kv = assignment.split("=");
             if (kv.length != 2) {
                 throw new IllegalArgumentException("Invalid SET clause");
             }
             String column = kv[0].trim();
-            String value = kv[1].trim().replace("'", "");
+            String valueStr = kv[1].trim().replace("'", "");
+            Object value;
+            try {
+                value = Integer.parseInt(valueStr);
+            } catch (NumberFormatException e) {
+                value = valueStr;
+            }
             updates.put(column, value);
         }
-
-        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}={3}",
-                new Object[]{tableName, updates, conditionColumn != null ? conditionColumn : "none",
-                        conditionValue != null ? conditionValue : "none"});
 
         return new UpdateQuery(updates, conditionColumn, conditionValue);
     }

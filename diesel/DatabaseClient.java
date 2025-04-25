@@ -1,5 +1,4 @@
 package diesel;
-
 import java.io.*;
 import java.net.*;
 import java.util.List;
@@ -85,9 +84,9 @@ public class DatabaseClient {
 
             // Select data
             String selectQuery = "SELECT NAME, AGE FROM USERS WHERE ID = '1'";
-            List<Map<String, String>> result = (List<Map<String, String>>) client.executeQuery(selectQuery);
+            List<Map<String, Object>> result = (List<Map<String, Object>>) client.executeQuery(selectQuery);
             System.out.println("Query Result:");
-            for (Map<String, String> row : result) {
+            for (Map<String, Object> row : result) {
                 System.out.println(row);
             }
         } catch (Exception e) {

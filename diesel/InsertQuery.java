@@ -3,9 +3,9 @@ import java.util.*;
 
 class InsertQuery implements Query<Void> {
     private final List<String> columns;
-    private final List<String> values;
+    private final List<Object> values;
 
-    public InsertQuery(List<String> columns, List<String> values) {
+    public InsertQuery(List<String> columns, List<Object> values) {
         this.columns = columns;
         this.values = values;
     }
@@ -15,7 +15,7 @@ class InsertQuery implements Query<Void> {
         if (columns.size() != values.size()) {
             throw new IllegalArgumentException("Column and value counts mismatch");
         }
-        Map<String, String> row = new HashMap<>();
+        Map<String, Object> row = new HashMap<>();
         for (int i = 0; i < columns.size(); i++) {
             row.put(columns.get(i), values.get(i));
         }

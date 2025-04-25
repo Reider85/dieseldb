@@ -9,9 +9,13 @@ public class DieselDatabase {
     public static void main(String[] args) {
         Database db = new Database();
 
-        // Create table
+        // Create table with types
         List<String> columns = Arrays.asList("ID", "NAME", "AGE");
-        db.createTable("USERS", columns);
+        Map<String, Class<?>> columnTypes = new HashMap<>();
+        columnTypes.put("ID", String.class);
+        columnTypes.put("NAME", String.class);
+        columnTypes.put("AGE", Integer.class);
+        db.createTable("USERS", columns, columnTypes);
 
         // Insert data via query
         String insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('1', 'Alice', '25')";
@@ -41,10 +45,10 @@ public class DieselDatabase {
         // Execute select query to verify update
         String selectQuery = "SELECT NAME, AGE FROM USERS WHERE ID = '1'";
         try {
-            List<Map<String, String>> result = db.executeQuery(selectQuery);
+            List<Map<String, Object>> result = (List<Map<String, Object>>) db.executeQuery(selectQuery);
             LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});
             System.out.println("Query Result after Update:");
-            for (Map<String, String> row : result) {
+            for (Map<String, Object> row : result) {
                 System.out.println(row);
             }
         } catch (Exception e) {
