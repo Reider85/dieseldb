@@ -50,7 +50,6 @@ public class DieselDBClient {
         out.close();
         socket.close();
     }
-
     public static void main(String[] args) {
         try {
             DieselDBClient client = new DieselDBClient("localhost", 9090);
