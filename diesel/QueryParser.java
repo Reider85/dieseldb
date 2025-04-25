@@ -74,6 +74,9 @@ class QueryParser {
                 case "FLOAT":
                     columnTypes.put(colName, Float.class);
                     break;
+                case "DOUBLE":
+                    columnTypes.put(colName, Double.class);
+                    break;
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
                     break;
@@ -152,6 +155,9 @@ class QueryParser {
                     if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
                             bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
                         conditionValue = bd.floatValue();
+                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
+                        conditionValue = bd.doubleValue();
                     } else {
                         conditionValue = bd;
                     }
@@ -237,6 +243,9 @@ class QueryParser {
                     if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
                             bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
                         values.add(bd.floatValue());
+                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
+                        values.add(bd.doubleValue());
                     } else {
                         values.add(bd);
                     }
@@ -322,6 +331,9 @@ class QueryParser {
                     if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
                             bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
                         conditionValue = bd.floatValue();
+                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
+                        conditionValue = bd.doubleValue();
                     } else {
                         conditionValue = bd;
                     }
@@ -389,6 +401,9 @@ class QueryParser {
                     if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
                             bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
                         value = bd.floatValue();
+                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
+                        value = bd.doubleValue();
                     } else {
                         value = bd;
                     }

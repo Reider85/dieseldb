@@ -19,6 +19,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 .filter(row -> conditionColumn == null ||
                         (row.get(conditionColumn) instanceof Float && conditionValue instanceof Float &&
                                 Math.abs(((Float) row.get(conditionColumn)) - ((Float) conditionValue)) < 1e-7) ||
+                        (row.get(conditionColumn) instanceof Double && conditionValue instanceof Double &&
+                                Math.abs(((Double) row.get(conditionColumn)) - ((Double) conditionValue)) < 1e-7) ||
                         String.valueOf(row.get(conditionColumn)).equals(String.valueOf(conditionValue)))
                 .map(row -> filterColumns(row, columns))
                 .collect(Collectors.toList());
