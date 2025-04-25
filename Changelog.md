@@ -16,3 +16,4 @@
 0.1.6 add type DateTime with milliseconds
 0.1.7 encoding fix
 0.1.8 add type Long
+0.1.9 add type Short
