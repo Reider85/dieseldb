@@ -1,11 +1,10 @@
 package diesel;
 import java.util.*;
-import java.util.stream.Collectors;
 
 class UpdateQuery implements Query<Void> {
-    private final Map<String, String> updates; // Column-value pairs to update
-    private final String conditionColumn; // Column for WHERE condition
-    private final String conditionValue; // Value for WHERE condition
+    private final Map<String, String> updates;
+    private final String conditionColumn;
+    private final String conditionValue;
 
     public UpdateQuery(Map<String, String> updates, String conditionColumn, String conditionValue) {
         this.updates = updates;

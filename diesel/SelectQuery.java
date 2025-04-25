@@ -1,7 +1,7 @@
 package diesel;
 import java.util.*;
 import java.util.stream.Collectors;
-// Select query representation (SRP, Polymorphism)
+
 class SelectQuery implements Query<List<Map<String, String>>> {
     private final List<String> columns;
     private final String conditionColumn;

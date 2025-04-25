@@ -9,7 +9,9 @@ class Database {
     private final QueryParser parser = new QueryParser();
 
     public void createTable(String name, List<String> columns) {
-        tables.put(name, new Table(columns));
+        Table table = new Table(columns);
+        tables.put(name, table);
+        table.loadFromFile(name); // Load existing data if any
         LOGGER.log(Level.INFO, "Created table: {0} with columns: {1}", new Object[]{name, columns});
     }
 
@@ -17,6 +19,7 @@ class Database {
         Table table = tables.get(tableName);
         if (table != null) {
             table.addRow(row);
+            table.saveToFile(tableName); // Save after insert
             LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{tableName, row});
         } else {
             LOGGER.log(Level.WARNING, "Table not found for insert: {0}", tableName);
@@ -34,6 +37,10 @@ class Database {
                 throw new IllegalArgumentException("Table not found: " + tableName);
             }
             T result = parsedQuery.execute(table);
+            // Save table after insert or update queries
+            if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery) {
+                table.saveToFile(tableName);
+            }
             if (result instanceof List) {
                 LOGGER.log(Level.INFO, "Query returned {0} rows", new Object[]{((List<?>) result).size()});
             } else {

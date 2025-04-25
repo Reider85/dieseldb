@@ -1,6 +1,6 @@
 package diesel;
 import java.util.*;
-import java.util.stream.Collectors;
+
 class InsertQuery implements Query<Void> {
     private final List<String> columns;
     private final List<String> values;
@@ -23,4 +23,3 @@ class InsertQuery implements Query<Void> {
         return null;
     }
 }
-
