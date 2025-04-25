@@ -26,3 +26,4 @@
 0.2.6 and condition !=
 0.2.7 and condition <>
 0.2.8 add condition and
+0.2.9 add condition or

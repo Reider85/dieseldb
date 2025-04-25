@@ -23,16 +23,18 @@ class QueryParser {
         String column;
         Object value;
         Operator operator;
+        String conjunction; // "AND" или "OR", null для последнего условия
 
-        Condition(String column, Object value, Operator operator) {
+        Condition(String column, Object value, Operator operator, String conjunction) {
             this.column = column;
             this.value = value;
             this.operator = operator;
+            this.conjunction = conjunction;
         }
 
         @Override
         public String toString() {
-            return column + " " + operator + " " + value;
+            return column + " " + operator + " " + value + (conjunction != null ? " " + conjunction : "");
         }
     }
 
@@ -146,9 +148,12 @@ class QueryParser {
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
             String conditionStr = tableCondition[1].trim();
-            String[] conditionParts = conditionStr.split("\\s+AND\\s+");
+            // Разделяем по AND или OR, сохраняя порядок
+            List<String> conditionParts = splitConditions(conditionStr);
 
-            for (String condition : conditionParts) {
+            for (int i = 0; i < conditionParts.size(); i++) {
+                String condition = conditionParts.get(i);
+                String conjunction = (i < conditionParts.size() - 1) ? determineConjunction(conditionStr, condition, conditionParts.get(i + 1)) : null;
                 String[] partsByOperator;
                 Operator operator;
                 if (condition.contains("!=")) {
@@ -174,7 +179,7 @@ class QueryParser {
                 String conditionColumn = partsByOperator[0].trim();
                 String valueStr = partsByOperator[1].trim();
                 Object conditionValue = parseConditionValue(conditionColumn, valueStr);
-                conditions.add(new Condition(conditionColumn, conditionValue, operator));
+                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction));
             }
         }
 
@@ -301,9 +306,11 @@ class QueryParser {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
-            String[] conditionParts = conditionStr.split("\\s+AND\\s+");
+            List<String> conditionParts = splitConditions(conditionStr);
 
-            for (String condition : conditionParts) {
+            for (int i = 0; i < conditionParts.size(); i++) {
+                String condition = conditionParts.get(i);
+                String conjunction = (i < conditionParts.size() - 1) ? determineConjunction(conditionStr, condition, conditionParts.get(i + 1)) : null;
                 String[] partsByOperator;
                 Operator operator;
                 if (condition.contains("!=")) {
@@ -329,7 +336,7 @@ class QueryParser {
                 String conditionColumn = partsByOperator[0].trim();
                 String valueStr = partsByOperator[1].trim();
                 Object conditionValue = parseConditionValue(conditionColumn, valueStr);
-                conditions.add(new Condition(conditionColumn, conditionValue, operator));
+                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction));
             }
         } else {
             setPart = setAndWhere;
@@ -404,5 +411,51 @@ class QueryParser {
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid value format: " + valueStr);
         }
+    }
+
+    private List<String> splitConditions(String conditionStr) {
+        List<String> conditions = new ArrayList<>();
+        StringBuilder currentCondition = new StringBuilder();
+        boolean inQuotes = false;
+
+        for (int i = 0; i < conditionStr.length(); i++) {
+            char c = conditionStr.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentCondition.append(c);
+                continue;
+            }
+            if (!inQuotes && i + 3 < conditionStr.length() &&
+                    (conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ||
+                            conditionStr.substring(i, i + 2).equalsIgnoreCase("OR"))) {
+                String conjunction = conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ? "AND" : "OR";
+                if (conjunction.equals("OR") && i + 2 < conditionStr.length()) {
+                    i += 2; // OR is 2 chars
+                } else {
+                    i += 3; // AND is 3 chars
+                }
+                conditions.add(currentCondition.toString().trim());
+                currentCondition = new StringBuilder();
+                continue;
+            }
+            currentCondition.append(c);
+        }
+        if (currentCondition.length() > 0) {
+            conditions.add(currentCondition.toString().trim());
+        }
+        return conditions;
+    }
+
+    private String determineConjunction(String conditionStr, String currentCondition, String nextCondition) {
+        int currentIndex = conditionStr.indexOf(currentCondition);
+        if (currentIndex == -1) {
+            return "AND"; // Default to AND if not found
+        }
+        int nextIndex = conditionStr.indexOf(nextCondition, currentIndex + currentCondition.length());
+        if (nextIndex == -1) {
+            return "AND";
+        }
+        String between = conditionStr.substring(currentIndex + currentCondition.length(), nextIndex).trim();
+        return between.equalsIgnoreCase("OR") ? "OR" : "AND";
     }
 }
