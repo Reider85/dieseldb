@@ -10,3 +10,4 @@
 0.1.0 Integer column type
 0.1.1 Type fixes
 0.1.2 Select,update,insert fixes for Integer type
+0.1.3 add type Boolean

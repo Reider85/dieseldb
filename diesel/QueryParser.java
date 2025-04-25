@@ -53,6 +53,9 @@ class QueryParser {
                 case "INTEGER":
                     columnTypes.put(colName, Integer.class);
                     break;
+                case "BOOLEAN":
+                    columnTypes.put(colName, Boolean.class);
+                    break;
                 default:
                     throw new IllegalArgumentException("Unsupported column type: " + type);
             }
@@ -92,6 +95,8 @@ class QueryParser {
             String valueStr = conditionParts[1].trim();
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
                 conditionValue = valueStr.substring(1, valueStr.length() - 1);
+            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
+                conditionValue = Boolean.parseBoolean(valueStr);
             } else {
                 try {
                     conditionValue = Integer.parseInt(valueStr);
@@ -132,10 +137,12 @@ class QueryParser {
         for (String val : valueStrings) {
             val = val.trim();
             if (val.startsWith("'") && val.endsWith("'")) {
-                values.add(val.substring(1, val.length() - 1)); // Сохраняем как строку
+                values.add(val.substring(1, val.length() - 1));
+            } else if (val.equalsIgnoreCase("TRUE") || val.equalsIgnoreCase("FALSE")) {
+                values.add(Boolean.parseBoolean(val));
             } else {
                 try {
-                    values.add(Integer.parseInt(val)); // Преобразуем в Integer
+                    values.add(Integer.parseInt(val));
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("Invalid integer value: " + val);
                 }
@@ -174,6 +181,8 @@ class QueryParser {
             String valueStr = conditionParts[1].trim();
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
                 conditionValue = valueStr.substring(1, valueStr.length() - 1);
+            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
+                conditionValue = Boolean.parseBoolean(valueStr);
             } else {
                 try {
                     conditionValue = Integer.parseInt(valueStr);
@@ -197,6 +206,8 @@ class QueryParser {
             Object value;
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
                 value = valueStr.substring(1, valueStr.length() - 1);
+            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
+                value = Boolean.parseBoolean(valueStr);
             } else {
                 try {
                     value = Integer.parseInt(valueStr);

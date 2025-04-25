@@ -33,6 +33,9 @@ class InsertQuery implements Query<Void> {
                 }
             } else if (expectedType == String.class && !(value instanceof String)) {
                 value = value.toString();
+            } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected BOOLEAN", value, column));
             }
             row.put(column, value);
         }
