@@ -58,6 +58,9 @@ class QueryParser {
                 case "INTEGER":
                     columnTypes.put(colName, Integer.class);
                     break;
+                case "LONG":
+                    columnTypes.put(colName, Long.class);
+                    break;
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
                     break;
@@ -132,9 +135,14 @@ class QueryParser {
                 conditionValue = Boolean.parseBoolean(valueStr);
             } else {
                 try {
-                    conditionValue = Integer.parseInt(valueStr);
+                    long parsedLong = Long.parseLong(valueStr);
+                    if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                        conditionValue = (int) parsedLong;
+                    } else {
+                        conditionValue = parsedLong;
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid condition value: " + valueStr);
+                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
                 }
             }
         }
@@ -196,9 +204,14 @@ class QueryParser {
                 values.add(Boolean.parseBoolean(val));
             } else {
                 try {
-                    values.add(Integer.parseInt(val));
+                    long parsedLong = Long.parseLong(val);
+                    if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                        values.add((int) parsedLong);
+                    } else {
+                        values.add(parsedLong);
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid integer value: " + val);
+                    throw new IllegalArgumentException("Invalid numeric value: " + val);
                 }
             }
         }
@@ -260,9 +273,14 @@ class QueryParser {
                 conditionValue = Boolean.parseBoolean(valueStr);
             } else {
                 try {
-                    conditionValue = Integer.parseInt(valueStr);
+                    long parsedLong = Long.parseLong(valueStr);
+                    if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                        conditionValue = (int) parsedLong;
+                    } else {
+                        conditionValue = parsedLong;
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid condition value: " + valueStr);
+                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
                 }
             }
         } else {
@@ -306,9 +324,14 @@ class QueryParser {
                 value = Boolean.parseBoolean(valueStr);
             } else {
                 try {
-                    value = Integer.parseInt(valueStr);
+                    long parsedLong = Long.parseLong(valueStr);
+                    if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                        value = (int) parsedLong;
+                    } else {
+                        value = parsedLong;
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid integer value: " + valueStr);
+                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
                 }
             }
             updates.put(column, value);

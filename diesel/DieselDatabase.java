@@ -10,7 +10,7 @@ public class DieselDatabase {
         Database db = new Database();
 
         // Create table with types
-        String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS)";
+        String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG)";
         try {
             db.executeQuery(createTableQuery);
         } catch (Exception e) {
@@ -18,7 +18,7 @@ public class DieselDatabase {
         }
 
         // Insert data via query
-        String insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION) VALUES ('1', 'Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00', '2023-10-15 14:30:00.123')";
+        String insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE) VALUES ('1', 'Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00', '2023-10-15 14:30:00.123', 9223372036854775807)";
         try {
             db.executeQuery(insertQuery);
         } catch (Exception e) {
@@ -26,7 +26,7 @@ public class DieselDatabase {
         }
 
         // Insert more data via query
-        insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION) VALUES ('2', 'Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00', '2023-10-16 09:00:00.456')";
+        insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE) VALUES ('2', 'Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00', '2023-10-16 09:00:00.456', 1000000000)";
         try {
             db.executeQuery(insertQuery);
         } catch (Exception e) {
@@ -34,7 +34,7 @@ public class DieselDatabase {
         }
 
         // Update data via query
-        String updateQuery = "UPDATE USERS SET LAST_ACTION = '2023-10-15 14:30:00.789' WHERE ID = '1'";
+        String updateQuery = "UPDATE USERS SET USER_SCORE = 9223372036854775806 WHERE ID = '1'";
         try {
             db.executeQuery(updateQuery);
             LOGGER.log(Level.INFO, "Update query executed: {0}", new Object[]{updateQuery});
@@ -43,7 +43,7 @@ public class DieselDatabase {
         }
 
         // Execute select query to verify update
-        String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION FROM USERS WHERE LAST_ACTION = '2023-10-16 09:00:00.456'";
+        String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE FROM USERS WHERE USER_SCORE = 1000000000";
         try {
             List<Map<String, Object>> result = (List<Map<String, Object>>) db.executeQuery(selectQuery);
             LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});

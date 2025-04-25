@@ -33,6 +33,13 @@ class InsertQuery implements Query<Void> {
                     throw new IllegalArgumentException(
                             String.format("Invalid value '%s' for column %s: expected INTEGER", value, column));
                 }
+            } else if (expectedType == Long.class && !(value instanceof Long)) {
+                try {
+                    value = Long.parseLong(value.toString());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException(
+                            String.format("Invalid value '%s' for column %s: expected LONG", value, column));
+                }
             } else if (expectedType == String.class && !(value instanceof String)) {
                 value = value.toString();
             } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
