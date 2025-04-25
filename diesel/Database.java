@@ -2,7 +2,7 @@ package diesel;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
-// Database facade (High Cohesion, Controller)
+
 class Database {
     private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
     private final Map<String, Table> tables = new HashMap<>();
@@ -37,7 +37,7 @@ class Database {
             if (result instanceof List) {
                 LOGGER.log(Level.INFO, "Query returned {0} rows", new Object[]{((List<?>) result).size()});
             } else {
-                LOGGER.log(Level.INFO, "Insert query executed successfully");
+                LOGGER.log(Level.INFO, "Insert or Update query executed successfully");
             }
             return result;
         } catch (Exception e) {
@@ -50,15 +50,20 @@ class Database {
         String normalized = query.toUpperCase().trim();
 
         if (normalized.startsWith("INSERT INTO")) {
-            // For INSERT queries, extract table name between "INSERT INTO" and the column list
             String afterInsert = normalized.replace("INSERT INTO", "").trim();
             int parenIndex = afterInsert.indexOf("(");
             if (parenIndex == -1) {
                 return "";
             }
             return afterInsert.substring(0, parenIndex).trim();
+        } else if (normalized.startsWith("UPDATE")) {
+            String afterUpdate = normalized.replace("UPDATE", "").trim();
+            int setIndex = afterUpdate.indexOf("SET");
+            if (setIndex == -1) {
+                return "";
+            }
+            return afterUpdate.substring(0, setIndex).trim();
         } else if (normalized.contains("FROM")) {
-            // For SELECT queries, extract table name after "FROM"
             String[] parts = normalized.split("FROM");
             if (parts.length < 2) {
                 return "";

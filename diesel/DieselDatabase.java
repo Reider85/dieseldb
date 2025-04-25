@@ -2,7 +2,7 @@ package diesel;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
-// Main class for demonstration
+
 public class DieselDatabase {
     private static final Logger LOGGER = Logger.getLogger(DieselDatabase.class.getName());
 
@@ -29,12 +29,21 @@ public class DieselDatabase {
             LOGGER.log(Level.SEVERE, "Insert query failed: {0}", new Object[]{e.getMessage()});
         }
 
-        // Execute select query
-        String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE = '25'";
+        // Update data via query
+        String updateQuery = "UPDATE USERS SET AGE = '26' WHERE ID = '1'";
+        try {
+            db.executeQuery(updateQuery);
+            LOGGER.log(Level.INFO, "Update query executed: {0}", new Object[]{updateQuery});
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Update query failed: {0}", new Object[]{e.getMessage()});
+        }
+
+        // Execute select query to verify update
+        String selectQuery = "SELECT NAME, AGE FROM USERS WHERE ID = '1'";
         try {
             List<Map<String, String>> result = db.executeQuery(selectQuery);
             LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});
-            System.out.println("Query Result:");
+            System.out.println("Query Result after Update:");
             for (Map<String, String> row : result) {
                 System.out.println(row);
             }
@@ -43,4 +52,3 @@ public class DieselDatabase {
         }
     }
 }
-

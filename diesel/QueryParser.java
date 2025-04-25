@@ -3,8 +3,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.logging.Logger;
 import java.util.logging.Level;
-// Query parser (SRP, Creator)
-// Query parser (SRP, Creator)
+
 class QueryParser {
     private static final Logger LOGGER = Logger.getLogger(QueryParser.class.getName());
 
@@ -15,6 +14,8 @@ class QueryParser {
                 return parseSelectQuery(normalized, query);
             } else if (normalized.startsWith("INSERT INTO")) {
                 return parseInsertQuery(normalized, query);
+            } else if (normalized.startsWith("UPDATE")) {
+                return parseUpdateQuery(normalized, query);
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
@@ -85,5 +86,50 @@ class QueryParser {
 
         return new InsertQuery(columns, values);
     }
-}
 
+    private Query<Void> parseUpdateQuery(String normalized, String original) {
+        String[] parts = normalized.split("SET");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid UPDATE query format");
+        }
+
+        String tablePart = parts[0].replace("UPDATE", "").trim();
+        String tableName = tablePart.split(" ")[0].trim();
+
+        String setAndWhere = parts[1].trim();
+        String setPart;
+        String conditionColumn = null;
+        String conditionValue = null;
+
+        if (setAndWhere.contains("WHERE")) {
+            String[] setWhereParts = setAndWhere.split("WHERE");
+            setPart = setWhereParts[0].trim();
+            String condition = setWhereParts[1].trim();
+            String[] conditionParts = condition.split("=");
+            if (conditionParts.length == 2) {
+                conditionColumn = conditionParts[0].trim();
+                conditionValue = conditionParts[1].trim().replace("'", "");
+            }
+        } else {
+            setPart = setAndWhere;
+        }
+
+        String[] assignments = setPart.split(",");
+        Map<String, String> updates = new HashMap<>();
+        for (String assignment : assignments) {
+            String[] kv = assignment.split("=");
+            if (kv.length != 2) {
+                throw new IllegalArgumentException("Invalid SET clause");
+            }
+            String column = kv[0].trim();
+            String value = kv[1].trim().replace("'", "");
+            updates.put(column, value);
+        }
+
+        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}={3}",
+                new Object[]{tableName, updates, conditionColumn != null ? conditionColumn : "none",
+                        conditionValue != null ? conditionValue : "none"});
+
+        return new UpdateQuery(updates, conditionColumn, conditionValue);
+    }
+}
