@@ -1,4 +1,5 @@
 package diesel;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -16,6 +17,23 @@ class QueryParser {
 
     enum Operator {
         EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN
+    }
+
+    static class Condition {
+        String column;
+        Object value;
+        Operator operator;
+
+        Condition(String column, Object value, Operator operator) {
+            this.column = column;
+            this.value = value;
+            this.operator = operator;
+        }
+
+        @Override
+        public String toString() {
+            return column + " " + operator + " " + value;
+        }
     }
 
     public Query<?> parse(String query) {
@@ -123,111 +141,47 @@ class QueryParser {
 
         String tableAndCondition = parts[1].trim();
         String tableName = tableAndCondition.split(" ")[0].trim();
-        String conditionColumn = null;
-        Object conditionValue = null;
-        Operator operator = Operator.EQUALS;
+        List<Condition> conditions = new ArrayList<>();
 
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
-            String condition = tableCondition[1].trim();
-            String[] conditionParts;
-            if (condition.contains("!=")) {
-                conditionParts = condition.split("!=");
-                operator = Operator.NOT_EQUALS;
-            } else if (condition.contains("<")) {
-                conditionParts = condition.split("<");
-                operator = Operator.LESS_THAN;
-            } else if (condition.contains(">")) {
-                conditionParts = condition.split(">");
-                operator = Operator.GREATER_THAN;
-            } else if (condition.contains("=")) {
-                conditionParts = condition.split("=");
-            } else {
-                throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
-            }
-            if (conditionParts.length != 2) {
-                throw new IllegalArgumentException("Invalid WHERE clause");
-            }
-            conditionColumn = conditionParts[0].trim();
-            String valueStr = conditionParts[1].trim();
-            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
-                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                    try {
-                        conditionValue = LocalDate.parse(strippedValue);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
-                    try {
-                        conditionValue = LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime_ms format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
-                    try {
-                        conditionValue = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches(UUID_PATTERN)) {
-                    try {
-                        conditionValue = UUID.fromString(strippedValue);
-                    } catch (IllegalArgumentException e) {
-                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
-                    }
-                } else if (strippedValue.length() == 1) {
-                    conditionValue = strippedValue.charAt(0);
+            String conditionStr = tableCondition[1].trim();
+            String[] conditionParts = conditionStr.split("\\s+AND\\s+");
+
+            for (String condition : conditionParts) {
+                String[] partsByOperator;
+                Operator operator;
+                if (condition.contains("!=")) {
+                    partsByOperator = condition.split("!=");
+                    operator = Operator.NOT_EQUALS;
+                } else if (condition.contains("<")) {
+                    partsByOperator = condition.split("<");
+                    operator = Operator.LESS_THAN;
+                } else if (condition.contains(">")) {
+                    partsByOperator = condition.split(">");
+                    operator = Operator.GREATER_THAN;
+                } else if (condition.contains("=")) {
+                    partsByOperator = condition.split("=");
+                    operator = Operator.EQUALS;
                 } else {
-                    conditionValue = strippedValue;
+                    throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
                 }
-            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
-                conditionValue = Boolean.parseBoolean(valueStr);
-            } else if (valueStr.contains(".")) {
-                try {
-                    BigDecimal bd = new BigDecimal(valueStr);
-                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
-                        conditionValue = bd.floatValue();
-                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
-                        conditionValue = bd.doubleValue();
-                    } else {
-                        conditionValue = bd;
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
+
+                if (partsByOperator.length != 2) {
+                    throw new IllegalArgumentException("Invalid WHERE clause");
                 }
-            } else {
-                try {
-                    // For AGE, we know it should be Integer
-                    if (conditionColumn.equals("AGE")) {
-                        conditionValue = Integer.parseInt(valueStr);
-                    } else {
-                        long parsedLong = Long.parseLong(valueStr);
-                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                            conditionValue = (byte) parsedLong;
-                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                            conditionValue = (short) parsedLong;
-                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                            conditionValue = (int) parsedLong;
-                        } else {
-                            conditionValue = parsedLong;
-                        }
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
-                }
+
+                String conditionColumn = partsByOperator[0].trim();
+                String valueStr = partsByOperator[1].trim();
+                Object conditionValue = parseConditionValue(conditionColumn, valueStr);
+                conditions.add(new Condition(conditionColumn, conditionValue, operator));
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, condition={2}{3}{4}, conditionValueType={5}",
-                new Object[]{columns, tableName, conditionColumn != null ? conditionColumn : "none",
-                        operator == Operator.EQUALS ? "=" : operator == Operator.NOT_EQUALS ? "!=" :
-                                operator == Operator.LESS_THAN ? "<" : ">", conditionValue != null ? conditionValue : "none",
-                        conditionValue != null ? conditionValue.getClass().getSimpleName() : "none"});
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, conditions={2}",
+                new Object[]{columns, tableName, conditions});
 
-        return new SelectQuery(columns, conditionColumn, conditionValue, operator);
+        return new SelectQuery(columns, conditions);
     }
 
     private Query<Void> parseInsertQuery(String normalized, String original) {
@@ -304,7 +258,6 @@ class QueryParser {
                 }
             } else {
                 try {
-                    // For AGE, explicitly parse as Integer
                     if (column.equals("AGE")) {
                         values.add(Integer.parseInt(val));
                     } else {
@@ -342,102 +295,41 @@ class QueryParser {
 
         String setAndWhere = parts[1].trim();
         String setPart;
-        String conditionColumn = null;
-        Object conditionValue = null;
-        Operator operator = Operator.EQUALS;
+        List<Condition> conditions = new ArrayList<>();
 
         if (setAndWhere.contains("WHERE")) {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
-            String condition = setWhereParts[1].trim();
-            String[] conditionParts;
-            if (condition.contains("!=")) {
-                conditionParts = condition.split("!=");
-                operator = Operator.NOT_EQUALS;
-            } else if (condition.contains("<")) {
-                conditionParts = condition.split("<");
-                operator = Operator.LESS_THAN;
-            } else if (condition.contains(">")) {
-                conditionParts = condition.split(">");
-                operator = Operator.GREATER_THAN;
-            } else if (condition.contains("=")) {
-                conditionParts = condition.split("=");
-            } else {
-                throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
-            }
-            if (conditionParts.length != 2) {
-                throw new IllegalArgumentException("Invalid WHERE clause");
-            }
-            conditionColumn = conditionParts[0].trim();
-            String valueStr = conditionParts[1].trim();
-            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
-                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                    try {
-                        conditionValue = LocalDate.parse(strippedValue);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
-                    try {
-                        conditionValue = LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime_ms format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
-                    try {
-                        conditionValue = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches(UUID_PATTERN)) {
-                    try {
-                        conditionValue = UUID.fromString(strippedValue);
-                    } catch (IllegalArgumentException e) {
-                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
-                    }
-                } else if (strippedValue.length() == 1) {
-                    conditionValue = strippedValue.charAt(0);
+            String conditionStr = setWhereParts[1].trim();
+            String[] conditionParts = conditionStr.split("\\s+AND\\s+");
+
+            for (String condition : conditionParts) {
+                String[] partsByOperator;
+                Operator operator;
+                if (condition.contains("!=")) {
+                    partsByOperator = condition.split("!=");
+                    operator = Operator.NOT_EQUALS;
+                } else if (condition.contains("<")) {
+                    partsByOperator = condition.split("<");
+                    operator = Operator.LESS_THAN;
+                } else if (condition.contains(">")) {
+                    partsByOperator = condition.split(">");
+                    operator = Operator.GREATER_THAN;
+                } else if (condition.contains("=")) {
+                    partsByOperator = condition.split("=");
+                    operator = Operator.EQUALS;
                 } else {
-                    conditionValue = strippedValue;
+                    throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
                 }
-            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
-                conditionValue = Boolean.parseBoolean(valueStr);
-            } else if (valueStr.contains(".")) {
-                try {
-                    BigDecimal bd = new BigDecimal(valueStr);
-                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
-                        conditionValue = bd.floatValue();
-                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
-                        conditionValue = bd.doubleValue();
-                    } else {
-                        conditionValue = bd;
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
+
+                if (partsByOperator.length != 2) {
+                    throw new IllegalArgumentException("Invalid WHERE clause");
                 }
-            } else {
-                try {
-                    // For AGE, explicitly parse as Integer
-                    if (conditionColumn.equals("AGE")) {
-                        conditionValue = Integer.parseInt(valueStr);
-                    } else {
-                        long parsedLong = Long.parseLong(valueStr);
-                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                            conditionValue = (byte) parsedLong;
-                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                            conditionValue = (short) parsedLong;
-                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                            conditionValue = (int) parsedLong;
-                        } else {
-                            conditionValue = parsedLong;
-                        }
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
-                }
+
+                String conditionColumn = partsByOperator[0].trim();
+                String valueStr = partsByOperator[1].trim();
+                Object conditionValue = parseConditionValue(conditionColumn, valueStr);
+                conditions.add(new Condition(conditionColumn, conditionValue, operator));
             }
         } else {
             setPart = setAndWhere;
@@ -452,85 +344,65 @@ class QueryParser {
             }
             String column = kv[0].trim();
             String valueStr = kv[1].trim();
-            Object value;
-            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
-                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                    try {
-                        value = LocalDate.parse(strippedValue);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
-                    try {
-                        value = LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime_ms format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
-                    try {
-                        value = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches(UUID_PATTERN)) {
-                    try {
-                        value = UUID.fromString(strippedValue);
-                    } catch (IllegalArgumentException e) {
-                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
-                    }
-                } else if (strippedValue.length() == 1) {
-                    value = strippedValue.charAt(0);
-                } else {
-                    value = strippedValue;
-                }
-            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
-                value = Boolean.parseBoolean(valueStr);
-            } else if (valueStr.contains(".")) {
-                try {
-                    BigDecimal bd = new BigDecimal(valueStr);
-                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
-                        value = bd.floatValue();
-                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
-                        value = bd.doubleValue();
-                    } else {
-                        value = bd;
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
-                }
-            } else {
-                try {
-                    // For AGE, explicitly parse as Integer
-                    if (column.equals("AGE")) {
-                        value = Integer.parseInt(valueStr);
-                    } else {
-                        long parsedLong = Long.parseLong(valueStr);
-                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                            value = (byte) parsedLong;
-                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                            value = (short) parsedLong;
-                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                            value = (int) parsedLong;
-                        } else {
-                            value = parsedLong;
-                        }
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
-                }
-            }
+            Object value = parseConditionValue(column, valueStr);
             updates.put(column, value);
         }
 
-        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}{3}{4}, conditionValueType={5}",
-                new Object[]{tableName, updates, conditionColumn != null ? conditionColumn : "none",
-                        operator == Operator.EQUALS ? "=" : operator == Operator.NOT_EQUALS ? "!=" :
-                                operator == Operator.LESS_THAN ? "<" : ">", conditionValue != null ? conditionValue : "none",
-                        conditionValue != null ? conditionValue.getClass().getSimpleName() : "none"});
+        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, conditions={2}",
+                new Object[]{tableName, updates, conditions});
 
-        return new UpdateQuery(updates, conditionColumn, conditionValue, operator);
+        return new UpdateQuery(updates, conditions);
+    }
+
+    private Object parseConditionValue(String conditionColumn, String valueStr) {
+        try {
+            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
+                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
+                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                    return LocalDate.parse(strippedValue);
+                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
+                    return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
+                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                    return LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
+                } else if (strippedValue.matches(UUID_PATTERN)) {
+                    return UUID.fromString(strippedValue);
+                } else if (strippedValue.length() == 1) {
+                    return strippedValue.charAt(0);
+                } else {
+                    return strippedValue;
+                }
+            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
+                return Boolean.parseBoolean(valueStr);
+            } else if (valueStr.contains(".")) {
+                BigDecimal bd = new BigDecimal(valueStr);
+                if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
+                        bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
+                    return bd.floatValue();
+                } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
+                        bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
+                    return bd.doubleValue();
+                } else {
+                    return bd;
+                }
+            } else {
+                if (conditionColumn.equals("AGE")) {
+                    return Integer.parseInt(valueStr);
+                }
+                long parsedLong = Long.parseLong(valueStr);
+                if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                    return (byte) parsedLong;
+                } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                    return (short) parsedLong;
+                } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                    return (int) parsedLong;
+                } else {
+                    return parsedLong;
+                }
+            }
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid value format: " + valueStr);
+        }
     }
 }

@@ -82,8 +82,8 @@ public class DatabaseClient {
             String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE AGE < 30";
             client.executeQuery(updateQuery);
 
-            // Select data
-            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE > 25";
+            // Select data with AND condition
+            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE > 25 AND ACTIVE = FALSE";
             List<Map<String, Object>> result = (List<Map<String, Object>>) client.executeQuery(selectQuery);
             System.out.println("Query Result:");
             for (Map<String, Object> row : result) {

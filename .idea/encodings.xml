@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="Encoding">
+    <file url="file://$PROJECT_DIR$/Changelog.md" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/CreateTableQuery.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/Database.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/DatabaseClient.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/DatabaseServer.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/DieselDatabase.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/InsertQuery.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/Query.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/QueryParser.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/SelectQuery.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/Table.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/TableStorage.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel/UpdateQuery.java" charset="UTF-8" />
+  </component>
+</project>

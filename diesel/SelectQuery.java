@@ -7,67 +7,58 @@ import java.util.logging.Level;
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
     private final List<String> columns;
-    private final String conditionColumn;
-    private final Object conditionValue;
-    private final QueryParser.Operator operator;
+    private final List<QueryParser.Condition> conditions;
 
-    public SelectQuery(List<String> columns, String conditionColumn, Object conditionValue, QueryParser.Operator operator) {
+    public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions) {
         this.columns = columns;
-        this.conditionColumn = conditionColumn;
-        this.conditionValue = conditionValue;
-        this.operator = operator;
+        this.conditions = conditions;
     }
 
     @Override
     public List<Map<String, Object>> execute(Table table) {
         return table.getRows().stream()
-                .filter(row -> {
-                    if (conditionColumn == null) {
-                        return true;
-                    }
-                    Object rowValue = row.get(conditionColumn);
+                .filter(row -> conditions.isEmpty() || conditions.stream().allMatch(condition -> {
+                    Object rowValue = row.get(condition.column);
                     if (rowValue == null) {
                         return false;
                     }
 
                     LOGGER.log(Level.INFO, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}",
                             new Object[]{rowValue, rowValue.getClass().getSimpleName(),
-                                    conditionValue, conditionValue.getClass().getSimpleName(), operator});
+                                    condition.value, condition.value.getClass().getSimpleName(), condition.operator});
 
-                    // Handle EQUALS and NOT_EQUALS
-                    if (operator == QueryParser.Operator.EQUALS || operator == QueryParser.Operator.NOT_EQUALS) {
+                    if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
                         boolean isEqual;
-                        if (rowValue instanceof Float && conditionValue instanceof Float) {
-                            isEqual = Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;
-                        } else if (rowValue instanceof Double && conditionValue instanceof Double) {
-                            isEqual = Math.abs(((Double) rowValue) - ((Double) conditionValue)) < 1e-7;
+                        if (rowValue instanceof Float && condition.value instanceof Float) {
+                            isEqual = Math.abs(((Float) rowValue) - ((Float) condition.value)) < 1e-7;
+                        } else if (rowValue instanceof Double && condition.value instanceof Double) {
+                            isEqual = Math.abs(((Double) rowValue) - ((Double) condition.value)) < 1e-7;
                         } else {
-                            isEqual = String.valueOf(rowValue).equals(String.valueOf(conditionValue));
+                            isEqual = String.valueOf(rowValue).equals(String.valueOf(condition.value));
                         }
-                        return operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
+                        return condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
                     }
 
-                    // Handle LESS_THAN and GREATER_THAN
-                    if (!(rowValue instanceof Comparable) || !(conditionValue instanceof Comparable)) {
+                    if (!(rowValue instanceof Comparable) || !(condition.value instanceof Comparable)) {
                         LOGGER.log(Level.WARNING, "Comparison operators < or > not supported for types: rowValue={0}, conditionValue={1}",
-                                new Object[]{rowValue.getClass().getSimpleName(), conditionValue.getClass().getSimpleName()});
+                                new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
                         throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
                     }
 
                     @SuppressWarnings("unchecked")
                     Comparable<Object> rowComparable = (Comparable<Object>) rowValue;
                     @SuppressWarnings("unchecked")
-                    Comparable<Object> conditionComparable = (Comparable<Object>) conditionValue;
+                    Comparable<Object> conditionComparable = (Comparable<Object>) condition.value;
 
-                    if (rowValue.getClass() != conditionValue.getClass()) {
+                    if (rowValue.getClass() != condition.value.getClass()) {
                         LOGGER.log(Level.WARNING, "Type mismatch in comparison: rowValue={0}, conditionValue={1}",
-                                new Object[]{rowValue.getClass().getSimpleName(), conditionValue.getClass().getSimpleName()});
+                                new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
                         throw new IllegalArgumentException("Type mismatch in comparison");
                     }
 
-                    int comparison = rowComparable.compareTo(conditionValue);
-                    return operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
-                })
+                    int comparison = rowComparable.compareTo(condition.value);
+                    return condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
+                }))
                 .map(row -> filterColumns(row, columns))
                 .collect(Collectors.toList());
     }

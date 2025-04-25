@@ -25,3 +25,4 @@
 0.2.5 add type UUID
 0.2.6 and condition !=
 0.2.7 and condition <>
+0.2.8 add condition and
