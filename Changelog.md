@@ -17,3 +17,4 @@
 0.1.7 encoding fix
 0.1.8 add type Long
 0.1.9 add type Short
+0.2.0 add type byte

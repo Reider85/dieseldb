@@ -64,6 +64,9 @@ class QueryParser {
                 case "SHORT":
                     columnTypes.put(colName, Short.class);
                     break;
+                case "BYTE":
+                    columnTypes.put(colName, Byte.class);
+                    break;
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
                     break;
@@ -139,7 +142,9 @@ class QueryParser {
             } else {
                 try {
                     long parsedLong = Long.parseLong(valueStr);
-                    if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                        conditionValue = (byte) parsedLong;
+                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
                         conditionValue = (short) parsedLong;
                     } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
                         conditionValue = (int) parsedLong;
@@ -210,7 +215,9 @@ class QueryParser {
             } else {
                 try {
                     long parsedLong = Long.parseLong(val);
-                    if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                        values.add((byte) parsedLong);
+                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
                         values.add((short) parsedLong);
                     } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
                         values.add((int) parsedLong);
@@ -281,7 +288,9 @@ class QueryParser {
             } else {
                 try {
                     long parsedLong = Long.parseLong(valueStr);
-                    if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                        conditionValue = (byte) parsedLong;
+                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
                         conditionValue = (short) parsedLong;
                     } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
                         conditionValue = (int) parsedLong;
@@ -334,7 +343,9 @@ class QueryParser {
             } else {
                 try {
                     long parsedLong = Long.parseLong(valueStr);
-                    if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                        value = (byte) parsedLong;
+                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
                         value = (short) parsedLong;
                     } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
                         value = (int) parsedLong;

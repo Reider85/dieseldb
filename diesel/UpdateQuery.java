@@ -48,6 +48,13 @@ class UpdateQuery implements Query<Void> {
                     throw new IllegalArgumentException(
                             String.format("Invalid value '%s' for column %s: expected SHORT", value, column));
                 }
+            } else if (expectedType == Byte.class && !(value instanceof Byte)) {
+                try {
+                    value = Byte.parseByte(value.toString());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException(
+                            String.format("Invalid value '%s' for column %s: expected BYTE", value, column));
+                }
             } else if (expectedType == String.class && !(value instanceof String)) {
                 value = value.toString();
             } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {

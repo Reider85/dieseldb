@@ -38,6 +38,9 @@ class Table implements Serializable {
             } else if (expectedType == Short.class && !(value instanceof Short)) {
                 throw new IllegalArgumentException(
                         String.format("Invalid type for column %s: expected Short, got %s", col, value.getClass().getSimpleName()));
+            } else if (expectedType == Byte.class && !(value instanceof Byte)) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid type for column %s: expected Byte, got %s", col, value.getClass().getSimpleName()));
             } else if (expectedType == String.class && !(value instanceof String)) {
                 throw new IllegalArgumentException(
                         String.format("Invalid type for column %s: expected String, got %s", col, value.getClass().getSimpleName()));
