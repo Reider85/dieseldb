@@ -1,4 +1,5 @@
 package diesel;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -53,6 +54,13 @@ class InsertQuery implements Query<Void> {
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException(
                             String.format("Invalid value '%s' for column %s: expected BYTE", value, column));
+                }
+            } else if (expectedType == BigDecimal.class && !(value instanceof BigDecimal)) {
+                try {
+                    value = new BigDecimal(value.toString());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException(
+                            String.format("Invalid value '%s' for column %s: expected BIGDECIMAL", value, column));
                 }
             } else if (expectedType == String.class && !(value instanceof String)) {
                 value = value.toString();

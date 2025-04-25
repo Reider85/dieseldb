@@ -1,4 +1,5 @@
 package diesel;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -66,6 +67,9 @@ class QueryParser {
                     break;
                 case "BYTE":
                     columnTypes.put(colName, Byte.class);
+                    break;
+                case "BIGDECIMAL":
+                    columnTypes.put(colName, BigDecimal.class);
                     break;
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
@@ -139,6 +143,12 @@ class QueryParser {
                 }
             } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
                 conditionValue = Boolean.parseBoolean(valueStr);
+            } else if (valueStr.contains(".")) {
+                try {
+                    conditionValue = new BigDecimal(valueStr);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid BigDecimal value: " + valueStr);
+                }
             } else {
                 try {
                     long parsedLong = Long.parseLong(valueStr);
@@ -212,6 +222,12 @@ class QueryParser {
                 }
             } else if (val.equalsIgnoreCase("TRUE") || val.equalsIgnoreCase("FALSE")) {
                 values.add(Boolean.parseBoolean(val));
+            } else if (val.contains(".")) {
+                try {
+                    values.add(new BigDecimal(val));
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid BigDecimal value: " + val);
+                }
             } else {
                 try {
                     long parsedLong = Long.parseLong(val);
@@ -285,6 +301,12 @@ class QueryParser {
                 }
             } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
                 conditionValue = Boolean.parseBoolean(valueStr);
+            } else if (valueStr.contains(".")) {
+                try {
+                    conditionValue = new BigDecimal(valueStr);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid BigDecimal value: " + valueStr);
+                }
             } else {
                 try {
                     long parsedLong = Long.parseLong(valueStr);
@@ -340,6 +362,12 @@ class QueryParser {
                 }
             } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
                 value = Boolean.parseBoolean(valueStr);
+            } else if (valueStr.contains(".")) {
+                try {
+                    value = new BigDecimal(valueStr);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid BigDecimal value: " + valueStr);
+                }
             } else {
                 try {
                     long parsedLong = Long.parseLong(valueStr);
