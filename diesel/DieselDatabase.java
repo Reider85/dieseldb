@@ -1,7 +1,11 @@
 package diesel;
 import java.util.*;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 // Main class for demonstration
 public class DieselDatabase {
+    private static final Logger LOGGER = Logger.getLogger(DieselDatabase.class.getName());
+
     public static void main(String[] args) {
         Database db = new Database();
 
@@ -24,12 +28,16 @@ public class DieselDatabase {
 
         // Execute query
         String query = "SELECT NAME, AGE FROM USERS WHERE AGE = '25'";
-        List<Map<String, String>> result = db.executeQuery(query);
-
-        // Print result
-        System.out.println("Query Result:");
-        for (Map<String, String> row : result) {
-            System.out.println(row);
+        try {
+            List<Map<String, String>> result = db.executeQuery(query);
+            LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});
+            System.out.println("Query zondag: ");
+            for (Map<String, String> row : result) {
+                System.out.println(row);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Main execution failed: {0}", new Object[]{e.getMessage()});
         }
     }
 }
+
