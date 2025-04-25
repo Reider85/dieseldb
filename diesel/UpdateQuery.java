@@ -63,6 +63,13 @@ class UpdateQuery implements Query<Void> {
                     throw new IllegalArgumentException(
                             String.format("Invalid value '%s' for column %s: expected BIGDECIMAL", value, column));
                 }
+            } else if (expectedType == Float.class && !(value instanceof Float)) {
+                try {
+                    value = Float.parseFloat(value.toString());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException(
+                            String.format("Invalid value '%s' for column %s: expected FLOAT", value, column));
+                }
             } else if (expectedType == String.class && !(value instanceof String)) {
                 value = value.toString();
             } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {

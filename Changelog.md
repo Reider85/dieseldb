@@ -19,3 +19,4 @@
 0.1.9 add type Short
 0.2.0 add type byte
 0.2.1 add type BigDecimal
+0.2.2 add type Float

@@ -71,6 +71,9 @@ class QueryParser {
                 case "BIGDECIMAL":
                     columnTypes.put(colName, BigDecimal.class);
                     break;
+                case "FLOAT":
+                    columnTypes.put(colName, Float.class);
+                    break;
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
                     break;
@@ -145,9 +148,15 @@ class QueryParser {
                 conditionValue = Boolean.parseBoolean(valueStr);
             } else if (valueStr.contains(".")) {
                 try {
-                    conditionValue = new BigDecimal(valueStr);
+                    BigDecimal bd = new BigDecimal(valueStr);
+                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
+                        conditionValue = bd.floatValue();
+                    } else {
+                        conditionValue = bd;
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid BigDecimal value: " + valueStr);
+                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
                 }
             } else {
                 try {
@@ -224,9 +233,15 @@ class QueryParser {
                 values.add(Boolean.parseBoolean(val));
             } else if (val.contains(".")) {
                 try {
-                    values.add(new BigDecimal(val));
+                    BigDecimal bd = new BigDecimal(val);
+                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
+                        values.add(bd.floatValue());
+                    } else {
+                        values.add(bd);
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid BigDecimal value: " + val);
+                    throw new IllegalArgumentException("Invalid numeric value: " + val);
                 }
             } else {
                 try {
@@ -303,9 +318,15 @@ class QueryParser {
                 conditionValue = Boolean.parseBoolean(valueStr);
             } else if (valueStr.contains(".")) {
                 try {
-                    conditionValue = new BigDecimal(valueStr);
+                    BigDecimal bd = new BigDecimal(valueStr);
+                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
+                        conditionValue = bd.floatValue();
+                    } else {
+                        conditionValue = bd;
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid BigDecimal value: " + valueStr);
+                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
                 }
             } else {
                 try {
@@ -364,9 +385,15 @@ class QueryParser {
                 value = Boolean.parseBoolean(valueStr);
             } else if (valueStr.contains(".")) {
                 try {
-                    value = new BigDecimal(valueStr);
+                    BigDecimal bd = new BigDecimal(valueStr);
+                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
+                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
+                        value = bd.floatValue();
+                    } else {
+                        value = bd;
+                    }
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid BigDecimal value: " + valueStr);
+                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
                 }
             } else {
                 try {

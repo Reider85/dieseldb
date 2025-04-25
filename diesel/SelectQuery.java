@@ -16,7 +16,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     @Override
     public List<Map<String, Object>> execute(Table table) {
         return table.getRows().stream()
-                .filter(row -> conditionColumn == null || String.valueOf(row.get(conditionColumn)).equals(String.valueOf(conditionValue)))
+                .filter(row -> conditionColumn == null ||
+                        (row.get(conditionColumn) instanceof Float && conditionValue instanceof Float &&
+                                Math.abs(((Float) row.get(conditionColumn)) - ((Float) conditionValue)) < 1e-7) ||
+                        String.valueOf(row.get(conditionColumn)).equals(String.valueOf(conditionValue)))
                 .map(row -> filterColumns(row, columns))
                 .collect(Collectors.toList());
     }
