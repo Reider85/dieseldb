@@ -5,9 +5,14 @@ import java.io.*;
 class Table implements TableStorage {
     private final List<Map<String, String>> rows = new ArrayList<>();
     private final List<String> columns;
+    private static final File TABLES_DIR = new File("tables");
 
     public Table(List<String> columns) {
         this.columns = new ArrayList<>(columns);
+        // Ensure directory exists once during table creation
+        if (!TABLES_DIR.exists()) {
+            TABLES_DIR.mkdirs();
+        }
     }
 
     @Override
@@ -29,24 +34,25 @@ class Table implements TableStorage {
 
     @Override
     public void saveToFile(String tableName) {
-        File dir = new File("tables");
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-        File file = new File(dir, tableName + ".csv");
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            // Write header
-            writer.write(String.join(",", columns));
-            writer.newLine();
-            // Write rows
-            for (Map<String, String> row : rows) {
-                List<String> values = new ArrayList<>();
-                for (String col : columns) {
-                    values.add(row.getOrDefault(col, ""));
+        File file = new File(TABLES_DIR, tableName + ".csv");
+        // Use StringBuilder to build content
+        StringBuilder content = new StringBuilder();
+        // Write header
+        content.append(String.join(",", columns)).append("\n");
+        // Write rows
+        for (Map<String, String> row : rows) {
+            for (int i = 0; i < columns.size(); i++) {
+                String value = row.getOrDefault(columns.get(i), "");
+                content.append(value);
+                if (i < columns.size() - 1) {
+                    content.append(",");
                 }
-                writer.write(String.join(",", values));
-                writer.newLine();
             }
+            content.append("\n");
+        }
+        // Write to file with large buffer
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file), 65536)) { // 64KB buffer
+            writer.write(content.toString());
         } catch (IOException e) {
             throw new RuntimeException("Failed to save table " + tableName + ": " + e.getMessage());
         }
@@ -54,7 +60,7 @@ class Table implements TableStorage {
 
     @Override
     public void loadFromFile(String tableName) {
-        File file = new File("tables", tableName + ".csv");
+        File file = new File(TABLES_DIR, tableName + ".csv");
         if (!file.exists()) {
             return; // No file means empty table
         }
