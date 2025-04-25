@@ -50,7 +50,7 @@ public class DatabaseClient {
 
     public void disconnect() {
         try {
-            out.writeObject("EXIT");
+            out.writeObject("EXIT"); // Исправлено
             out.flush();
             if (in != null) in.close();
             if (out != null) out.close();
@@ -66,8 +66,8 @@ public class DatabaseClient {
         try {
             client.connect();
 
-            // Create table
-            String createTable = "CREATE TABLE USERS (ID, NAME, AGE)";
+            // Create table with types
+            String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER)";
             client.executeQuery(createTable);
 
             // Insert data

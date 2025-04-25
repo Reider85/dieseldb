@@ -8,3 +8,4 @@
 0.0.8 Client and Server
 0.0.9 Client for tests
 0.1.0 Integer column type
+0.1.1 Type fixes

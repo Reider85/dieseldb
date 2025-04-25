@@ -14,6 +14,11 @@ class Database {
 
     public Object executeQuery(String query) {
         Query<?> parsedQuery = new QueryParser().parse(query);
+        if (parsedQuery instanceof CreateTableQuery) {
+            CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
+            createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes());
+            return "Table created successfully";
+        }
         String tableName = extractTableName(query);
         Table table = tables.get(tableName);
         if (table == null) {

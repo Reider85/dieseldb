@@ -4,7 +4,6 @@ import java.net.*;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
-import java.util.stream.Collectors;
 
 public class DatabaseServer {
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
@@ -76,28 +75,8 @@ public class DatabaseServer {
                     }
 
                     try {
-                        if (query.toUpperCase().startsWith("CREATE TABLE")) {
-                            String[] parts = query.split("\\(");
-                            String tableName = parts[0].replace("CREATE TABLE", "").trim();
-                            String columnsPart = parts[1].replace(")", "").trim();
-                            List<String> columns = Arrays.stream(columnsPart.split(","))
-                                    .map(String::trim)
-                                    .collect(Collectors.toList());
-                            Map<String, Class<?>> columnTypes = new HashMap<>();
-                            // Пример: задаем типы вручную или можно добавить синтаксис в запрос
-                            columns.forEach(col -> {
-                                if (col.equals("AGE")) {
-                                    columnTypes.put(col, Integer.class);
-                                } else {
-                                    columnTypes.put(col, String.class);
-                                }
-                            });
-                            database.createTable(tableName, columns, columnTypes);
-                            out.writeObject("Table created successfully");
-                        } else {
-                            Object result = database.executeQuery(query);
-                            out.writeObject(result);
-                        }
+                        Object result = database.executeQuery(query);
+                        out.writeObject(result);
                         out.flush();
                     } catch (Exception e) {
                         out.writeObject("Error: " + e.getMessage());

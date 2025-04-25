@@ -10,12 +10,12 @@ public class DieselDatabase {
         Database db = new Database();
 
         // Create table with types
-        List<String> columns = Arrays.asList("ID", "NAME", "AGE");
-        Map<String, Class<?>> columnTypes = new HashMap<>();
-        columnTypes.put("ID", String.class);
-        columnTypes.put("NAME", String.class);
-        columnTypes.put("AGE", Integer.class);
-        db.createTable("USERS", columns, columnTypes);
+        String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER)";
+        try {
+            db.executeQuery(createTableQuery);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Create table query failed: {0}", new Object[]{e.getMessage()});
+        }
 
         // Insert data via query
         String insertQuery = "INSERT INTO USERS (ID, NAME, AGE) VALUES ('1', 'Alice', '25')";

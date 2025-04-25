@@ -16,12 +16,52 @@ class QueryParser {
                 return parseInsertQuery(normalized, query);
             } else if (normalized.startsWith("UPDATE")) {
                 return parseUpdateQuery(normalized, query);
+            } else if (normalized.startsWith("CREATE TABLE")) {
+                return parseCreateTableQuery(normalized, query);
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
             LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
             throw e;
         }
+    }
+
+    private Query<Void> parseCreateTableQuery(String normalized, String original) {
+        String[] parts = normalized.split("\\(");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid CREATE TABLE query format");
+        }
+
+        String tableName = parts[0].replace("CREATE TABLE", "").trim();
+        String columnsPart = parts[1].replace(")", "").trim();
+        String[] columnDefs = columnsPart.split(",");
+        List<String> columns = new ArrayList<>();
+        Map<String, Class<?>> columnTypes = new HashMap<>();
+
+        for (String colDef : columnDefs) {
+            String[] colParts = colDef.trim().split("\\s+");
+            if (colParts.length != 2) {
+                throw new IllegalArgumentException("Invalid column definition: " + colDef);
+            }
+            String colName = colParts[0];
+            String type = colParts[1];
+            columns.add(colName);
+            switch (type.toUpperCase()) {
+                case "STRING":
+                    columnTypes.put(colName, String.class);
+                    break;
+                case "INTEGER":
+                    columnTypes.put(colName, Integer.class);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported column type: " + type);
+            }
+        }
+
+        LOGGER.log(Level.INFO, "Parsed CREATE TABLE query: table={0}, columns={1}, types={2}",
+                new Object[]{tableName, columns, columnTypes});
+
+        return new CreateTableQuery(tableName, columns, columnTypes);
     }
 
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original) {
@@ -51,6 +91,10 @@ class QueryParser {
             }
         }
 
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, condition={2}={3}",
+                new Object[]{columns, tableName, conditionColumn != null ? conditionColumn : "none",
+                        conditionValue != null ? conditionValue : "none"});
+
         return new SelectQuery(columns, conditionColumn, conditionValue);
     }
 
@@ -73,16 +117,12 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid VALUES syntax");
         }
         valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
-        String[] valueStrings = valuesPart.split(",");
-        List<Object> values = new ArrayList<>();
-        for (String val : valueStrings) {
-            val = val.trim().replace("'", "");
-            try {
-                values.add(Integer.parseInt(val)); // Пытаемся преобразовать в Integer
-            } catch (NumberFormatException e) {
-                values.add(val); // Если не удалось, оставляем как String
-            }
-        }
+        List<String> values = Arrays.stream(valuesPart.split(","))
+                .map(val -> val.trim().replace("'", ""))
+                .collect(Collectors.toList());
+
+        LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, values={2}",
+                new Object[]{tableName, columns, values});
 
         return new InsertQuery(columns, values);
     }
@@ -115,7 +155,7 @@ class QueryParser {
         }
 
         String[] assignments = setPart.split(",");
-        Map<String, Object> updates = new HashMap<>();
+        Map<String, String> updates = new HashMap<>();
         for (String assignment : assignments) {
             String[] kv = assignment.split("=");
             if (kv.length != 2) {
@@ -123,14 +163,12 @@ class QueryParser {
             }
             String column = kv[0].trim();
             String valueStr = kv[1].trim().replace("'", "");
-            Object value;
-            try {
-                value = Integer.parseInt(valueStr);
-            } catch (NumberFormatException e) {
-                value = valueStr;
-            }
-            updates.put(column, value);
+            updates.put(column, valueStr);
         }
+
+        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}={3}",
+                new Object[]{tableName, updates, conditionColumn != null ? conditionColumn : "none",
+                        conditionValue != null ? conditionValue : "none"});
 
         return new UpdateQuery(updates, conditionColumn, conditionValue);
     }
