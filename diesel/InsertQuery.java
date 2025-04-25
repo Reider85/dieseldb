@@ -1,4 +1,5 @@
 package diesel;
+import java.time.LocalDate;
 import java.util.*;
 
 class InsertQuery implements Query<Void> {
@@ -36,6 +37,9 @@ class InsertQuery implements Query<Void> {
             } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
                 throw new IllegalArgumentException(
                         String.format("Invalid value '%s' for column %s: expected BOOLEAN", value, column));
+            } else if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected DATE", value, column));
             }
             row.put(column, value);
         }

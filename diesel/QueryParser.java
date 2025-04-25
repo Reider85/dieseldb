@@ -1,4 +1,5 @@
 package diesel;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.logging.Logger;
@@ -56,6 +57,9 @@ class QueryParser {
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
                     break;
+                case "DATE":
+                    columnTypes.put(colName, LocalDate.class);
+                    break;
                 default:
                     throw new IllegalArgumentException("Unsupported column type: " + type);
             }
@@ -94,7 +98,16 @@ class QueryParser {
             conditionColumn = conditionParts[0].trim();
             String valueStr = conditionParts[1].trim();
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                conditionValue = valueStr.substring(1, valueStr.length() - 1);
+                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
+                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                    try {
+                        conditionValue = LocalDate.parse(strippedValue);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
+                    }
+                } else {
+                    conditionValue = strippedValue;
+                }
             } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
                 conditionValue = Boolean.parseBoolean(valueStr);
             } else {
@@ -137,7 +150,16 @@ class QueryParser {
         for (String val : valueStrings) {
             val = val.trim();
             if (val.startsWith("'") && val.endsWith("'")) {
-                values.add(val.substring(1, val.length() - 1));
+                String strippedValue = val.substring(1, val.length() - 1);
+                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                    try {
+                        values.add(LocalDate.parse(strippedValue));
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
+                    }
+                } else {
+                    values.add(strippedValue);
+                }
             } else if (val.equalsIgnoreCase("TRUE") || val.equalsIgnoreCase("FALSE")) {
                 values.add(Boolean.parseBoolean(val));
             } else {
@@ -180,7 +202,16 @@ class QueryParser {
             conditionColumn = conditionParts[0].trim();
             String valueStr = conditionParts[1].trim();
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                conditionValue = valueStr.substring(1, valueStr.length() - 1);
+                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
+                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                    try {
+                        conditionValue = LocalDate.parse(strippedValue);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
+                    }
+                } else {
+                    conditionValue = strippedValue;
+                }
             } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
                 conditionValue = Boolean.parseBoolean(valueStr);
             } else {
@@ -205,7 +236,16 @@ class QueryParser {
             String valueStr = kv[1].trim();
             Object value;
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                value = valueStr.substring(1, valueStr.length() - 1);
+                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
+                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                    try {
+                        value = LocalDate.parse(strippedValue);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
+                    }
+                } else {
+                    value = strippedValue;
+                }
             } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
                 value = Boolean.parseBoolean(valueStr);
             } else {

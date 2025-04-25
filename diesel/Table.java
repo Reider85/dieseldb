@@ -1,5 +1,6 @@
 package diesel;
 import java.io.*;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -36,6 +37,9 @@ class Table implements Serializable {
             } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
                 throw new IllegalArgumentException(
                         String.format("Invalid type for column %s: expected Boolean, got %s", col, value.getClass().getSimpleName()));
+            } else if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid type for column %s: expected LocalDate, got %s", col, value.getClass().getSimpleName()));
             }
             validatedRow.put(col, value);
         }

@@ -67,23 +67,23 @@ public class DatabaseClient {
             client.connect();
 
             // Create table with types
-            String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN)";
+            String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE)";
             client.executeQuery(createTable);
 
             // Insert data
-            String insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE) VALUES ('1', 'Alice', 25, TRUE)";
+            String insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE) VALUES ('1', 'Alice', 25, TRUE, '1998-05-20')";
             client.executeQuery(insertQuery);
 
             // Insert more data
-            insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE) VALUES ('2', 'Bob', 30, FALSE)";
+            insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE) VALUES ('2', 'Bob', 30, FALSE, '1993-08-15')";
             client.executeQuery(insertQuery);
 
             // Update data
-            String updateQuery = "UPDATE USERS SET ACTIVE = FALSE WHERE ID = '1'";
+            String updateQuery = "UPDATE USERS SET BIRTHDATE = '1998-05-21' WHERE ID = '1'";
             client.executeQuery(updateQuery);
 
             // Select data
-            String selectQuery = "SELECT NAME, AGE, ACTIVE FROM USERS WHERE ACTIVE = FALSE";
+            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE FROM USERS WHERE BIRTHDATE = '1993-08-15'";
             List<Map<String, Object>> result = (List<Map<String, Object>>) client.executeQuery(selectQuery);
             System.out.println("Query Result:");
             for (Map<String, Object> row : result) {

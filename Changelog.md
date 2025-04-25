@@ -11,3 +11,4 @@
 0.1.1 Type fixes
 0.1.2 Select,update,insert fixes for Integer type
 0.1.3 add type Boolean
+0.1.4 add type Date
