@@ -67,23 +67,23 @@ public class DatabaseClient {
             client.connect();
 
             // Create table with types
-            String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE)";
+            String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME)";
             client.executeQuery(createTable);
 
             // Insert data
-            String insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE) VALUES ('1', 'Alice', 25, TRUE, '1998-05-20')";
+            String insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN) VALUES ('1', 'Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00')";
             client.executeQuery(insertQuery);
 
             // Insert more data
-            insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE) VALUES ('2', 'Bob', 30, FALSE, '1993-08-15')";
+            insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN) VALUES ('2', 'Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00')";
             client.executeQuery(insertQuery);
 
             // Update data
-            String updateQuery = "UPDATE USERS SET BIRTHDATE = '1998-05-21' WHERE ID = '1'";
+            String updateQuery = "UPDATE USERS SET LAST_LOGIN = '2023-10-15 15:00:00' WHERE ID = '1'";
             client.executeQuery(updateQuery);
 
             // Select data
-            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE FROM USERS WHERE BIRTHDATE = '1993-08-15'";
+            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN FROM USERS WHERE LAST_LOGIN = '2023-10-16 09:00:00'";
             List<Map<String, Object>> result = (List<Map<String, Object>>) client.executeQuery(selectQuery);
             System.out.println("Query Result:");
             for (Map<String, Object> row : result) {

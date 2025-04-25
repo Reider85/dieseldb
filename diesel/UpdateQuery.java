@@ -1,5 +1,6 @@
 package diesel;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 
 class UpdateQuery implements Query<Void> {
@@ -41,6 +42,9 @@ class UpdateQuery implements Query<Void> {
             } else if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
                 throw new IllegalArgumentException(
                         String.format("Invalid value '%s' for column %s: expected DATE", value, column));
+            } else if (expectedType == LocalDateTime.class && !(value instanceof LocalDateTime)) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected DATETIME", value, column));
             }
             validatedUpdates.put(column, value);
         }

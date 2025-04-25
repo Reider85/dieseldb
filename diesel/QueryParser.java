@@ -1,5 +1,7 @@
 package diesel;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.logging.Logger;
@@ -7,6 +9,7 @@ import java.util.logging.Level;
 
 class QueryParser {
     private static final Logger LOGGER = Logger.getLogger(QueryParser.class.getName());
+    private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public Query<?> parse(String query) {
         try {
@@ -60,6 +63,9 @@ class QueryParser {
                 case "DATE":
                     columnTypes.put(colName, LocalDate.class);
                     break;
+                case "DATETIME":
+                    columnTypes.put(colName, LocalDateTime.class);
+                    break;
                 default:
                     throw new IllegalArgumentException("Unsupported column type: " + type);
             }
@@ -104,6 +110,12 @@ class QueryParser {
                         conditionValue = LocalDate.parse(strippedValue);
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid date format: " + strippedValue);
+                    }
+                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                    try {
+                        conditionValue = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
                 } else {
                     conditionValue = strippedValue;
@@ -157,6 +169,12 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid date format: " + strippedValue);
                     }
+                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                    try {
+                        values.add(LocalDateTime.parse(strippedValue, DATETIME_FORMATTER));
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
+                    }
                 } else {
                     values.add(strippedValue);
                 }
@@ -209,6 +227,12 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid date format: " + strippedValue);
                     }
+                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                    try {
+                        conditionValue = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
+                    }
                 } else {
                     conditionValue = strippedValue;
                 }
@@ -242,6 +266,12 @@ class QueryParser {
                         value = LocalDate.parse(strippedValue);
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid date format: " + strippedValue);
+                    }
+                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                    try {
+                        value = LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
                 } else {
                     value = strippedValue;
