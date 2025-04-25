@@ -79,11 +79,11 @@ public class DatabaseClient {
             client.executeQuery(insertQuery);
 
             // Update data
-            String updateQuery = "UPDATE USERS SET SESSION_ID = '6ba7b810-9dad-11d1-80b4-00c04fd430c8' WHERE ID = '1'";
+            String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE SESSION_ID != '550e8400-e29b-41d4-a716-446655440000'";
             client.executeQuery(updateQuery);
 
             // Select data
-            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE SESSION_ID = '550e8400-e29b-41d4-a716-446655440000'";
+            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE INITIAL != 'B'";
             List<Map<String, Object>> result = (List<Map<String, Object>>) client.executeQuery(selectQuery);
             System.out.println("Query Result:");
             for (Map<String, Object> row : result) {

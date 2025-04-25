@@ -34,7 +34,7 @@ public class DieselDatabase {
         }
 
         // Update data via query
-        String updateQuery = "UPDATE USERS SET SESSION_ID = '6ba7b810-9dad-11d1-80b4-00c04fd430c8' WHERE ID = '1'";
+        String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE SESSION_ID != '550e8400-e29b-41d4-a716-446655440000'";
         try {
             db.executeQuery(updateQuery);
             LOGGER.log(Level.INFO, "Update query executed: {0}", new Object[]{updateQuery});
@@ -43,7 +43,7 @@ public class DieselDatabase {
         }
 
         // Execute select query to verify update
-        String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE SESSION_ID = '550e8400-e29b-41d4-a716-446655440000'";
+        String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE INITIAL != 'B'";
         try {
             List<Map<String, Object>> result = (List<Map<String, Object>>) db.executeQuery(selectQuery);
             LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});

@@ -8,11 +8,13 @@ class UpdateQuery implements Query<Void> {
     private final Map<String, Object> updates;
     private final String conditionColumn;
     private final Object conditionValue;
+    private final QueryParser.Operator operator;
 
-    public UpdateQuery(Map<String, Object> updates, String conditionColumn, Object conditionValue) {
+    public UpdateQuery(Map<String, Object> updates, String conditionColumn, Object conditionValue, QueryParser.Operator operator) {
         this.updates = updates;
         this.conditionColumn = conditionColumn;
         this.conditionValue = conditionValue;
+        this.operator = operator;
     }
 
     @Override
@@ -111,7 +113,10 @@ class UpdateQuery implements Query<Void> {
         }
 
         for (Map<String, Object> row : rows) {
-            if (conditionColumn == null || String.valueOf(row.get(conditionColumn)).equals(String.valueOf(conditionValue))) {
+            if (conditionColumn == null ||
+                    (operator == QueryParser.Operator.EQUALS ?
+                            String.valueOf(row.get(conditionColumn)).equals(String.valueOf(conditionValue)) :
+                            !String.valueOf(row.get(conditionColumn)).equals(String.valueOf(conditionValue)))) {
                 validatedUpdates.forEach(row::put);
             }
         }

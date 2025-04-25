@@ -14,6 +14,10 @@ class QueryParser {
     private static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
+    enum Operator {
+        EQUALS, NOT_EQUALS
+    }
+
     public Query<?> parse(String query) {
         try {
             String normalized = query.trim().toUpperCase();
@@ -121,11 +125,20 @@ class QueryParser {
         String tableName = tableAndCondition.split(" ")[0].trim();
         String conditionColumn = null;
         Object conditionValue = null;
+        Operator operator = Operator.EQUALS;
 
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
             String condition = tableCondition[1].trim();
-            String[] conditionParts = condition.split("=");
+            String[] conditionParts;
+            if (condition.contains("!=")) {
+                conditionParts = condition.split("!=");
+                operator = Operator.NOT_EQUALS;
+            } else if (condition.contains("=")) {
+                conditionParts = condition.split("=");
+            } else {
+                throw new IllegalArgumentException("Invalid WHERE clause: must contain = or !=");
+            }
             if (conditionParts.length != 2) {
                 throw new IllegalArgumentException("Invalid WHERE clause");
             }
@@ -197,11 +210,11 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, condition={2}={3}",
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, condition={2}{3}{4}",
                 new Object[]{columns, tableName, conditionColumn != null ? conditionColumn : "none",
-                        conditionValue != null ? conditionValue : "none"});
+                        operator == Operator.EQUALS ? "=" : "!=", conditionValue != null ? conditionValue : "none"});
 
-        return new SelectQuery(columns, conditionColumn, conditionValue);
+        return new SelectQuery(columns, conditionColumn, conditionValue, operator);
     }
 
     private Query<Void> parseInsertQuery(String normalized, String original) {
@@ -312,12 +325,21 @@ class QueryParser {
         String setPart;
         String conditionColumn = null;
         Object conditionValue = null;
+        Operator operator = Operator.EQUALS;
 
         if (setAndWhere.contains("WHERE")) {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
             String condition = setWhereParts[1].trim();
-            String[] conditionParts = condition.split("=");
+            String[] conditionParts;
+            if (condition.contains("!=")) {
+                conditionParts = condition.split("!=");
+                operator = Operator.NOT_EQUALS;
+            } else if (condition.contains("=")) {
+                conditionParts = condition.split("=");
+            } else {
+                throw new IllegalArgumentException("Invalid WHERE clause: must contain = or !=");
+            }
             if (conditionParts.length != 2) {
                 throw new IllegalArgumentException("Invalid WHERE clause");
             }
@@ -468,10 +490,10 @@ class QueryParser {
             updates.put(column, value);
         }
 
-        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}={3}",
+        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}{3}{4}",
                 new Object[]{tableName, updates, conditionColumn != null ? conditionColumn : "none",
-                        conditionValue != null ? conditionValue : "none"});
+                        operator == Operator.EQUALS ? "=" : "!=", conditionValue != null ? conditionValue : "none"});
 
-        return new UpdateQuery(updates, conditionColumn, conditionValue);
+        return new UpdateQuery(updates, conditionColumn, conditionValue, operator);
     }
 }
