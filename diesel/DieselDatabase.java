@@ -34,16 +34,17 @@ public class DieselDatabase {
         }
 
         // Update data via query
-        String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE SESSION_ID != '550e8400-e29b-41d4-a716-446655440000'";
+        String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE AGE < 30";
         try {
             db.executeQuery(updateQuery);
             LOGGER.log(Level.INFO, "Update query executed: {0}", new Object[]{updateQuery});
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Update query failed: {0}", new Object[]{e.getMessage()});
+            e.printStackTrace();
         }
 
         // Execute select query to verify update
-        String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE INITIAL != 'B'";
+        String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE > 25";
         try {
             List<Map<String, Object>> result = (List<Map<String, Object>>) db.executeQuery(selectQuery);
             LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});
@@ -53,6 +54,7 @@ public class DieselDatabase {
             }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Main execution failed: {0}", new Object[]{e.getMessage()});
+            e.printStackTrace();
         }
     }
 }

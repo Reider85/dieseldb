@@ -23,4 +23,5 @@
 0.2.3 add type Double
 0.2.4 add type Char
 0.2.5 add type UUID
-0.2.6 and type !=
+0.2.6 and condition !=
+0.2.7 and condition <>

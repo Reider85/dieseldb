@@ -15,7 +15,7 @@ class QueryParser {
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
     enum Operator {
-        EQUALS, NOT_EQUALS
+        EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN
     }
 
     public Query<?> parse(String query) {
@@ -134,10 +134,16 @@ class QueryParser {
             if (condition.contains("!=")) {
                 conditionParts = condition.split("!=");
                 operator = Operator.NOT_EQUALS;
+            } else if (condition.contains("<")) {
+                conditionParts = condition.split("<");
+                operator = Operator.LESS_THAN;
+            } else if (condition.contains(">")) {
+                conditionParts = condition.split(">");
+                operator = Operator.GREATER_THAN;
             } else if (condition.contains("=")) {
                 conditionParts = condition.split("=");
             } else {
-                throw new IllegalArgumentException("Invalid WHERE clause: must contain = or !=");
+                throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
             }
             if (conditionParts.length != 2) {
                 throw new IllegalArgumentException("Invalid WHERE clause");
@@ -194,15 +200,20 @@ class QueryParser {
                 }
             } else {
                 try {
-                    long parsedLong = Long.parseLong(valueStr);
-                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                        conditionValue = (byte) parsedLong;
-                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                        conditionValue = (short) parsedLong;
-                    } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                        conditionValue = (int) parsedLong;
+                    // For AGE, we know it should be Integer
+                    if (conditionColumn.equals("AGE")) {
+                        conditionValue = Integer.parseInt(valueStr);
                     } else {
-                        conditionValue = parsedLong;
+                        long parsedLong = Long.parseLong(valueStr);
+                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                            conditionValue = (byte) parsedLong;
+                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                            conditionValue = (short) parsedLong;
+                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                            conditionValue = (int) parsedLong;
+                        } else {
+                            conditionValue = parsedLong;
+                        }
                     }
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
@@ -210,9 +221,11 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, condition={2}{3}{4}",
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, condition={2}{3}{4}, conditionValueType={5}",
                 new Object[]{columns, tableName, conditionColumn != null ? conditionColumn : "none",
-                        operator == Operator.EQUALS ? "=" : "!=", conditionValue != null ? conditionValue : "none"});
+                        operator == Operator.EQUALS ? "=" : operator == Operator.NOT_EQUALS ? "!=" :
+                                operator == Operator.LESS_THAN ? "<" : ">", conditionValue != null ? conditionValue : "none",
+                        conditionValue != null ? conditionValue.getClass().getSimpleName() : "none"});
 
         return new SelectQuery(columns, conditionColumn, conditionValue, operator);
     }
@@ -238,8 +251,9 @@ class QueryParser {
         valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
         String[] valueStrings = valuesPart.split(",");
         List<Object> values = new ArrayList<>();
-        for (String val : valueStrings) {
-            val = val.trim();
+        for (int i = 0; i < valueStrings.length; i++) {
+            String val = valueStrings[i].trim();
+            String column = columns.get(i);
             if (val.startsWith("'") && val.endsWith("'")) {
                 String strippedValue = val.substring(1, val.length() - 1);
                 if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
@@ -290,15 +304,20 @@ class QueryParser {
                 }
             } else {
                 try {
-                    long parsedLong = Long.parseLong(val);
-                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                        values.add((byte) parsedLong);
-                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                        values.add((short) parsedLong);
-                    } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                        values.add((int) parsedLong);
+                    // For AGE, explicitly parse as Integer
+                    if (column.equals("AGE")) {
+                        values.add(Integer.parseInt(val));
                     } else {
-                        values.add(parsedLong);
+                        long parsedLong = Long.parseLong(val);
+                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                            values.add((byte) parsedLong);
+                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                            values.add((short) parsedLong);
+                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                            values.add((int) parsedLong);
+                        } else {
+                            values.add(parsedLong);
+                        }
                     }
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("Invalid numeric value: " + val);
@@ -335,10 +354,16 @@ class QueryParser {
             if (condition.contains("!=")) {
                 conditionParts = condition.split("!=");
                 operator = Operator.NOT_EQUALS;
+            } else if (condition.contains("<")) {
+                conditionParts = condition.split("<");
+                operator = Operator.LESS_THAN;
+            } else if (condition.contains(">")) {
+                conditionParts = condition.split(">");
+                operator = Operator.GREATER_THAN;
             } else if (condition.contains("=")) {
                 conditionParts = condition.split("=");
             } else {
-                throw new IllegalArgumentException("Invalid WHERE clause: must contain = or !=");
+                throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
             }
             if (conditionParts.length != 2) {
                 throw new IllegalArgumentException("Invalid WHERE clause");
@@ -395,15 +420,20 @@ class QueryParser {
                 }
             } else {
                 try {
-                    long parsedLong = Long.parseLong(valueStr);
-                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                        conditionValue = (byte) parsedLong;
-                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                        conditionValue = (short) parsedLong;
-                    } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                        conditionValue = (int) parsedLong;
+                    // For AGE, explicitly parse as Integer
+                    if (conditionColumn.equals("AGE")) {
+                        conditionValue = Integer.parseInt(valueStr);
                     } else {
-                        conditionValue = parsedLong;
+                        long parsedLong = Long.parseLong(valueStr);
+                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                            conditionValue = (byte) parsedLong;
+                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                            conditionValue = (short) parsedLong;
+                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                            conditionValue = (int) parsedLong;
+                        } else {
+                            conditionValue = parsedLong;
+                        }
                     }
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
@@ -473,15 +503,20 @@ class QueryParser {
                 }
             } else {
                 try {
-                    long parsedLong = Long.parseLong(valueStr);
-                    if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                        value = (byte) parsedLong;
-                    } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                        value = (short) parsedLong;
-                    } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                        value = (int) parsedLong;
+                    // For AGE, explicitly parse as Integer
+                    if (column.equals("AGE")) {
+                        value = Integer.parseInt(valueStr);
                     } else {
-                        value = parsedLong;
+                        long parsedLong = Long.parseLong(valueStr);
+                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                            value = (byte) parsedLong;
+                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                            value = (short) parsedLong;
+                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
+                            value = (int) parsedLong;
+                        } else {
+                            value = parsedLong;
+                        }
                     }
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
@@ -490,9 +525,11 @@ class QueryParser {
             updates.put(column, value);
         }
 
-        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}{3}{4}",
+        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, updates={1}, condition={2}{3}{4}, conditionValueType={5}",
                 new Object[]{tableName, updates, conditionColumn != null ? conditionColumn : "none",
-                        operator == Operator.EQUALS ? "=" : "!=", conditionValue != null ? conditionValue : "none"});
+                        operator == Operator.EQUALS ? "=" : operator == Operator.NOT_EQUALS ? "!=" :
+                                operator == Operator.LESS_THAN ? "<" : ">", conditionValue != null ? conditionValue : "none",
+                        conditionValue != null ? conditionValue.getClass().getSimpleName() : "none"});
 
         return new UpdateQuery(updates, conditionColumn, conditionValue, operator);
     }
