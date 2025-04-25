@@ -21,23 +21,32 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     if (conditions.isEmpty()) {
                         return true;
                     }
-                    boolean result = evaluateCondition(row, conditions.get(0));
-                    for (int i = 1; i < conditions.size(); i++) {
-                        boolean currentResult = evaluateCondition(row, conditions.get(i));
-                        String conjunction = conditions.get(i - 1).conjunction;
-                        if ("AND".equalsIgnoreCase(conjunction)) {
-                            result = result && currentResult;
-                        } else if ("OR".equalsIgnoreCase(conjunction)) {
-                            result = result || currentResult;
-                        }
-                    }
-                    return result;
+                    return evaluateConditions(row, conditions);
                 })
                 .map(row -> filterColumns(row, columns))
                 .collect(Collectors.toList());
     }
 
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions) {
+        boolean result = evaluateCondition(row, conditions.get(0));
+        for (int i = 1; i < conditions.size(); i++) {
+            boolean currentResult = evaluateCondition(row, conditions.get(i));
+            String conjunction = conditions.get(i - 1).conjunction;
+            if ("AND".equalsIgnoreCase(conjunction)) {
+                result = result && currentResult;
+            } else if ("OR".equalsIgnoreCase(conjunction)) {
+                result = result || currentResult;
+            }
+        }
+        return result;
+    }
+
     private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition) {
+        if (condition.isGrouped()) {
+            boolean subResult = evaluateConditions(row, condition.subConditions);
+            return condition.not ? !subResult : subResult;
+        }
+
         Object rowValue = row.get(condition.column);
         if (rowValue == null) {
             LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);

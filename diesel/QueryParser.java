@@ -25,17 +25,40 @@ class QueryParser {
         Operator operator;
         String conjunction; // "AND" or "OR", null for last condition
         boolean not; // Indicates if the condition is negated with NOT
+        List<Condition> subConditions; // For grouped conditions within parentheses
 
+        // Constructor for simple condition
         Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = value;
             this.operator = operator;
             this.conjunction = conjunction;
             this.not = not;
+            this.subConditions = null;
+        }
+
+        // Constructor for grouped condition
+        Condition(List<Condition> subConditions, String conjunction, boolean not) {
+            this.column = null;
+            this.value = null;
+            this.operator = null;
+            this.conjunction = conjunction;
+            this.not = not;
+            this.subConditions = subConditions;
+        }
+
+        boolean isGrouped() {
+            return subConditions != null;
         }
 
         @Override
         public String toString() {
+            if (isGrouped()) {
+                String subCondStr = subConditions.stream()
+                        .map(Condition::toString)
+                        .collect(Collectors.joining(" "));
+                return (not ? "NOT " : "") + "(" + subCondStr + ")" + (conjunction != null ? " " + conjunction : "");
+            }
             return (not ? "NOT " : "") + column + " " + operator + " " + value + (conjunction != null ? " " + conjunction : "");
         }
     }
@@ -150,43 +173,7 @@ class QueryParser {
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
             String conditionStr = tableCondition[1].trim();
-            List<String> conditionParts = splitConditions(conditionStr);
-
-            for (int i = 0; i < conditionParts.size(); i++) {
-                String condition = conditionParts.get(i).trim();
-                String conjunction = (i < conditionParts.size() - 1) ? determineConjunction(conditionStr, condition, conditionParts.get(i + 1)) : null;
-                boolean isNot = condition.startsWith("NOT ");
-                if (isNot) {
-                    condition = condition.substring(4).trim(); // Remove "NOT "
-                }
-
-                String[] partsByOperator;
-                Operator operator;
-                if (condition.contains("!=")) {
-                    partsByOperator = condition.split("!=");
-                    operator = Operator.NOT_EQUALS;
-                } else if (condition.contains("<")) {
-                    partsByOperator = condition.split("<");
-                    operator = Operator.LESS_THAN;
-                } else if (condition.contains(">")) {
-                    partsByOperator = condition.split(">");
-                    operator = Operator.GREATER_THAN;
-                } else if (condition.contains("=")) {
-                    partsByOperator = condition.split("=");
-                    operator = Operator.EQUALS;
-                } else {
-                    throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
-                }
-
-                if (partsByOperator.length != 2) {
-                    throw new IllegalArgumentException("Invalid WHERE clause");
-                }
-
-                String conditionColumn = partsByOperator[0].trim();
-                String valueStr = partsByOperator[1].trim();
-                Object conditionValue = parseConditionValue(conditionColumn, valueStr);
-                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction, isNot));
-            }
+            conditions = parseConditions(conditionStr);
         }
 
         LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, conditions={2}",
@@ -312,43 +299,7 @@ class QueryParser {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
-            List<String> conditionParts = splitConditions(conditionStr);
-
-            for (int i = 0; i < conditionParts.size(); i++) {
-                String condition = conditionParts.get(i).trim();
-                String conjunction = (i < conditionParts.size() - 1) ? determineConjunction(conditionStr, condition, conditionParts.get(i + 1)) : null;
-                boolean isNot = condition.startsWith("NOT ");
-                if (isNot) {
-                    condition = condition.substring(4).trim(); // Remove "NOT "
-                }
-
-                String[] partsByOperator;
-                Operator operator;
-                if (condition.contains("!=")) {
-                    partsByOperator = condition.split("!=");
-                    operator = Operator.NOT_EQUALS;
-                } else if (condition.contains("<")) {
-                    partsByOperator = condition.split("<");
-                    operator = Operator.LESS_THAN;
-                } else if (condition.contains(">")) {
-                    partsByOperator = condition.split(">");
-                    operator = Operator.GREATER_THAN;
-                } else if (condition.contains("=")) {
-                    partsByOperator = condition.split("=");
-                    operator = Operator.EQUALS;
-                } else {
-                    throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
-                }
-
-                if (partsByOperator.length != 2) {
-                    throw new IllegalArgumentException("Invalid WHERE clause");
-                }
-
-                String conditionColumn = partsByOperator[0].trim();
-                String valueStr = partsByOperator[1].trim();
-                Object conditionValue = parseConditionValue(conditionColumn, valueStr);
-                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction, isNot));
-            }
+            conditions = parseConditions(conditionStr);
         } else {
             setPart = setAndWhere;
         }
@@ -424,10 +375,11 @@ class QueryParser {
         }
     }
 
-    private List<String> splitConditions(String conditionStr) {
-        List<String> conditions = new ArrayList<>();
+    private List<Condition> parseConditions(String conditionStr) {
+        List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
+        int parenDepth = 0;
 
         for (int i = 0; i < conditionStr.length(); i++) {
             char c = conditionStr.charAt(i);
@@ -436,37 +388,104 @@ class QueryParser {
                 currentCondition.append(c);
                 continue;
             }
-            if (!inQuotes && i + 3 < conditionStr.length() &&
-                    (conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ||
-                            conditionStr.substring(i, i + 2).equalsIgnoreCase("OR"))) {
-                String conjunction = conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ? "AND" : "OR";
-                if (conjunction.equals("OR") && i + 2 < conditionStr.length()) {
-                    i += 2; // OR is 2 chars
-                } else {
-                    i += 3; // AND is 3 chars
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    if (parenDepth == 1) {
+                        // Start of a grouped condition, skip the opening parenthesis
+                        continue;
+                    }
+                } else if (c == ')') {
+                    parenDepth--;
+                    if (parenDepth == 0) {
+                        // End of a grouped condition
+                        String subConditionStr = currentCondition.toString().trim();
+                        if (!subConditionStr.isEmpty()) {
+                            boolean isNot = subConditionStr.startsWith("NOT ");
+                            if (isNot) {
+                                subConditionStr = subConditionStr.substring(4).trim();
+                            }
+                            List<Condition> subConditions = parseConditions(subConditionStr);
+                            String conjunction = determineConjunctionAfter(conditionStr, i);
+                            conditions.add(new Condition(subConditions, conjunction, isNot));
+                        }
+                        currentCondition = new StringBuilder();
+                        continue;
+                    }
+                } else if (parenDepth == 0 && i + 3 <= conditionStr.length() &&
+                        (conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ||
+                                conditionStr.substring(i, i + 2).equalsIgnoreCase("OR"))) {
+                    String conjunction = conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ? "AND" : "OR";
+                    String current = currentCondition.toString().trim();
+                    if (!current.isEmpty()) {
+                        conditions.add(parseSingleCondition(current, conjunction));
+                    }
+                    currentCondition = new StringBuilder();
+                    i += conjunction.equals("AND") ? 2 : 1; // Skip AND/OR
+                    continue;
                 }
-                conditions.add(currentCondition.toString().trim());
-                currentCondition = new StringBuilder();
-                continue;
             }
             currentCondition.append(c);
         }
-        if (currentCondition.length() > 0) {
-            conditions.add(currentCondition.toString().trim());
+
+        if (currentCondition.length() > 0 && parenDepth == 0) {
+            String current = currentCondition.toString().trim();
+            if (!current.isEmpty()) {
+                conditions.add(parseSingleCondition(current, null));
+            }
         }
+
+        if (parenDepth != 0) {
+            throw new IllegalArgumentException("Mismatched parentheses in WHERE clause");
+        }
+
         return conditions;
     }
 
-    private String determineConjunction(String conditionStr, String currentCondition, String nextCondition) {
-        int currentIndex = conditionStr.indexOf(currentCondition);
-        if (currentIndex == -1) {
-            return "AND"; // Default to AND if not found
+    private Condition parseSingleCondition(String condition, String conjunction) {
+        boolean isNot = condition.startsWith("NOT ");
+        if (isNot) {
+            condition = condition.substring(4).trim();
         }
-        int nextIndex = conditionStr.indexOf(nextCondition, currentIndex + currentCondition.length());
-        if (nextIndex == -1) {
+
+        String[] partsByOperator;
+        Operator operator;
+        if (condition.contains("!=")) {
+            partsByOperator = condition.split("!=");
+            operator = Operator.NOT_EQUALS;
+        } else if (condition.contains("<")) {
+            partsByOperator = condition.split("<");
+            operator = Operator.LESS_THAN;
+        } else if (condition.contains(">")) {
+            partsByOperator = condition.split(">");
+            operator = Operator.GREATER_THAN;
+        } else if (condition.contains("=")) {
+            partsByOperator = condition.split("=");
+            operator = Operator.EQUALS;
+        } else {
+            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
+        }
+
+        if (partsByOperator.length != 2) {
+            throw new IllegalArgumentException("Invalid WHERE clause");
+        }
+
+        String conditionColumn = partsByOperator[0].trim();
+        String valueStr = partsByOperator[1].trim();
+        Object conditionValue = parseConditionValue(conditionColumn, valueStr);
+        return new Condition(conditionColumn, conditionValue, operator, conjunction, isNot);
+    }
+
+    private String determineConjunctionAfter(String conditionStr, int index) {
+        int i = index + 1;
+        while (i < conditionStr.length() && Character.isWhitespace(conditionStr.charAt(i))) {
+            i++;
+        }
+        if (i + 3 <= conditionStr.length() && conditionStr.substring(i, i + 3).equalsIgnoreCase("AND")) {
             return "AND";
+        } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR")) {
+            return "OR";
         }
-        String between = conditionStr.substring(currentIndex + currentCondition.length(), nextIndex).trim();
-        return between.equalsIgnoreCase("OR") ? "OR" : "AND";
+        return null;
     }
 }

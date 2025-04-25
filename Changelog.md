@@ -28,3 +28,4 @@
 0.2.8 add condition and
 0.2.9 add condition or
 0.3.0 add condition not
+0.3.1 add condition ()

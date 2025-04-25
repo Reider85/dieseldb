@@ -69,14 +69,14 @@ class UpdateQuery implements Query<Void> {
 
         // Update rows that match the conditions
         for (Map<String, Object> row : rows) {
-            if (conditions.isEmpty() || evaluateConditions(row)) {
+            if (conditions.isEmpty() || evaluateConditions(row, conditions)) {
                 validatedUpdates.forEach(row::put);
             }
         }
         return null;
     }
 
-    private boolean evaluateConditions(Map<String, Object> row) {
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions) {
         boolean result = evaluateCondition(row, conditions.get(0));
         for (int i = 1; i < conditions.size(); i++) {
             boolean currentResult = evaluateCondition(row, conditions.get(i));
@@ -91,6 +91,11 @@ class UpdateQuery implements Query<Void> {
     }
 
     private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition) {
+        if (condition.isGrouped()) {
+            boolean subResult = evaluateConditions(row, condition.subConditions);
+            return condition.not ? !subResult : subResult;
+        }
+
         Object rowValue = row.get(condition.column);
         if (rowValue == null) {
             LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);

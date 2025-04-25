@@ -98,6 +98,14 @@ public class DatabaseClient {
                 System.out.println(row);
             }
 
+            // Select data with parentheses in WHERE clause
+            String selectParenQuery = "SELECT NAME, AGE, ACTIVE FROM USERS WHERE (AGE < 30 AND ACTIVE = TRUE) OR NAME = 'Bob'";
+            List<Map<String, Object>> parenResult = (List<Map<String, Object>>) client.executeQuery(selectParenQuery);
+            System.out.println("\nQuery Result (SELECT with Parentheses):");
+            for (Map<String, Object> row : parenResult) {
+                System.out.println(row);
+            }
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Client error: {0}", e.getMessage());
             e.printStackTrace();
