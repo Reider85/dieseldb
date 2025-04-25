@@ -23,18 +23,20 @@ class QueryParser {
         String column;
         Object value;
         Operator operator;
-        String conjunction; // "AND" или "OR", null для последнего условия
+        String conjunction; // "AND" or "OR", null for last condition
+        boolean not; // Indicates if the condition is negated with NOT
 
-        Condition(String column, Object value, Operator operator, String conjunction) {
+        Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = value;
             this.operator = operator;
             this.conjunction = conjunction;
+            this.not = not;
         }
 
         @Override
         public String toString() {
-            return column + " " + operator + " " + value + (conjunction != null ? " " + conjunction : "");
+            return (not ? "NOT " : "") + column + " " + operator + " " + value + (conjunction != null ? " " + conjunction : "");
         }
     }
 
@@ -148,12 +150,16 @@ class QueryParser {
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
             String conditionStr = tableCondition[1].trim();
-            // Разделяем по AND или OR, сохраняя порядок
             List<String> conditionParts = splitConditions(conditionStr);
 
             for (int i = 0; i < conditionParts.size(); i++) {
-                String condition = conditionParts.get(i);
+                String condition = conditionParts.get(i).trim();
                 String conjunction = (i < conditionParts.size() - 1) ? determineConjunction(conditionStr, condition, conditionParts.get(i + 1)) : null;
+                boolean isNot = condition.startsWith("NOT ");
+                if (isNot) {
+                    condition = condition.substring(4).trim(); // Remove "NOT "
+                }
+
                 String[] partsByOperator;
                 Operator operator;
                 if (condition.contains("!=")) {
@@ -179,7 +185,7 @@ class QueryParser {
                 String conditionColumn = partsByOperator[0].trim();
                 String valueStr = partsByOperator[1].trim();
                 Object conditionValue = parseConditionValue(conditionColumn, valueStr);
-                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction));
+                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction, isNot));
             }
         }
 
@@ -309,8 +315,13 @@ class QueryParser {
             List<String> conditionParts = splitConditions(conditionStr);
 
             for (int i = 0; i < conditionParts.size(); i++) {
-                String condition = conditionParts.get(i);
+                String condition = conditionParts.get(i).trim();
                 String conjunction = (i < conditionParts.size() - 1) ? determineConjunction(conditionStr, condition, conditionParts.get(i + 1)) : null;
+                boolean isNot = condition.startsWith("NOT ");
+                if (isNot) {
+                    condition = condition.substring(4).trim(); // Remove "NOT "
+                }
+
                 String[] partsByOperator;
                 Operator operator;
                 if (condition.contains("!=")) {
@@ -336,7 +347,7 @@ class QueryParser {
                 String conditionColumn = partsByOperator[0].trim();
                 String valueStr = partsByOperator[1].trim();
                 Object conditionValue = parseConditionValue(conditionColumn, valueStr);
-                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction));
+                conditions.add(new Condition(conditionColumn, conditionValue, operator, conjunction, isNot));
             }
         } else {
             setPart = setAndWhere;

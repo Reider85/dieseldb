@@ -44,9 +44,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return false;
         }
 
-        LOGGER.log(Level.INFO, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}",
+        LOGGER.log(Level.INFO, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}, not={5}",
                 new Object[]{rowValue, rowValue.getClass().getSimpleName(),
-                        condition.value, condition.value.getClass().getSimpleName(), condition.operator});
+                        condition.value, condition.value.getClass().getSimpleName(), condition.operator, condition.not});
+
+        boolean result;
 
         // Handle EQUALS and NOT_EQUALS
         if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
@@ -58,29 +60,32 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             } else {
                 isEqual = String.valueOf(rowValue).equals(String.valueOf(condition.value));
             }
-            return condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
+            result = condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
         }
-
         // Handle LESS_THAN and GREATER_THAN
-        if (!(rowValue instanceof Comparable) || !(condition.value instanceof Comparable)) {
-            LOGGER.log(Level.WARNING, "Comparison operators < or > not supported for types: rowValue={0}, conditionValue={1}",
-                    new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
-            throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
+        else {
+            if (!(rowValue instanceof Comparable) || !(condition.value instanceof Comparable)) {
+                LOGGER.log(Level.WARNING, "Comparison operators < or > not supported for types: rowValue={0}, conditionValue={1}",
+                        new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
+                throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
+            }
+
+            @SuppressWarnings("unchecked")
+            Comparable<Object> rowComparable = (Comparable<Object>) rowValue;
+            @SuppressWarnings("unchecked")
+            Comparable<Object> conditionComparable = (Comparable<Object>) condition.value;
+
+            if (rowValue.getClass() != condition.value.getClass()) {
+                LOGGER.log(Level.WARNING, "Type mismatch in comparison: rowValue={0}, conditionValue={1}",
+                        new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
+                throw new IllegalArgumentException("Type mismatch in comparison");
+            }
+
+            int comparison = rowComparable.compareTo(condition.value);
+            result = condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
         }
 
-        @SuppressWarnings("unchecked")
-        Comparable<Object> rowComparable = (Comparable<Object>) rowValue;
-        @SuppressWarnings("unchecked")
-        Comparable<Object> conditionComparable = (Comparable<Object>) condition.value;
-
-        if (rowValue.getClass() != condition.value.getClass()) {
-            LOGGER.log(Level.WARNING, "Type mismatch in comparison: rowValue={0}, conditionValue={1}",
-                    new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
-            throw new IllegalArgumentException("Type mismatch in comparison");
-        }
-
-        int comparison = rowComparable.compareTo(condition.value);
-        return condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
+        return condition.not ? !result : result;
     }
 
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {

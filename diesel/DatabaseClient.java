@@ -85,10 +85,19 @@ public class DatabaseClient {
             // Select data with OR condition
             String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE > 25 OR ACTIVE = TRUE";
             List<Map<String, Object>> result = (List<Map<String, Object>>) client.executeQuery(selectQuery);
-            System.out.println("Query Result:");
+            System.out.println("Query Result (Original SELECT):");
             for (Map<String, Object> row : result) {
                 System.out.println(row);
             }
+
+            // Select data with NOT condition
+            String selectNotQuery = "SELECT NAME, AGE, ACTIVE FROM USERS WHERE NOT AGE = 25 OR ACTIVE = TRUE";
+            List<Map<String, Object>> notResult = (List<Map<String, Object>>) client.executeQuery(selectNotQuery);
+            System.out.println("\nQuery Result (SELECT with NOT):");
+            for (Map<String, Object> row : notResult) {
+                System.out.println(row);
+            }
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Client error: {0}", e.getMessage());
             e.printStackTrace();
