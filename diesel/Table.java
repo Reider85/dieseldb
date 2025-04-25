@@ -51,6 +51,9 @@ class Table implements Serializable {
             } else if (expectedType == Double.class && !(value instanceof Double)) {
                 throw new IllegalArgumentException(
                         String.format("Invalid type for column %s: expected Double, got %s", col, value.getClass().getSimpleName()));
+            } else if (expectedType == Character.class && !(value instanceof Character)) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid type for column %s: expected Character, got %s", col, value.getClass().getSimpleName()));
             } else if (expectedType == String.class && !(value instanceof String)) {
                 throw new IllegalArgumentException(
                         String.format("Invalid type for column %s: expected String, got %s", col, value.getClass().getSimpleName()));

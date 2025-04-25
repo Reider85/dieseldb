@@ -77,6 +77,9 @@ class QueryParser {
                 case "DOUBLE":
                     columnTypes.put(colName, Double.class);
                     break;
+                case "CHAR":
+                    columnTypes.put(colName, Character.class);
+                    break;
                 case "BOOLEAN":
                     columnTypes.put(colName, Boolean.class);
                     break;
@@ -144,6 +147,8 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
+                } else if (strippedValue.length() == 1) {
+                    conditionValue = strippedValue.charAt(0);
                 } else {
                     conditionValue = strippedValue;
                 }
@@ -232,6 +237,8 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
+                } else if (strippedValue.length() == 1) {
+                    values.add(strippedValue.charAt(0));
                 } else {
                     values.add(strippedValue);
                 }
@@ -320,6 +327,8 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
+                } else if (strippedValue.length() == 1) {
+                    conditionValue = strippedValue.charAt(0);
                 } else {
                     conditionValue = strippedValue;
                 }
@@ -390,6 +399,8 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
+                } else if (strippedValue.length() == 1) {
+                    value = strippedValue.charAt(0);
                 } else {
                     value = strippedValue;
                 }

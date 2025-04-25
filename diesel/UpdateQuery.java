@@ -77,6 +77,17 @@ class UpdateQuery implements Query<Void> {
                     throw new IllegalArgumentException(
                             String.format("Invalid value '%s' for column %s: expected DOUBLE", value, column));
                 }
+            } else if (expectedType == Character.class && !(value instanceof Character)) {
+                try {
+                    if (value.toString().length() == 1) {
+                        value = value.toString().charAt(0);
+                    } else {
+                        throw new IllegalArgumentException("Expected single character");
+                    }
+                } catch (Exception e) {
+                    throw new IllegalArgumentException(
+                            String.format("Invalid value '%s' for column %s: expected CHAR", value, column));
+                }
             } else if (expectedType == String.class && !(value instanceof String)) {
                 value = value.toString();
             } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {

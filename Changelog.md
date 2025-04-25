@@ -21,3 +21,4 @@
 0.2.1 add type BigDecimal
 0.2.2 add type Float
 0.2.3 add type Double
+0.2.4 add type Char
