@@ -4,7 +4,6 @@ import java.util.stream.Collectors;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 // Query parser (SRP, Creator)
-// Query parser (SRP, Creator)
 class QueryParser {
     private static final Logger LOGGER = Logger.getLogger(QueryParser.class.getName());
 
@@ -20,13 +19,14 @@ class QueryParser {
                 throw new IllegalArgumentException("Invalid query format");
             }
 
-            String selectPart  = parts[0].replace("SELECT", "").trim();
+            String selectPart = parts[0].replace("SELECT", "").trim();
             String[] selectColumns = selectPart.split(",");
             List<String> columns = Arrays.stream(selectColumns)
                     .map(String::trim)
                     .collect(Collectors.toList());
 
             String tableAndCondition = parts[1].trim();
+            String tableName = tableAndCondition.split(" ")[0].trim();
             String conditionColumn = null;
             String conditionValue = null;
 
@@ -39,6 +39,10 @@ class QueryParser {
                     conditionValue = conditionParts[1].trim().replace("'", "");
                 }
             }
+
+            LOGGER.log(Level.INFO, "Parsed query: columns={0}, table={1}, condition={2}={3}",
+                    new Object[]{columns, tableName, conditionColumn != null ? conditionColumn : "none",
+                            conditionValue != null ? conditionValue : "none"});
 
             return new SelectQuery(columns, conditionColumn, conditionValue);
         } catch (IllegalArgumentException e) {

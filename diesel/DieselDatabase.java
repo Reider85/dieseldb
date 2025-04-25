@@ -31,7 +31,7 @@ public class DieselDatabase {
         try {
             List<Map<String, String>> result = db.executeQuery(query);
             LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});
-            System.out.println("Query zondag: ");
+            System.out.println("Query Result:");
             for (Map<String, String> row : result) {
                 System.out.println(row);
             }
