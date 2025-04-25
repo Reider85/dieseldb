@@ -2,10 +2,10 @@ package diesel;
 import java.util.*;
 
 interface TableStorage {
-    List<Map<String, Object>> getRows(); // Изменено с String на Object
+    List<Map<String, Object>> getRows(); // РР·РјРµРЅРµРЅРѕ СЃ String РЅР° Object
     List<String> getColumns();
-    Map<String, Class<?>> getColumnTypes(); // Новый метод для хранения типов столбцов
-    void addRow(Map<String, Object> row); // Изменено с String на Object
+    Map<String, Class<?>> getColumnTypes(); // РќРѕРІС‹Р№ РјРµС‚РѕРґ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ С‚РёРїРѕРІ СЃС‚РѕР»Р±С†РѕРІ
+    void addRow(Map<String, Object> row); // РР·РјРµРЅРµРЅРѕ СЃ String РЅР° Object
     void saveToFile(String tableName);
     void loadFromFile(String tableName);
 }

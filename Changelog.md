@@ -14,3 +14,4 @@
 0.1.4 add type Date
 0.1.5 add type DateTime
 0.1.6 add type DateTime with milliseconds
+0.1.7 encoding fix
