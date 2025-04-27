@@ -172,7 +172,11 @@ class QueryParser {
 
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
+            if (tableCondition.length != 2) {
+                throw new IllegalArgumentException("Invalid WHERE clause format");
+            }
             String conditionStr = tableCondition[1].trim();
+            LOGGER.log(Level.FINE, "Parsing WHERE clause: {0}", conditionStr);
             conditions = parseConditions(conditionStr);
         }
 
@@ -381,6 +385,8 @@ class QueryParser {
         boolean inQuotes = false;
         int parenDepth = 0;
 
+        LOGGER.log(Level.FINE, "Processing condition string: {0}", conditionStr);
+
         for (int i = 0; i < conditionStr.length(); i++) {
             char c = conditionStr.charAt(i);
             if (c == '\'') {
@@ -412,17 +418,31 @@ class QueryParser {
                         currentCondition = new StringBuilder();
                         continue;
                     }
-                } else if (parenDepth == 0 && i + 3 <= conditionStr.length() &&
-                        (conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ||
-                                conditionStr.substring(i, i + 2).equalsIgnoreCase("OR"))) {
-                    String conjunction = conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") ? "AND" : "OR";
-                    String current = currentCondition.toString().trim();
-                    if (!current.isEmpty()) {
-                        conditions.add(parseSingleCondition(current, conjunction));
+                } else if (parenDepth == 0) {
+                    // Check for AND/OR only as whole words surrounded by whitespace
+                    if (i + 3 <= conditionStr.length() && conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
+                            (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
+                            (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
+                        String current = currentCondition.toString().trim();
+                        if (!current.isEmpty()) {
+                            conditions.add(parseSingleCondition(current, "AND"));
+                            LOGGER.log(Level.FINE, "Added condition with AND: {0}", current);
+                        }
+                        currentCondition = new StringBuilder();
+                        i += 2; // Skip AND
+                        continue;
+                    } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
+                            (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
+                            (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
+                        String current = currentCondition.toString().trim();
+                        if (!current.isEmpty()) {
+                            conditions.add(parseSingleCondition(current, "OR"));
+                            LOGGER.log(Level.FINE, "Added condition with OR: {0}", current);
+                        }
+                        currentCondition = new StringBuilder();
+                        i += 1; // Skip OR
+                        continue;
                     }
-                    currentCondition = new StringBuilder();
-                    i += conjunction.equals("AND") ? 2 : 1; // Skip AND/OR
-                    continue;
                 }
             }
             currentCondition.append(c);
@@ -432,6 +452,7 @@ class QueryParser {
             String current = currentCondition.toString().trim();
             if (!current.isEmpty()) {
                 conditions.add(parseSingleCondition(current, null));
+                LOGGER.log(Level.FINE, "Added final condition: {0}", current);
             }
         }
 
@@ -439,40 +460,48 @@ class QueryParser {
             throw new IllegalArgumentException("Mismatched parentheses in WHERE clause");
         }
 
+        LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
+
         return conditions;
     }
 
     private Condition parseSingleCondition(String condition, String conjunction) {
+        LOGGER.log(Level.FINE, "Parsing condition: {0}", condition);
         boolean isNot = condition.startsWith("NOT ");
         if (isNot) {
             condition = condition.substring(4).trim();
         }
 
-        String[] partsByOperator;
-        Operator operator;
+        // Split on operators, handling whitespace correctly
+        String[] partsByOperator = null;
+        Operator operator = null;
+
+        // Use regex to split on operators, preserving the operator
         if (condition.contains("!=")) {
-            partsByOperator = condition.split("!=");
+            partsByOperator = condition.split("\\s*!=\\s*");
             operator = Operator.NOT_EQUALS;
         } else if (condition.contains("<")) {
-            partsByOperator = condition.split("<");
+            partsByOperator = condition.split("\\s*<\\s*");
             operator = Operator.LESS_THAN;
         } else if (condition.contains(">")) {
-            partsByOperator = condition.split(">");
+            partsByOperator = condition.split("\\s*>\\s*");
             operator = Operator.GREATER_THAN;
         } else if (condition.contains("=")) {
-            partsByOperator = condition.split("=");
+            partsByOperator = condition.split("\\s*=\\s*");
             operator = Operator.EQUALS;
-        } else {
-            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
         }
 
-        if (partsByOperator.length != 2) {
-            throw new IllegalArgumentException("Invalid WHERE clause");
+        if (partsByOperator == null || partsByOperator.length != 2) {
+            LOGGER.log(Level.SEVERE, "Invalid condition format: {0}, parts: {1}",
+                    new Object[]{condition, partsByOperator == null ? "null" : Arrays.toString(partsByOperator)});
+            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
         }
 
         String conditionColumn = partsByOperator[0].trim();
         String valueStr = partsByOperator[1].trim();
         Object conditionValue = parseConditionValue(conditionColumn, valueStr);
+        LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
+                new Object[]{conditionColumn, operator, conditionValue, isNot, conjunction});
         return new Condition(conditionColumn, conditionValue, operator, conjunction, isNot);
     }
 
@@ -481,9 +510,11 @@ class QueryParser {
         while (i < conditionStr.length() && Character.isWhitespace(conditionStr.charAt(i))) {
             i++;
         }
-        if (i + 3 <= conditionStr.length() && conditionStr.substring(i, i + 3).equalsIgnoreCase("AND")) {
+        if (i + 3 <= conditionStr.length() && conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
+                (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
             return "AND";
-        } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR")) {
+        } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
+                (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
             return "OR";
         }
         return null;
