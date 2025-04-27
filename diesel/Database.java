@@ -3,10 +3,15 @@ import java.util.*;
 
 class Database {
     private final Map<String, Table> tables = new HashMap<>();
+    private Transaction currentTransaction = null;
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         if (!tables.containsKey(tableName)) {
-            tables.put(tableName, new Table(columns, columnTypes));
+            Table newTable = new Table(columns, columnTypes);
+            tables.put(tableName, newTable);
+            if (currentTransaction != null && currentTransaction.isActive()) {
+                currentTransaction.updateTable(tableName, newTable);
+            }
         } else {
             throw new IllegalArgumentException("Table " + tableName + " already exists");
         }
@@ -14,7 +19,40 @@ class Database {
 
     public Object executeQuery(String query) {
         Query<?> parsedQuery = new QueryParser().parse(query);
-        if (parsedQuery instanceof CreateTableQuery) {
+        if (parsedQuery instanceof BeginTransactionQuery) {
+            if (currentTransaction != null && currentTransaction.isActive()) {
+                throw new IllegalStateException("Another transaction is already active");
+            }
+            currentTransaction = new Transaction();
+            for (Map.Entry<String, Table> entry : tables.entrySet()) {
+                currentTransaction.snapshotTable(entry.getKey(), entry.getValue());
+            }
+            return "Transaction started: " + currentTransaction.getTransactionId();
+        } else if (parsedQuery instanceof CommitTransactionQuery) {
+            if (currentTransaction == null || !currentTransaction.isActive()) {
+                throw new IllegalStateException("No active transaction to commit");
+            }
+            // Apply modified tables
+            for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
+                tables.put(entry.getKey(), entry.getValue());
+                entry.getValue().saveToFile(entry.getKey());
+            }
+            currentTransaction.setInactive();
+            currentTransaction = null;
+            return "Transaction committed";
+        } else if (parsedQuery instanceof RollbackTransactionQuery) {
+            if (currentTransaction == null || !currentTransaction.isActive()) {
+                throw new IllegalStateException("No active transaction to rollback");
+            }
+            // Restore original tables
+            tables.clear();
+            for (Map.Entry<String, Table> entry : currentTransaction.getOriginalTables().entrySet()) {
+                tables.put(entry.getKey(), entry.getValue());
+            }
+            currentTransaction.setInactive();
+            currentTransaction = null;
+            return "Transaction rolled back";
+        } else if (parsedQuery instanceof CreateTableQuery) {
             CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
             createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes());
             return "Table created successfully";
@@ -25,7 +63,11 @@ class Database {
             throw new IllegalArgumentException("Table " + tableName + " does not exist");
         }
         Object result = parsedQuery.execute(table);
-        table.saveToFile(tableName);
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            currentTransaction.updateTable(tableName, table);
+        } else {
+            table.saveToFile(tableName);
+        }
         return result;
     }
 
@@ -53,5 +95,12 @@ class Database {
         if (tables.remove(tableName) == null) {
             throw new IllegalArgumentException("Table " + tableName + " does not exist");
         }
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            currentTransaction.updateTable(tableName, null);
+        }
+    }
+
+    public boolean isInTransaction() {
+        return currentTransaction != null && currentTransaction.isActive();
     }
 }

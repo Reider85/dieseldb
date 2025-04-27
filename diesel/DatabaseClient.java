@@ -66,6 +66,9 @@ public class DatabaseClient {
         try {
             client.connect();
 
+            // Begin transaction
+            client.executeQuery("BEGIN TRANSACTION");
+
             // Create table with types
             String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
             client.executeQuery(createTable);
@@ -81,6 +84,12 @@ public class DatabaseClient {
             // Update data with OR condition
             String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE AGE < 30 OR ACTIVE = FALSE";
             client.executeQuery(updateQuery);
+
+            // Commit transaction
+            client.executeQuery("COMMIT TRANSACTION");
+
+            // Begin another transaction for selects
+            client.executeQuery("BEGIN TRANSACTION");
 
             // Select data with OR condition
             String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE > 25 OR ACTIVE = TRUE";
@@ -106,8 +115,17 @@ public class DatabaseClient {
                 System.out.println(row);
             }
 
+            // Commit transaction
+            client.executeQuery("COMMIT TRANSACTION");
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Client error: {0}", e.getMessage());
+            try {
+                // Attempt to rollback on error
+                client.executeQuery("ROLLBACK TRANSACTION");
+            } catch (Exception rollbackEx) {
+                LOGGER.log(Level.SEVERE, "Rollback failed: {0}", rollbackEx.getMessage());
+            }
             e.printStackTrace();
         } finally {
             client.disconnect();

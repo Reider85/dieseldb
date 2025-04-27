@@ -89,6 +89,10 @@ public class DatabaseServer {
                 LOGGER.log(Level.SEVERE, "Client handler error: {0}", e.getMessage());
             } finally {
                 try {
+                    // Rollback any active transaction for this client
+                    if (database.isInTransaction()) {
+                        database.executeQuery("ROLLBACK TRANSACTION");
+                    }
                     if (out != null) out.close();
                     if (in != null) in.close();
                     if (clientSocket != null) clientSocket.close();

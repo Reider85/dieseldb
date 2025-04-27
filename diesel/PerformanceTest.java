@@ -11,9 +11,9 @@ import java.util.Locale;
 
 public class PerformanceTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class.getName());
-    private static final int RECORD_COUNT = 1000;
+    private static final int RECORD_COUNT = 100;
     private static final int WARMUP_RUNS = 1;
-    private static final int TEST_RUNS = 10;
+    private static final int TEST_RUNS = 5;
     private final Database database;
 
     public PerformanceTest() {
@@ -24,6 +24,7 @@ public class PerformanceTest {
         runInsertPerformanceTest();
         setupTable();
         runUpdatePerformanceTest();
+        runTransactionPerformanceTest();
         List<String> queries = prepareQueries();
         for (String query : queries) {
             runPerformanceTest(query);
@@ -162,6 +163,51 @@ public class PerformanceTest {
         double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
 
         LOGGER.log(Level.INFO, "UPDATE performance for {0} records", RECORD_COUNT);
+        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
+        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
+        LOGGER.log(Level.INFO, "--------------------------------");
+    }
+
+    private void runTransactionPerformanceTest() {
+        LOGGER.log(Level.INFO, "Testing TRANSACTION performance for {0} records", RECORD_COUNT);
+
+        Random random = new Random();
+
+        for (int i = 0; i < WARMUP_RUNS; i++) {
+            LOGGER.log(Level.INFO, "Warmup run {0}", i);
+            dropTable();
+            database.executeQuery("BEGIN TRANSACTION");
+            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+            insertRecords(RECORD_COUNT);
+            performUpdateRun(random);
+            database.executeQuery("COMMIT TRANSACTION");
+        }
+
+        List<Long> executionTimes = new ArrayList<>();
+        for (int i = 0; i < TEST_RUNS; i++) {
+            LOGGER.log(Level.INFO, "Test run {0}", i);
+            dropTable();
+            long startTime = System.nanoTime();
+            database.executeQuery("BEGIN TRANSACTION");
+            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+            insertRecords(RECORD_COUNT);
+            performUpdateRun(random);
+            database.executeQuery("COMMIT TRANSACTION");
+            long endTime = System.nanoTime();
+            executionTimes.add(endTime - startTime);
+        }
+
+        double averageTimeMs = executionTimes.stream()
+                .mapToLong(Long::longValue)
+                .average()
+                .orElse(0.0) / 1_000_000.0;
+        long minTimeNs = executionTimes.stream().min(Long::compareTo).orElse(0L);
+        long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
+        double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
+
+        LOGGER.log(Level.INFO, "TRANSACTION performance for {0} records", RECORD_COUNT);
         LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
         LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
         LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));

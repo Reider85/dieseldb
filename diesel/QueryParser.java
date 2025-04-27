@@ -74,6 +74,12 @@ class QueryParser {
                 return parseUpdateQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
+            } else if (normalized.equals("BEGIN TRANSACTION")) {
+                return new BeginTransactionQuery();
+            } else if (normalized.equals("COMMIT TRANSACTION")) {
+                return new CommitTransactionQuery();
+            } else if (normalized.equals("ROLLBACK TRANSACTION")) {
+                return new RollbackTransactionQuery();
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
@@ -518,5 +524,29 @@ class QueryParser {
             return "OR";
         }
         return null;
+    }
+}
+
+// Transaction query interfaces
+interface TransactionQuery extends Query<String> {}
+
+class BeginTransactionQuery implements TransactionQuery {
+    @Override
+    public String execute(Table table) {
+        throw new UnsupportedOperationException("BeginTransactionQuery should be handled by Database directly");
+    }
+}
+
+class CommitTransactionQuery implements TransactionQuery {
+    @Override
+    public String execute(Table table) {
+        throw new UnsupportedOperationException("CommitTransactionQuery should be handled by Database directly");
+    }
+}
+
+class RollbackTransactionQuery implements TransactionQuery {
+    @Override
+    public String execute(Table table) {
+        throw new UnsupportedOperationException("RollbackTransactionQuery should be handled by Database directly");
     }
 }
