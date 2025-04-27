@@ -41,4 +41,3 @@
 0.4.1 row lock
 0.4.2 b-tree index
 0.4.3 hash index
-0.4.4 unique index

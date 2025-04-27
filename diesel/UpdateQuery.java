@@ -30,24 +30,6 @@ class UpdateQuery implements Query<Void> {
                     lock.writeLock().lock();
                     acquiredLocks.add(lock);
 
-                    // Check unique indexes for new values
-                    for (Map.Entry<String, Object> update : updates.entrySet()) {
-                        String column = update.getKey();
-                        Index uniqueIndex = table.getUniqueIndexes().get(column);
-                        if (uniqueIndex != null) {
-                            Object newValue = update.getValue();
-                            if (newValue != null) {
-                                List<Integer> existingRows = uniqueIndex.search(newValue);
-                                if (!existingRows.isEmpty() && !existingRows.contains(i)) {
-                                    LOGGER.log(Level.WARNING, "Unique constraint violation on column {0}: value {1} already exists at row {2}",
-                                            new Object[]{column, newValue, existingRows.get(0)});
-                                    throw new IllegalArgumentException(
-                                            "Unique constraint violation: value '" + newValue + "' already exists in column " + column);
-                                }
-                            }
-                        }
-                    }
-
                     // Store old values for index updates
                     Map<String, Object> oldValues = new HashMap<>();
                     for (String column : updates.keySet()) {
@@ -152,8 +134,7 @@ class UpdateQuery implements Query<Void> {
                                 index.insert(newValue, i);
                             }
                             LOGGER.log(Level.INFO, "Updated {0} index for column {1} at row {2}: {3} -> {4}",
-                                    new Object[]{index instanceof UniqueHashIndex ? "unique hash" : index instanceof HashIndex ? "hash" : "B-tree",
-                                            column, i, oldValue, newValue});
+                                    new Object[]{index instanceof HashIndex ? "hash" : "B-tree", column, i, oldValue, newValue});
                         }
                     }
                 }
