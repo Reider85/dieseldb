@@ -73,6 +73,8 @@ class QueryParser {
                 return parseUpdateQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
+            } else if (normalized.startsWith("CREATE UNIQUE INDEX")) {
+                return parseCreateUniqueIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE HASH INDEX")) {
                 return parseCreateHashIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE INDEX")) {
@@ -96,11 +98,11 @@ class QueryParser {
                 return new RollbackTransactionQuery();
             } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
                 return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);
-            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")) {
+            } else if (normalized.startsWith("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")) {
                 return new SetIsolationLevelQuery(IsolationLevel.READ_COMMITTED);
-            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
+            } else if (normalized.startsWith("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
                 return new SetIsolationLevelQuery(IsolationLevel.REPEATABLE_READ);
-            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
+            } else if (normalized.startsWith("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
                 return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
             }
             throw new IllegalArgumentException("Unsupported query type");
@@ -108,6 +110,18 @@ class QueryParser {
             LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
             throw e;
         }
+    }
+
+    private Query<Void> parseCreateUniqueIndexQuery(String normalized) {
+        String[] parts = normalized.split("ON");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid CREATE UNIQUE INDEX query format");
+        }
+        String indexPart = parts[0].replace("CREATE UNIQUE INDEX", "").trim();
+        String tableAndColumn = parts[1].trim();
+        String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
+        String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
+        return new CreateUniqueIndexQuery(tableName, columnName);
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {
@@ -282,7 +296,7 @@ class QueryParser {
                     } catch (Exception e) {
                         throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
                     }
-                } else if (strippedValue.matches(UUID_PATTERN)) {
+                } else if (strippedValue.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
                     try {
                         values.add(UUID.fromString(strippedValue));
                     } catch (IllegalArgumentException e) {
@@ -389,7 +403,7 @@ class QueryParser {
                     return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
                 } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
                     return LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
-                } else if (strippedValue.matches(UUID_PATTERN)) {
+                } else if (strippedValue.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
                     return UUID.fromString(strippedValue);
                 } else if (strippedValue.length() == 1) {
                     return strippedValue.charAt(0);
@@ -568,3 +582,28 @@ class QueryParser {
     }
 }
 
+
+
+class CreateUniqueIndexQuery implements Query<Void> {
+    private final String tableName;
+    private final String columnName;
+
+    public CreateUniqueIndexQuery(String tableName, String columnName) {
+        this.tableName = tableName;
+        this.columnName = columnName;
+    }
+
+    public String getTableName() {
+        return tableName;
+    }
+
+    public String getColumnName() {
+        return columnName;
+    }
+
+    @Override
+    public Void execute(Table table) {
+        table.createUniqueIndex(columnName);
+        return null;
+    }
+}

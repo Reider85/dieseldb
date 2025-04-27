@@ -1,11 +1,14 @@
 package diesel;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 class InsertQuery implements Query<Void> {
+    private static final Logger LOGGER = Logger.getLogger(InsertQuery.class.getName());
     private final List<String> columns;
     private final List<Object> values;
 
@@ -108,6 +111,19 @@ class InsertQuery implements Query<Void> {
                         String.format("Invalid value '%s' for column %s: expected DATETIME or DATETIME_MS", value, column));
             }
             row.put(column, value);
+        }
+        // Check unique indexes
+        for (Map.Entry<String, Index> entry : table.getUniqueIndexes().entrySet()) {
+            String column = entry.getKey();
+            Index index = entry.getValue();
+            Object value = row.get(column);
+            if (value != null) {
+                List<Integer> existingRows = index.search(value);
+                if (!existingRows.isEmpty()) {
+                    LOGGER.log(Level.WARNING, "Unique constraint violation on column {0}: value {1} already exists", new Object[]{column, value});
+                    throw new IllegalArgumentException("Unique constraint violation: value '" + value + "' already exists in column " + column);
+                }
+            }
         }
         table.addRow(row);
         return null;

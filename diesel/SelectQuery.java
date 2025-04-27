@@ -28,7 +28,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (conditions.size() == 1 && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
             QueryParser.Condition condition = conditions.get(0);
             Index index = table.getIndex(condition.column);
-            if (index instanceof HashIndex) {
+            if (index instanceof UniqueHashIndex) {
+                Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+                candidateRowIndices = index.search(conditionValue);
+                LOGGER.log(Level.INFO, "Using unique hash index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+            } else if (index instanceof HashIndex) {
                 Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
                 candidateRowIndices = index.search(conditionValue);
                 LOGGER.log(Level.INFO, "Using hash index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
