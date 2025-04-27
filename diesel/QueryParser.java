@@ -546,53 +546,5 @@ class QueryParser {
     }
 }
 
-// Transaction query interfaces
-interface TransactionQuery extends Query<String> {}
 
-class BeginTransactionQuery implements TransactionQuery {
-    private final IsolationLevel isolationLevel;
 
-    public BeginTransactionQuery(IsolationLevel isolationLevel) {
-        this.isolationLevel = isolationLevel;
-    }
-
-    public IsolationLevel getIsolationLevel() {
-        return isolationLevel;
-    }
-
-    @Override
-    public String execute(Table table) {
-        throw new UnsupportedOperationException("BeginTransactionQuery should be handled by Database directly");
-    }
-}
-
-class CommitTransactionQuery implements TransactionQuery {
-    @Override
-    public String execute(Table table) {
-        throw new UnsupportedOperationException("CommitTransactionQuery should be handled by Database directly");
-    }
-}
-
-class RollbackTransactionQuery implements TransactionQuery {
-    @Override
-    public String execute(Table table) {
-        throw new UnsupportedOperationException("RollbackTransactionQuery should be handled by Database directly");
-    }
-}
-
-class SetIsolationLevelQuery implements Query<String> {
-    private final IsolationLevel isolationLevel;
-
-    public SetIsolationLevelQuery(IsolationLevel isolationLevel) {
-        this.isolationLevel = isolationLevel;
-    }
-
-    public IsolationLevel getIsolationLevel() {
-        return isolationLevel;
-    }
-
-    @Override
-    public String execute(Table table) {
-        throw new UnsupportedOperationException("SetIsolationLevelQuery should be handled by Database directly");
-    }
-}

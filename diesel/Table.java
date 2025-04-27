@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -13,14 +14,14 @@ class Table implements Serializable {
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final List<Map<String, Object>> rows;
-    private transient ReentrantReadWriteLock lock;
+    private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
     private boolean isFileInitialized;
 
     public Table(List<String> columns, Map<String, Class<?>> columnTypes) {
         this.columns = new ArrayList<>(columns);
         this.columnTypes = new HashMap<>(columnTypes);
         this.rows = new ArrayList<>();
-        this.lock = new ReentrantReadWriteLock();
+        this.rowLocks = new ConcurrentHashMap<>();
         this.isFileInitialized = false;
     }
 
@@ -32,18 +33,18 @@ class Table implements Serializable {
         isFileInitialized = fileInitialized;
     }
 
-    public ReentrantReadWriteLock getLock() {
-        return lock;
+    public ReentrantReadWriteLock getRowLock(int rowIndex) {
+        return rowLocks.computeIfAbsent(rowIndex, k -> new ReentrantReadWriteLock());
     }
 
-    // Custom serialization to handle transient lock
+    // Custom serialization to handle transient rowLocks
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
-        this.lock = new ReentrantReadWriteLock();
+        this.rowLocks = new ConcurrentHashMap<>();
     }
 
     public void addRow(Map<String, Object> row) {
@@ -99,7 +100,14 @@ class Table implements Serializable {
             }
             validatedRow.put(col, value);
         }
-        rows.add(validatedRow);
+        int rowIndex = rows.size();
+        ReentrantReadWriteLock lock = getRowLock(rowIndex);
+        lock.writeLock().lock();
+        try {
+            rows.add(validatedRow);
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     public List<Map<String, Object>> getRows() {
@@ -121,14 +129,21 @@ class Table implements Serializable {
             }
             // Write the last row (most recent insert)
             if (!rows.isEmpty()) {
-                Map<String, Object> row = rows.get(rows.size() - 1);
-                List<String> values = new ArrayList<>();
-                for (String column : columns) {
-                    Object value = row.get(column);
-                    values.add(formatValue(value));
+                int lastRowIndex = rows.size() - 1;
+                ReentrantReadWriteLock lock = getRowLock(lastRowIndex);
+                lock.readLock().lock();
+                try {
+                    Map<String, Object> row = rows.get(lastRowIndex);
+                    List<String> values = new ArrayList<>();
+                    for (String column : columns) {
+                        Object value = row.get(column);
+                        values.add(formatValue(value));
+                    }
+                    writer.write(String.join(",", values));
+                    writer.newLine();
+                } finally {
+                    lock.readLock().unlock();
                 }
-                writer.write(String.join(",", values));
-                writer.newLine();
             }
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);

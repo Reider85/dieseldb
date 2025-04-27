@@ -3,6 +3,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 class InsertQuery implements Query<Void> {
     private final List<String> columns;

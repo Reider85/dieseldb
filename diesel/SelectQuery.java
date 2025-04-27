@@ -2,6 +2,7 @@ package diesel;
 
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -18,15 +19,28 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     @Override
     public List<Map<String, Object>> execute(Table table) {
-        return table.getRows().stream()
-                .filter(row -> {
-                    if (conditions.isEmpty()) {
-                        return true;
-                    }
-                    return evaluateConditions(row, conditions, table.getColumnTypes());
-                })
-                .map(row -> filterColumns(row, columns))
-                .collect(Collectors.toList());
+        List<Map<String, Object>> result = new ArrayList<>();
+        List<Map<String, Object>> rows = table.getRows();
+        Map<String, Class<?>> columnTypes = table.getColumnTypes();
+        List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
+
+        try {
+            for (int i = 0; i < rows.size(); i++) {
+                Map<String, Object> row = rows.get(i);
+                if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
+                    ReentrantReadWriteLock lock = table.getRowLock(i);
+                    lock.readLock().lock();
+                    acquiredLocks.add(lock);
+                    result.add(filterColumns(row, columns));
+                }
+            }
+            return result;
+        } finally {
+            // Release all acquired read locks
+            for (ReentrantReadWriteLock lock : acquiredLocks) {
+                lock.readLock().unlock();
+            }
+        }
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
@@ -82,7 +96,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         else {
             if (!(rowValue instanceof Comparable) || !(conditionValue instanceof Comparable)) {
                 LOGGER.log(Level.WARNING, "Comparison operators < or > not supported for types: rowValue={0}, conditionValue={1}",
-                        new Object[]{rowValue.getClass().getSimpleName(), conditionValue.getClass().getSimpleName()});
+                        new Object[]{rowValue.getClass().getSimpleName(), rowValue.getClass().getSimpleName(), conditionValue.getClass().getSimpleName()});
                 throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
             }
 

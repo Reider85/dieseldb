@@ -3,6 +3,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -21,6 +22,7 @@ class UpdateQuery implements Query<Void> {
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         Map<String, Object> validatedUpdates = new HashMap<>();
+        List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
 
         // Validate and convert update values to match column types
         for (Map.Entry<String, Object> entry : updates.entrySet()) {
@@ -67,13 +69,24 @@ class UpdateQuery implements Query<Void> {
             validatedUpdates.put(column, value);
         }
 
-        // Update rows that match the conditions
-        for (Map<String, Object> row : rows) {
-            if (conditions.isEmpty() || evaluateConditions(row, conditions)) {
-                validatedUpdates.forEach(row::put);
+        try {
+            // Update rows that match the conditions
+            for (int i = 0; i < rows.size(); i++) {
+                Map<String, Object> row = rows.get(i);
+                if (conditions.isEmpty() || evaluateConditions(row, conditions)) {
+                    ReentrantReadWriteLock lock = table.getRowLock(i);
+                    lock.writeLock().lock();
+                    acquiredLocks.add(lock);
+                    validatedUpdates.forEach(row::put);
+                }
+            }
+            return null;
+        } finally {
+            // Release all acquired write locks
+            for (ReentrantReadWriteLock lock : acquiredLocks) {
+                lock.writeLock().unlock();
             }
         }
-        return null;
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions) {

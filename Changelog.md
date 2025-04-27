@@ -38,3 +38,4 @@
 0.3.8 config
 0.3.9 SERIALIZABLE transaction level
 0.4.0 table lock
+0.4.1 row lock

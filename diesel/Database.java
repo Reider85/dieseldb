@@ -1,7 +1,6 @@
 package diesel;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 class Database {
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
@@ -25,9 +24,6 @@ class Database {
     public Object executeQuery(String query, UUID transactionId) {
         Query<?> parsedQuery = new QueryParser().parse(query);
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
-        Table table = null;
-        ReentrantReadWriteLock lock = null;
-        boolean writeLockAcquired = false;
 
         try {
             if (parsedQuery instanceof SetIsolationLevelQuery) {
@@ -55,14 +51,8 @@ class Database {
                 // Apply modified tables
                 for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
                     if (entry.getValue() != null) {
-                        lock = entry.getValue().getLock();
-                        lock.writeLock().lock();
-                        try {
-                            tables.put(entry.getKey(), entry.getValue());
-                            entry.getValue().saveToFile(entry.getKey());
-                        } finally {
-                            lock.writeLock().unlock();
-                        }
+                        tables.put(entry.getKey(), entry.getValue());
+                        entry.getValue().saveToFile(entry.getKey());
                     } else {
                         tables.remove(entry.getKey());
                     }
@@ -84,37 +74,21 @@ class Database {
             }
 
             String tableName = extractTableName(query);
-            table = getTableForQuery(tableName, currentTransaction);
+            Table table = getTableForQuery(tableName, currentTransaction);
             if (table == null) {
                 throw new IllegalArgumentException("Table " + tableName + " does not exist");
-            }
-            lock = table.getLock();
-
-            // Acquire appropriate lock based on query type
-            if (parsedQuery instanceof SelectQuery) {
-                lock.readLock().lock();
-            } else if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery) {
-                lock.writeLock().lock();
-                writeLockAcquired = true;
             }
 
             Object result = parsedQuery.execute(table);
             if (currentTransaction != null && currentTransaction.isActive()) {
                 currentTransaction.updateTable(tableName, table);
-            } else if (writeLockAcquired) {
+            } else if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery) {
                 table.saveToFile(tableName);
             }
             return result;
 
-        } finally {
-            // Release the lock if it was acquired
-            if (lock != null) {
-                if (writeLockAcquired) {
-                    lock.writeLock().unlock();
-                } else if (parsedQuery instanceof SelectQuery) {
-                    lock.readLock().unlock();
-                }
-            }
+        } catch (Exception e) {
+            throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
         }
     }
 
