@@ -43,3 +43,4 @@
 0.4.3 hash index
 0.4.4 fix performance test
 0.4.5 fix performance test
+0.4.6 advanced test
