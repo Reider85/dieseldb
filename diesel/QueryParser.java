@@ -83,6 +83,8 @@ class QueryParser {
                     isolationLevel = IsolationLevel.READ_COMMITTED;
                 } else if (normalized.contains("ISOLATION LEVEL REPEATABLE READ")) {
                     isolationLevel = IsolationLevel.REPEATABLE_READ;
+                } else if (normalized.contains("ISOLATION LEVEL SERIALIZABLE")) {
+                    isolationLevel = IsolationLevel.SERIALIZABLE;
                 }
                 return new BeginTransactionQuery(isolationLevel);
             } else if (normalized.equals("COMMIT TRANSACTION")) {
@@ -95,6 +97,8 @@ class QueryParser {
                 return new SetIsolationLevelQuery(IsolationLevel.READ_COMMITTED);
             } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
                 return new SetIsolationLevelQuery(IsolationLevel.REPEATABLE_READ);
+            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
+                return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {

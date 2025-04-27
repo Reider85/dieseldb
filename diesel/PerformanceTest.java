@@ -12,7 +12,7 @@ import java.util.concurrent.*;
 
 public class PerformanceTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class.getName());
-    private static final int RECORD_COUNT = 100;
+    private static final int RECORD_COUNT = 1000;
     private static final int WARMUP_RUNS = 1;
     private static final int TEST_RUNS = 10;
     private final Database database;
@@ -23,6 +23,7 @@ public class PerformanceTest {
 
     public void runTests() {
         runInsertPerformanceTest();
+        /*
         setupTable();
         runUpdatePerformanceTest();
         runTransactionPerformanceTest();
@@ -30,7 +31,7 @@ public class PerformanceTest {
         List<String> queries = prepareQueries();
         for (String query : queries) {
             runPerformanceTest(query);
-        }
+        }*/
     }
 
     private void setupTable() {

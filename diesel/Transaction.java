@@ -6,8 +6,8 @@ import java.util.*;
 enum IsolationLevel {
     READ_UNCOMMITTED,
     READ_COMMITTED,
-    REPEATABLE_READ
-    // Future levels: SERIALIZABLE
+    REPEATABLE_READ,
+    SERIALIZABLE
 }
 
 class Transaction {

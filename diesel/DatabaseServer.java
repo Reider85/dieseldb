@@ -46,10 +46,23 @@ public class DatabaseServer {
         }
     }
 
+    // Get isolation level from Properties
+    private static IsolationLevel getIsolationLevel(Properties config) {
+        String isolationLevelStr = config.getProperty("transaction.isolation.level", "READ_UNCOMMITTED").toUpperCase();
+        try {
+            return IsolationLevel.valueOf(isolationLevelStr);
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.SEVERE, "Invalid isolation level {0} in {1}, using default READ_UNCOMMITTED", new Object[]{isolationLevelStr, CONFIG_FILE});
+            return IsolationLevel.READ_UNCOMMITTED;
+        }
+    }
+
     public void start() {
         // Load and log configuration
         Properties config = loadConfig();
         logConfig(config);
+        IsolationLevel isolationLevel = getIsolationLevel(config);
+        LOGGER.log(Level.INFO, "Server configured with transaction isolation level: {0}", isolationLevel);
 
         running = true;
         try {
