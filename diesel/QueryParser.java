@@ -23,11 +23,10 @@ class QueryParser {
         String column;
         Object value;
         Operator operator;
-        String conjunction; // "AND" or "OR", null for last condition
-        boolean not; // Indicates if the condition is negated with NOT
-        List<Condition> subConditions; // For grouped conditions within parentheses
+        String conjunction;
+        boolean not;
+        List<Condition> subConditions;
 
-        // Constructor for simple condition
         Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = value;
@@ -37,7 +36,6 @@ class QueryParser {
             this.subConditions = null;
         }
 
-        // Constructor for grouped condition
         Condition(List<Condition> subConditions, String conjunction, boolean not) {
             this.column = null;
             this.value = null;
@@ -74,6 +72,8 @@ class QueryParser {
                 return parseUpdateQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
+            } else if (normalized.startsWith("CREATE INDEX")) {
+                return parseCreateIndexQuery(normalized);
             } else if (normalized.equals("BEGIN TRANSACTION") ||
                     normalized.startsWith("BEGIN TRANSACTION ISOLATION LEVEL")) {
                 IsolationLevel isolationLevel = null;
@@ -105,6 +105,18 @@ class QueryParser {
             LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
             throw e;
         }
+    }
+
+    private Query<Void> parseCreateIndexQuery(String normalized) {
+        String[] parts = normalized.split("ON");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid CREATE INDEX query format");
+        }
+        String indexPart = parts[0].replace("CREATE INDEX", "").trim();
+        String tableAndColumn = parts[1].trim();
+        String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
+        String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
+        return new CreateIndexQuery(tableName, columnName);
     }
 
     private Query<Void> parseCreateTableQuery(String normalized, String original) {
@@ -423,13 +435,11 @@ class QueryParser {
                 if (c == '(') {
                     parenDepth++;
                     if (parenDepth == 1) {
-                        // Start of a grouped condition, skip the opening parenthesis
                         continue;
                     }
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth == 0) {
-                        // End of a grouped condition
                         String subConditionStr = currentCondition.toString().trim();
                         if (!subConditionStr.isEmpty()) {
                             boolean isNot = subConditionStr.startsWith("NOT ");
@@ -444,7 +454,6 @@ class QueryParser {
                         continue;
                     }
                 } else if (parenDepth == 0) {
-                    // Check for AND/OR only as whole words surrounded by whitespace
                     if (i + 3 <= conditionStr.length() && conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
                             (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
                             (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
@@ -454,7 +463,7 @@ class QueryParser {
                             LOGGER.log(Level.FINE, "Added condition with AND: {0}", current);
                         }
                         currentCondition = new StringBuilder();
-                        i += 2; // Skip AND
+                        i += 2;
                         continue;
                     } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
                             (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
@@ -465,7 +474,7 @@ class QueryParser {
                             LOGGER.log(Level.FINE, "Added condition with OR: {0}", current);
                         }
                         currentCondition = new StringBuilder();
-                        i += 1; // Skip OR
+                        i += 1;
                         continue;
                     }
                 }
@@ -497,11 +506,9 @@ class QueryParser {
             condition = condition.substring(4).trim();
         }
 
-        // Split on operators, handling whitespace correctly
         String[] partsByOperator = null;
         Operator operator = null;
 
-        // Use regex to split on operators, preserving the operator
         if (condition.contains("!=")) {
             partsByOperator = condition.split("\\s*!=\\s*");
             operator = Operator.NOT_EQUALS;
@@ -546,5 +553,26 @@ class QueryParser {
     }
 }
 
+class CreateIndexQuery implements Query<Void> {
+    private final String tableName;
+    private final String columnName;
 
+    public CreateIndexQuery(String tableName, String columnName) {
+        this.tableName = tableName;
+        this.columnName = columnName;
+    }
 
+    public String getTableName() {
+        return tableName;
+    }
+
+    public String getColumnName() {
+        return columnName;
+    }
+
+    @Override
+    public Void execute(Table table) {
+        table.createIndex(columnName);
+        return null;
+    }
+}

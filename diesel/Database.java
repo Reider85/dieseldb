@@ -48,7 +48,6 @@ class Database {
                 if (currentTransaction == null || !currentTransaction.isActive()) {
                     throw new IllegalStateException("No active transaction to commit");
                 }
-                // Apply modified tables
                 for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
                     if (entry.getValue() != null) {
                         tables.put(entry.getKey(), entry.getValue());
@@ -71,6 +70,14 @@ class Database {
                 CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
                 createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes());
                 return "Table created successfully";
+            } else if (parsedQuery instanceof CreateIndexQuery) {
+                CreateIndexQuery indexQuery = (CreateIndexQuery) parsedQuery;
+                Table table = getTable(indexQuery.getTableName());
+                indexQuery.execute(table);
+                if (currentTransaction != null && currentTransaction.isActive()) {
+                    currentTransaction.updateTable(indexQuery.getTableName(), table);
+                }
+                return "Index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
             }
 
             String tableName = extractTableName(query);
@@ -94,26 +101,22 @@ class Database {
 
     private Table getTableForQuery(String tableName, Transaction currentTransaction) {
         if (currentTransaction != null && currentTransaction.isActive()) {
-            // If in transaction, prefer modified table
             Table modifiedTable = currentTransaction.getModifiedTables().get(tableName);
             if (modifiedTable != null) {
                 return modifiedTable;
             }
-            // For READ_UNCOMMITTED, check other transactions' modified tables
             if (currentTransaction.getIsolationLevel() == IsolationLevel.READ_UNCOMMITTED) {
                 for (Transaction otherTransaction : activeTransactions.values()) {
                     if (otherTransaction != currentTransaction && otherTransaction.isActive()) {
                         Table otherModifiedTable = otherTransaction.getModifiedTables().get(tableName);
                         if (otherModifiedTable != null) {
-                            return otherModifiedTable; // Dirty read
+                            return otherModifiedTable;
                         }
                     }
                 }
             }
-            // Fallback to original table
             return currentTransaction.getOriginalTables().get(tableName);
         }
-        // Outside transaction, use committed table
         return tables.get(tableName);
     }
 

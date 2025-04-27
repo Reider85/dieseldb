@@ -15,6 +15,7 @@ class Table implements Serializable {
     private final Map<String, Class<?>> columnTypes;
     private final List<Map<String, Object>> rows;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
+    private transient Map<String, BTreeIndex> indexes; // Map of column name to B-tree index
     private boolean isFileInitialized;
 
     public Table(List<String> columns, Map<String, Class<?>> columnTypes) {
@@ -22,6 +23,7 @@ class Table implements Serializable {
         this.columnTypes = new HashMap<>(columnTypes);
         this.rows = new ArrayList<>();
         this.rowLocks = new ConcurrentHashMap<>();
+        this.indexes = new ConcurrentHashMap<>();
         this.isFileInitialized = false;
     }
 
@@ -37,14 +39,36 @@ class Table implements Serializable {
         return rowLocks.computeIfAbsent(rowIndex, k -> new ReentrantReadWriteLock());
     }
 
-    // Custom serialization to handle transient rowLocks
+    public void createIndex(String columnName) {
+        if (!columnTypes.containsKey(columnName)) {
+            throw new IllegalArgumentException("Column " + columnName + " does not exist");
+        }
+        BTreeIndex index = new BTreeIndex(columnTypes.get(columnName));
+        // Populate index with existing data
+        for (int i = 0; i < rows.size(); i++) {
+            Map<String, Object> row = rows.get(i);
+            Object key = row.get(columnName);
+            if (key != null) {
+                index.insert(key, i);
+            }
+        }
+        indexes.put(columnName, index);
+        LOGGER.log(Level.INFO, "Created B-tree index on column {0}", columnName);
+    }
+
+    public BTreeIndex getIndex(String columnName) {
+        return indexes.get(columnName);
+    }
+
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
+        oos.writeObject(indexes);
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
         this.rowLocks = new ConcurrentHashMap<>();
+        this.indexes = (Map<String, BTreeIndex>) ois.readObject();
     }
 
     public void addRow(Map<String, Object> row) {
@@ -105,6 +129,15 @@ class Table implements Serializable {
         lock.writeLock().lock();
         try {
             rows.add(validatedRow);
+            // Update indexes
+            for (Map.Entry<String, BTreeIndex> entry : indexes.entrySet()) {
+                String column = entry.getKey();
+                BTreeIndex index = entry.getValue();
+                Object key = validatedRow.get(column);
+                if (key != null) {
+                    index.insert(key, rowIndex);
+                }
+            }
         } finally {
             lock.writeLock().unlock();
         }
@@ -122,12 +155,10 @@ class Table implements Serializable {
         String fileName = tableName + ".csv";
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, isFileInitialized))) {
             if (!isFileInitialized) {
-                // Write header
                 writer.write(String.join(",", columns));
                 writer.newLine();
                 isFileInitialized = true;
             }
-            // Write the last row (most recent insert)
             if (!rows.isEmpty()) {
                 int lastRowIndex = rows.size() - 1;
                 ReentrantReadWriteLock lock = getRowLock(lastRowIndex);

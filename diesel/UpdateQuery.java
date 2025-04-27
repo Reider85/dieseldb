@@ -1,7 +1,6 @@
 package diesel;
+
 import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
@@ -21,78 +20,137 @@ class UpdateQuery implements Query<Void> {
     public Void execute(Table table) {
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
-        Map<String, Object> validatedUpdates = new HashMap<>();
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
 
-        // Validate and convert update values to match column types
-        for (Map.Entry<String, Object> entry : updates.entrySet()) {
-            String column = entry.getKey();
-            Object value = entry.getValue();
-            Class<?> expectedType = columnTypes.get(column);
-            if (expectedType == null) {
-                throw new IllegalArgumentException("Unknown column: " + column);
-            }
-            if (expectedType == Integer.class && !(value instanceof Integer)) {
-                value = Integer.parseInt(value.toString());
-            } else if (expectedType == Long.class && !(value instanceof Long)) {
-                value = Long.parseLong(value.toString());
-            } else if (expectedType == Short.class && !(value instanceof Short)) {
-                value = Short.parseShort(value.toString());
-            } else if (expectedType == Byte.class && !(value instanceof Byte)) {
-                value = Byte.parseByte(value.toString());
-            } else if (expectedType == BigDecimal.class && !(value instanceof BigDecimal)) {
-                value = new BigDecimal(value.toString());
-            } else if (expectedType == Float.class && !(value instanceof Float)) {
-                value = Float.parseFloat(value.toString());
-            } else if (expectedType == Double.class && !(value instanceof Double)) {
-                value = Double.parseDouble(value.toString());
-            } else if (expectedType == Character.class && !(value instanceof Character)) {
-                if (value.toString().length() == 1) {
-                    value = value.toString().charAt(0);
-                } else {
-                    throw new IllegalArgumentException("Expected single character for column: " + column);
-                }
-            } else if (expectedType == UUID.class && !(value instanceof UUID)) {
-                value = UUID.fromString(value.toString());
-            } else if (expectedType == String.class && !(value instanceof String)) {
-                value = value.toString();
-            } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid value '%s' for column %s: expected BOOLEAN", value, column));
-            } else if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid value '%s' for column %s: expected DATE", value, column));
-            } else if (expectedType == LocalDateTime.class && !(value instanceof LocalDateTime)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid value '%s' for column %s: expected DATETIME or DATETIME_MS", value, column));
-            }
-            validatedUpdates.put(column, value);
-        }
-
         try {
-            // Update rows that match the conditions
             for (int i = 0; i < rows.size(); i++) {
                 Map<String, Object> row = rows.get(i);
-                if (conditions.isEmpty() || evaluateConditions(row, conditions)) {
+                if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
                     ReentrantReadWriteLock lock = table.getRowLock(i);
                     lock.writeLock().lock();
                     acquiredLocks.add(lock);
-                    validatedUpdates.forEach(row::put);
+
+                    // Store old values for index updates
+                    Map<String, Object> oldValues = new HashMap<>();
+                    for (String column : updates.keySet()) {
+                        oldValues.put(column, row.get(column));
+                    }
+
+                    // Apply updates
+                    for (Map.Entry<String, Object> update : updates.entrySet()) {
+                        String column = update.getKey();
+                        Object value = update.getValue();
+                        Class<?> expectedType = columnTypes.get(column);
+                        if (expectedType == null) {
+                            throw new IllegalArgumentException("Unknown column: " + column);
+                        }
+                        if (expectedType == Integer.class && !(value instanceof Integer)) {
+                            try {
+                                value = Integer.parseInt(value.toString());
+                            } catch (NumberFormatException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected INTEGER", value, column));
+                            }
+                        } else if (expectedType == Long.class && !(value instanceof Long)) {
+                            try {
+                                value = Long.parseLong(value.toString());
+                            } catch (NumberFormatException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected LONG", value, column));
+                            }
+                        } else if (expectedType == Short.class && !(value instanceof Short)) {
+                            try {
+                                value = Short.parseShort(value.toString());
+                            } catch (NumberFormatException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected SHORT", value, column));
+                            }
+                        } else if (expectedType == Byte.class && !(value instanceof Byte)) {
+                            try {
+                                value = Byte.parseByte(value.toString());
+                            } catch (NumberFormatException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected BYTE", value, column));
+                            }
+                        } else if (expectedType == BigDecimal.class && !(value instanceof BigDecimal)) {
+                            try {
+                                value = new BigDecimal(value.toString());
+                            } catch (NumberFormatException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected BIGDECIMAL", value, column));
+                            }
+                        } else if (expectedType == Float.class && !(value instanceof Float)) {
+                            try {
+                                value = Float.parseFloat(value.toString());
+                            } catch (NumberFormatException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected FLOAT", value, column));
+                            }
+                        } else if (expectedType == Double.class && !(value instanceof Double)) {
+                            try {
+                                value = Double.parseDouble(value.toString());
+                            } catch (NumberFormatException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected DOUBLE", value, column));
+                            }
+                        } else if (expectedType == Character.class && !(value instanceof Character)) {
+                            try {
+                                if (value.toString().length() == 1) {
+                                    value = value.toString().charAt(0);
+                                } else {
+                                    throw new IllegalArgumentException("Expected single character");
+                                }
+                            } catch (Exception e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected CHAR", value, column));
+                            }
+                        } else if (expectedType == UUID.class && !(value instanceof UUID)) {
+                            try {
+                                value = UUID.fromString(value.toString());
+                            } catch (IllegalArgumentException e) {
+                                throw new IllegalArgumentException(
+                                        String.format("Invalid value '%s' for column %s: expected UUID", value, column));
+                            }
+                        } else if (expectedType == String.class && !(value instanceof String)) {
+                            value = value.toString();
+                        } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
+                            throw new IllegalArgumentException(
+                                    String.format("Invalid value '%s' for column %s: expected BOOLEAN", value, column));
+                        }
+                        row.put(column, value);
+                    }
+
+                    // Update indexes
+                    for (Map.Entry<String, Object> update : updates.entrySet()) {
+                        String column = update.getKey();
+                        BTreeIndex index = table.getIndex(column);
+                        if (index != null) {
+                            Object oldValue = oldValues.get(column);
+                            Object newValue = update.getValue();
+                            if (oldValue != null) {
+                                index.remove(oldValue, i);
+                            }
+                            if (newValue != null) {
+                                index.insert(newValue, i);
+                            }
+                            LOGGER.log(Level.INFO, "Updated B-tree index for column {0} at row {1}: {2} -> {3}",
+                                    new Object[]{column, i, oldValue, newValue});
+                        }
+                    }
                 }
             }
             return null;
         } finally {
-            // Release all acquired write locks
             for (ReentrantReadWriteLock lock : acquiredLocks) {
                 lock.writeLock().unlock();
             }
         }
     }
 
-    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions) {
-        boolean result = evaluateCondition(row, conditions.get(0));
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
+        boolean result = evaluateCondition(row, conditions.get(0), columnTypes);
         for (int i = 1; i < conditions.size(); i++) {
-            boolean currentResult = evaluateCondition(row, conditions.get(i));
+            boolean currentResult = evaluateCondition(row, conditions.get(i), columnTypes);
             String conjunction = conditions.get(i - 1).conjunction;
             if ("AND".equalsIgnoreCase(conjunction)) {
                 result = result && currentResult;
@@ -103,9 +161,9 @@ class UpdateQuery implements Query<Void> {
         return result;
     }
 
-    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition) {
+    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
         if (condition.isGrouped()) {
-            boolean subResult = evaluateConditions(row, condition.subConditions);
+            boolean subResult = evaluateConditions(row, condition.subConditions, columnTypes);
             return condition.not ? !subResult : subResult;
         }
 
@@ -115,47 +173,66 @@ class UpdateQuery implements Query<Void> {
             return false;
         }
 
-        LOGGER.log(Level.INFO, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}, not={5}",
-                new Object[]{rowValue, rowValue.getClass().getSimpleName(),
-                        condition.value, condition.value.getClass().getSimpleName(), condition.operator, condition.not});
+        Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
 
         boolean result;
-
-        // Handle EQUALS and NOT_EQUALS
         if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
             boolean isEqual;
-            if (rowValue instanceof Float && condition.value instanceof Float) {
-                isEqual = Math.abs(((Float) rowValue) - ((Float) condition.value)) < 1e-7;
-            } else if (rowValue instanceof Double && condition.value instanceof Double) {
-                isEqual = Math.abs(((Double) rowValue) - ((Double) condition.value)) < 1e-7;
+            if (rowValue instanceof Float && conditionValue instanceof Float) {
+                isEqual = Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;
+            } else if (rowValue instanceof Double && conditionValue instanceof Double) {
+                isEqual = Math.abs(((Double) rowValue) - ((Double) conditionValue)) < 1e-7;
+            } else if (rowValue instanceof BigDecimal && conditionValue instanceof BigDecimal) {
+                isEqual = ((BigDecimal) rowValue).compareTo((BigDecimal) conditionValue) == 0;
             } else {
-                isEqual = String.valueOf(rowValue).equals(String.valueOf(condition.value));
+                isEqual = String.valueOf(rowValue).equals(String.valueOf(conditionValue));
             }
             result = condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
-        }
-        // Handle LESS_THAN and GREATER_THAN
-        else {
-            if (!(rowValue instanceof Comparable) || !(condition.value instanceof Comparable)) {
-                LOGGER.log(Level.WARNING, "Comparison operators < or > not supported for types: rowValue={0}, conditionValue={1}",
-                        new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
+        } else {
+            if (!(rowValue instanceof Comparable) || !(conditionValue instanceof Comparable)) {
                 throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
             }
-
             @SuppressWarnings("unchecked")
             Comparable<Object> rowComparable = (Comparable<Object>) rowValue;
             @SuppressWarnings("unchecked")
-            Comparable<Object> conditionComparable = (Comparable<Object>) condition.value;
-
-            if (rowValue.getClass() != condition.value.getClass()) {
-                LOGGER.log(Level.WARNING, "Type mismatch in comparison: rowValue={0}, conditionValue={1}",
-                        new Object[]{rowValue.getClass().getSimpleName(), condition.value.getClass().getSimpleName()});
-                throw new IllegalArgumentException("Type mismatch in comparison");
-            }
-
-            int comparison = rowComparable.compareTo(condition.value);
+            Comparable<Object> conditionComparable = (Comparable<Object>) conditionValue;
+            int comparison = rowComparable.compareTo(conditionValue);
             result = condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
         }
 
         return condition.not ? !result : result;
+    }
+
+    private Object convertConditionValue(Object conditionValue, String column, Class<?> rowValueType, Map<String, Class<?>> columnTypes) {
+        Class<?> expectedType = columnTypes.get(column);
+        if (expectedType == null) {
+            throw new IllegalArgumentException("Unknown column: " + column);
+        }
+
+        if (conditionValue == null || rowValueType == conditionValue.getClass()) {
+            return conditionValue;
+        }
+
+        try {
+            if (expectedType == BigDecimal.class && !(conditionValue instanceof BigDecimal)) {
+                return new BigDecimal(conditionValue.toString());
+            } else if (expectedType == Float.class && !(conditionValue instanceof Float)) {
+                return Float.parseFloat(conditionValue.toString());
+            } else if (expectedType == Double.class && !(conditionValue instanceof Double)) {
+                return Double.parseDouble(conditionValue.toString());
+            } else if (expectedType == Integer.class && !(conditionValue instanceof Integer)) {
+                return Integer.parseInt(conditionValue.toString());
+            } else if (expectedType == Long.class && !(conditionValue instanceof Long)) {
+                return Long.parseLong(conditionValue.toString());
+            } else if (expectedType == Short.class && !(conditionValue instanceof Short)) {
+                return Short.parseShort(conditionValue.toString());
+            } else if (expectedType == Byte.class && !(conditionValue instanceof Byte)) {
+                return Byte.parseByte(conditionValue.toString());
+            }
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Cannot convert condition value '" + conditionValue + "' to type " + expectedType.getSimpleName());
+        }
+
+        return conditionValue;
     }
 }

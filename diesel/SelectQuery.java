@@ -19,24 +19,67 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     @Override
     public List<Map<String, Object>> execute(Table table) {
-        List<Map<String, Object>> result = new ArrayList<>();
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
+        List<Integer> candidateRowIndices = null;
 
+        // Check if we can use an index for a single equality condition
+        if (conditions.size() == 1 && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
+            QueryParser.Condition condition = conditions.get(0);
+            BTreeIndex index = table.getIndex(condition.column);
+            if (index != null) {
+                Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+                candidateRowIndices = index.search(conditionValue);
+                LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+            }
+        }
+        // Check for range queries (LESS_THAN or GREATER_THAN)
+        else if (conditions.size() == 2 && conditions.get(0).column.equals(conditions.get(1).column) &&
+                ((conditions.get(0).operator == QueryParser.Operator.GREATER_THAN && conditions.get(1).operator == QueryParser.Operator.LESS_THAN) ||
+                        (conditions.get(0).operator == QueryParser.Operator.LESS_THAN && conditions.get(1).operator == QueryParser.Operator.GREATER_THAN)) &&
+                conditions.get(0).conjunction.equalsIgnoreCase("AND") && !conditions.get(0).not && !conditions.get(1).not) {
+            QueryParser.Condition cond1 = conditions.get(0);
+            QueryParser.Condition cond2 = conditions.get(1);
+            BTreeIndex index = table.getIndex(cond1.column);
+            if (index != null) {
+                Object low = convertConditionValue(cond1.operator == QueryParser.Operator.GREATER_THAN ? cond1.value : cond2.value,
+                        cond1.column, columnTypes.get(cond1.column), columnTypes);
+                Object high = convertConditionValue(cond1.operator == QueryParser.Operator.LESS_THAN ? cond1.value : cond2.value,
+                        cond1.column, columnTypes.get(cond1.column), columnTypes);
+                candidateRowIndices = index.rangeSearch(low, high);
+                LOGGER.log(Level.INFO, "Using B-tree index for range query on column {0} between {1} and {2}",
+                        new Object[]{cond1.column, low, high});
+            }
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
         try {
-            for (int i = 0; i < rows.size(); i++) {
-                Map<String, Object> row = rows.get(i);
-                if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
-                    ReentrantReadWriteLock lock = table.getRowLock(i);
-                    lock.readLock().lock();
-                    acquiredLocks.add(lock);
-                    result.add(filterColumns(row, columns));
+            if (candidateRowIndices != null) {
+                // Use index results
+                for (int rowIndex : candidateRowIndices) {
+                    if (rowIndex >= 0 && rowIndex < rows.size()) {
+                        Map<String, Object> row = rows.get(rowIndex);
+                        ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
+                        lock.readLock().lock();
+                        acquiredLocks.add(lock);
+                        result.add(filterColumns(row, columns));
+                    }
+                }
+            } else {
+                // Full table scan
+                for (int i = 0; i < rows.size(); i++) {
+                    Map<String, Object> row = rows.get(i);
+                    if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
+                        ReentrantReadWriteLock lock = table.getRowLock(i);
+                        lock.readLock().lock();
+                        acquiredLocks.add(lock);
+                        result.add(filterColumns(row, columns));
+                    }
                 }
             }
             return result;
         } finally {
-            // Release all acquired read locks
             for (ReentrantReadWriteLock lock : acquiredLocks) {
                 lock.readLock().unlock();
             }
@@ -69,7 +112,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return false;
         }
 
-        // Convert condition value to match row value's type
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
 
         LOGGER.log(Level.INFO, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}, not={5}",
@@ -78,7 +120,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         boolean result;
 
-        // Handle EQUALS and NOT_EQUALS
         if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
             boolean isEqual;
             if (rowValue instanceof Float && conditionValue instanceof Float) {
@@ -91,12 +132,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 isEqual = String.valueOf(rowValue).equals(String.valueOf(conditionValue));
             }
             result = condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
-        }
-        // Handle LESS_THAN and GREATER_THAN
-        else {
+        } else {
             if (!(rowValue instanceof Comparable) || !(conditionValue instanceof Comparable)) {
                 LOGGER.log(Level.WARNING, "Comparison operators < or > not supported for types: rowValue={0}, conditionValue={1}",
-                        new Object[]{rowValue.getClass().getSimpleName(), rowValue.getClass().getSimpleName(), conditionValue.getClass().getSimpleName()});
+                        new Object[]{rowValue.getClass().getSimpleName(), conditionValue.getClass().getSimpleName()});
                 throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
             }
 
@@ -138,7 +177,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             } else if (expectedType == Byte.class && !(conditionValue instanceof Byte)) {
                 return Byte.parseByte(conditionValue.toString());
             }
-            // Other types (String, Boolean, LocalDate, etc.) are handled by String comparison or are already matched
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Cannot convert condition value '" + conditionValue + "' to type " + expectedType.getSimpleName());
         }
