@@ -3,6 +3,7 @@ import java.io.*;
 import java.net.*;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -13,10 +14,12 @@ public class DatabaseClient {
     private Socket socket;
     private ObjectOutputStream out;
     private ObjectInputStream in;
+    private UUID transactionId;
 
     public DatabaseClient(String host, int port) {
         this.host = host;
         this.port = port;
+        this.transactionId = null;
     }
 
     public void connect() {
@@ -33,9 +36,15 @@ public class DatabaseClient {
 
     public Object executeQuery(String query) {
         try {
-            out.writeObject(query);
+            out.writeObject(new QueryMessage(query, transactionId));
             out.flush();
             Object result = in.readObject();
+            if (result instanceof String && ((String) result).startsWith("Transaction started: ")) {
+                transactionId = UUID.fromString(((String) result).split(": ")[1]);
+            } else if (result instanceof String &&
+                    (((String) result).equals("Transaction committed") || ((String) result).equals("Transaction rolled back"))) {
+                transactionId = null;
+            }
             if (result instanceof String && ((String) result).startsWith("Error: ")) {
                 throw new RuntimeException((String) result);
             }
@@ -66,6 +75,9 @@ public class DatabaseClient {
         try {
             client.connect();
 
+            // Set isolation level
+            client.executeQuery("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED");
+
             // Begin transaction
             client.executeQuery("BEGIN TRANSACTION");
 
@@ -88,8 +100,8 @@ public class DatabaseClient {
             // Commit transaction
             client.executeQuery("COMMIT TRANSACTION");
 
-            // Begin another transaction for selects
-            client.executeQuery("BEGIN TRANSACTION");
+            // Begin another transaction for selects with READ UNCOMMITTED
+            client.executeQuery("BEGIN TRANSACTION ISOLATION LEVEL READ UNCOMMITTED");
 
             // Select data with OR condition
             String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE > 25 OR ACTIVE = TRUE";

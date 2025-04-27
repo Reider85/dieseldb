@@ -8,12 +8,13 @@ import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.Locale;
+import java.util.concurrent.*;
 
 public class PerformanceTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class.getName());
     private static final int RECORD_COUNT = 100;
     private static final int WARMUP_RUNS = 1;
-    private static final int TEST_RUNS = 5;
+    private static final int TEST_RUNS = 10;
     private final Database database;
 
     public PerformanceTest() {
@@ -25,6 +26,7 @@ public class PerformanceTest {
         setupTable();
         runUpdatePerformanceTest();
         runTransactionPerformanceTest();
+        runReadUncommittedPerformanceTest();
         List<String> queries = prepareQueries();
         for (String query : queries) {
             runPerformanceTest(query);
@@ -34,7 +36,7 @@ public class PerformanceTest {
     private void setupTable() {
         dropTable(); // Ensure table does not exist
         String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
-        database.executeQuery(createTableQuery);
+        database.executeQuery(createTableQuery, null);
         insertRecords(RECORD_COUNT);
         LOGGER.log(Level.INFO, "Setup completed: {0} records inserted into USERS table", RECORD_COUNT);
     }
@@ -100,7 +102,7 @@ public class PerformanceTest {
             for (int i = 0; i < WARMUP_RUNS; i++) {
                 LOGGER.log(Level.INFO, "Warmup run {0}", i);
                 dropTable();
-                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", null);
                 insertRecords(RECORD_COUNT);
             }
 
@@ -108,7 +110,7 @@ public class PerformanceTest {
             for (int i = 0; i < TEST_RUNS; i++) {
                 LOGGER.log(Level.INFO, "Test run {0}", i);
                 dropTable();
-                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", null);
                 long startTime = System.nanoTime();
                 insertRecords(RECORD_COUNT);
                 long endTime = System.nanoTime();
@@ -147,6 +149,7 @@ public class PerformanceTest {
 
         List<Long> executionTimes = new ArrayList<>();
         for (int i = 0; i < TEST_RUNS; i++) {
+            LOGGER.log(Level.INFO, "Test run {0}", i);
             resetScoreColumn();
             long startTime = System.nanoTime();
             performUpdateRun(random);
@@ -178,11 +181,11 @@ public class PerformanceTest {
         for (int i = 0; i < WARMUP_RUNS; i++) {
             LOGGER.log(Level.INFO, "Warmup run {0}", i);
             dropTable();
-            database.executeQuery("BEGIN TRANSACTION");
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+            UUID txId = database.beginTransaction(null);
+            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", txId);
             insertRecords(RECORD_COUNT);
             performUpdateRun(random);
-            database.executeQuery("COMMIT TRANSACTION");
+            database.executeQuery("COMMIT TRANSACTION", txId);
         }
 
         List<Long> executionTimes = new ArrayList<>();
@@ -190,11 +193,11 @@ public class PerformanceTest {
             LOGGER.log(Level.INFO, "Test run {0}", i);
             dropTable();
             long startTime = System.nanoTime();
-            database.executeQuery("BEGIN TRANSACTION");
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+            UUID txId = database.beginTransaction(null);
+            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", txId);
             insertRecords(RECORD_COUNT);
             performUpdateRun(random);
-            database.executeQuery("COMMIT TRANSACTION");
+            database.executeQuery("COMMIT TRANSACTION", txId);
             long endTime = System.nanoTime();
             executionTimes.add(endTime - startTime);
         }
@@ -215,6 +218,111 @@ public class PerformanceTest {
         LOGGER.log(Level.INFO, "--------------------------------");
     }
 
+    private void runReadUncommittedPerformanceTest() {
+        LOGGER.log(Level.INFO, "Testing READ UNCOMMITTED performance with {0} records", RECORD_COUNT);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        Random random = new Random();
+
+        for (int i = 0; i < WARMUP_RUNS; i++) {
+            LOGGER.log(Level.INFO, "Warmup run {0}", i);
+            dropTable();
+            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER)", null);
+            UUID tx1Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
+            UUID tx2Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
+
+            // Transaction 1: Insert records
+            Future<?> tx1 = executor.submit(() -> {
+                for (int j = 1; j <= RECORD_COUNT; j++) {
+                    String insertQuery = String.format("INSERT INTO USERS (ID, NAME, AGE) VALUES ('%d', 'User%d', %d)",
+                            j, j, 18 + (j % 52));
+                    database.executeQuery(insertQuery, tx1Id);
+                }
+            });
+
+            // Transaction 2: Read uncommitted data
+            Future<?> tx2 = executor.submit(() -> {
+                try {
+                    Thread.sleep(50); // Ensure tx1 starts inserting
+                    String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
+                    database.executeQuery(selectQuery, tx2Id);
+                } catch (InterruptedException e) {
+                    LOGGER.log(Level.SEVERE, "Error in tx2: {0}", e.getMessage());
+                }
+            });
+
+            try {
+                tx1.get();
+                tx2.get();
+                database.executeQuery("COMMIT TRANSACTION", tx1Id);
+                database.executeQuery("COMMIT TRANSACTION", tx2Id);
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Error in warmup: {0}", e.getMessage());
+            }
+        }
+
+        List<Long> executionTimes = new ArrayList<>();
+        for (int i = 0; i < TEST_RUNS; i++) {
+            LOGGER.log(Level.INFO, "Test run {0}", i);
+            dropTable();
+            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER)", null);
+            UUID tx1Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
+            UUID tx2Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
+
+            long startTime = System.nanoTime();
+            Future<?> tx1 = executor.submit(() -> {
+                for (int j = 1; j <= RECORD_COUNT; j++) {
+                    String insertQuery = String.format("INSERT INTO USERS (ID, NAME, AGE) VALUES ('%d', 'User%d', %d)",
+                            j, j, 18 + (j % 52));
+                    database.executeQuery(insertQuery, tx1Id);
+                }
+            });
+
+            Future<?> tx2 = executor.submit(() -> {
+                try {
+                    Thread.sleep(50); // Ensure tx1 starts inserting
+                    String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
+                    database.executeQuery(selectQuery, tx2Id);
+                } catch (InterruptedException e) {
+                    LOGGER.log(Level.SEVERE, "Error in tx2: {0}", e.getMessage());
+                }
+            });
+
+            try {
+                tx1.get();
+                tx2.get();
+                database.executeQuery("COMMIT TRANSACTION", tx1Id);
+                database.executeQuery("COMMIT TRANSACTION", tx2Id);
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Error in test: {0}", e.getMessage());
+            }
+            long endTime = System.nanoTime();
+            executionTimes.add(endTime - startTime);
+        }
+
+        executor.shutdown();
+        try {
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            LOGGER.log(Level.SEVERE, "Executor shutdown interrupted: {0}", e.getMessage());
+        }
+
+        double averageTimeMs = executionTimes.stream()
+                .mapToLong(Long::longValue)
+                .average()
+                .orElse(0.0) / 1_000_000.0;
+        long minTimeNs = executionTimes.stream().min(Long::compareTo).orElse(0L);
+        long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
+        double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
+
+        LOGGER.log(Level.INFO, "READ UNCOMMITTED performance for {0} records", RECORD_COUNT);
+        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
+        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
+        LOGGER.log(Level.INFO, "--------------------------------");
+    }
+
     private void performUpdateRun(Random random) {
         String tableName = "USERS";
         Table table = database.getTable(tableName);
@@ -222,14 +330,14 @@ public class PerformanceTest {
         for (int i = 1; i <= RECORD_COUNT; i++) {
             String updateQuery = String.format(Locale.US, "UPDATE USERS SET SCORE = %f WHERE ID = '%d'",
                     50 + random.nextFloat() * 50, i);
-            database.executeQuery(updateQuery);
+            database.executeQuery(updateQuery, null);
             table.saveToFile(tableName);
         }
     }
 
     private void resetScoreColumn() {
         String resetQuery = String.format(Locale.US, "UPDATE USERS SET SCORE = %f", 50.0);
-        database.executeQuery(resetQuery);
+        database.executeQuery(resetQuery, null);
         Table table = database.getTable("USERS");
         table.saveToFile("USERS");
     }
@@ -258,13 +366,13 @@ public class PerformanceTest {
         LOGGER.log(Level.INFO, "Testing query: {0}", query);
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
-            database.executeQuery(query);
+            database.executeQuery(query, null);
         }
 
         List<Long> executionTimes = new ArrayList<>();
         for (int i = 0; i < TEST_RUNS; i++) {
             long startTime = System.nanoTime();
-            database.executeQuery(query);
+            database.executeQuery(query, null);
             long endTime = System.nanoTime();
             executionTimes.add(endTime - startTime);
         }

@@ -74,12 +74,19 @@ class QueryParser {
                 return parseUpdateQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
-            } else if (normalized.equals("BEGIN TRANSACTION")) {
-                return new BeginTransactionQuery();
+            } else if (normalized.equals("BEGIN TRANSACTION") ||
+                    normalized.startsWith("BEGIN TRANSACTION ISOLATION LEVEL")) {
+                IsolationLevel isolationLevel = null;
+                if (normalized.contains("ISOLATION LEVEL READ UNCOMMITTED")) {
+                    isolationLevel = IsolationLevel.READ_UNCOMMITTED;
+                }
+                return new BeginTransactionQuery(isolationLevel);
             } else if (normalized.equals("COMMIT TRANSACTION")) {
                 return new CommitTransactionQuery();
             } else if (normalized.equals("ROLLBACK TRANSACTION")) {
                 return new RollbackTransactionQuery();
+            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
+                return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
@@ -531,6 +538,16 @@ class QueryParser {
 interface TransactionQuery extends Query<String> {}
 
 class BeginTransactionQuery implements TransactionQuery {
+    private final IsolationLevel isolationLevel;
+
+    public BeginTransactionQuery(IsolationLevel isolationLevel) {
+        this.isolationLevel = isolationLevel;
+    }
+
+    public IsolationLevel getIsolationLevel() {
+        return isolationLevel;
+    }
+
     @Override
     public String execute(Table table) {
         throw new UnsupportedOperationException("BeginTransactionQuery should be handled by Database directly");
@@ -548,5 +565,22 @@ class RollbackTransactionQuery implements TransactionQuery {
     @Override
     public String execute(Table table) {
         throw new UnsupportedOperationException("RollbackTransactionQuery should be handled by Database directly");
+    }
+}
+
+class SetIsolationLevelQuery implements Query<String> {
+    private final IsolationLevel isolationLevel;
+
+    public SetIsolationLevelQuery(IsolationLevel isolationLevel) {
+        this.isolationLevel = isolationLevel;
+    }
+
+    public IsolationLevel getIsolationLevel() {
+        return isolationLevel;
+    }
+
+    @Override
+    public String execute(Table table) {
+        throw new UnsupportedOperationException("SetIsolationLevelQuery should be handled by Database directly");
     }
 }

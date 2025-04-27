@@ -56,10 +56,12 @@ public class DatabaseServer {
         private final Database database;
         private ObjectOutputStream out;
         private ObjectInputStream in;
+        private UUID transactionId;
 
         public ClientHandler(Socket socket, Database database) {
             this.clientSocket = socket;
             this.database = database;
+            this.transactionId = null;
         }
 
         @Override
@@ -69,13 +71,23 @@ public class DatabaseServer {
                 in = new ObjectInputStream(clientSocket.getInputStream());
 
                 while (true) {
-                    String query = (String) in.readObject();
-                    if (query == null || query.equalsIgnoreCase("EXIT")) {
+                    Object input = in.readObject();
+                    if (input == null || input.equals("EXIT")) {
                         break;
                     }
 
+                    if (!(input instanceof QueryMessage)) {
+                        out.writeObject("Error: Invalid query message");
+                        out.flush();
+                        continue;
+                    }
+
+                    QueryMessage queryMessage = (QueryMessage) input;
+                    String query = queryMessage.getQuery();
+                    transactionId = queryMessage.getTransactionId();
+
                     try {
-                        Object result = database.executeQuery(query);
+                        Object result = database.executeQuery(query, transactionId);
                         out.writeObject(result);
                         out.flush();
                     } catch (Exception e) {
@@ -90,8 +102,8 @@ public class DatabaseServer {
             } finally {
                 try {
                     // Rollback any active transaction for this client
-                    if (database.isInTransaction()) {
-                        database.executeQuery("ROLLBACK TRANSACTION");
+                    if (transactionId != null && database.isInTransaction(transactionId)) {
+                        database.executeQuery("ROLLBACK TRANSACTION", transactionId);
                     }
                     if (out != null) out.close();
                     if (in != null) in.close();
@@ -107,5 +119,23 @@ public class DatabaseServer {
     public static void main(String[] args) {
         DatabaseServer server = new DatabaseServer(3306);
         server.start();
+    }
+}
+
+class QueryMessage implements Serializable {
+    private final String query;
+    private final UUID transactionId;
+
+    public QueryMessage(String query, UUID transactionId) {
+        this.query = query;
+        this.transactionId = transactionId;
+    }
+
+    public String getQuery() {
+        return query;
+    }
+
+    public UUID getTransactionId() {
+        return transactionId;
     }
 }
