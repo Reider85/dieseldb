@@ -37,3 +37,4 @@
 0.3.7 repeatable read  transaction level
 0.3.8 config
 0.3.9 SERIALIZABLE transaction level
+0.4.0 table lock

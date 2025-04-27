@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -12,7 +13,17 @@ class Table implements Serializable {
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final List<Map<String, Object>> rows;
+    private transient ReentrantReadWriteLock lock;
     private boolean isFileInitialized;
+
+    public Table(List<String> columns, Map<String, Class<?>> columnTypes) {
+        this.columns = new ArrayList<>(columns);
+        this.columnTypes = new HashMap<>(columnTypes);
+        this.rows = new ArrayList<>();
+        this.lock = new ReentrantReadWriteLock();
+        this.isFileInitialized = false;
+    }
+
     public boolean isFileInitialized() {
         return isFileInitialized;
     }
@@ -21,12 +32,18 @@ class Table implements Serializable {
         isFileInitialized = fileInitialized;
     }
 
+    public ReentrantReadWriteLock getLock() {
+        return lock;
+    }
 
+    // Custom serialization to handle transient lock
+    private void writeObject(ObjectOutputStream oos) throws IOException {
+        oos.defaultWriteObject();
+    }
 
-    public Table(List<String> columns, Map<String, Class<?>> columnTypes) {
-        this.columns = new ArrayList<>(columns);
-        this.columnTypes = new HashMap<>(columnTypes);
-        this.rows = new ArrayList<>();
+    private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
+        ois.defaultReadObject();
+        this.lock = new ReentrantReadWriteLock();
     }
 
     public void addRow(Map<String, Object> row) {
@@ -134,6 +151,7 @@ class Table implements Serializable {
         }
         return value.toString();
     }
+
     public static Table loadFromFile(String tableName) {
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(tableName + ".table"))) {
             Table table = (Table) ois.readObject();

@@ -1,6 +1,7 @@
 package diesel;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 class Database {
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
@@ -24,66 +25,97 @@ class Database {
     public Object executeQuery(String query, UUID transactionId) {
         Query<?> parsedQuery = new QueryParser().parse(query);
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
+        Table table = null;
+        ReentrantReadWriteLock lock = null;
+        boolean writeLockAcquired = false;
 
-        if (parsedQuery instanceof SetIsolationLevelQuery) {
-            SetIsolationLevelQuery isolationQuery = (SetIsolationLevelQuery) parsedQuery;
-            defaultIsolationLevel = isolationQuery.getIsolationLevel();
-            return "Isolation level set to " + defaultIsolationLevel;
-        } else if (parsedQuery instanceof BeginTransactionQuery) {
+        try {
+            if (parsedQuery instanceof SetIsolationLevelQuery) {
+                SetIsolationLevelQuery isolationQuery = (SetIsolationLevelQuery) parsedQuery;
+                defaultIsolationLevel = isolationQuery.getIsolationLevel();
+                return "Isolation level set to " + defaultIsolationLevel;
+            } else if (parsedQuery instanceof BeginTransactionQuery) {
+                if (currentTransaction != null && currentTransaction.isActive()) {
+                    throw new IllegalStateException("Another transaction is already active for this client");
+                }
+                IsolationLevel isolationLevel = ((BeginTransactionQuery) parsedQuery).getIsolationLevel() != null
+                        ? ((BeginTransactionQuery) parsedQuery).getIsolationLevel()
+                        : defaultIsolationLevel;
+                currentTransaction = new Transaction(isolationLevel);
+                transactionId = currentTransaction.getTransactionId();
+                activeTransactions.put(transactionId, currentTransaction);
+                for (Map.Entry<String, Table> entry : tables.entrySet()) {
+                    currentTransaction.snapshotTable(entry.getKey(), entry.getValue());
+                }
+                return "Transaction started: " + transactionId;
+            } else if (parsedQuery instanceof CommitTransactionQuery) {
+                if (currentTransaction == null || !currentTransaction.isActive()) {
+                    throw new IllegalStateException("No active transaction to commit");
+                }
+                // Apply modified tables
+                for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
+                    if (entry.getValue() != null) {
+                        lock = entry.getValue().getLock();
+                        lock.writeLock().lock();
+                        try {
+                            tables.put(entry.getKey(), entry.getValue());
+                            entry.getValue().saveToFile(entry.getKey());
+                        } finally {
+                            lock.writeLock().unlock();
+                        }
+                    } else {
+                        tables.remove(entry.getKey());
+                    }
+                }
+                currentTransaction.setInactive();
+                activeTransactions.remove(transactionId);
+                return "Transaction committed";
+            } else if (parsedQuery instanceof RollbackTransactionQuery) {
+                if (currentTransaction == null || !currentTransaction.isActive()) {
+                    throw new IllegalStateException("No active transaction to rollback");
+                }
+                currentTransaction.setInactive();
+                activeTransactions.remove(transactionId);
+                return "Transaction rolled back";
+            } else if (parsedQuery instanceof CreateTableQuery) {
+                CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
+                createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes());
+                return "Table created successfully";
+            }
+
+            String tableName = extractTableName(query);
+            table = getTableForQuery(tableName, currentTransaction);
+            if (table == null) {
+                throw new IllegalArgumentException("Table " + tableName + " does not exist");
+            }
+            lock = table.getLock();
+
+            // Acquire appropriate lock based on query type
+            if (parsedQuery instanceof SelectQuery) {
+                lock.readLock().lock();
+            } else if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery) {
+                lock.writeLock().lock();
+                writeLockAcquired = true;
+            }
+
+            Object result = parsedQuery.execute(table);
             if (currentTransaction != null && currentTransaction.isActive()) {
-                throw new IllegalStateException("Another transaction is already active for this client");
+                currentTransaction.updateTable(tableName, table);
+            } else if (writeLockAcquired) {
+                table.saveToFile(tableName);
             }
-            IsolationLevel isolationLevel = ((BeginTransactionQuery) parsedQuery).getIsolationLevel() != null
-                    ? ((BeginTransactionQuery) parsedQuery).getIsolationLevel()
-                    : defaultIsolationLevel;
-            currentTransaction = new Transaction(isolationLevel);
-            transactionId = currentTransaction.getTransactionId();
-            activeTransactions.put(transactionId, currentTransaction);
-            for (Map.Entry<String, Table> entry : tables.entrySet()) {
-                currentTransaction.snapshotTable(entry.getKey(), entry.getValue());
-            }
-            return "Transaction started: " + transactionId;
-        } else if (parsedQuery instanceof CommitTransactionQuery) {
-            if (currentTransaction == null || !currentTransaction.isActive()) {
-                throw new IllegalStateException("No active transaction to commit");
-            }
-            // Apply modified tables
-            for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
-                if (entry.getValue() != null) {
-                    tables.put(entry.getKey(), entry.getValue());
-                    entry.getValue().saveToFile(entry.getKey());
-                } else {
-                    tables.remove(entry.getKey());
+            return result;
+
+        } finally {
+            // Release the lock if it was acquired
+            if (lock != null) {
+                if (writeLockAcquired) {
+                    lock.writeLock().unlock();
+                } else if (parsedQuery instanceof SelectQuery) {
+                    lock.readLock().unlock();
                 }
             }
-            currentTransaction.setInactive();
-            activeTransactions.remove(transactionId);
-            return "Transaction committed";
-        } else if (parsedQuery instanceof RollbackTransactionQuery) {
-            if (currentTransaction == null || !currentTransaction.isActive()) {
-                throw new IllegalStateException("No active transaction to rollback");
-            }
-            currentTransaction.setInactive();
-            activeTransactions.remove(transactionId);
-            return "Transaction rolled back";
-        } else if (parsedQuery instanceof CreateTableQuery) {
-            CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
-            createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes());
-            return "Table created successfully";
         }
-
-        String tableName = extractTableName(query);
-        Table table = getTableForQuery(tableName, currentTransaction);
-        if (table == null) {
-            throw new IllegalArgumentException("Table " + tableName + " does not exist");
-        }
-        Object result = parsedQuery.execute(table);
-        if (currentTransaction != null && currentTransaction.isActive()) {
-            currentTransaction.updateTable(tableName, table);
-        } else {
-            table.saveToFile(tableName);
-        }
-        return result;
     }
 
     private Table getTableForQuery(String tableName, Transaction currentTransaction) {
