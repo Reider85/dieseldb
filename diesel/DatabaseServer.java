@@ -1,4 +1,5 @@
 package diesel;
+
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -7,6 +8,7 @@ import java.util.logging.Level;
 
 public class DatabaseServer {
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
+    private static final String CONFIG_FILE = "config.properties";
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
@@ -17,7 +19,38 @@ public class DatabaseServer {
         this.database = new Database();
     }
 
+    // Load configuration and return Properties object
+    private static Properties loadConfig() {
+        Properties props = new Properties();
+        try (InputStream input = DatabaseServer.class.getClassLoader().getResourceAsStream(CONFIG_FILE)) {
+            if (input == null) {
+                LOGGER.log(Level.SEVERE, "Configuration file {0} not found", CONFIG_FILE);
+                return props; // Return empty Properties
+            }
+            props.load(input);
+            return props;
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Failed to load {0}: {1}", new Object[]{CONFIG_FILE, e.getMessage()});
+            return props; // Return empty Properties
+        }
+    }
+
+    // Log configuration parameters
+    private static void logConfig(Properties config) {
+        LOGGER.log(Level.INFO, "Configuration parameters loaded from {0}:", CONFIG_FILE);
+        if (config.isEmpty()) {
+            LOGGER.log(Level.WARNING, "No configuration parameters found in {0}", CONFIG_FILE);
+        } else {
+            config.forEach((key, value) ->
+                    LOGGER.log(Level.INFO, "Config: {0} = {1}", new Object[]{key, value}));
+        }
+    }
+
     public void start() {
+        // Load and log configuration
+        Properties config = loadConfig();
+        logConfig(config);
+
         running = true;
         try {
             serverSocket = new ServerSocket(port);
@@ -119,23 +152,5 @@ public class DatabaseServer {
     public static void main(String[] args) {
         DatabaseServer server = new DatabaseServer(3306);
         server.start();
-    }
-}
-
-class QueryMessage implements Serializable {
-    private final String query;
-    private final UUID transactionId;
-
-    public QueryMessage(String query, UUID transactionId) {
-        this.query = query;
-        this.transactionId = transactionId;
-    }
-
-    public String getQuery() {
-        return query;
-    }
-
-    public UUID getTransactionId() {
-        return transactionId;
     }
 }
