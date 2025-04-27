@@ -40,4 +40,18 @@ class Database {
         }
         throw new IllegalArgumentException("Cannot extract table name from query");
     }
+
+    public Table getTable(String tableName) {
+        Table table = tables.get(tableName);
+        if (table == null) {
+            throw new IllegalArgumentException("Table " + tableName + " does not exist");
+        }
+        return table;
+    }
+
+    public void dropTable(String tableName) {
+        if (tables.remove(tableName) == null) {
+            throw new IllegalArgumentException("Table " + tableName + " does not exist");
+        }
+    }
 }

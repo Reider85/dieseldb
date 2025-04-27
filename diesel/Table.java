@@ -12,6 +12,16 @@ class Table implements Serializable {
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final List<Map<String, Object>> rows;
+    private boolean isFileInitialized;
+    public boolean isFileInitialized() {
+        return isFileInitialized;
+    }
+
+    public void setFileInitialized(boolean fileInitialized) {
+        isFileInitialized = fileInitialized;
+    }
+
+
 
     public Table(List<String> columns, Map<String, Class<?>> columnTypes) {
         this.columns = new ArrayList<>(columns);
@@ -84,14 +94,46 @@ class Table implements Serializable {
     }
 
     public void saveToFile(String tableName) {
-        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(tableName + ".table"))) {
-            oos.writeObject(this);
-            LOGGER.log(Level.INFO, "Table {0} saved to file", tableName);
+        String fileName = tableName + ".csv";
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, isFileInitialized))) {
+            if (!isFileInitialized) {
+                // Write header
+                writer.write(String.join(",", columns));
+                writer.newLine();
+                isFileInitialized = true;
+            }
+            // Write the last row (most recent insert)
+            if (!rows.isEmpty()) {
+                Map<String, Object> row = rows.get(rows.size() - 1);
+                List<String> values = new ArrayList<>();
+                for (String column : columns) {
+                    Object value = row.get(column);
+                    values.add(formatValue(value));
+                }
+                writer.write(String.join(",", values));
+                writer.newLine();
+            }
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to save table {0}: {1}", new Object[]{tableName, e.getMessage()});
+            LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
+            throw new RuntimeException("Failed to save table to file: " + fileName, e);
         }
     }
 
+    private String formatValue(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof String) {
+            return "\"" + value.toString().replace("\"", "\"\"") + "\"";
+        }
+        if (value instanceof LocalDate || value instanceof LocalDateTime || value instanceof UUID) {
+            return value.toString();
+        }
+        if (value instanceof BigDecimal) {
+            return ((BigDecimal) value).toPlainString();
+        }
+        return value.toString();
+    }
     public static Table loadFromFile(String tableName) {
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(tableName + ".table"))) {
             Table table = (Table) ois.readObject();
