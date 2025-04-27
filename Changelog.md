@@ -34,3 +34,4 @@
 0.3.4 performance test
 0.3.5 transaction
 0.3.6 read uncommited transaction level
+0.3.7 repeatable read and seriazable transaction level
