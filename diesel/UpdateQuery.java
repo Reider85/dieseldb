@@ -123,7 +123,7 @@ class UpdateQuery implements Query<Void> {
                     // Update indexes
                     for (Map.Entry<String, Object> update : updates.entrySet()) {
                         String column = update.getKey();
-                        BTreeIndex index = table.getIndex(column);
+                        Index index = table.getIndex(column);
                         if (index != null) {
                             Object oldValue = oldValues.get(column);
                             Object newValue = update.getValue();
@@ -133,8 +133,8 @@ class UpdateQuery implements Query<Void> {
                             if (newValue != null) {
                                 index.insert(newValue, i);
                             }
-                            LOGGER.log(Level.INFO, "Updated B-tree index for column {0} at row {1}: {2} -> {3}",
-                                    new Object[]{column, i, oldValue, newValue});
+                            LOGGER.log(Level.INFO, "Updated {0} index for column {1} at row {2}: {3} -> {4}",
+                                    new Object[]{index instanceof HashIndex ? "hash" : "B-tree", column, i, oldValue, newValue});
                         }
                     }
                 }

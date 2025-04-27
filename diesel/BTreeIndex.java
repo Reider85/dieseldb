@@ -3,7 +3,7 @@ package diesel;
 import java.io.Serializable;
 import java.util.*;
 
-class BTreeIndex implements Serializable {
+class BTreeIndex implements Index, Serializable {
     private static class Node implements Serializable {
         List<Object> keys;
         List<Integer> rowIndices; // For leaf nodes
@@ -28,6 +28,12 @@ class BTreeIndex implements Serializable {
         this.keyType = keyType;
     }
 
+    @Override
+    public Class<?> getKeyType() {
+        return keyType;
+    }
+
+    @Override
     public void insert(Object key, int rowIndex) {
         Node r = root;
         if (r.keys.size() == (2 * t - 1)) {
@@ -91,6 +97,7 @@ class BTreeIndex implements Serializable {
         }
     }
 
+    @Override
     public void remove(Object key, int rowIndex) {
         remove(root, key, rowIndex);
         if (root.keys.isEmpty() && !root.isLeaf) {
@@ -202,6 +209,7 @@ class BTreeIndex implements Serializable {
         x.children.remove(i + 1);
     }
 
+    @Override
     public List<Integer> search(Object key) {
         return search(root, key);
     }

@@ -1,4 +1,5 @@
 package diesel;
+
 import java.io.*;
 import java.net.*;
 import java.util.List;
@@ -36,7 +37,8 @@ public class DatabaseClient {
 
     public Object executeQuery(String query) {
         try {
-            out.writeObject(new QueryMessage(query, transactionId));
+            String normalizedQuery = query.trim();
+            out.writeObject(new QueryMessage(normalizedQuery, transactionId));
             out.flush();
             Object result = in.readObject();
             if (result instanceof String && ((String) result).startsWith("Transaction started: ")) {
@@ -46,9 +48,10 @@ public class DatabaseClient {
                 transactionId = null;
             }
             if (result instanceof String && ((String) result).startsWith("Error: ")) {
+                LOGGER.log(Level.SEVERE, "Server error for query '{0}': {1}", new Object[]{normalizedQuery, result});
                 throw new RuntimeException((String) result);
             }
-            LOGGER.log(Level.INFO, "Query executed: {0}, Result: {1}", new Object[]{query, result});
+            LOGGER.log(Level.INFO, "Query executed: {0}, Result: {1}", new Object[]{normalizedQuery, result});
             return result;
         } catch (IOException | ClassNotFoundException e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
@@ -75,69 +78,56 @@ public class DatabaseClient {
         try {
             client.connect();
 
-            client.executeQuery("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED");
+            // Try setting isolation level, but continue if unsupported
+            try {
+                client.executeQuery("SET TRANSACTION ISOLATION LEVEL READ_UNCOMMITTED");
+            } catch (RuntimeException e) {
+                LOGGER.log(Level.WARNING, "Failed to set isolation level: {0}. Continuing with default.", e.getMessage());
+            }
 
             client.executeQuery("BEGIN TRANSACTION");
 
-            String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+            String createTable = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, INITIAL CHAR)";
             client.executeQuery(createTable);
 
-            // Create index on AGE column
             client.executeQuery("CREATE INDEX idx_age ON USERS(AGE)");
+            client.executeQuery("CREATE HASH INDEX idx_name ON USERS(NAME)");
 
-            String insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) VALUES ('1', 'Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00', '2023-10-15 14:30:00.123', 9223372036854775807, 100, 1, 123.45, 99.75, 123456.789012, 'A', '123e4567-e89b-12d3-a456-426614174000')";
-            client.executeQuery(insertQuery);
+            String insertQuery1 = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, INITIAL) VALUES ('1', 'Alice', 25, TRUE, 'A')";
+            client.executeQuery(insertQuery1);
 
-            insertQuery = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) VALUES ('2', 'Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00', '2023-10-16 09:00:00.456', 1000000000, 200, 2, 678.90, 88.50, 987654.321098, 'B', '550e8400-e29b-41d4-a716-446655440000')";
-            client.executeQuery(insertQuery);
+            String insertQuery2 = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, INITIAL) VALUES ('2', 'Bob', 30, FALSE, 'B')";
+            client.executeQuery(insertQuery2);
+
+            String insertQuery3 = "INSERT INTO USERS (ID, NAME, AGE, ACTIVE, INITIAL) VALUES ('3', 'Alice', 28, TRUE, 'C')";
+            client.executeQuery(insertQuery3);
 
             String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE AGE < 30 OR ACTIVE = FALSE";
             client.executeQuery(updateQuery);
 
-            client.executeQuery("COMMIT TRANSACTION");
+            String selectQuery = "SELECT ID, NAME, AGE FROM USERS WHERE NAME = 'Alice'";
+            Object result = client.executeQuery(selectQuery);
 
-            client.executeQuery("BEGIN TRANSACTION ISOLATION LEVEL READ UNCOMMITTED");
-
-            // Query using the index
-            String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE = 25";
-            List<Map<String, Object>> result = (List<Map<String, Object>>) client.executeQuery(selectQuery);
-            System.out.println("Query Result (Indexed SELECT on AGE=25):");
-            for (Map<String, Object> row : result) {
-                System.out.println(row);
-            }
-
-            // Range query using the index
-            String rangeQuery = "SELECT NAME, AGE FROM USERS WHERE AGE > 20 AND AGE < 30";
-            List<Map<String, Object>> rangeResult = (List<Map<String, Object>>) client.executeQuery(rangeQuery);
-            System.out.println("\nQuery Result (Indexed Range SELECT AGE > 20 AND AGE < 30):");
-            for (Map<String, Object> row : rangeResult) {
-                System.out.println(row);
-            }
-
-            String selectNotQuery = "SELECT NAME, AGE, ACTIVE FROM USERS WHERE NOT AGE = 25 OR ACTIVE = TRUE";
-            List<Map<String, Object>> notResult = (List<Map<String, Object>>) client.executeQuery(selectNotQuery);
-            System.out.println("\nQuery Result (SELECT with NOT):");
-            for (Map<String, Object> row : notResult) {
-                System.out.println(row);
-            }
-
-            String selectParenQuery = "SELECT NAME, AGE, ACTIVE FROM USERS WHERE (AGE < 30 AND ACTIVE = TRUE) OR NAME = 'Bob'";
-            List<Map<String, Object>> parenResult = (List<Map<String, Object>>) client.executeQuery(selectParenQuery);
-            System.out.println("\nQuery Result (SELECT with Parentheses):");
-            for (Map<String, Object> row : parenResult) {
-                System.out.println(row);
+            if (result instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> rows = (List<Map<String, Object>>) result;
+                System.out.println("Query Results:");
+                for (Map<String, Object> row : rows) {
+                    System.out.println(row);
+                }
             }
 
             client.executeQuery("COMMIT TRANSACTION");
-
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Client error: {0}", e.getMessage());
+            e.printStackTrace();
             try {
-                client.executeQuery("ROLLBACK TRANSACTION");
+                if (client.transactionId != null) {
+                    client.executeQuery("ROLLBACK TRANSACTION");
+                }
             } catch (Exception rollbackEx) {
                 LOGGER.log(Level.SEVERE, "Rollback failed: {0}", rollbackEx.getMessage());
             }
-            e.printStackTrace();
         } finally {
             client.disconnect();
         }

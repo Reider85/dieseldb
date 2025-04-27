@@ -1,4 +1,5 @@
 package diesel;
+
 import java.io.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -9,13 +10,20 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+interface Index {
+    void insert(Object key, int rowIndex);
+    void remove(Object key, int rowIndex);
+    List<Integer> search(Object key);
+    Class<?> getKeyType();
+}
+
 class Table implements Serializable {
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final List<Map<String, Object>> rows;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
-    private transient Map<String, BTreeIndex> indexes; // Map of column name to B-tree index
+    private transient Map<String, Index> indexes; // Map of column name to Index (BTreeIndex or HashIndex)
     private boolean isFileInitialized;
 
     public Table(List<String> columns, Map<String, Class<?>> columnTypes) {
@@ -39,7 +47,7 @@ class Table implements Serializable {
         return rowLocks.computeIfAbsent(rowIndex, k -> new ReentrantReadWriteLock());
     }
 
-    public void createIndex(String columnName) {
+    public void createBTreeIndex(String columnName) {
         if (!columnTypes.containsKey(columnName)) {
             throw new IllegalArgumentException("Column " + columnName + " does not exist");
         }
@@ -56,7 +64,24 @@ class Table implements Serializable {
         LOGGER.log(Level.INFO, "Created B-tree index on column {0}", columnName);
     }
 
-    public BTreeIndex getIndex(String columnName) {
+    public void createHashIndex(String columnName) {
+        if (!columnTypes.containsKey(columnName)) {
+            throw new IllegalArgumentException("Column " + columnName + " does not exist");
+        }
+        HashIndex index = new HashIndex(columnTypes.get(columnName));
+        // Populate index with existing data
+        for (int i = 0; i < rows.size(); i++) {
+            Map<String, Object> row = rows.get(i);
+            Object key = row.get(columnName);
+            if (key != null) {
+                index.insert(key, i);
+            }
+        }
+        indexes.put(columnName, index);
+        LOGGER.log(Level.INFO, "Created hash index on column {0}", columnName);
+    }
+
+    public Index getIndex(String columnName) {
         return indexes.get(columnName);
     }
 
@@ -68,7 +93,7 @@ class Table implements Serializable {
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
         this.rowLocks = new ConcurrentHashMap<>();
-        this.indexes = (Map<String, BTreeIndex>) ois.readObject();
+        this.indexes = (Map<String, Index>) ois.readObject();
     }
 
     public void addRow(Map<String, Object> row) {
@@ -129,10 +154,10 @@ class Table implements Serializable {
         lock.writeLock().lock();
         try {
             rows.add(validatedRow);
-            // Update indexes
-            for (Map.Entry<String, BTreeIndex> entry : indexes.entrySet()) {
+            // Update all indexes
+            for (Map.Entry<String, Index> entry : indexes.entrySet()) {
                 String column = entry.getKey();
-                BTreeIndex index = entry.getValue();
+                Index index = entry.getValue();
                 Object key = validatedRow.get(column);
                 if (key != null) {
                     index.insert(key, rowIndex);

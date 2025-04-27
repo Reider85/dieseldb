@@ -63,7 +63,8 @@ class QueryParser {
 
     public Query<?> parse(String query) {
         try {
-            String normalized = query.trim().toUpperCase();
+            String normalized = query.trim().toUpperCase().replace("_", " ");
+            LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
             if (normalized.startsWith("SELECT")) {
                 return parseSelectQuery(normalized, query);
             } else if (normalized.startsWith("INSERT INTO")) {
@@ -72,6 +73,8 @@ class QueryParser {
                 return parseUpdateQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
+            } else if (normalized.startsWith("CREATE HASH INDEX")) {
+                return parseCreateHashIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE INDEX")) {
                 return parseCreateIndexQuery(normalized);
             } else if (normalized.equals("BEGIN TRANSACTION") ||
@@ -117,6 +120,18 @@ class QueryParser {
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
         return new CreateIndexQuery(tableName, columnName);
+    }
+
+    private Query<Void> parseCreateHashIndexQuery(String normalized) {
+        String[] parts = normalized.split("ON");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid CREATE HASH INDEX query format");
+        }
+        String indexPart = parts[0].replace("CREATE HASH INDEX", "").trim();
+        String tableAndColumn = parts[1].trim();
+        String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
+        String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
+        return new CreateHashIndexQuery(tableName, columnName);
     }
 
     private Query<Void> parseCreateTableQuery(String normalized, String original) {
@@ -553,26 +568,3 @@ class QueryParser {
     }
 }
 
-class CreateIndexQuery implements Query<Void> {
-    private final String tableName;
-    private final String columnName;
-
-    public CreateIndexQuery(String tableName, String columnName) {
-        this.tableName = tableName;
-        this.columnName = columnName;
-    }
-
-    public String getTableName() {
-        return tableName;
-    }
-
-    public String getColumnName() {
-        return columnName;
-    }
-
-    @Override
-    public Void execute(Table table) {
-        table.createIndex(columnName);
-        return null;
-    }
-}

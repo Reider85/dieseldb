@@ -77,7 +77,15 @@ class Database {
                 if (currentTransaction != null && currentTransaction.isActive()) {
                     currentTransaction.updateTable(indexQuery.getTableName(), table);
                 }
-                return "Index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
+                return "B-tree index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
+            } else if (parsedQuery instanceof CreateHashIndexQuery) {
+                CreateHashIndexQuery indexQuery = (CreateHashIndexQuery) parsedQuery;
+                Table table = getTable(indexQuery.getTableName());
+                indexQuery.execute(table);
+                if (currentTransaction != null && currentTransaction.isActive()) {
+                    currentTransaction.updateTable(indexQuery.getTableName(), table);
+                }
+                return "Hash index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
             }
 
             String tableName = extractTableName(query);

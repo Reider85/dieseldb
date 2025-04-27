@@ -27,27 +27,31 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // Check if we can use an index for a single equality condition
         if (conditions.size() == 1 && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
             QueryParser.Condition condition = conditions.get(0);
-            BTreeIndex index = table.getIndex(condition.column);
-            if (index != null) {
+            Index index = table.getIndex(condition.column);
+            if (index instanceof HashIndex) {
                 Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
                 candidateRowIndices = index.search(conditionValue);
+                LOGGER.log(Level.INFO, "Using hash index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+            } else if (index instanceof BTreeIndex) {
+                Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+                candidateRowIndices = ((BTreeIndex) index).search(conditionValue);
                 LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
             }
         }
-        // Check for range queries (LESS_THAN or GREATER_THAN)
+        // Check for range queries (LESS_THAN or GREATER_THAN) - only for BTreeIndex
         else if (conditions.size() == 2 && conditions.get(0).column.equals(conditions.get(1).column) &&
                 ((conditions.get(0).operator == QueryParser.Operator.GREATER_THAN && conditions.get(1).operator == QueryParser.Operator.LESS_THAN) ||
                         (conditions.get(0).operator == QueryParser.Operator.LESS_THAN && conditions.get(1).operator == QueryParser.Operator.GREATER_THAN)) &&
                 conditions.get(0).conjunction.equalsIgnoreCase("AND") && !conditions.get(0).not && !conditions.get(1).not) {
             QueryParser.Condition cond1 = conditions.get(0);
             QueryParser.Condition cond2 = conditions.get(1);
-            BTreeIndex index = table.getIndex(cond1.column);
-            if (index != null) {
+            Index index = table.getIndex(cond1.column);
+            if (index instanceof BTreeIndex) {
                 Object low = convertConditionValue(cond1.operator == QueryParser.Operator.GREATER_THAN ? cond1.value : cond2.value,
                         cond1.column, columnTypes.get(cond1.column), columnTypes);
                 Object high = convertConditionValue(cond1.operator == QueryParser.Operator.LESS_THAN ? cond1.value : cond2.value,
                         cond1.column, columnTypes.get(cond1.column), columnTypes);
-                candidateRowIndices = index.rangeSearch(low, high);
+                candidateRowIndices = ((BTreeIndex) index).rangeSearch(low, high);
                 LOGGER.log(Level.INFO, "Using B-tree index for range query on column {0} between {1} and {2}",
                         new Object[]{cond1.column, low, high});
             }
