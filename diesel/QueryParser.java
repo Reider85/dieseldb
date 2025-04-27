@@ -63,7 +63,7 @@ class QueryParser {
 
     public Query<?> parse(String query) {
         try {
-            String normalized = query.trim().toUpperCase().replace("_", " ");
+            String normalized = query.trim().toUpperCase();
             LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
             if (normalized.startsWith("SELECT")) {
                 return parseSelectQuery(normalized, query);

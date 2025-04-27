@@ -12,7 +12,7 @@ import java.util.concurrent.*;
 
 public class PerformanceTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class.getName());
-    private static final int RECORD_COUNT = 1000;
+    private static final int RECORD_COUNT = 100;
     private static final int WARMUP_RUNS = 1;
     private static final int TEST_RUNS = 10;
     private final Database database;
@@ -23,7 +23,6 @@ public class PerformanceTest {
 
     public void runTests() {
         runInsertPerformanceTest();
-        /*
         setupTable();
         runUpdatePerformanceTest();
         runTransactionPerformanceTest();
@@ -31,12 +30,13 @@ public class PerformanceTest {
         List<String> queries = prepareQueries();
         for (String query : queries) {
             runPerformanceTest(query);
-        }*/
+        }
     }
 
     private void setupTable() {
         dropTable(); // Ensure table does not exist
-        String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+        String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+        LOGGER.log(Level.INFO, "Executing CREATE TABLE query in setupTable: {0}", createTableQuery);
         database.executeQuery(createTableQuery, null);
         insertRecords(RECORD_COUNT);
         LOGGER.log(Level.INFO, "Setup completed: {0} records inserted into USERS table", RECORD_COUNT);
@@ -44,7 +44,7 @@ public class PerformanceTest {
 
     private void insertRecords(int count) {
         Random random = new Random();
-        List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LAST_LOGIN", "LAST_ACTION", "USER_SCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
+        List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
         String tableName = "USERS";
         Table table = database.getTable(tableName);
 
@@ -72,7 +72,7 @@ public class PerformanceTest {
         float score = 50 + (index % 50);
         double precision = 1000 + (index % 100000);
         char initial = (char) ('A' + (index % 26));
-        UUID sessionId = new UUID(index, index);
+        UUID sessionId = new UUID((long) index, (long) index);
 
         values.add(id);
         values.add(name);
@@ -97,13 +97,15 @@ public class PerformanceTest {
         try {
             LOGGER.log(Level.INFO, "Starting INSERT performance test for {0} records", RECORD_COUNT);
 
-            List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LAST_LOGIN", "LAST_ACTION", "USER_SCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
+            List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
             Random random = new Random();
 
             for (int i = 0; i < WARMUP_RUNS; i++) {
                 LOGGER.log(Level.INFO, "Warmup run {0}", i);
                 dropTable();
-                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", null);
+                String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+                LOGGER.log(Level.INFO, "Executing CREATE TABLE query in warmup: {0}", createQuery);
+                database.executeQuery(createQuery, null);
                 insertRecords(RECORD_COUNT);
             }
 
@@ -111,7 +113,9 @@ public class PerformanceTest {
             for (int i = 0; i < TEST_RUNS; i++) {
                 LOGGER.log(Level.INFO, "Test run {0}", i);
                 dropTable();
-                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", null);
+                String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+                LOGGER.log(Level.INFO, "Executing CREATE TABLE query in test run: {0}", createQuery);
+                database.executeQuery(createQuery, null);
                 long startTime = System.nanoTime();
                 insertRecords(RECORD_COUNT);
                 long endTime = System.nanoTime();
@@ -183,7 +187,9 @@ public class PerformanceTest {
             LOGGER.log(Level.INFO, "Warmup run {0}", i);
             dropTable();
             UUID txId = database.beginTransaction(null);
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", txId);
+            String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+            LOGGER.log(Level.INFO, "Executing CREATE TABLE query in transaction warmup: {0}", createQuery);
+            database.executeQuery(createQuery, txId);
             insertRecords(RECORD_COUNT);
             performUpdateRun(random);
             database.executeQuery("COMMIT TRANSACTION", txId);
@@ -195,7 +201,9 @@ public class PerformanceTest {
             dropTable();
             long startTime = System.nanoTime();
             UUID txId = database.beginTransaction(null);
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", txId);
+            String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+            LOGGER.log(Level.INFO, "Executing CREATE TABLE query in transaction test: {0}", createQuery);
+            database.executeQuery(createQuery, txId);
             insertRecords(RECORD_COUNT);
             performUpdateRun(random);
             database.executeQuery("COMMIT TRANSACTION", txId);
