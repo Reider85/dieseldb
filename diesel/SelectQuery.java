@@ -25,7 +25,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         List<Integer> candidateRowIndices = null;
 
         // Check if we can use an index for a single equality condition
-        if (conditions.size() == 1 && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
+        if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
             QueryParser.Condition condition = conditions.get(0);
             Index index = table.getIndex(condition.column);
             if (index instanceof HashIndex) {
@@ -39,7 +39,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         // Check for range queries (LESS_THAN or GREATER_THAN) - only for BTreeIndex
-        else if (conditions.size() == 2 && conditions.get(0).column.equals(conditions.get(1).column) &&
+        else if (conditions.size() == 2 && !conditions.get(0).isGrouped() && !conditions.get(1).isGrouped() &&
+                conditions.get(0).column != null && conditions.get(1).column != null &&
+                conditions.get(0).column.equals(conditions.get(1).column) &&
                 ((conditions.get(0).operator == QueryParser.Operator.GREATER_THAN && conditions.get(1).operator == QueryParser.Operator.LESS_THAN) ||
                         (conditions.get(0).operator == QueryParser.Operator.LESS_THAN && conditions.get(1).operator == QueryParser.Operator.GREATER_THAN)) &&
                 conditions.get(0).conjunction.equalsIgnoreCase("AND") && !conditions.get(0).not && !conditions.get(1).not) {
@@ -91,16 +93,28 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        boolean result = evaluateCondition(row, conditions.get(0), columnTypes);
-        for (int i = 1; i < conditions.size(); i++) {
-            boolean currentResult = evaluateCondition(row, conditions.get(i), columnTypes);
-            String conjunction = conditions.get(i - 1).conjunction;
-            if ("AND".equalsIgnoreCase(conjunction)) {
-                result = result && currentResult;
-            } else if ("OR".equalsIgnoreCase(conjunction)) {
-                result = result || currentResult;
-            }
+        if (conditions == null || conditions.isEmpty()) {
+            return true;
         }
+
+        boolean result = true;
+        String lastConjunction = null;
+
+        for (QueryParser.Condition condition : conditions) {
+            boolean conditionResult = evaluateCondition(row, condition, columnTypes);
+
+            // Apply conjunction logic
+            if (lastConjunction == null) {
+                result = conditionResult;
+            } else if ("AND".equalsIgnoreCase(lastConjunction)) {
+                result = result && conditionResult;
+            } else if ("OR".equalsIgnoreCase(lastConjunction)) {
+                result = result || conditionResult;
+            }
+
+            lastConjunction = condition.conjunction;
+        }
+
         return result;
     }
 
