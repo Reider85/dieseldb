@@ -31,3 +31,4 @@
 0.3.1 add condition ()
 0.3.2 where performance test
 0.3.3 insert and update performance test
+0.3.4 performance test

@@ -11,9 +11,9 @@ import java.util.Locale;
 
 public class PerformanceTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class.getName());
-    private static final int RECORD_COUNT = 100;
+    private static final int RECORD_COUNT = 1000;
     private static final int WARMUP_RUNS = 1;
-    private static final int TEST_RUNS = 1;
+    private static final int TEST_RUNS = 10;
     private final Database database;
 
     public PerformanceTest() {
@@ -90,41 +90,48 @@ public class PerformanceTest {
     }
 
     private void runInsertPerformanceTest() {
-        LOGGER.log(Level.INFO, "Testing INSERT performance for {0} records", RECORD_COUNT);
+        try {
+            LOGGER.log(Level.INFO, "Starting INSERT performance test for {0} records", RECORD_COUNT);
 
-        List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LAST_LOGIN", "LAST_ACTION", "USER_SCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
-        Random random = new Random();
+            List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LAST_LOGIN", "LAST_ACTION", "USER_SCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
+            Random random = new Random();
 
-        for (int i = 0; i < WARMUP_RUNS; i++) {
-            dropTable();
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
-            insertRecords(RECORD_COUNT);
+            for (int i = 0; i < WARMUP_RUNS; i++) {
+                LOGGER.log(Level.INFO, "Warmup run {0}", i);
+                dropTable();
+                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+                insertRecords(RECORD_COUNT);
+            }
+
+            List<Long> executionTimes = new ArrayList<>();
+            for (int i = 0; i < TEST_RUNS; i++) {
+                LOGGER.log(Level.INFO, "Test run {0}", i);
+                dropTable();
+                database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+                long startTime = System.nanoTime();
+                insertRecords(RECORD_COUNT);
+                long endTime = System.nanoTime();
+                executionTimes.add(endTime - startTime);
+            }
+
+            double averageTimeMs = executionTimes.stream()
+                    .mapToLong(Long::longValue)
+                    .average()
+                    .orElse(0.0) / 1_000_000.0;
+            long minTimeNs = executionTimes.stream().min(Long::compareTo).orElse(0L);
+            long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
+            double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
+
+            LOGGER.log(Level.INFO, "INSERT performance for {0} records", RECORD_COUNT);
+            LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
+            LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+            LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+            LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
+            LOGGER.log(Level.INFO, "--------------------------------");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error in INSERT performance test: {0}", e.getMessage());
+            e.printStackTrace();
         }
-
-        List<Long> executionTimes = new ArrayList<>();
-        for (int i = 0; i < TEST_RUNS; i++) {
-            dropTable();
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, LAST_ACTION DATETIME_MS, USER_SCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
-            long startTime = System.nanoTime();
-            insertRecords(RECORD_COUNT);
-            long endTime = System.nanoTime();
-            executionTimes.add(endTime - startTime);
-        }
-
-        double averageTimeMs = executionTimes.stream()
-                .mapToLong(Long::longValue)
-                .average()
-                .orElse(0.0) / 1_000_000.0;
-        long minTimeNs = executionTimes.stream().min(Long::compareTo).orElse(0L);
-        long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
-        double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
-
-        LOGGER.log(Level.INFO, "INSERT performance for {0} records", RECORD_COUNT);
-        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
-        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
-        LOGGER.log(Level.INFO, "--------------------------------");
     }
 
     private void runUpdatePerformanceTest() {
