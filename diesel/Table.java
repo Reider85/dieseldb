@@ -35,6 +35,10 @@ class Table implements Serializable {
         this.isFileInitialized = false;
     }
 
+    public Map<String, Index> getIndexes() {
+        return indexes;
+    }
+
     public boolean isFileInitialized() {
         return isFileInitialized;
     }
@@ -85,15 +89,29 @@ class Table implements Serializable {
         return indexes.get(columnName);
     }
 
+    public List<String> getColumns() {
+        return new ArrayList<>(columns);
+    }
+
+    public Map<String, Class<?>> getColumnTypes() {
+        return new HashMap<>(columnTypes);
+    }
+
+    public List<Map<String, Object>> getRows() {
+        return new ArrayList<>(rows);
+    }
+
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
-        oos.writeObject(indexes);
+        // Since indexes are transient and rebuilt on load, we don't serialize them
+        // oos.writeObject(indexes); // Removed to align with CSV persistence
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
         this.rowLocks = new ConcurrentHashMap<>();
-        this.indexes = (Map<String, Index>) ois.readObject();
+        this.indexes = new ConcurrentHashMap<>();
+        // Indexes will be rebuilt when needed (e.g., via createBTreeIndex or createHashIndex)
     }
 
     public void addRow(Map<String, Object> row) {
@@ -166,14 +184,6 @@ class Table implements Serializable {
         } finally {
             lock.writeLock().unlock();
         }
-    }
-
-    public List<Map<String, Object>> getRows() {
-        return new ArrayList<>(rows);
-    }
-
-    public Map<String, Class<?>> getColumnTypes() {
-        return new HashMap<>(columnTypes);
     }
 
     public void saveToFile(String tableName) {

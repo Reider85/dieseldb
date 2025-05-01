@@ -49,6 +49,17 @@ public class AdvancedTest {
             updateWithWhereIndexedAndNonIndexedInParentheses();
             updateWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
 
+            // Step 6: Run DELETE queries
+            deleteWithWhereNoIndex();
+            deleteWithWhereHashIndex();
+            deleteWithWhereBTreeIndex();
+            deleteWithWhereIndexedAndNonIndexed();
+            deleteWithWhereIndexedAndNonIndexedInParentheses();
+            deleteWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
+            deleteWithWhereTwoIndexed();
+            deleteWithWhereIndexedOrIndexed();
+            deleteWithWhereIndexedOrNonIndexed();
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error running tests: {0}", e.getMessage());
             e.printStackTrace();
@@ -125,6 +136,16 @@ public class AdvancedTest {
         long endTime = System.nanoTime();
         double durationMs = (endTime - startTime) / 1_000_000.0;
         LOGGER.log(Level.INFO, "Update completed in {0} ms", String.format("%.3f", durationMs));
+    }
+
+    private void executeDeleteQuery(String query) {
+        LOGGER.log(Level.INFO, "Executing DELETE: {0}", query);
+        long startTime = System.nanoTime();
+        Object result = database.executeQuery(query, null);
+        long endTime = System.nanoTime();
+        double durationMs = (endTime - startTime) / 1_000_000.0;
+        int deletedRows = (result instanceof Integer) ? (Integer) result : 0;
+        LOGGER.log(Level.INFO, "Deleted {0} rows in {1} ms", new Object[]{deletedRows, String.format("%.3f", durationMs)});
     }
 
     private void selectWithoutWhere() {
@@ -220,6 +241,69 @@ public class AdvancedTest {
     private void updateWithWhereIndexedAndNonIndexedInParenthesesWithSpaces() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE (  AGE  =  50  ) AND (  BALANCE  >  5000  )";
         executeUpdateQuery(query);
+    }
+
+    private void deleteWithWhereNoIndex() {
+        String query = "DELETE FROM USERS WHERE BALANCE > 5000";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereHashIndex() {
+        String query = "DELETE FROM USERS WHERE NAME = 'User500'";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereBTreeIndex() {
+        String query = "DELETE FROM USERS WHERE AGE = 50";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereIndexedAndNonIndexed() {
+        String query = "DELETE FROM USERS WHERE AGE = 50 AND BALANCE > 5000";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereIndexedAndNonIndexedInParentheses() {
+        String query = "DELETE FROM USERS WHERE (AGE = 50) AND (BALANCE > 5000)";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereIndexedAndNonIndexedInParenthesesWithSpaces() {
+        String query = "DELETE FROM USERS WHERE (  AGE  =  50  ) AND (  BALANCE  >  5000  )";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereTwoIndexed() {
+        String query = "DELETE FROM USERS WHERE AGE = 50 AND NAME = 'User500'";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereIndexedOrIndexed() {
+        String query = "DELETE FROM USERS WHERE AGE = 50 OR NAME = 'User500'";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
+    }
+
+    private void deleteWithWhereIndexedOrNonIndexed() {
+        String query = "DELETE FROM USERS WHERE AGE = 50 OR BALANCE > 5000";
+        executeDeleteQuery(query);
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
     }
 
     public static void main(String[] args) {

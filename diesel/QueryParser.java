@@ -71,6 +71,8 @@ class QueryParser {
                 return parseInsertQuery(normalized, query);
             } else if (normalized.startsWith("UPDATE")) {
                 return parseUpdateQuery(normalized, query);
+            } else if (normalized.startsWith("DELETE FROM")) {
+                return parseDeleteQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
             } else if (normalized.startsWith("CREATE HASH INDEX")) {
@@ -379,6 +381,24 @@ class QueryParser {
         return new UpdateQuery(updates, conditions);
     }
 
+    private Query<Void> parseDeleteQuery(String normalized, String original) {
+        String[] parts = normalized.split("WHERE");
+        String tableName = normalized.replace("DELETE FROM", "").trim();
+        List<QueryParser.Condition> conditions = new ArrayList<>();
+
+        if (parts.length == 2) {
+            tableName = parts[0].replace("DELETE FROM", "").trim();
+            String conditionStr = parts[1].trim();
+            LOGGER.log(Level.FINE, "Parsing WHERE clause for DELETE: {0}", conditionStr);
+            conditions = parseConditions(conditionStr);
+        }
+
+        LOGGER.log(Level.INFO, "Parsed DELETE query: table={0}, conditions={1}",
+                new Object[]{tableName, conditions});
+
+        return new DeleteQuery(conditions);
+    }
+
     private Object parseConditionValue(String conditionColumn, String valueStr) {
         try {
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
@@ -567,4 +587,3 @@ class QueryParser {
         return null;
     }
 }
-
