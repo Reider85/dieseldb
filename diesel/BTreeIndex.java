@@ -140,10 +140,20 @@ class BTreeIndex implements Index, Serializable {
                 new Object[]{key, rowIndex, x.keys, x.children != null ? x.children.size() : 0, x.isLeaf, i});
 
         if (x.isLeaf) {
-            if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0 && x.rowIndices.get(i) == rowIndex) {
-                x.keys.remove(i);
-                x.rowIndices.remove(i);
-                LOGGER.log(Level.FINE, "Removed key={0}, rowIndex={1} from leaf node", new Object[]{key, rowIndex});
+            // Handle duplicate keys by finding all matching keys
+            boolean removed = false;
+            for (int j = 0; j < x.keys.size(); j++) {
+                if (compareKeys(key, x.keys.get(j)) == 0 && x.rowIndices.get(j) == rowIndex) {
+                    x.keys.remove(j);
+                    x.rowIndices.remove(j);
+                    removed = true;
+                    LOGGER.log(Level.FINE, "Removed key={0}, rowIndex={1} from leaf node at position={2}",
+                            new Object[]{key, rowIndex, j});
+                    break; // Remove only the first matching rowIndex
+                }
+            }
+            if (!removed) {
+                LOGGER.log(Level.FINE, "No matching key={0}, rowIndex={1} found in leaf node", new Object[]{key, rowIndex});
             }
             return;
         }
