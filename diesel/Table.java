@@ -19,12 +19,12 @@ interface Index {
 
 class Table implements Serializable {
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
-    private final String name; // Added table name field
+    private final String name;
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final List<Map<String, Object>> rows;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
-    private transient Map<String, Index> indexes; // Map of column name to Index (BTreeIndex or HashIndex)
+    private transient Map<String, Index> indexes;
     private boolean isFileInitialized;
 
     public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes) {
@@ -63,7 +63,6 @@ class Table implements Serializable {
             throw new IllegalArgumentException("Column " + columnName + " does not exist");
         }
         BTreeIndex index = new BTreeIndex(columnTypes.get(columnName));
-        // Populate index with existing data
         for (int i = 0; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
             Object key = row.get(columnName);
@@ -80,7 +79,6 @@ class Table implements Serializable {
             throw new IllegalArgumentException("Column " + columnName + " does not exist");
         }
         HashIndex index = new HashIndex(columnTypes.get(columnName));
-        // Populate index with existing data
         for (int i = 0; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
             Object key = row.get(columnName);
@@ -90,6 +88,26 @@ class Table implements Serializable {
         }
         indexes.put(columnName, index);
         LOGGER.log(Level.INFO, "Created hash index on column {0} for table {1}", new Object[]{columnName, name});
+    }
+
+    public void createUniqueIndex(String columnName) {
+        if (!columnTypes.containsKey(columnName)) {
+            throw new IllegalArgumentException("Column " + columnName + " does not exist");
+        }
+        UniqueIndex index = new UniqueIndex(columnTypes.get(columnName));
+        Set<Object> seenKeys = new HashSet<>();
+        for (int i = 0; i < rows.size(); i++) {
+            Map<String, Object> row = rows.get(i);
+            Object key = row.get(columnName);
+            if (key != null) {
+                if (!seenKeys.add(key)) {
+                    throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique index");
+                }
+                index.insert(key, i);
+            }
+        }
+        indexes.put(columnName, index);
+        LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
     public Index getIndex(String columnName) {
@@ -110,14 +128,12 @@ class Table implements Serializable {
 
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
-        // Since indexes and rowLocks are transient, we don't serialize them
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
-        // Indexes will be rebuilt when needed
     }
 
     public void addRow(Map<String, Object> row) {
@@ -178,7 +194,6 @@ class Table implements Serializable {
         lock.writeLock().lock();
         try {
             rows.add(validatedRow);
-            // Update all indexes
             for (Map.Entry<String, Index> entry : indexes.entrySet()) {
                 String column = entry.getKey();
                 Index index = entry.getValue();

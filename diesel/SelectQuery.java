@@ -15,6 +15,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions) {
         this.columns = columns;
         this.conditions = conditions;
+        LOGGER.log(Level.FINE, "Created SelectQuery with columns: {0}, conditions: {1}", new Object[]{columns, conditions});
     }
 
     @Override
@@ -36,6 +37,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
                 candidateRowIndices = ((BTreeIndex) index).search(conditionValue);
                 LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+            } else if (index instanceof UniqueIndex) {
+                Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+                candidateRowIndices = index.search(conditionValue);
+                LOGGER.log(Level.INFO, "Using unique index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
             }
         }
         // Check for range queries (LESS_THAN or GREATER_THAN) - only for BTreeIndex
@@ -84,6 +89,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
                 }
             }
+            LOGGER.log(Level.INFO, "Selected {0} rows from table {1}", new Object[]{result.size(), table.getName()});
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -132,7 +138,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
 
-        LOGGER.log(Level.INFO, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}, not={5}",
+        LOGGER.log(Level.FINE, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}, not={5}",
                 new Object[]{rowValue, rowValue.getClass().getSimpleName(),
                         conditionValue, conditionValue.getClass().getSimpleName(), condition.operator, condition.not});
 

@@ -1,17 +1,21 @@
 package diesel;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
 class InsertQuery implements Query<Void> {
+    private static final Logger LOGGER = Logger.getLogger(InsertQuery.class.getName());
     private final List<String> columns;
     private final List<Object> values;
 
     public InsertQuery(List<String> columns, List<Object> values) {
         this.columns = columns;
         this.values = values;
+        LOGGER.log(Level.FINE, "Created InsertQuery with columns: {0}, values: {1}", new Object[]{columns, values});
     }
 
     @Override
@@ -109,7 +113,13 @@ class InsertQuery implements Query<Void> {
             }
             row.put(column, value);
         }
-        table.addRow(row);
+        try {
+            table.addRow(row);
+            LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{table.getName(), row});
+        } catch (IllegalStateException e) {
+            LOGGER.log(Level.SEVERE, "Insert failed due to unique constraint violation: {0}", e.getMessage());
+            throw new IllegalStateException("Insert failed: " + e.getMessage(), e);
+        }
         return null;
     }
 }

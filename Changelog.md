@@ -47,3 +47,4 @@
 0.4.7 DELETE
 0.4.8 Advanced Delete Test fix
 0.4.9 Advanced Delete Test fix
+0.5.0 Unique Index

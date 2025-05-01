@@ -13,7 +13,7 @@ class Database {
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         if (!tables.containsKey(tableName)) {
-            Table newTable = new Table(tableName, columns, columnTypes); // Fixed: Include tableName
+            Table newTable = new Table(tableName, columns, columnTypes);
             tables.put(tableName, newTable);
             for (Transaction transaction : activeTransactions.values()) {
                 if (transaction.isActive()) {
@@ -92,6 +92,14 @@ class Database {
                     currentTransaction.updateTable(indexQuery.getTableName(), table);
                 }
                 return "Hash index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
+            } else if (parsedQuery instanceof CreateUniqueIndexQuery) {
+                CreateUniqueIndexQuery indexQuery = (CreateUniqueIndexQuery) parsedQuery;
+                Table table = getTable(indexQuery.getTableName());
+                indexQuery.execute(table);
+                if (currentTransaction != null && currentTransaction.isActive()) {
+                    currentTransaction.updateTable(indexQuery.getTableName(), table);
+                }
+                return "Unique index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
             }
 
             LOGGER.log(Level.FINE, "Calling extractTableName for query: {0}", query);
@@ -108,7 +116,6 @@ class Database {
             } else if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery || parsedQuery instanceof DeleteQuery) {
                 table.saveToFile(tableName);
             }
-            // Handle DeleteQuery returning Integer
             return (parsedQuery instanceof DeleteQuery) ? result : result;
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
@@ -207,7 +214,7 @@ class Database {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE TABLE");
             }
             return tablePart;
-        } else if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX")) {
+        } else if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX") || normalized.startsWith("CREATE UNIQUE INDEX")) {
             LOGGER.log(Level.FINE, "Processing CREATE INDEX query");
             String[] parts = normalized.split("(?i)ON\\s+", 2);
             if (parts.length < 2) {

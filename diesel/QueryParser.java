@@ -75,6 +75,8 @@ class QueryParser {
                 return parseDeleteQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
+            } else if (normalized.startsWith("CREATE UNIQUE INDEX")) {
+                return parseCreateUniqueIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE HASH INDEX")) {
                 return parseCreateHashIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE INDEX")) {
@@ -134,6 +136,18 @@ class QueryParser {
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
         return new CreateHashIndexQuery(tableName, columnName);
+    }
+
+    private Query<Void> parseCreateUniqueIndexQuery(String normalized) {
+        String[] parts = normalized.split("ON");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid CREATE UNIQUE INDEX query format");
+        }
+        String indexPart = parts[0].replace("CREATE UNIQUE INDEX", "").trim();
+        String tableAndColumn = parts[1].trim();
+        String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
+        String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
+        return new CreateUniqueIndexQuery(tableName, columnName);
     }
 
     private Query<Void> parseCreateTableQuery(String normalized, String original) {
