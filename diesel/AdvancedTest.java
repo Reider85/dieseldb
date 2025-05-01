@@ -22,41 +22,55 @@ public class AdvancedTest {
             // Step 2: Create indexes
             createBTreeIndex();
             createHashIndex();
+            createUniqueIndex();
 
             // Step 3: Insert records
             insertRecords();
 
-            // Step 4: Run SELECT queries
+            // Step 4: Run INSERT queries with unique index
+            insertWithUniqueIndex();
+            insertWithDuplicateUniqueIndex();
+
+            // Step 5: Run SELECT queries
             selectWithoutWhere();
             selectWithWhereNoIndex();
             selectWithWhereHashIndex();
             selectWithWhereBTreeIndex();
+            selectWithWhereUniqueIndex();
             selectWithWhereIndexedAndNonIndexed();
             selectWithWhereIndexedAndNonIndexedInParentheses();
             selectWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
             selectWithWhereTwoIndexed();
+            selectWithWhereUniqueBTreeHashIndexed();
+            selectWithWhereUniqueBTreeHashIndexedInParentheses();
             selectWithWhereIndexedOrIndexed();
             selectWithWhereIndexedOrNonIndexed();
 
-            // Step 5: Run UPDATE queries
+            // Step 6: Run UPDATE queries
             updateWithWhereNoIndex();
             updateWithWhereHashIndex();
             updateWithWhereBTreeIndex();
+            updateWithWhereUniqueIndex();
             updateWithWhereIndexedAndNonIndexed();
             updateWithWhereTwoIndexed();
+            updateWithWhereUniqueBTreeHashIndexed();
+            updateWithWhereUniqueBTreeHashIndexedInParentheses();
             updateWithWhereIndexedOrIndexed();
             updateWithWhereIndexedOrNonIndexed();
             updateWithWhereIndexedAndNonIndexedInParentheses();
             updateWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
 
-            // Step 6: Run DELETE queries
+            // Step 7: Run DELETE queries
             deleteWithWhereNoIndex();
             deleteWithWhereHashIndex();
             deleteWithWhereBTreeIndex();
+            deleteWithWhereUniqueIndex();
             deleteWithWhereIndexedAndNonIndexed();
             deleteWithWhereIndexedAndNonIndexedInParentheses();
             deleteWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
             deleteWithWhereTwoIndexed();
+            deleteWithWhereUniqueBTreeHashIndexed();
+            deleteWithWhereUniqueBTreeHashIndexedInParentheses();
             deleteWithWhereIndexedOrIndexed();
             deleteWithWhereIndexedOrNonIndexed();
 
@@ -88,6 +102,13 @@ public class AdvancedTest {
         LOGGER.log(Level.INFO, "Hash index created on NAME");
     }
 
+    private void createUniqueIndex() {
+        String createIndexQuery = "CREATE UNIQUE INDEX ON USERS (ID)";
+        LOGGER.log(Level.INFO, "Executing: {0}", createIndexQuery);
+        database.executeQuery(createIndexQuery, null);
+        LOGGER.log(Level.INFO, "Unique index created on ID");
+    }
+
     private void insertRecords() {
         LOGGER.log(Level.INFO, "Inserting {0} records", RECORD_COUNT);
         List<String> columns = Arrays.asList("ID", "NAME", "AGE", "BALANCE");
@@ -109,6 +130,37 @@ public class AdvancedTest {
         long endTime = System.nanoTime();
         double durationMs = (endTime - startTime) / 1_000_000.0;
         LOGGER.log(Level.INFO, "Inserted {0} records in {1} ms", new Object[]{RECORD_COUNT, String.format("%.3f", durationMs)});
+    }
+
+    private void insertWithUniqueIndex() {
+        String query = "INSERT INTO USERS (ID, NAME, AGE, BALANCE) VALUES ('1001', 'User1001', 25, 1500.00)";
+        LOGGER.log(Level.INFO, "Executing INSERT with unique index: {0}", query);
+        long startTime = System.nanoTime();
+        try {
+            database.executeQuery(query, null);
+            database.getTable("USERS").saveToFile("USERS");
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / 1_000_000.0;
+            LOGGER.log(Level.INFO, "Insert with unique index completed in {0} ms", String.format("%.3f", durationMs));
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Insert with unique index failed: {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void insertWithDuplicateUniqueIndex() {
+        String query = "INSERT INTO USERS (ID, NAME, AGE, BALANCE) VALUES ('1001', 'User1001Duplicate', 25, 1500.00)";
+        LOGGER.log(Level.INFO, "Executing INSERT with duplicate unique index: {0}", query);
+        long startTime = System.nanoTime();
+        try {
+            database.executeQuery(query, null);
+            LOGGER.log(Level.WARNING, "Insert with duplicate unique index succeeded unexpectedly");
+        } catch (IllegalStateException e) {
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / 1_000_000.0;
+            LOGGER.log(Level.INFO, "Insert with duplicate unique index failed as expected: {0}, Time: {1} ms",
+                    new Object[]{e.getMessage(), String.format("%.3f", durationMs)});
+        }
     }
 
     private void dropTable() {
@@ -136,6 +188,7 @@ public class AdvancedTest {
         long endTime = System.nanoTime();
         double durationMs = (endTime - startTime) / 1_000_000.0;
         LOGGER.log(Level.INFO, "Update completed in {0} ms", String.format("%.3f", durationMs));
+        database.getTable("USERS").saveToFile("USERS");
     }
 
     private void executeDeleteQuery(String query) {
@@ -146,6 +199,9 @@ public class AdvancedTest {
         double durationMs = (endTime - startTime) / 1_000_000.0;
         int deletedRows = (result instanceof Integer) ? (Integer) result : 0;
         LOGGER.log(Level.INFO, "Deleted {0} rows in {1} ms", new Object[]{deletedRows, String.format("%.3f", durationMs)});
+        database.getTable("USERS").saveToFile("USERS");
+        // Re-insert records to ensure table state for subsequent tests
+        insertRecords();
     }
 
     private void selectWithoutWhere() {
@@ -168,6 +224,11 @@ public class AdvancedTest {
         executeSelectQuery(query);
     }
 
+    private void selectWithWhereUniqueIndex() {
+        String query = "SELECT ID, NAME FROM USERS WHERE ID = '500'";
+        executeSelectQuery(query);
+    }
+
     private void selectWithWhereIndexedAndNonIndexed() {
         String query = "SELECT ID, NAME FROM USERS WHERE AGE = 50 AND BALANCE > 5000";
         executeSelectQuery(query);
@@ -185,6 +246,16 @@ public class AdvancedTest {
 
     private void selectWithWhereTwoIndexed() {
         String query = "SELECT ID, NAME FROM USERS WHERE AGE = 50 AND NAME = 'User500'";
+        executeSelectQuery(query);
+    }
+
+    private void selectWithWhereUniqueBTreeHashIndexed() {
+        String query = "SELECT ID, NAME FROM USERS WHERE ID = '500' AND AGE = 50 AND NAME = 'User500'";
+        executeSelectQuery(query);
+    }
+
+    private void selectWithWhereUniqueBTreeHashIndexedInParentheses() {
+        String query = "SELECT ID, NAME FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeSelectQuery(query);
     }
 
@@ -213,6 +284,11 @@ public class AdvancedTest {
         executeUpdateQuery(query);
     }
 
+    private void updateWithWhereUniqueIndex() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE ID = '500'";
+        executeUpdateQuery(query);
+    }
+
     private void updateWithWhereIndexedAndNonIndexed() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE AGE = 50 AND BALANCE > 5000";
         executeUpdateQuery(query);
@@ -220,6 +296,16 @@ public class AdvancedTest {
 
     private void updateWithWhereTwoIndexed() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE AGE = 50 AND NAME = 'User500'";
+        executeUpdateQuery(query);
+    }
+
+    private void updateWithWhereUniqueBTreeHashIndexed() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE ID = '500' AND AGE = 50 AND NAME = 'User500'";
+        executeUpdateQuery(query);
+    }
+
+    private void updateWithWhereUniqueBTreeHashIndexedInParentheses() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeUpdateQuery(query);
     }
 
@@ -246,64 +332,61 @@ public class AdvancedTest {
     private void deleteWithWhereNoIndex() {
         String query = "DELETE FROM USERS WHERE BALANCE > 5000";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
     }
 
     private void deleteWithWhereHashIndex() {
         String query = "DELETE FROM USERS WHERE NAME = 'User500'";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
     }
 
     private void deleteWithWhereBTreeIndex() {
         String query = "DELETE FROM USERS WHERE AGE = 50";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
+    }
+
+    private void deleteWithWhereUniqueIndex() {
+        String query = "DELETE FROM USERS WHERE ID = '500'";
+        executeDeleteQuery(query);
     }
 
     private void deleteWithWhereIndexedAndNonIndexed() {
         String query = "DELETE FROM USERS WHERE AGE = 50 AND BALANCE > 5000";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
     }
 
     private void deleteWithWhereIndexedAndNonIndexedInParentheses() {
         String query = "DELETE FROM USERS WHERE (AGE = 50) AND (BALANCE > 5000)";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
     }
 
     private void deleteWithWhereIndexedAndNonIndexedInParenthesesWithSpaces() {
         String query = "DELETE FROM USERS WHERE (  AGE  =  50  ) AND (  BALANCE  >  5000  )";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
     }
 
     private void deleteWithWhereTwoIndexed() {
         String query = "DELETE FROM USERS WHERE AGE = 50 AND NAME = 'User500'";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
+    }
+
+    private void deleteWithWhereUniqueBTreeHashIndexed() {
+        String query = "DELETE FROM USERS WHERE ID = '500' AND AGE = 50 AND NAME = 'User500'";
+        executeDeleteQuery(query);
+    }
+
+    private void deleteWithWhereUniqueBTreeHashIndexedInParentheses() {
+        String query = "DELETE FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
+        executeDeleteQuery(query);
     }
 
     private void deleteWithWhereIndexedOrIndexed() {
         String query = "DELETE FROM USERS WHERE AGE = 50 OR NAME = 'User500'";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
     }
 
     private void deleteWithWhereIndexedOrNonIndexed() {
         String query = "DELETE FROM USERS WHERE AGE = 50 OR BALANCE > 5000";
         executeDeleteQuery(query);
-        // Re-insert records to ensure table state for subsequent tests
-        insertRecords();
     }
 
     public static void main(String[] args) {
