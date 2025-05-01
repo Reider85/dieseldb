@@ -45,3 +45,4 @@
 0.4.5 fix performance test
 0.4.6 advanced test
 0.4.7 DELETE
+0.4.8 Advanced Delete Test fix

@@ -19,6 +19,7 @@ interface Index {
 
 class Table implements Serializable {
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
+    private final String name; // Added table name field
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final List<Map<String, Object>> rows;
@@ -26,13 +27,19 @@ class Table implements Serializable {
     private transient Map<String, Index> indexes; // Map of column name to Index (BTreeIndex or HashIndex)
     private boolean isFileInitialized;
 
-    public Table(List<String> columns, Map<String, Class<?>> columnTypes) {
+    public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes) {
+        this.name = name;
         this.columns = new ArrayList<>(columns);
         this.columnTypes = new HashMap<>(columnTypes);
         this.rows = new ArrayList<>();
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.isFileInitialized = false;
+        LOGGER.log(Level.FINE, "Created table: {0}", name);
+    }
+
+    public String getName() {
+        return name;
     }
 
     public Map<String, Index> getIndexes() {
@@ -65,7 +72,7 @@ class Table implements Serializable {
             }
         }
         indexes.put(columnName, index);
-        LOGGER.log(Level.INFO, "Created B-tree index on column {0}", columnName);
+        LOGGER.log(Level.INFO, "Created B-tree index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
     public void createHashIndex(String columnName) {
@@ -82,7 +89,7 @@ class Table implements Serializable {
             }
         }
         indexes.put(columnName, index);
-        LOGGER.log(Level.INFO, "Created hash index on column {0}", columnName);
+        LOGGER.log(Level.INFO, "Created hash index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
     public Index getIndex(String columnName) {
@@ -103,15 +110,14 @@ class Table implements Serializable {
 
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
-        // Since indexes are transient and rebuilt on load, we don't serialize them
-        // oos.writeObject(indexes); // Removed to align with CSV persistence
+        // Since indexes and rowLocks are transient, we don't serialize them
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
-        // Indexes will be rebuilt when needed (e.g., via createBTreeIndex or createHashIndex)
+        // Indexes will be rebuilt when needed
     }
 
     public void addRow(Map<String, Object> row) {

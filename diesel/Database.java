@@ -1,15 +1,19 @@
 package diesel;
+
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
 class Database {
+    private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         if (!tables.containsKey(tableName)) {
-            Table newTable = new Table(columns, columnTypes);
+            Table newTable = new Table(tableName, columns, columnTypes); // Fixed: Include tableName
             tables.put(tableName, newTable);
             for (Transaction transaction : activeTransactions.values()) {
                 if (transaction.isActive()) {
@@ -22,7 +26,9 @@ class Database {
     }
 
     public Object executeQuery(String query, UUID transactionId) {
+        LOGGER.log(Level.FINE, "Executing query: {0}", query);
         Query<?> parsedQuery = new QueryParser().parse(query);
+        LOGGER.log(Level.FINE, "Parsed query type: {0}", parsedQuery.getClass().getSimpleName());
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
         try {
@@ -88,7 +94,9 @@ class Database {
                 return "Hash index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
             }
 
+            LOGGER.log(Level.FINE, "Calling extractTableName for query: {0}", query);
             String tableName = extractTableName(query);
+            LOGGER.log(Level.FINE, "Extracted table name: {0}", tableName);
             Table table = getTableForQuery(tableName, currentTransaction);
             if (table == null) {
                 throw new IllegalArgumentException("Table " + tableName + " does not exist");
@@ -97,12 +105,13 @@ class Database {
             Object result = parsedQuery.execute(table);
             if (currentTransaction != null && currentTransaction.isActive()) {
                 currentTransaction.updateTable(tableName, table);
-            } else if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery) {
+            } else if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery || parsedQuery instanceof DeleteQuery) {
                 table.saveToFile(tableName);
             }
-            return result;
-
+            // Handle DeleteQuery returning Integer
+            return (parsedQuery instanceof DeleteQuery) ? result : result;
         } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
             throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
         }
     }
@@ -129,15 +138,90 @@ class Database {
     }
 
     private String extractTableName(String query) {
+        LOGGER.log(Level.FINE, "Raw query for table name extraction: {0}", query);
         String normalized = query.trim().toUpperCase();
+        LOGGER.log(Level.FINE, "Extracting table name from normalized query: {0}", normalized);
         if (normalized.startsWith("SELECT")) {
-            return normalized.split("FROM")[1].trim().split(" ")[0];
+            LOGGER.log(Level.FINE, "Processing SELECT query");
+            String[] parts = normalized.split("(?i)FROM\\s+", 2);
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("Cannot extract table name from query: invalid SELECT format");
+            }
+            LOGGER.log(Level.FINE, "SELECT query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
+            String tablePart = parts[1].split("(?i)WHERE")[0].trim();
+            LOGGER.log(Level.FINE, "Table part after WHERE split: {0}", tablePart);
+            if (tablePart.isEmpty()) {
+                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in SELECT");
+            }
+            return tablePart;
         } else if (normalized.startsWith("INSERT INTO")) {
-            return normalized.split(" ")[2].split("\\(")[0];
+            LOGGER.log(Level.FINE, "Processing INSERT query");
+            String[] parts = normalized.split("(?i)INSERT INTO\\s+", 2);
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("Cannot extract table name from query: invalid INSERT format");
+            }
+            LOGGER.log(Level.FINE, "INSERT query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
+            String tablePart = parts[1].split("\\s+|\\(")[0].trim();
+            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
+            if (tablePart.isEmpty()) {
+                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in INSERT");
+            }
+            return tablePart;
         } else if (normalized.startsWith("UPDATE")) {
-            return normalized.split(" ")[1].split(" ")[0];
+            LOGGER.log(Level.FINE, "Processing UPDATE query");
+            String[] parts = normalized.split("(?i)UPDATE\\s+", 2);
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("Cannot extract table name from query: invalid UPDATE format");
+            }
+            LOGGER.log(Level.FINE, "UPDATE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
+            String tablePart = parts[1].split("\\s+")[0].trim();
+            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
+            if (tablePart.isEmpty()) {
+                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in UPDATE");
+            }
+            return tablePart;
+        } else if (normalized.startsWith("DELETE FROM")) {
+            LOGGER.log(Level.FINE, "Processing DELETE query");
+            String[] parts = normalized.split("(?i)FROM\\s+", 2);
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("Cannot extract table name from query: invalid DELETE format");
+            }
+            LOGGER.log(Level.FINE, "DELETE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
+            String[] whereParts = parts[1].split("(?i)WHERE\\s*", 2);
+            String tablePart = whereParts[0].trim();
+            LOGGER.log(Level.FINE, "Table part after WHERE split: {0}", tablePart);
+            if (tablePart.isEmpty()) {
+                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in DELETE");
+            }
+            return tablePart;
+        } else if (normalized.startsWith("CREATE TABLE")) {
+            LOGGER.log(Level.FINE, "Processing CREATE TABLE query");
+            String[] parts = normalized.split("(?i)CREATE TABLE\\s+", 2);
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE TABLE format");
+            }
+            LOGGER.log(Level.FINE, "CREATE TABLE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
+            String tablePart = parts[1].split("\\s+")[0].trim();
+            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
+            if (tablePart.isEmpty()) {
+                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE TABLE");
+            }
+            return tablePart;
+        } else if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX")) {
+            LOGGER.log(Level.FINE, "Processing CREATE INDEX query");
+            String[] parts = normalized.split("(?i)ON\\s+", 2);
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE INDEX format");
+            }
+            LOGGER.log(Level.FINE, "CREATE INDEX query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
+            String tablePart = parts[1].split("\\s+")[0].trim();
+            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
+            if (tablePart.isEmpty()) {
+                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE INDEX");
+            }
+            return tablePart;
         }
-        throw new IllegalArgumentException("Cannot extract table name from query");
+        throw new IllegalArgumentException("Cannot extract table name from query: unsupported query type");
     }
 
     public Table getTable(String tableName) {

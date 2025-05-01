@@ -2,8 +2,12 @@ package diesel;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
 class BTreeIndex implements Index, Serializable {
+    private static final Logger LOGGER = Logger.getLogger(BTreeIndex.class.getName());
+
     private static class Node implements Serializable {
         List<Object> keys;
         List<Integer> rowIndices; // For leaf nodes
@@ -95,6 +99,10 @@ class BTreeIndex implements Index, Serializable {
         } else {
             y.children.subList(mid + 1, y.children.size()).clear();
         }
+
+        validateNode(x); // Validate parent
+        validateNode(y); // Validate original child
+        validateNode(z); // Validate new child
     }
 
     @Override
@@ -105,52 +113,110 @@ class BTreeIndex implements Index, Serializable {
         }
     }
 
+    private void validateNode(Node x) {
+        if (x.isLeaf) {
+            if (x.rowIndices == null || x.rowIndices.size() != x.keys.size()) {
+                LOGGER.log(Level.SEVERE, "Invalid leaf node: keys={0}, rowIndices={1}",
+                        new Object[]{x.keys, x.rowIndices});
+                throw new IllegalStateException("Leaf node has mismatched keys and rowIndices");
+            }
+        } else {
+            if (x.children == null || x.children.size() != x.keys.size() + 1) {
+                LOGGER.log(Level.SEVERE, "Invalid internal node: keys={0}, children={1}",
+                        new Object[]{x.keys, x.children != null ? x.children.size() : null});
+                throw new IllegalStateException("Internal node has mismatched keys and children");
+            }
+        }
+    }
+
     private void remove(Node x, Object key, int rowIndex) {
+        validateNode(x);
         int i = 0;
         while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
             i++;
         }
 
+        LOGGER.log(Level.FINE, "Removing key={0}, rowIndex={1}, node keys={2}, children size={3}, isLeaf={4}, i={5}",
+                new Object[]{key, rowIndex, x.keys, x.children != null ? x.children.size() : 0, x.isLeaf, i});
+
         if (x.isLeaf) {
             if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0 && x.rowIndices.get(i) == rowIndex) {
                 x.keys.remove(i);
                 x.rowIndices.remove(i);
+                LOGGER.log(Level.FINE, "Removed key={0}, rowIndex={1} from leaf node", new Object[]{key, rowIndex});
             }
             return;
         }
 
         if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
-            // Key found in internal node, but we need to find the rowIndex in a leaf
-            remove(x.children.get(i), key, rowIndex);
+            // Key found in internal node, traverse to the leaf (use i + 1 for successor)
+            int childIndex = i + 1; // Traverse to successor child
+            if (childIndex >= x.children.size()) {
+                LOGGER.log(Level.SEVERE, "Invalid child index: {0}, children size={1}, node keys={2}",
+                        new Object[]{childIndex, x.children.size(), x.keys});
+                throw new IllegalStateException("Invalid child index for key found in internal node");
+            }
+            LOGGER.log(Level.FINE, "Key found, traversing to child at index={0}", childIndex);
+            remove(x.children.get(childIndex), key, rowIndex);
         } else {
             if (i < x.children.size()) {
                 Node child = x.children.get(i);
+                validateNode(child);
                 if (child.keys.size() < t) {
+                    LOGGER.log(Level.FINE, "Filling child at index={0}, child keys={1}", new Object[]{i, child.keys});
                     fillChild(x, i);
+                    // Recompute i after fillChild
+                    i = 0;
+                    while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
+                        i++;
+                    }
+                    if (i >= x.children.size()) {
+                        LOGGER.log(Level.SEVERE, "Invalid child index after fill: {0}, children size={1}, node keys={2}",
+                                new Object[]{i, x.children.size(), x.keys});
+                        throw new IllegalStateException("Invalid child index after filling child");
+                    }
+                    child = x.children.get(i);
                 }
-                remove(x.children.get(i), key, rowIndex);
+                LOGGER.log(Level.FINE, "Traversing to child at index={0}, child keys={1}", new Object[]{i, child.keys});
+                remove(child, key, rowIndex);
+            } else {
+                LOGGER.log(Level.WARNING, "No valid child for key={0}, i={1}, children size={2}",
+                        new Object[]{key, i, x.children.size()});
             }
         }
 
         // After removal, ensure the node has enough keys
         if (x != root && x.keys.size() < t - 1) {
-            // This would require merging or borrowing, but for simplicity, we skip full balancing
+            LOGGER.log(Level.FINE, "Node underflow: keys={0}, attempting to balance", new Object[]{x.keys});
+            // Simplified: Rely on fillChild in parent to handle underflow
         }
     }
 
     private void fillChild(Node x, int i) {
-        // Simplified: Merge with sibling or borrow (not fully implemented for brevity)
+        validateNode(x);
+        LOGGER.log(Level.FINE, "Filling child at index={0}, parent keys={1}, children size={2}",
+                new Object[]{i, x.keys, x.children.size()});
+        if (i >= x.children.size()) {
+            LOGGER.log(Level.SEVERE, "Invalid child index: {0}, children size={1}", new Object[]{i, x.children.size()});
+            throw new IllegalStateException("Invalid child index in fillChild");
+        }
+
         if (i > 0 && x.children.get(i - 1).keys.size() >= t) {
             borrowFromPrev(x, i);
+            LOGGER.log(Level.FINE, "Borrowed from previous sibling at index={0}", i - 1);
         } else if (i < x.children.size() - 1 && x.children.get(i + 1).keys.size() >= t) {
             borrowFromNext(x, i);
+            LOGGER.log(Level.FINE, "Borrowed from next sibling at index={0}", i + 1);
         } else {
             if (i < x.children.size() - 1) {
+                LOGGER.log(Level.FINE, "Merging child at index={0} with next sibling", i);
                 merge(x, i);
             } else {
+                LOGGER.log(Level.FINE, "Merging child at index={0} with previous sibling", i - 1);
                 merge(x, i - 1);
             }
         }
+        validateNode(x); // Validate after modification
     }
 
     private void borrowFromPrev(Node x, int i) {

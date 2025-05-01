@@ -1,4 +1,3 @@
-// New class: DeleteQuery.java
 package diesel;
 
 import java.math.BigDecimal;
@@ -12,11 +11,13 @@ class DeleteQuery implements Query<Void> {
     private final List<QueryParser.Condition> conditions;
 
     public DeleteQuery(List<QueryParser.Condition> conditions) {
-        this.conditions = conditions;
+        this.conditions = conditions != null ? conditions : new ArrayList<>();
+        LOGGER.log(Level.FINE, "Created DeleteQuery with conditions: {0}", this.conditions);
     }
 
     @Override
     public Void execute(Table table) {
+        LOGGER.log(Level.FINE, "Executing DeleteQuery for table: {0}", table.getName());
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
@@ -65,6 +66,7 @@ class DeleteQuery implements Query<Void> {
                 }
             }
 
+            LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
             return null;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -74,23 +76,39 @@ class DeleteQuery implements Query<Void> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
+        if (conditions.isEmpty()) {
+            LOGGER.log(Level.FINE, "No conditions provided; all rows match");
+            return true; // Delete all rows if no conditions
+        }
+
         boolean result = evaluateCondition(row, conditions.get(0), columnTypes);
+        LOGGER.log(Level.FINE, "Evaluated first condition: {0}, result: {1}", new Object[]{conditions.get(0), result});
+
         for (int i = 1; i < conditions.size(); i++) {
             boolean currentResult = evaluateCondition(row, conditions.get(i), columnTypes);
             String conjunction = conditions.get(i - 1).conjunction;
+            LOGGER.log(Level.FINE, "Evaluated condition: {0}, result: {1}, conjunction: {2}",
+                    new Object[]{conditions.get(i), currentResult, conjunction});
             if ("AND".equalsIgnoreCase(conjunction)) {
                 result = result && currentResult;
             } else if ("OR".equalsIgnoreCase(conjunction)) {
                 result = result || currentResult;
+            } else {
+                LOGGER.log(Level.WARNING, "Invalid conjunction: {0}, treating as AND", conjunction);
+                result = result && currentResult;
             }
         }
+
+        LOGGER.log(Level.FINE, "Final condition evaluation result: {0}", result);
         return result;
     }
 
     private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
         if (condition.isGrouped()) {
             boolean subResult = evaluateConditions(row, condition.subConditions, columnTypes);
-            return condition.not ? !subResult : subResult;
+            boolean result = condition.not ? !subResult : subResult;
+            LOGGER.log(Level.FINE, "Evaluated grouped condition: {0}, result: {1}", new Object[]{condition, result});
+            return result;
         }
 
         Object rowValue = row.get(condition.column);
@@ -100,6 +118,8 @@ class DeleteQuery implements Query<Void> {
         }
 
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
+        LOGGER.log(Level.FINE, "Condition values: rowValue={0}, conditionValue={1}, column={2}, operator={3}",
+                new Object[]{rowValue, conditionValue, condition.column, condition.operator});
 
         boolean result;
         if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
@@ -126,7 +146,10 @@ class DeleteQuery implements Query<Void> {
             result = condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
         }
 
-        return condition.not ? !result : result;
+        result = condition.not ? !result : result;
+        LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue: {1}, conditionValue: {2}, result: {3}",
+                new Object[]{condition, rowValue, conditionValue, result});
+        return result;
     }
 
     private Object convertConditionValue(Object conditionValue, String column, Class<?> rowValueType, Map<String, Class<?>> columnTypes) {

@@ -382,15 +382,30 @@ class QueryParser {
     }
 
     private Query<Void> parseDeleteQuery(String normalized, String original) {
-        String[] parts = normalized.split("WHERE");
-        String tableName = normalized.replace("DELETE FROM", "").trim();
+        LOGGER.log(Level.FINE, "Raw DELETE query: {0}", original);
+        LOGGER.log(Level.FINE, "Normalized DELETE query: {0}", normalized);
+        String[] fromParts = normalized.split("(?i)FROM\\s+", 2);
+        if (fromParts.length != 2) {
+            LOGGER.log(Level.SEVERE, "Invalid DELETE query format: missing FROM clause, normalized: {0}", normalized);
+            throw new IllegalArgumentException("Invalid DELETE query format: missing FROM clause");
+        }
+
+        String tableAndCondition = fromParts[1].trim();
+        LOGGER.log(Level.FINE, "Table and condition: {0}", tableAndCondition);
+        String[] whereParts = tableAndCondition.split("(?i)WHERE\\s+", 2);
+        String tableName = whereParts[0].trim();
         List<QueryParser.Condition> conditions = new ArrayList<>();
 
-        if (parts.length == 2) {
-            tableName = parts[0].replace("DELETE FROM", "").trim();
-            String conditionStr = parts[1].trim();
+        if (whereParts.length == 2) {
+            String conditionStr = whereParts[1].trim();
             LOGGER.log(Level.FINE, "Parsing WHERE clause for DELETE: {0}", conditionStr);
+            if (conditionStr.isEmpty()) {
+                LOGGER.log(Level.SEVERE, "Empty WHERE clause in DELETE query: {0}", normalized);
+                throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
+            }
             conditions = parseConditions(conditionStr);
+        } else {
+            LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
         }
 
         LOGGER.log(Level.INFO, "Parsed DELETE query: table={0}, conditions={1}",
@@ -430,7 +445,9 @@ class QueryParser {
                     return bd;
                 }
             } else {
-                if (conditionColumn.equals("AGE")) {
+                if (conditionColumn.equalsIgnoreCase("BALANCE")) {
+                    return new BigDecimal(valueStr); // Handle BALANCE as BigDecimal
+                } else if (conditionColumn.equalsIgnoreCase("AGE")) {
                     return Integer.parseInt(valueStr);
                 }
                 long parsedLong = Long.parseLong(valueStr);
@@ -544,28 +561,33 @@ class QueryParser {
         String[] partsByOperator = null;
         Operator operator = null;
 
+        // Prioritize operators to avoid splitting on the wrong one
         if (condition.contains("!=")) {
-            partsByOperator = condition.split("\\s*!=\\s*");
+            partsByOperator = condition.split("\\s*!=\\s*", 2);
             operator = Operator.NOT_EQUALS;
+        } else if (condition.contains("=")) {
+            partsByOperator = condition.split("\\s*=\\s*", 2);
+            operator = Operator.EQUALS;
         } else if (condition.contains("<")) {
-            partsByOperator = condition.split("\\s*<\\s*");
+            partsByOperator = condition.split("\\s*<\\s*", 2);
             operator = Operator.LESS_THAN;
         } else if (condition.contains(">")) {
-            partsByOperator = condition.split("\\s*>\\s*");
+            partsByOperator = condition.split("\\s*>\\s*", 2);
             operator = Operator.GREATER_THAN;
-        } else if (condition.contains("=")) {
-            partsByOperator = condition.split("\\s*=\\s*");
-            operator = Operator.EQUALS;
         }
 
         if (partsByOperator == null || partsByOperator.length != 2) {
             LOGGER.log(Level.SEVERE, "Invalid condition format: {0}, parts: {1}",
                     new Object[]{condition, partsByOperator == null ? "null" : Arrays.toString(partsByOperator)});
-            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or >");
+            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or > with valid column and value");
         }
 
         String conditionColumn = partsByOperator[0].trim();
         String valueStr = partsByOperator[1].trim();
+        if (conditionColumn.isEmpty() || valueStr.isEmpty()) {
+            LOGGER.log(Level.SEVERE, "Invalid WHERE clause: column or value is empty in condition: {0}", condition);
+            throw new IllegalArgumentException("Invalid WHERE clause: column or value is empty in condition: " + condition);
+        }
         Object conditionValue = parseConditionValue(conditionColumn, valueStr);
         LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
                 new Object[]{conditionColumn, operator, conditionValue, isNot, conjunction});
