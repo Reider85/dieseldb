@@ -26,12 +26,13 @@ class Table implements Serializable {
     private final List<Map<String, Object>> rows;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
     private transient Map<String, Index> indexes;
+    private transient Map<String, Sequence> sequences; // Map to store sequences for columns
     private boolean isFileInitialized;
     private boolean hasClusteredIndex;
     private String clusteredIndexColumn;
     private transient BTreeClusteredIndex clusteredIndex;
 
-    public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
+    public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
         this.name = name;
         this.columns = new ArrayList<>(columns);
         // Use case-insensitive map for column types
@@ -41,6 +42,7 @@ class Table implements Serializable {
         this.rows = new ArrayList<>();
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
+        this.sequences = sequences != null ? new ConcurrentHashMap<>(sequences) : new ConcurrentHashMap<>();
         this.isFileInitialized = false;
         this.hasClusteredIndex = false;
         this.clusteredIndexColumn = null;
@@ -57,8 +59,8 @@ class Table implements Serializable {
             createUniqueClusteredIndex(primaryKeyColumn);
         }
 
-        LOGGER.log(Level.INFO, "Created table: {0} with columns {1}, types {2}, primary key: {3}",
-                new Object[]{name, columns, columnTypes, primaryKeyColumn});
+        LOGGER.log(Level.INFO, "Created table: {0} with columns {1}, types {2}, primary key: {3}, sequences: {4}",
+                new Object[]{name, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
     }
 
     private void validateSchema(List<String> columns, Map<String, Class<?>> columnTypes) {
@@ -97,6 +99,10 @@ class Table implements Serializable {
 
     public ReentrantReadWriteLock getRowLock(int rowIndex) {
         return rowLocks.computeIfAbsent(rowIndex, k -> new ReentrantReadWriteLock());
+    }
+
+    public Map<String, Sequence> getSequences() {
+        return sequences;
     }
 
     public void createBTreeIndex(String columnName) {
@@ -243,6 +249,7 @@ class Table implements Serializable {
         oos.defaultWriteObject();
         oos.writeObject(hasClusteredIndex);
         oos.writeObject(clusteredIndexColumn);
+        oos.writeObject(sequences);
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
@@ -256,6 +263,7 @@ class Table implements Serializable {
         this.indexes = new ConcurrentHashMap<>();
         this.hasClusteredIndex = (boolean) ois.readObject();
         this.clusteredIndexColumn = (String) ois.readObject();
+        this.sequences = (Map<String, Sequence>) ois.readObject();
         if (hasClusteredIndex) {
             this.clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
             for (int i = 0; i < rows.size(); i++) {
@@ -271,10 +279,16 @@ class Table implements Serializable {
         LOGGER.log(Level.FINE, "Entering addRow: row={0}", row);
         Map<String, Object> validatedRow = new HashMap<>();
         for (String col : columns) {
-            if (!row.containsKey(col)) {
+            Object value;
+            // Check if the column has a sequence
+            Sequence sequence = sequences.get(col);
+            if (sequence != null && !row.containsKey(col)) {
+                value = sequence.nextValue();
+            } else if (!row.containsKey(col)) {
                 throw new IllegalArgumentException("Missing value for column: " + col);
+            } else {
+                value = row.get(col);
             }
-            Object value = row.get(col);
             Class<?> expectedType = columnTypes.get(col);
             if (value == null || expectedType == null) {
                 throw new IllegalArgumentException("Invalid value or type for column: " + col);

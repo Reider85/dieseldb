@@ -2,8 +2,9 @@ package diesel;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Logger;
+
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
 class Database {
     private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
@@ -13,7 +14,7 @@ class Database {
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         if (!tables.containsKey(tableName)) {
-            Table newTable = new Table(tableName, columns, columnTypes, primaryKeyColumn);
+            Table newTable = new Table(tableName, columns, columnTypes, primaryKeyColumn, new HashMap<>());
             tables.put(tableName, newTable);
             for (Transaction transaction : activeTransactions.values()) {
                 if (transaction.isActive()) {
@@ -76,6 +77,10 @@ class Database {
             } else if (parsedQuery instanceof CreateTableQuery) {
                 CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
                 createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes(), createQuery.getPrimaryKeyColumn());
+                Table table = getTable(createQuery.getTableName());
+                for (Map.Entry<String, Sequence> entry : createQuery.getSequences().entrySet()) {
+                    table.getSequences().put(entry.getKey(), entry.getValue());
+                }
                 return "Table created successfully";
             } else if (parsedQuery instanceof CreateIndexQuery) {
                 CreateIndexQuery indexQuery = (CreateIndexQuery) parsedQuery;

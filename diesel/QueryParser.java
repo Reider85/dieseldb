@@ -175,6 +175,7 @@ class QueryParser {
         String[] columnDefs = columnsPart.split(",\\s*(?=(?:[^']*'[^']*')*[^']*$)");
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Sequence> sequences = new HashMap<>();
         String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
@@ -194,8 +195,16 @@ class QueryParser {
                 case "INTEGER":
                     columnTypes.put(colName, Integer.class);
                     break;
+                case "INTEGER_SEQUENCE":
+                    columnTypes.put(colName, Integer.class);
+                    sequences.put(colName, new Sequence(tableName + "_" + colName + "_seq", Integer.class, 1, 1));
+                    break;
                 case "LONG":
                     columnTypes.put(colName, Long.class);
+                    break;
+                case "LONG_SEQUENCE":
+                    columnTypes.put(colName, Long.class);
+                    sequences.put(colName, new Sequence(tableName + "_" + colName + "_seq", Long.class, 1, 1));
                     break;
                 case "SHORT":
                     columnTypes.put(colName, Short.class);
@@ -240,10 +249,10 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed CREATE TABLE query: table={0}, columns={1}, types={2}, primaryKey={3}",
-                new Object[]{tableName, columns, columnTypes, primaryKeyColumn});
+        LOGGER.log(Level.INFO, "Parsed CREATE TABLE query: table={0}, columns={1}, types={2}, primaryKey={3}, sequences={4}",
+                new Object[]{tableName, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
 
-        return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn);
+        return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
     }
 
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
