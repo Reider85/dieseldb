@@ -223,6 +223,7 @@ class Table implements Serializable {
     }
 
     public void addRow(Map<String, Object> row) {
+        LOGGER.log(Level.FINE, "Entering addRow: row={0}", row);
         Map<String, Object> validatedRow = new HashMap<>();
         for (String col : columns) {
             if (!row.containsKey(col)) {
@@ -322,6 +323,7 @@ class Table implements Serializable {
                 lock.writeLock().unlock();
             }
         }
+        LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
     }
 
     private int findInsertPosition(Object key) {
@@ -346,87 +348,66 @@ class Table implements Serializable {
     }
 
     private void updateIndicesAfterInsert(int insertIndex) {
+        LOGGER.log(Level.FINE, "Entering updateIndicesAfterInsert: insertIndex={0}, rows size={1}",
+                new Object[]{insertIndex, rows.size()});
         for (int i = insertIndex + 1; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
-            for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-                String column = entry.getKey();
-                Index index = entry.getValue();
-                Object key = row.get(column);
-                if (key != null) {
-                    if (index instanceof BTreeIndex) {
-                        List<Integer> currentIndices = index.search(key);
-                        for (int oldIndex : currentIndices) {
-                            if (oldIndex >= insertIndex && oldIndex == i - 1) {
-                                LOGGER.log(Level.FINE, "Updating BTreeIndex for column {0}, key {1}, oldIndex {2}, newIndex {3}, currentIndices {4}",
-                                        new Object[]{column, key, oldIndex, i, currentIndices});
-                                index.remove(key, oldIndex);
-                                index.insert(key, i);
-                                break;
-                            }
-                        }
-                    } else {
-                        List<Integer> currentIndices = index.search(key);
-                        if (currentIndices.contains(i - 1)) {
-                            LOGGER.log(Level.FINE, "Updating index for column {0}, key {1}, oldIndex {2}, newIndex {3}, currentIndices {4}",
-                                    new Object[]{column, key, i - 1, i, currentIndices});
-                            index.remove(key, i - 1);
-                            index.insert(key, i);
-                        }
-                    }
-                }
-            }
+            LOGGER.log(Level.FINE, "Processing row {0}: {1}", new Object[]{i, row});
+
+            // Update clustered index
             Object clusteredKey = row.get(clusteredIndexColumn);
             if (clusteredKey != null) {
                 List<Integer> clusteredIndices = clusteredIndex.search(clusteredKey);
                 if (clusteredIndices.contains(i - 1)) {
-                    LOGGER.log(Level.FINE, "Updating clustered index for key {0}, oldIndex {1}, newIndex {2}, currentIndices {3}",
+                    LOGGER.log(Level.FINE, "Updating clustered index: key={0}, oldIndex={1}, newIndex={2}, currentIndices={3}",
                             new Object[]{clusteredKey, i - 1, i, clusteredIndices});
                     clusteredIndex.remove(clusteredKey, i - 1);
                     clusteredIndex.insert(clusteredKey, i);
                 }
             }
+
+            // Update other indices
+            for (Map.Entry<String, Index> entry : indexes.entrySet()) {
+                String column = entry.getKey();
+                Index index = entry.getValue();
+                Object key = row.get(column);
+                if (key != null) {
+                    List<Integer> currentIndices = index.search(key);
+                    LOGGER.log(Level.FINE, "Checking index for column={0}, key={1}, currentIndices={2}, rowIndex={3}",
+                            new Object[]{column, key, currentIndices, i});
+                    if (currentIndices.contains(i - 1)) {
+                        LOGGER.log(Level.FINE, "Updating index: column={0}, key={1}, oldIndex={2}, newIndex={3}",
+                                new Object[]{column, key, i - 1, i});
+                        index.remove(key, i - 1);
+                        index.insert(key, i);
+                    }
+                }
+            }
         }
+        LOGGER.log(Level.FINE, "Exiting updateIndicesAfterInsert: insertIndex={0}", insertIndex);
     }
 
     public void saveToFile(String tableName) {
+        LOGGER.log(Level.FINE, "Entering saveToFile: tableName={0}", tableName);
         String fileName = tableName + ".csv";
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
             writer.write(String.join(",", columns));
             writer.newLine();
 
-            if (hasClusteredIndex) {
-                for (int i = 0; i < rows.size(); i++) {
-                    ReentrantReadWriteLock lock = getRowLock(i);
-                    lock.readLock().lock();
-                    try {
-                        Map<String, Object> row = rows.get(i);
-                        List<String> values = new ArrayList<>();
-                        for (String column : columns) {
-                            Object value = row.get(column);
-                            values.add(formatValue(value));
-                        }
-                        writer.write(String.join(",", values));
-                        writer.newLine();
-                    } finally {
-                        lock.readLock().unlock();
+            for (int i = 0; i < rows.size(); i++) {
+                ReentrantReadWriteLock lock = getRowLock(i);
+                lock.readLock().lock();
+                try {
+                    Map<String, Object> row = rows.get(i);
+                    List<String> values = new ArrayList<>();
+                    for (String column : columns) {
+                        Object value = row.get(column);
+                        values.add(formatValue(value));
                     }
-                }
-            } else {
-                for (int i = 0; i < rows.size(); i++) {
-                    ReentrantReadWriteLock lock = getRowLock(i);
-                    lock.readLock().lock();
-                    try {
-                        Map<String, Object> row = rows.get(i);
-                        List<String> values = new ArrayList<>();
-                        for (String column : columns) {
-                            Object value = row.get(column);
-                            values.add(formatValue(value));
-                        }
-                        writer.write(String.join(",", values));
-                        writer.newLine();
-                    } finally {
-                        lock.readLock().unlock();
-                    }
+                    writer.write(String.join(",", values));
+                    writer.newLine();
+                } finally {
+                    lock.readLock().unlock();
                 }
             }
 
@@ -437,6 +418,7 @@ class Table implements Serializable {
             LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
             throw new RuntimeException("Failed to save table to file: " + fileName, e);
         }
+        LOGGER.log(Level.FINE, "Exiting saveToFile: tableName={0}", tableName);
     }
 
     private String formatValue(Object value) {

@@ -181,6 +181,7 @@ class BTreeIndex implements Index, Serializable {
                     fillChild(x, i);
                     i = 0;
                     while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
+                        i++; // Fixed: Increment i to find the correct key position
                     }
                     if (i >= x.children.size()) {
                         LOGGER.log(Level.SEVERE, "Invalid child index after fill: {0}, children size={1}, node keys={2}",
