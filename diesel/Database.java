@@ -14,7 +14,7 @@ class Database {
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         if (!tables.containsKey(tableName)) {
-            Table newTable = new Table(tableName, columns, columnTypes, primaryKeyColumn, new HashMap<>());
+            Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
             tables.put(tableName, newTable);
             for (Transaction transaction : activeTransactions.values()) {
                 if (transaction.isActive()) {
@@ -265,7 +265,7 @@ class Database {
         }
     }
 
-    public boolean isInTransaction(UUID transactionId) {
+    public boolean isInTransaction(UUID transactionId)  {
         Transaction transaction = activeTransactions.get(transactionId);
         return transaction != null && transaction.isActive();
     }

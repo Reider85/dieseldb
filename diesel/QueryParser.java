@@ -328,6 +328,13 @@ class QueryParser {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
+        Map<String, Sequence> sequences = table.getSequences();
+        String primaryKeyColumn = table.getPrimaryKeyColumn();
+
+        // Validate that sequence-based primary key is not included in columns
+        if (primaryKeyColumn != null && sequences.containsKey(primaryKeyColumn) && columns.contains(primaryKeyColumn)) {
+            throw new IllegalArgumentException("Cannot specify value for sequence-based primary key column: " + primaryKeyColumn);
+        }
 
         String valuesPart = parts[1].trim();
         if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {

@@ -59,3 +59,4 @@
 0.5.9 Performance Test fix
 0.6.0 Performance Test fix
 0.6.1 SEQUENCE
+0.6.2 SEQUENCE fix

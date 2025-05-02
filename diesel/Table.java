@@ -31,8 +31,10 @@ class Table implements Serializable {
     private boolean hasClusteredIndex;
     private String clusteredIndexColumn;
     private transient BTreeClusteredIndex clusteredIndex;
+    private transient Database database; // New field to store Database reference
 
-    public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
+    public Table(Database database, String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
+        this.database = database; // Store Database reference
         this.name = name;
         this.columns = new ArrayList<>(columns);
         // Use case-insensitive map for column types
@@ -61,6 +63,10 @@ class Table implements Serializable {
 
         LOGGER.log(Level.INFO, "Created table: {0} with columns {1}, types {2}, primary key: {3}, sequences: {4}",
                 new Object[]{name, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
+    }
+
+    public Database getDatabase() {
+        return database;
     }
 
     private void validateSchema(List<String> columns, Map<String, Class<?>> columnTypes) {
@@ -273,6 +279,7 @@ class Table implements Serializable {
                 }
             }
         }
+        this.database = null; // Database will need to be reinitialized after deserialization
     }
 
     public void addRow(Map<String, Object> row) {
@@ -282,8 +289,17 @@ class Table implements Serializable {
             Object value;
             // Check if the column has a sequence
             Sequence sequence = sequences.get(col);
-            if (sequence != null && !row.containsKey(col)) {
-                value = sequence.nextValue();
+            if (sequence != null) {
+                // Prevent manual insertion of sequence-based primary key values
+                if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
+                    throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
+                }
+                // Generate sequence value if not provided
+                if (!row.containsKey(col)) {
+                    value = sequence.nextValue();
+                } else {
+                    value = row.get(col);
+                }
             } else if (!row.containsKey(col)) {
                 throw new IllegalArgumentException("Missing value for column: " + col);
             } else {
@@ -496,10 +512,11 @@ class Table implements Serializable {
         return value.toString();
     }
 
-    public static Table loadFromFile(String tableName) {
+    public static Table loadFromFile(Database database, String tableName) {
         String fileName = tableName + ".table";
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
             Table table = (Table) ois.readObject();
+            table.database = database; // Reassign Database after deserialization
             table.setFileInitialized(true);
             LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
             return table;

@@ -40,6 +40,11 @@ class CreateTableQuery implements Query<Void> {
 
     @Override
     public Void execute(Table table) {
-        throw new UnsupportedOperationException("CreateTableQuery should be handled by Database directly");
+        Database database = table.getDatabase(); // Assuming Table has a method to get the Database
+        database.createTable(tableName, columns, columnTypes, primaryKeyColumn);
+        for (Map.Entry<String, Sequence> entry : sequences.entrySet()) {
+            table.getSequences().put(entry.getKey(), entry.getValue());
+        }
+        return null;
     }
 }
