@@ -53,3 +53,4 @@
 0.5.3 B-tree indexes fix
 0.5.4 Advanced Test fix
 0.5.5 Advanced Test fix
+0.5.6 Delete hardcode

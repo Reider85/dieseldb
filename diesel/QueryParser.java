@@ -61,18 +61,18 @@ class QueryParser {
         }
     }
 
-    public Query<?> parse(String query) {
+    public Query<?> parse(String query, Database database) {
         try {
             String normalized = query.trim().toUpperCase();
             LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
             if (normalized.startsWith("SELECT")) {
-                return parseSelectQuery(normalized, query);
+                return parseSelectQuery(normalized, query, database);
             } else if (normalized.startsWith("INSERT INTO")) {
-                return parseInsertQuery(normalized, query);
+                return parseInsertQuery(normalized, query, database);
             } else if (normalized.startsWith("UPDATE")) {
-                return parseUpdateQuery(normalized, query);
+                return parseUpdateQuery(normalized, query, database);
             } else if (normalized.startsWith("DELETE FROM")) {
-                return parseDeleteQuery(normalized, query);
+                return parseDeleteQuery(normalized, query, database);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
             } else if (normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
@@ -236,7 +236,7 @@ class QueryParser {
         return new CreateTableQuery(tableName, columns, columnTypes);
     }
 
-    private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original) {
+    private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
         String[] parts = normalized.split("FROM");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid SELECT query format");
@@ -259,7 +259,7 @@ class QueryParser {
             }
             String conditionStr = tableCondition[1].trim();
             LOGGER.log(Level.FINE, "Parsing WHERE clause: {0}", conditionStr);
-            conditions = parseConditions(conditionStr);
+            conditions = parseConditions(conditionStr, tableName, database);
         }
 
         LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, conditions={2}",
@@ -268,7 +268,7 @@ class QueryParser {
         return new SelectQuery(columns, conditions);
     }
 
-    private Query<Void> parseInsertQuery(String normalized, String original) {
+    private Query<Void> parseInsertQuery(String normalized, String original, Database database) {
         String[] parts = normalized.split("VALUES");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid INSERT query format");
@@ -282,6 +282,13 @@ class QueryParser {
                 .map(String::trim)
                 .collect(Collectors.toList());
 
+        // Retrieve column types from the table schema
+        Table table = database.getTable(tableName);
+        if (table == null) {
+            throw new IllegalArgumentException("Table not found: " + tableName);
+        }
+        Map<String, Class<?>> columnTypes = table.getColumnTypes();
+
         String valuesPart = parts[1].trim();
         if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
             throw new IllegalArgumentException("Invalid VALUES syntax");
@@ -292,74 +299,11 @@ class QueryParser {
         for (int i = 0; i < valueStrings.length; i++) {
             String val = valueStrings[i].trim();
             String column = columns.get(i);
-            if (val.startsWith("'") && val.endsWith("'")) {
-                String strippedValue = val.substring(1, val.length() - 1);
-                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                    try {
-                        values.add(LocalDate.parse(strippedValue));
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid date format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
-                    try {
-                        values.add(LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER));
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime_ms format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
-                    try {
-                        values.add(LocalDateTime.parse(strippedValue, DATETIME_FORMATTER));
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException("Invalid datetime format: " + strippedValue);
-                    }
-                } else if (strippedValue.matches(UUID_PATTERN)) {
-                    try {
-                        values.add(UUID.fromString(strippedValue));
-                    } catch (IllegalArgumentException e) {
-                        throw new IllegalArgumentException("Invalid UUID format: " + strippedValue);
-                    }
-                } else if (strippedValue.length() == 1) {
-                    values.add(strippedValue.charAt(0));
-                } else {
-                    values.add(strippedValue);
-                }
-            } else if (val.equalsIgnoreCase("TRUE") || val.equalsIgnoreCase("FALSE")) {
-                values.add(Boolean.parseBoolean(val));
-            } else if (val.contains(".")) {
-                try {
-                    BigDecimal bd = new BigDecimal(val);
-                    if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
-                        values.add(bd.floatValue());
-                    } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
-                            bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
-                        values.add(bd.doubleValue());
-                    } else {
-                        values.add(bd);
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + val);
-                }
-            } else {
-                try {
-                    if (column.equals("AGE")) {
-                        values.add(Integer.parseInt(val));
-                    } else {
-                        long parsedLong = Long.parseLong(val);
-                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                            values.add((byte) parsedLong);
-                        } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                            values.add((short) parsedLong);
-                        } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                            values.add((int) parsedLong);
-                        } else {
-                            values.add(parsedLong);
-                        }
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value: " + val);
-                }
+            Class<?> columnType = columnTypes.get(column);
+            if (columnType == null) {
+                throw new IllegalArgumentException("Unknown column: " + column);
             }
+            values.add(parseConditionValue(column, val, columnType));
         }
 
         LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, values={2}",
@@ -368,7 +312,7 @@ class QueryParser {
         return new InsertQuery(columns, values);
     }
 
-    private Query<Void> parseUpdateQuery(String normalized, String original) {
+    private Query<Void> parseUpdateQuery(String normalized, String original, Database database) {
         String[] parts = normalized.split("SET");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid UPDATE query format");
@@ -376,6 +320,13 @@ class QueryParser {
 
         String tablePart = parts[0].replace("UPDATE", "").trim();
         String tableName = tablePart.split(" ")[0].trim();
+
+        // Retrieve column types from the table schema
+        Table table = database.getTable(tableName);
+        if (table == null) {
+            throw new IllegalArgumentException("Table not found: " + tableName);
+        }
+        Map<String, Class<?>> columnTypes = table.getColumnTypes();
 
         String setAndWhere = parts[1].trim();
         String setPart;
@@ -385,7 +336,7 @@ class QueryParser {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
-            conditions = parseConditions(conditionStr);
+            conditions = parseConditions(conditionStr, tableName, database);
         } else {
             setPart = setAndWhere;
         }
@@ -399,7 +350,11 @@ class QueryParser {
             }
             String column = kv[0].trim();
             String valueStr = kv[1].trim();
-            Object value = parseConditionValue(column, valueStr);
+            Class<?> columnType = columnTypes.get(column);
+            if (columnType == null) {
+                throw new IllegalArgumentException("Unknown column: " + column);
+            }
+            Object value = parseConditionValue(column, valueStr, columnType);
             updates.put(column, value);
         }
 
@@ -409,7 +364,7 @@ class QueryParser {
         return new UpdateQuery(updates, conditions);
     }
 
-    private Query<Void> parseDeleteQuery(String normalized, String original) {
+    private Query<Void> parseDeleteQuery(String normalized, String original, Database database) {
         LOGGER.log(Level.FINE, "Raw DELETE query: {0}", original);
         LOGGER.log(Level.FINE, "Normalized DELETE query: {0}", normalized);
         String[] fromParts = normalized.split("(?i)FROM\\s+", 2);
@@ -431,7 +386,7 @@ class QueryParser {
                 LOGGER.log(Level.SEVERE, "Empty WHERE clause in DELETE query: {0}", normalized);
                 throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
             }
-            conditions = parseConditions(conditionStr);
+            conditions = parseConditions(conditionStr, tableName, database);
         } else {
             LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
         }
@@ -442,61 +397,91 @@ class QueryParser {
         return new DeleteQuery(conditions);
     }
 
-    private Object parseConditionValue(String conditionColumn, String valueStr) {
+    private Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {
         try {
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
                 String strippedValue = valueStr.substring(1, valueStr.length() - 1);
-                if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                if (columnType == String.class) {
+                    return strippedValue;
+                } else if (columnType == LocalDate.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
                     return LocalDate.parse(strippedValue);
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
+                } else if (columnType == LocalDateTime.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
                     return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
-                } else if (strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                } else if (columnType == LocalDateTime.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
                     return LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
-                } else if (strippedValue.matches(UUID_PATTERN)) {
+                } else if (columnType == UUID.class && strippedValue.matches(UUID_PATTERN)) {
                     return UUID.fromString(strippedValue);
-                } else if (strippedValue.length() == 1) {
+                } else if (columnType == Character.class && strippedValue.length() == 1) {
                     return strippedValue.charAt(0);
                 } else {
-                    return strippedValue;
+                    throw new IllegalArgumentException("Value '" + strippedValue + "' does not match column type: " + columnType.getSimpleName());
                 }
             } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
-                return Boolean.parseBoolean(valueStr);
-            } else if (valueStr.contains(".")) {
-                BigDecimal bd = new BigDecimal(valueStr);
-                if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
-                        bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
-                    return bd.floatValue();
-                } else if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
-                        bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
-                    return bd.doubleValue();
+                if (columnType == Boolean.class) {
+                    return Boolean.parseBoolean(valueStr);
                 } else {
-                    return bd;
+                    throw new IllegalArgumentException("Boolean value '" + valueStr + "' does not match column type: " + columnType.getSimpleName());
                 }
             } else {
-                if (conditionColumn.equalsIgnoreCase("BALANCE")) {
-                    return new BigDecimal(valueStr); // Handle BALANCE as BigDecimal
-                } else if (conditionColumn.equalsIgnoreCase("AGE")) {
-                    return Integer.parseInt(valueStr);
-                }
-                long parsedLong = Long.parseLong(valueStr);
-                if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                    return (byte) parsedLong;
-                } else if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                    return (short) parsedLong;
-                } else if (parsedLong >= Integer.MIN_VALUE && parsedLong <= Integer.MAX_VALUE) {
-                    return (int) parsedLong;
-                } else {
-                    return parsedLong;
+                // Try parsing as a number
+                try {
+                    if (columnType == BigDecimal.class) {
+                        return new BigDecimal(valueStr);
+                    } else if (columnType == Float.class) {
+                        BigDecimal bd = new BigDecimal(valueStr);
+                        if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
+                                bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
+                            return bd.floatValue();
+                        } else {
+                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Float");
+                        }
+                    } else if (columnType == Double.class) {
+                        BigDecimal bd = new BigDecimal(valueStr);
+                        if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
+                                bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
+                            return bd.doubleValue();
+                        } else {
+                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Double");
+                        }
+                    } else if (columnType == Byte.class) {
+                        long parsedLong = Long.parseLong(valueStr);
+                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
+                            return (byte) parsedLong;
+                        } else {
+                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Byte");
+                        }
+                    } else if (columnType == Short.class) {
+                        long parsedLong = Long.parseLong(valueStr);
+                        if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
+                            return (short) parsedLong;
+                        } else {
+                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Short");
+                        }
+                    } else if (columnType == Integer.class) {
+                        return Integer.parseInt(valueStr);
+                    } else if (columnType == Long.class) {
+                        return Long.parseLong(valueStr);
+                    } else {
+                        throw new IllegalArgumentException("Numeric value '" + valueStr + "' does not match column type: " + columnType.getSimpleName());
+                    }
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
                 }
             }
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Invalid numeric value: " + valueStr);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid value format: " + valueStr);
+            throw new IllegalArgumentException("Invalid value format: " + valueStr + " for column type: " + columnType.getSimpleName());
         }
     }
 
-    private List<Condition> parseConditions(String conditionStr) {
+    private List<Condition> parseConditions(String conditionStr, String tableName, Database database) {
+        Table table = database.getTable(tableName);
+        if (table == null) {
+            throw new IllegalArgumentException("Table not found: " + tableName);
+        }
+        Map<String, Class<?>> columnTypes = table.getColumnTypes();
+
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
@@ -526,7 +511,7 @@ class QueryParser {
                             if (isNot) {
                                 subConditionStr = subConditionStr.substring(4).trim();
                             }
-                            List<Condition> subConditions = parseConditions(subConditionStr);
+                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database);
                             String conjunction = determineConjunctionAfter(conditionStr, i);
                             conditions.add(new Condition(subConditions, conjunction, isNot));
                         }
@@ -539,7 +524,7 @@ class QueryParser {
                             (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "AND"));
+                            conditions.add(parseSingleCondition(current, "AND", columnTypes));
                             LOGGER.log(Level.FINE, "Added condition with AND: {0}", current);
                         }
                         currentCondition = new StringBuilder();
@@ -550,7 +535,7 @@ class QueryParser {
                             (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "OR"));
+                            conditions.add(parseSingleCondition(current, "OR", columnTypes));
                             LOGGER.log(Level.FINE, "Added condition with OR: {0}", current);
                         }
                         currentCondition = new StringBuilder();
@@ -565,7 +550,7 @@ class QueryParser {
         if (currentCondition.length() > 0 && parenDepth == 0) {
             String current = currentCondition.toString().trim();
             if (!current.isEmpty()) {
-                conditions.add(parseSingleCondition(current, null));
+                conditions.add(parseSingleCondition(current, null, columnTypes));
                 LOGGER.log(Level.FINE, "Added final condition: {0}", current);
             }
         }
@@ -579,7 +564,7 @@ class QueryParser {
         return conditions;
     }
 
-    private Condition parseSingleCondition(String condition, String conjunction) {
+    private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes) {
         LOGGER.log(Level.FINE, "Parsing condition: {0}", condition);
         boolean isNot = condition.startsWith("NOT ");
         if (isNot) {
@@ -616,7 +601,11 @@ class QueryParser {
             LOGGER.log(Level.SEVERE, "Invalid WHERE clause: column or value is empty in condition: {0}", condition);
             throw new IllegalArgumentException("Invalid WHERE clause: column or value is empty in condition: " + condition);
         }
-        Object conditionValue = parseConditionValue(conditionColumn, valueStr);
+        Class<?> columnType = columnTypes.get(conditionColumn);
+        if (columnType == null) {
+            throw new IllegalArgumentException("Unknown column: " + conditionColumn);
+        }
+        Object conditionValue = parseConditionValue(conditionColumn, valueStr, columnType);
         LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
                 new Object[]{conditionColumn, operator, conditionValue, isNot, conjunction});
         return new Condition(conditionColumn, conditionValue, operator, conjunction, isNot);

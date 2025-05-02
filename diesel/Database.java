@@ -27,7 +27,7 @@ class Database {
 
     public Object executeQuery(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
-        Query<?> parsedQuery = new QueryParser().parse(query);
+        Query<?> parsedQuery = new QueryParser().parse(query, this); // Pass 'this' as the Database instance
         LOGGER.log(Level.FINE, "Parsed query type: {0}", parsedQuery.getClass().getSimpleName());
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
