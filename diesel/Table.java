@@ -22,6 +22,7 @@ class Table implements Serializable {
     private final String name;
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
+    private final String primaryKeyColumn;
     private final List<Map<String, Object>> rows;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
     private transient Map<String, Index> indexes;
@@ -30,10 +31,11 @@ class Table implements Serializable {
     private String clusteredIndexColumn;
     private transient BTreeClusteredIndex clusteredIndex;
 
-    public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes) {
+    public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         this.name = name;
         this.columns = new ArrayList<>(columns);
         this.columnTypes = new HashMap<>(columnTypes);
+        this.primaryKeyColumn = primaryKeyColumn;
         this.rows = new ArrayList<>();
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
@@ -41,7 +43,16 @@ class Table implements Serializable {
         this.hasClusteredIndex = false;
         this.clusteredIndexColumn = null;
         this.clusteredIndex = null;
-        LOGGER.log(Level.FINE, "Created table: {0}", name);
+
+        // Automatically create a unique clustered index for the primary key if specified
+        if (primaryKeyColumn != null) {
+            if (!columnTypes.containsKey(primaryKeyColumn)) {
+                throw new IllegalArgumentException("Primary key column " + primaryKeyColumn + " does not exist");
+            }
+            createUniqueClusteredIndex(primaryKeyColumn);
+        }
+
+        LOGGER.log(Level.FINE, "Created table: {0} with primary key: {1}", new Object[]{name, primaryKeyColumn});
     }
 
     public String getName() {
@@ -193,6 +204,10 @@ class Table implements Serializable {
 
     public Map<String, Class<?>> getColumnTypes() {
         return new HashMap<>(columnTypes);
+    }
+
+    public String getPrimaryKeyColumn() {
+        return primaryKeyColumn;
     }
 
     public List<Map<String, Object>> getRows() {

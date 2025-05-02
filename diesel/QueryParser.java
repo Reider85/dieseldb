@@ -171,20 +171,23 @@ class QueryParser {
         }
 
         String tableName = parts[0].replace("CREATE TABLE", "").trim();
-        String columnsPart = parts[1].replace(")", "").trim();
+        String columnsPart = original.substring(original.indexOf("(") + 1, original.lastIndexOf(")")).trim();
         String[] columnDefs = columnsPart.split(",");
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new HashMap<>();
+        String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
             String[] colParts = colDef.trim().split("\\s+");
-            if (colParts.length != 2) {
+            if (colParts.length < 2) {
                 throw new IllegalArgumentException("Invalid column definition: " + colDef);
             }
             String colName = colParts[0];
-            String type = colParts[1];
+            String type = colParts[1].toUpperCase();
+            boolean isPrimaryKey = colDef.toUpperCase().contains("PRIMARY KEY");
+
             columns.add(colName);
-            switch (type.toUpperCase()) {
+            switch (type) {
                 case "STRING":
                     columnTypes.put(colName, String.class);
                     break;
@@ -228,12 +231,19 @@ class QueryParser {
                 default:
                     throw new IllegalArgumentException("Unsupported column type: " + type);
             }
+
+            if (isPrimaryKey) {
+                if (primaryKeyColumn != null) {
+                    throw new IllegalArgumentException("Multiple primary keys defined in table " + tableName);
+                }
+                primaryKeyColumn = colName;
+            }
         }
 
-        LOGGER.log(Level.INFO, "Parsed CREATE TABLE query: table={0}, columns={1}, types={2}",
-                new Object[]{tableName, columns, columnTypes});
+        LOGGER.log(Level.INFO, "Parsed CREATE TABLE query: table={0}, columns={1}, types={2}, primaryKey={3}",
+                new Object[]{tableName, columns, columnTypes, primaryKeyColumn});
 
-        return new CreateTableQuery(tableName, columns, columnTypes);
+        return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn);
     }
 
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {

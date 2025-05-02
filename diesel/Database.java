@@ -11,15 +11,16 @@ class Database {
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
 
-    public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
+    public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         if (!tables.containsKey(tableName)) {
-            Table newTable = new Table(tableName, columns, columnTypes);
+            Table newTable = new Table(tableName, columns, columnTypes, primaryKeyColumn);
             tables.put(tableName, newTable);
             for (Transaction transaction : activeTransactions.values()) {
                 if (transaction.isActive()) {
                     transaction.updateTable(tableName, newTable);
                 }
             }
+            LOGGER.log(Level.INFO, "Created table {0} with primary key {1}", new Object[]{tableName, primaryKeyColumn});
         } else {
             throw new IllegalArgumentException("Table " + tableName + " already exists");
         }
@@ -27,7 +28,7 @@ class Database {
 
     public Object executeQuery(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
-        Query<?> parsedQuery = new QueryParser().parse(query, this); // Pass 'this' as the Database instance
+        Query<?> parsedQuery = new QueryParser().parse(query, this);
         LOGGER.log(Level.FINE, "Parsed query type: {0}", parsedQuery.getClass().getSimpleName());
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
@@ -74,7 +75,7 @@ class Database {
                 return "Transaction rolled back";
             } else if (parsedQuery instanceof CreateTableQuery) {
                 CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
-                createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes());
+                createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes(), createQuery.getPrimaryKeyColumn());
                 return "Table created successfully";
             } else if (parsedQuery instanceof CreateIndexQuery) {
                 CreateIndexQuery indexQuery = (CreateIndexQuery) parsedQuery;
