@@ -55,3 +55,4 @@
 0.5.5 Advanced Test fix
 0.5.6 Delete hardcode
 0.5.7 PRIMARY KEY
+0.5.8 Test Primary Key

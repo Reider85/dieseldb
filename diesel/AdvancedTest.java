@@ -53,6 +53,18 @@ public class AdvancedTest {
                     throw e;
                 }
             }
+            insertWithPrimaryKey();
+            try {
+                insertWithDuplicatePrimaryKey();
+                throw new RuntimeException("insertWithDuplicatePrimaryKey succeeded unexpectedly, test failed");
+            } catch (RuntimeException e) {
+                if (e.getCause() instanceof IllegalStateException) {
+                    LOGGER.log(Level.INFO, "Expected failure in insertWithDuplicatePrimaryKey: {0}", e.getCause().getMessage());
+                } else {
+                    LOGGER.log(Level.SEVERE, "Unexpected error in insertWithDuplicatePrimaryKey: {0}", e.getMessage());
+                    throw e;
+                }
+            }
 
             // Step 5: Run SELECT queries
             selectWithoutWhere();
@@ -61,14 +73,17 @@ public class AdvancedTest {
             selectWithWhereBTreeIndex();
             selectWithWhereUniqueIndex();
             selectWithWhereUniqueClusteredIndex();
+            selectWithWherePrimaryKey();
             selectWithWhereIndexedAndNonIndexed();
             selectWithWhereIndexedAndNonIndexedInParentheses();
             selectWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
             selectWithWhereTwoIndexed();
             selectWithWhereUniqueBTreeHashIndexed();
             selectWithWhereUniqueClusteredBTreeHashIndexed();
+            selectWithWherePrimaryKeyBTreeHashIndexed();
             selectWithWhereUniqueBTreeHashIndexedInParentheses();
             selectWithWhereUniqueClusteredBTreeHashIndexedInParentheses();
+            selectWithWherePrimaryKeyBTreeHashIndexedInParentheses();
             selectWithWhereIndexedOrIndexed();
             selectWithWhereIndexedOrNonIndexed();
 
@@ -78,12 +93,15 @@ public class AdvancedTest {
             updateWithWhereBTreeIndex();
             updateWithWhereUniqueIndex();
             updateWithWhereUniqueClusteredIndex();
+            updateWithWherePrimaryKey();
             updateWithWhereIndexedAndNonIndexed();
             updateWithWhereTwoIndexed();
             updateWithWhereUniqueBTreeHashIndexed();
             updateWithWhereUniqueClusteredBTreeHashIndexed();
+            updateWithWherePrimaryKeyBTreeHashIndexed();
             updateWithWhereUniqueBTreeHashIndexedInParentheses();
             updateWithWhereUniqueClusteredBTreeHashIndexedInParentheses();
+            updateWithWherePrimaryKeyBTreeHashIndexedInParentheses();
             updateWithWhereIndexedOrIndexed();
             updateWithWhereIndexedOrNonIndexed();
             updateWithWhereIndexedAndNonIndexedInParentheses();
@@ -95,14 +113,17 @@ public class AdvancedTest {
             deleteWithWhereBTreeIndex();
             deleteWithWhereUniqueIndex();
             deleteWithWhereUniqueClusteredIndex();
+            deleteWithWherePrimaryKey();
             deleteWithWhereIndexedAndNonIndexed();
             deleteWithWhereIndexedAndNonIndexedInParentheses();
             deleteWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
             deleteWithWhereTwoIndexed();
             deleteWithWhereUniqueBTreeHashIndexed();
             deleteWithWhereUniqueClusteredBTreeHashIndexed();
+            deleteWithWherePrimaryKeyBTreeHashIndexed();
             deleteWithWhereUniqueBTreeHashIndexedInParentheses();
             deleteWithWhereUniqueClusteredBTreeHashIndexedInParentheses();
+            deleteWithWherePrimaryKeyBTreeHashIndexedInParentheses();
             deleteWithWhereIndexedOrIndexed();
             deleteWithWhereIndexedOrNonIndexed();
 
@@ -224,6 +245,32 @@ public class AdvancedTest {
         LOGGER.log(Level.WARNING, "Insert with duplicate unique clustered index succeeded unexpectedly in {0} ms", String.format("%.3f", durationMs));
     }
 
+    private void insertWithPrimaryKey() {
+        String query = "INSERT INTO USERS (ID, USER_CODE, NAME, AGE, BALANCE) VALUES ('1004', 'CODE1004', 'User1004', 27, 1700.00)";
+        LOGGER.log(Level.INFO, "Executing INSERT with unique index (ID): {0}", query);
+        long startTime = System.nanoTime();
+        try {
+            database.executeQuery(query, null);
+            database.getTable("USERS").saveToFile("USERS");
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / 1_000_000.0;
+            LOGGER.log(Level.INFO, "Insert with unique index (ID) completed in {0} ms", String.format("%.3f", durationMs));
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Insert with unique index (ID) failed: {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void insertWithDuplicatePrimaryKey() {
+        String query = "INSERT INTO USERS (ID, USER_CODE, NAME, AGE, BALANCE) VALUES ('1004', 'CODE1004DUP', 'User1004Duplicate', 27, 1700.00)";
+        LOGGER.log(Level.INFO, "Executing INSERT with duplicate unique index (ID): {0}", query);
+        long startTime = System.nanoTime();
+        database.executeQuery(query, null);
+        long endTime = System.nanoTime();
+        double durationMs = (endTime - startTime) / 1_000_000.0;
+        LOGGER.log(Level.WARNING, "Insert with duplicate unique index (ID) succeeded unexpectedly in {0} ms", String.format("%.3f", durationMs));
+    }
+
     private void dropTable() {
         try {
             database.dropTable("USERS");
@@ -265,6 +312,10 @@ public class AdvancedTest {
             // Drop and recreate table to ensure clean state before re-inserting records
             try {
                 createTable(); // This calls dropTable() internally
+                createUniqueIndex();
+                createBTreeIndex();
+                createHashIndex();
+                createUniqueClusteredIndex();
                 insertRecords();
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to restore table state after DELETE: {0}", e.getMessage());
@@ -306,6 +357,11 @@ public class AdvancedTest {
         executeSelectQuery(query);
     }
 
+    private void selectWithWherePrimaryKey() {
+        String query = "SELECT ID, NAME FROM USERS WHERE ID = '500'";
+        executeSelectQuery(query);
+    }
+
     private void selectWithWhereIndexedAndNonIndexed() {
         String query = "SELECT ID, NAME FROM USERS WHERE AGE = 50 AND BALANCE > 5000";
         executeSelectQuery(query);
@@ -336,6 +392,11 @@ public class AdvancedTest {
         executeSelectQuery(query);
     }
 
+    private void selectWithWherePrimaryKeyBTreeHashIndexed() {
+        String query = "SELECT ID, NAME FROM USERS WHERE ID = '500' AND AGE = 50 AND NAME = 'User500'";
+        executeSelectQuery(query);
+    }
+
     private void selectWithWhereUniqueBTreeHashIndexedInParentheses() {
         String query = "SELECT ID, NAME FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeSelectQuery(query);
@@ -343,6 +404,11 @@ public class AdvancedTest {
 
     private void selectWithWhereUniqueClusteredBTreeHashIndexedInParentheses() {
         String query = "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')";
+        executeSelectQuery(query);
+    }
+
+    private void selectWithWherePrimaryKeyBTreeHashIndexedInParentheses() {
+        String query = "SELECT ID, NAME FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeSelectQuery(query);
     }
 
@@ -381,6 +447,11 @@ public class AdvancedTest {
         executeUpdateQuery(query);
     }
 
+    private void updateWithWherePrimaryKey() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE ID = '500'";
+        executeUpdateQuery(query);
+    }
+
     private void updateWithWhereIndexedAndNonIndexed() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE AGE = 50 AND BALANCE > 5000";
         executeUpdateQuery(query);
@@ -401,6 +472,11 @@ public class AdvancedTest {
         executeUpdateQuery(query);
     }
 
+    private void updateWithWherePrimaryKeyBTreeHashIndexed() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE ID = '500' AND AGE = 50 AND NAME = 'User500'";
+        executeUpdateQuery(query);
+    }
+
     private void updateWithWhereUniqueBTreeHashIndexedInParentheses() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeUpdateQuery(query);
@@ -408,6 +484,11 @@ public class AdvancedTest {
 
     private void updateWithWhereUniqueClusteredBTreeHashIndexedInParentheses() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')";
+        executeUpdateQuery(query);
+    }
+
+    private void updateWithWherePrimaryKeyBTreeHashIndexedInParentheses() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeUpdateQuery(query);
     }
 
@@ -456,6 +537,11 @@ public class AdvancedTest {
         executeDeleteQuery(query);
     }
 
+    private void deleteWithWherePrimaryKey() {
+        String query = "DELETE FROM USERS WHERE ID = '500'";
+        executeDeleteQuery(query);
+    }
+
     private void deleteWithWhereIndexedAndNonIndexed() {
         String query = "DELETE FROM USERS WHERE AGE = 50 AND BALANCE > 5000";
         executeDeleteQuery(query);
@@ -486,6 +572,11 @@ public class AdvancedTest {
         executeDeleteQuery(query);
     }
 
+    private void deleteWithWherePrimaryKeyBTreeHashIndexed() {
+        String query = "DELETE FROM USERS WHERE ID = '500' AND AGE = 50 AND NAME = 'User500'";
+        executeDeleteQuery(query);
+    }
+
     private void deleteWithWhereUniqueBTreeHashIndexedInParentheses() {
         String query = "DELETE FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeDeleteQuery(query);
@@ -493,6 +584,11 @@ public class AdvancedTest {
 
     private void deleteWithWhereUniqueClusteredBTreeHashIndexedInParentheses() {
         String query = "DELETE FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')";
+        executeDeleteQuery(query);
+    }
+
+    private void deleteWithWherePrimaryKeyBTreeHashIndexedInParentheses() {
+        String query = "DELETE FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
         executeDeleteQuery(query);
     }
 
