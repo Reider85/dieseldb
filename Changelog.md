@@ -52,3 +52,4 @@
 0.5.2 Unique B-tree clustered index
 0.5.3 B-tree indexes fix
 0.5.4 Advanced Test fix
+0.5.5 Advanced Test fix
