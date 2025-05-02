@@ -34,7 +34,9 @@ class Table implements Serializable {
     public Table(String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         this.name = name;
         this.columns = new ArrayList<>(columns);
-        this.columnTypes = new HashMap<>(columnTypes);
+        // Use case-insensitive map for column types
+        this.columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        this.columnTypes.putAll(columnTypes);
         this.primaryKeyColumn = primaryKeyColumn;
         this.rows = new ArrayList<>();
         this.rowLocks = new ConcurrentHashMap<>();
@@ -44,15 +46,37 @@ class Table implements Serializable {
         this.clusteredIndexColumn = null;
         this.clusteredIndex = null;
 
+        // Validate schema
+        validateSchema(columns, columnTypes);
+
         // Automatically create a unique clustered index for the primary key if specified
         if (primaryKeyColumn != null) {
-            if (!columnTypes.containsKey(primaryKeyColumn)) {
+            if (!this.columnTypes.containsKey(primaryKeyColumn)) {
                 throw new IllegalArgumentException("Primary key column " + primaryKeyColumn + " does not exist");
             }
             createUniqueClusteredIndex(primaryKeyColumn);
         }
 
-        LOGGER.log(Level.FINE, "Created table: {0} with primary key: {1}", new Object[]{name, primaryKeyColumn});
+        LOGGER.log(Level.INFO, "Created table: {0} with columns {1}, types {2}, primary key: {3}",
+                new Object[]{name, columns, columnTypes, primaryKeyColumn});
+    }
+
+    private void validateSchema(List<String> columns, Map<String, Class<?>> columnTypes) {
+        // Ensure all columns in the list have corresponding types
+        for (String column : columns) {
+            if (!columnTypes.containsKey(column)) {
+                LOGGER.log(Level.SEVERE, "Schema validation failed: Column {0} missing in columnTypes {1}",
+                        new Object[]{column, columnTypes.keySet()});
+                throw new IllegalArgumentException("Column " + column + " missing in columnTypes");
+            }
+        }
+        // Ensure all columnTypes have corresponding columns
+        for (String column : columnTypes.keySet()) {
+            if (!columns.contains(column)) {
+                LOGGER.log(Level.WARNING, "Column {0} in columnTypes but not in columns list {1}",
+                        new Object[]{column, columns});
+            }
+        }
     }
 
     public String getName() {
@@ -203,7 +227,8 @@ class Table implements Serializable {
     }
 
     public Map<String, Class<?>> getColumnTypes() {
-        return new HashMap<>(columnTypes);
+        // Return a case-insensitive copy
+        return new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }};
     }
 
     public String getPrimaryKeyColumn() {
@@ -222,6 +247,11 @@ class Table implements Serializable {
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
+        // Ensure columnTypes is case-insensitive after deserialization
+        Map<String, Class<?>> tempColumnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        tempColumnTypes.putAll(columnTypes);
+        this.columnTypes.clear();
+        this.columnTypes.putAll(tempColumnTypes);
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.hasClusteredIndex = (boolean) ois.readObject();

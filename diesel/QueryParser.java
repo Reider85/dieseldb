@@ -172,19 +172,19 @@ class QueryParser {
 
         String tableName = parts[0].replace("CREATE TABLE", "").trim();
         String columnsPart = original.substring(original.indexOf("(") + 1, original.lastIndexOf(")")).trim();
-        String[] columnDefs = columnsPart.split(",");
+        String[] columnDefs = columnsPart.split(",\\s*(?=(?:[^']*'[^']*')*[^']*$)");
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
-            String[] colParts = colDef.trim().split("\\s+");
+            String[] colParts = colDef.trim().split("\\s+", 3);
             if (colParts.length < 2) {
                 throw new IllegalArgumentException("Invalid column definition: " + colDef);
             }
             String colName = colParts[0];
             String type = colParts[1].toUpperCase();
-            boolean isPrimaryKey = colDef.toUpperCase().contains("PRIMARY KEY");
+            boolean isPrimaryKey = colParts.length > 2 && colParts[2].toUpperCase().contains("PRIMARY KEY");
 
             columns.add(colName);
             switch (type) {
@@ -252,9 +252,9 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid SELECT query format");
         }
 
-        String selectPart = parts[0].replace("SELECT", "").trim();
-        String[] selectColumns = selectPart.split(",");
-        List<String> columns = Arrays.stream(selectColumns)
+        // Extract columns from the original query to preserve case
+        String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, original.indexOf("FROM")).trim();
+        List<String> columns = Arrays.stream(selectPartOriginal.split(","))
                 .map(String::trim)
                 .collect(Collectors.toList());
 
@@ -266,10 +266,17 @@ class QueryParser {
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
-        LOGGER.log(Level.FINE, "Table {0} column types: {1}", new Object[]{tableName, table.getColumnTypes()});
+
+        // Log table schema for debugging
+        LOGGER.log(Level.FINE, "Table {0} columns: {1}, column types: {2}",
+                new Object[]{tableName, table.getColumns(), table.getColumnTypes()});
 
         // Validate select columns
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
+        if (columnTypes.isEmpty()) {
+            LOGGER.log(Level.SEVERE, "Table {0} has no columns defined", tableName);
+            throw new IllegalStateException("Table " + tableName + " has no columns defined");
+        }
         for (String column : columns) {
             if (!columnTypes.containsKey(column)) {
                 LOGGER.log(Level.SEVERE, "Unknown column in SELECT: {0}, available columns: {1}",
@@ -302,8 +309,7 @@ class QueryParser {
 
         String tableAndColumns = parts[0].replace("INSERT INTO", "").trim();
         String tableName = tableAndColumns.substring(0, tableAndColumns.indexOf("(")).trim();
-        String columnsPart = tableAndColumns.substring(tableAndColumns.indexOf("(") + 1,
-                tableAndColumns.indexOf(")")).trim();
+        String columnsPart = original.substring(original.indexOf("(") + 1, original.indexOf(")")).trim();
         List<String> columns = Arrays.stream(columnsPart.split(","))
                 .map(String::trim)
                 .collect(Collectors.toList());
@@ -319,7 +325,7 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid VALUES syntax");
         }
         valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
-        String[] valueStrings = valuesPart.split(",");
+        String[] valueStrings = valuesPart.split(",(?=([^']*'[^']*')*[^']*$)");
         List<Object> values = new ArrayList<>();
         for (int i = 0; i < valueStrings.length; i++) {
             String val = valueStrings[i].trim();
@@ -367,7 +373,7 @@ class QueryParser {
             setPart = setAndWhere;
         }
 
-        String[] assignments = setPart.split(",");
+        String[] assignments = setPart.split(",(?=([^']*'[^']*')*[^']*$)");
         Map<String, Object> updates = new HashMap<>();
         for (String assignment : assignments) {
             String[] kv = assignment.split("=");
