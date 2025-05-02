@@ -10,7 +10,7 @@ class BTreeIndex implements Index, Serializable {
 
     private static class Node implements Serializable {
         List<Object> keys;
-        List<Integer> rowIndices; // For leaf nodes
+        List<List<Integer>> rowIndices; // For leaf nodes, each key maps to a list of row indices
         List<Node> children; // For internal nodes
         boolean isLeaf;
 
@@ -39,6 +39,10 @@ class BTreeIndex implements Index, Serializable {
 
     @Override
     public void insert(Object key, int rowIndex) {
+        if (key == null) {
+            LOGGER.log(Level.WARNING, "Attempted to insert null key");
+            return;
+        }
         Node r = root;
         if (r.keys.size() == (2 * t - 1)) {
             Node s = new Node(false);
@@ -54,15 +58,18 @@ class BTreeIndex implements Index, Serializable {
     private void insertNonFull(Node x, Object key, int rowIndex) {
         int i = x.keys.size() - 1;
         if (x.isLeaf) {
-            x.keys.add(null);
-            x.rowIndices.add(null);
             while (i >= 0 && compareKeys(key, x.keys.get(i)) < 0) {
-                x.keys.set(i + 1, x.keys.get(i));
-                x.rowIndices.set(i + 1, x.rowIndices.get(i));
                 i--;
             }
-            x.keys.set(i + 1, key);
-            x.rowIndices.set(i + 1, rowIndex);
+            i++;
+            if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
+                x.rowIndices.get(i).add(rowIndex);
+                LOGGER.log(Level.FINE, "Appended rowIndex {0} to key {1} at position {2}", new Object[]{rowIndex, key, i});
+            } else {
+                x.keys.add(i, key);
+                x.rowIndices.add(i, new ArrayList<>(Collections.singletonList(rowIndex)));
+                LOGGER.log(Level.FINE, "Inserted new key {0} with rowIndex {1} at position {2}", new Object[]{key, rowIndex, i});
+            }
         } else {
             while (i >= 0 && compareKeys(key, x.keys.get(i)) < 0) {
                 i--;
@@ -76,6 +83,7 @@ class BTreeIndex implements Index, Serializable {
             }
             insertNonFull(x.children.get(i), key, rowIndex);
         }
+        validateNode(x);
     }
 
     private void splitChild(Node x, int i) {
@@ -100,32 +108,20 @@ class BTreeIndex implements Index, Serializable {
             y.children.subList(mid + 1, y.children.size()).clear();
         }
 
-        validateNode(x); // Validate parent
-        validateNode(y); // Validate original child
-        validateNode(z); // Validate new child
+        validateNode(x);
+        validateNode(y);
+        validateNode(z);
     }
 
     @Override
     public void remove(Object key, int rowIndex) {
+        if (key == null) {
+            LOGGER.log(Level.WARNING, "Attempted to remove null key");
+            return;
+        }
         remove(root, key, rowIndex);
         if (root.keys.isEmpty() && !root.isLeaf) {
             root = root.children.get(0);
-        }
-    }
-
-    private void validateNode(Node x) {
-        if (x.isLeaf) {
-            if (x.rowIndices == null || x.rowIndices.size() != x.keys.size()) {
-                LOGGER.log(Level.SEVERE, "Invalid leaf node: keys={0}, rowIndices={1}",
-                        new Object[]{x.keys, x.rowIndices});
-                throw new IllegalStateException("Leaf node has mismatched keys and rowIndices");
-            }
-        } else {
-            if (x.children == null || x.children.size() != x.keys.size() + 1) {
-                LOGGER.log(Level.SEVERE, "Invalid internal node: keys={0}, children={1}",
-                        new Object[]{x.keys, x.children != null ? x.children.size() : null});
-                throw new IllegalStateException("Internal node has mismatched keys and children");
-            }
         }
     }
 
@@ -136,38 +132,46 @@ class BTreeIndex implements Index, Serializable {
             i++;
         }
 
-        LOGGER.log(Level.FINE, "Removing key={0}, rowIndex={1}, node keys={2}, children size={3}, isLeaf={4}, i={5}",
-                new Object[]{key, rowIndex, x.keys, x.children != null ? x.children.size() : 0, x.isLeaf, i});
+        LOGGER.log(Level.FINE, "Removing key={0}, rowIndex={1}, node keys={2}, isLeaf={3}, i={4}",
+                new Object[]{key, rowIndex, x.keys, x.isLeaf, i});
 
         if (x.isLeaf) {
-            // Handle duplicate keys by finding all matching keys
-            boolean removed = false;
             for (int j = 0; j < x.keys.size(); j++) {
-                if (compareKeys(key, x.keys.get(j)) == 0 && x.rowIndices.get(j) == rowIndex) {
-                    x.keys.remove(j);
-                    x.rowIndices.remove(j);
-                    removed = true;
-                    LOGGER.log(Level.FINE, "Removed key={0}, rowIndex={1} from leaf node at position={2}",
-                            new Object[]{key, rowIndex, j});
-                    break; // Remove only the first matching rowIndex
+                if (compareKeys(key, x.keys.get(j)) == 0) {
+                    List<Integer> indices = x.rowIndices.get(j);
+                    if (indices.remove(Integer.valueOf(rowIndex))) {
+                        LOGGER.log(Level.FINE, "Removed rowIndex {0} for key {1} at position {2}", new Object[]{rowIndex, key, j});
+                        if (indices.isEmpty()) {
+                            x.keys.remove(j);
+                            x.rowIndices.remove(j);
+                            LOGGER.log(Level.FINE, "Removed key {0} at position {1} as no indices remain", new Object[]{key, j});
+                        }
+                        validateNode(x);
+                        return;
+                    }
                 }
             }
-            if (!removed) {
-                LOGGER.log(Level.FINE, "No matching key={0}, rowIndex={1} found in leaf node", new Object[]{key, rowIndex});
-            }
+            LOGGER.log(Level.FINE, "No matching key={0}, rowIndex={1} found in leaf node", new Object[]{key, rowIndex});
             return;
         }
 
         if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
-            // Key found in internal node, traverse to the leaf (use i + 1 for successor)
-            int childIndex = i + 1; // Traverse to successor child
-            if (childIndex >= x.children.size()) {
-                LOGGER.log(Level.SEVERE, "Invalid child index: {0}, children size={1}, node keys={2}",
-                        new Object[]{childIndex, x.children.size(), x.keys});
-                throw new IllegalStateException("Invalid child index for key found in internal node");
+            Node child = x.children.get(i + 1);
+            validateNode(child);
+            if (child.keys.size() < t) {
+                LOGGER.log(Level.FINE, "Filling child at index={0}, child keys={1}", new Object[]{i + 1, child.keys});
+                fillChild(x, i + 1);
+                i = 0;
+                while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
+                    i++;
+                }
+                if (i >= x.children.size()) {
+                    LOGGER.log(Level.SEVERE, "Invalid child index after fill: {0}, children size={1}, node keys={2}",
+                            new Object[]{i, x.children.size(), x.keys});
+                    throw new IllegalStateException("Invalid child index after filling child");
+                }
             }
-            LOGGER.log(Level.FINE, "Key found, traversing to child at index={0}", childIndex);
-            remove(x.children.get(childIndex), key, rowIndex);
+            remove(x.children.get(i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0 ? i + 1 : i), key, rowIndex);
         } else {
             if (i < x.children.size()) {
                 Node child = x.children.get(i);
@@ -175,30 +179,44 @@ class BTreeIndex implements Index, Serializable {
                 if (child.keys.size() < t) {
                     LOGGER.log(Level.FINE, "Filling child at index={0}, child keys={1}", new Object[]{i, child.keys});
                     fillChild(x, i);
-                    // Recompute i after fillChild
                     i = 0;
                     while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
-                        i++;
                     }
                     if (i >= x.children.size()) {
                         LOGGER.log(Level.SEVERE, "Invalid child index after fill: {0}, children size={1}, node keys={2}",
                                 new Object[]{i, x.children.size(), x.keys});
                         throw new IllegalStateException("Invalid child index after filling child");
                     }
-                    child = x.children.get(i);
                 }
-                LOGGER.log(Level.FINE, "Traversing to child at index={0}, child keys={1}", new Object[]{i, child.keys});
-                remove(child, key, rowIndex);
+                remove(x.children.get(i), key, rowIndex);
             } else {
-                LOGGER.log(Level.WARNING, "No valid child for key={0}, i={1}, children size={2}",
+                LOGGER.log(Level.FINE, "No valid child for key={0}, i={1}, children size={2}",
                         new Object[]{key, i, x.children.size()});
             }
         }
+    }
 
-        // After removal, ensure the node has enough keys
-        if (x != root && x.keys.size() < t - 1) {
-            LOGGER.log(Level.FINE, "Node underflow: keys={0}, attempting to balance", new Object[]{x.keys});
-            // Simplified: Rely on fillChild in parent to handle underflow
+    private void validateNode(Node x) {
+        if (x.isLeaf) {
+            if (x.rowIndices == null || x.rowIndices.size() != x.keys.size()) {
+                LOGGER.log(Level.SEVERE, "Invalid leaf node: keys={0}, rowIndices size={1}, rowIndices={2}",
+                        new Object[]{x.keys, x.rowIndices != null ? x.rowIndices.size() : null, x.rowIndices});
+                throw new IllegalStateException("Leaf node has mismatched keys and rowIndices");
+            }
+            for (int i = 0; i < x.rowIndices.size(); i++) {
+                List<Integer> indices = x.rowIndices.get(i);
+                if (indices == null || indices.isEmpty()) {
+                    LOGGER.log(Level.SEVERE, "Invalid leaf node: empty or null rowIndices for key {0} at position {1}, keys={2}, rowIndices={3}",
+                            new Object[]{x.keys.get(i), i, x.keys, x.rowIndices});
+                    throw new IllegalStateException("Leaf node has empty or null rowIndices");
+                }
+            }
+        } else {
+            if (x.children == null || x.children.size() != x.keys.size() + 1) {
+                LOGGER.log(Level.SEVERE, "Invalid internal node: keys={0}, keys size={1}, children={2}, children size={3}",
+                        new Object[]{x.keys, x.keys.size(), x.children, x.children != null ? x.children.size() : null});
+                throw new IllegalStateException("Internal node has mismatched keys and children");
+            }
         }
     }
 
@@ -226,7 +244,7 @@ class BTreeIndex implements Index, Serializable {
                 merge(x, i - 1);
             }
         }
-        validateNode(x); // Validate after modification
+        validateNode(x);
     }
 
     private void borrowFromPrev(Node x, int i) {
@@ -235,7 +253,7 @@ class BTreeIndex implements Index, Serializable {
 
         child.keys.add(0, x.keys.get(i - 1));
         if (child.isLeaf) {
-            child.rowIndices.add(0, sibling.rowIndices.get(sibling.rowIndices.size() - 1));
+            child.rowIndices.add(0, new ArrayList<>(sibling.rowIndices.get(sibling.rowIndices.size() - 1)));
         } else {
             child.children.add(0, sibling.children.get(sibling.children.size() - 1));
         }
@@ -247,6 +265,8 @@ class BTreeIndex implements Index, Serializable {
         } else {
             sibling.children.remove(sibling.children.size() - 1);
         }
+        validateNode(child);
+        validateNode(sibling);
     }
 
     private void borrowFromNext(Node x, int i) {
@@ -255,7 +275,7 @@ class BTreeIndex implements Index, Serializable {
 
         child.keys.add(x.keys.get(i));
         if (child.isLeaf) {
-            child.rowIndices.add(sibling.rowIndices.get(0));
+            child.rowIndices.add(new ArrayList<>(sibling.rowIndices.get(0)));
         } else {
             child.children.add(sibling.children.get(0));
         }
@@ -267,22 +287,65 @@ class BTreeIndex implements Index, Serializable {
         } else {
             sibling.children.remove(0);
         }
+        validateNode(child);
+        validateNode(sibling);
     }
 
     private void merge(Node x, int i) {
         Node child = x.children.get(i);
         Node sibling = x.children.get(i + 1);
 
-        child.keys.add(x.keys.get(i));
-        child.keys.addAll(sibling.keys);
+        LOGGER.log(Level.FINE, "Merging child at index={0}, isLeaf={1}, child keys={2}, sibling keys={3}, parent key={4}",
+                new Object[]{i, child.isLeaf, child.keys, sibling.keys, x.keys.get(i)});
+
         if (child.isLeaf) {
-            child.rowIndices.addAll(sibling.rowIndices);
+            // Leaf node merge: combine keys and rowIndices, handling duplicates
+            for (int j = 0; j < sibling.keys.size(); j++) {
+                Object siblingKey = sibling.keys.get(j);
+                List<Integer> siblingIndices = sibling.rowIndices.get(j);
+                int pos = -1;
+                for (int k = 0; k < child.keys.size(); k++) {
+                    if (compareKeys(siblingKey, child.keys.get(k)) == 0) {
+                        pos = k;
+                        break;
+                    }
+                }
+                if (pos >= 0) {
+                    // Duplicate key found, merge rowIndices
+                    child.rowIndices.get(pos).addAll(siblingIndices);
+                    LOGGER.log(Level.FINE, "Merged rowIndices for key {0} at child position {1}: {2}",
+                            new Object[]{siblingKey, pos, child.rowIndices.get(pos)});
+                } else {
+                    // New key, add to child in sorted order
+                    int insertPos = child.keys.size();
+                    for (int k = 0; k < child.keys.size(); k++) {
+                        if (compareKeys(siblingKey, child.keys.get(k)) < 0) {
+                            insertPos = k;
+                            break;
+                        }
+                    }
+                    child.keys.add(insertPos, siblingKey);
+                    child.rowIndices.add(insertPos, new ArrayList<>(siblingIndices));
+                    LOGGER.log(Level.FINE, "Added key {0} with rowIndices {1} at child position {2}",
+                            new Object[]{siblingKey, siblingIndices, insertPos});
+                }
+            }
         } else {
+            // Internal node merge: add parent key and sibling keys/children
+            child.keys.add(x.keys.get(i));
+            child.keys.addAll(sibling.keys);
             child.children.addAll(sibling.children);
+            LOGGER.log(Level.FINE, "Merged internal node: added parent key {0}, sibling keys {1}, sibling children size={2}",
+                    new Object[]{x.keys.get(i), sibling.keys, sibling.children.size()});
         }
 
         x.keys.remove(i);
         x.children.remove(i + 1);
+
+        validateNode(child);
+        validateNode(x);
+        LOGGER.log(Level.FINE, "Merge completed, child keys={0}, child rowIndices={1}, child children size={2}",
+                new Object[]{child.keys, child.isLeaf ? child.rowIndices : null, child.isLeaf ? 0 : child.children.size()});
     }
 
     @Override
@@ -292,13 +355,16 @@ class BTreeIndex implements Index, Serializable {
 
     private List<Integer> search(Node x, Object key) {
         List<Integer> result = new ArrayList<>();
+        if (key == null) {
+            return result;
+        }
         int i = 0;
         while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
             i++;
         }
         if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
             if (x.isLeaf) {
-                result.add(x.rowIndices.get(i));
+                result.addAll(x.rowIndices.get(i));
             }
         }
         if (!x.isLeaf) {
@@ -309,6 +375,9 @@ class BTreeIndex implements Index, Serializable {
 
     public List<Integer> rangeSearch(Object low, Object high) {
         List<Integer> result = new ArrayList<>();
+        if (low == null || high == null) {
+            return result;
+        }
         rangeSearch(root, low, high, result);
         return result;
     }
@@ -320,7 +389,7 @@ class BTreeIndex implements Index, Serializable {
         }
         if (x.isLeaf) {
             while (i < x.keys.size() && compareKeys(x.keys.get(i), high) <= 0) {
-                result.add(x.rowIndices.get(i));
+                result.addAll(x.rowIndices.get(i));
                 i++;
             }
         } else {

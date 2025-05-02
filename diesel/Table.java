@@ -128,7 +128,6 @@ class Table implements Serializable {
         hasClusteredIndex = true;
         clusteredIndexColumn = columnName;
 
-        // Перестраиваем таблицу: сортируем строки по columnName
         List<Map<String, Object>> sortedRows = new ArrayList<>(rows);
         sortedRows.sort((row1, row2) -> {
             Object key1 = row1.get(columnName);
@@ -139,7 +138,6 @@ class Table implements Serializable {
             return compareKeys(key1, key2);
         });
 
-        // Проверяем уникальность ключей
         Set<Object> seenKeys = new HashSet<>();
         for (Map<String, Object> row : sortedRows) {
             Object key = row.get(columnName);
@@ -148,7 +146,6 @@ class Table implements Serializable {
             }
         }
 
-        // Обновляем rows и индексы
         rows.clear();
         rows.addAll(sortedRows);
         for (int i = 0; i < rows.size(); i++) {
@@ -284,20 +281,17 @@ class Table implements Serializable {
             if (key == null) {
                 throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
             }
-            // Проверяем уникальность
             List<Integer> existing = clusteredIndex.search(key);
             if (!existing.isEmpty()) {
                 throw new IllegalStateException("Duplicate key violation: key '" + key + "' in column " + clusteredIndexColumn);
             }
 
-            // Находим позицию для вставки
             int insertIndex = findInsertPosition(key);
             ReentrantReadWriteLock lock = getRowLock(insertIndex);
             lock.writeLock().lock();
             try {
                 rows.add(insertIndex, validatedRow);
                 clusteredIndex.insert(key, insertIndex);
-                // Обновляем другие индексы
                 for (Map.Entry<String, Index> entry : indexes.entrySet()) {
                     String column = entry.getKey();
                     Index index = entry.getValue();
@@ -306,7 +300,6 @@ class Table implements Serializable {
                         index.insert(idxKey, insertIndex);
                     }
                 }
-                // Обновляем индексы для строк после insertIndex
                 updateIndicesAfterInsert(insertIndex);
             } finally {
                 lock.writeLock().unlock();
@@ -353,23 +346,44 @@ class Table implements Serializable {
     }
 
     private void updateIndicesAfterInsert(int insertIndex) {
-        for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-            String column = entry.getKey();
-            Index index = entry.getValue();
-            for (int i = insertIndex + 1; i < rows.size(); i++) {
-                Object key = rows.get(i).get(column);
+        for (int i = insertIndex + 1; i < rows.size(); i++) {
+            Map<String, Object> row = rows.get(i);
+            for (Map.Entry<String, Index> entry : indexes.entrySet()) {
+                String column = entry.getKey();
+                Index index = entry.getValue();
+                Object key = row.get(column);
                 if (key != null) {
-                    index.remove(key, i - 1);
-                    index.insert(key, i);
+                    if (index instanceof BTreeIndex) {
+                        List<Integer> currentIndices = index.search(key);
+                        for (int oldIndex : currentIndices) {
+                            if (oldIndex >= insertIndex && oldIndex == i - 1) {
+                                LOGGER.log(Level.FINE, "Updating BTreeIndex for column {0}, key {1}, oldIndex {2}, newIndex {3}, currentIndices {4}",
+                                        new Object[]{column, key, oldIndex, i, currentIndices});
+                                index.remove(key, oldIndex);
+                                index.insert(key, i);
+                                break;
+                            }
+                        }
+                    } else {
+                        List<Integer> currentIndices = index.search(key);
+                        if (currentIndices.contains(i - 1)) {
+                            LOGGER.log(Level.FINE, "Updating index for column {0}, key {1}, oldIndex {2}, newIndex {3}, currentIndices {4}",
+                                    new Object[]{column, key, i - 1, i, currentIndices});
+                            index.remove(key, i - 1);
+                            index.insert(key, i);
+                        }
+                    }
                 }
             }
-        }
-        // Обновляем clusteredIndex
-        for (int i = insertIndex + 1; i < rows.size(); i++) {
-            Object key = rows.get(i).get(clusteredIndexColumn);
-            if (key != null) {
-                clusteredIndex.remove(key, i - 1);
-                clusteredIndex.insert(key, i);
+            Object clusteredKey = row.get(clusteredIndexColumn);
+            if (clusteredKey != null) {
+                List<Integer> clusteredIndices = clusteredIndex.search(clusteredKey);
+                if (clusteredIndices.contains(i - 1)) {
+                    LOGGER.log(Level.FINE, "Updating clustered index for key {0}, oldIndex {1}, newIndex {2}, currentIndices {3}",
+                            new Object[]{clusteredKey, i - 1, i, clusteredIndices});
+                    clusteredIndex.remove(clusteredKey, i - 1);
+                    clusteredIndex.insert(clusteredKey, i);
+                }
             }
         }
     }
@@ -377,13 +391,10 @@ class Table implements Serializable {
     public void saveToFile(String tableName) {
         String fileName = tableName + ".csv";
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
-            // Записываем заголовок
             writer.write(String.join(",", columns));
             writer.newLine();
 
-            // Записываем строки
             if (hasClusteredIndex) {
-                // Для кластеризованного индекса строки уже отсортированы по clusteredIndexColumn
                 for (int i = 0; i < rows.size(); i++) {
                     ReentrantReadWriteLock lock = getRowLock(i);
                     lock.readLock().lock();
@@ -401,7 +412,6 @@ class Table implements Serializable {
                     }
                 }
             } else {
-                // Без кластеризованного индекса сохраняем в порядке добавления
                 for (int i = 0; i < rows.size(); i++) {
                     ReentrantReadWriteLock lock = getRowLock(i);
                     lock.readLock().lock();
@@ -449,7 +459,6 @@ class Table implements Serializable {
         String fileName = tableName + ".table";
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
             Table table = (Table) ois.readObject();
-            // Устанавливаем флаг инициализации файла
             table.setFileInitialized(true);
             LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
             return table;
