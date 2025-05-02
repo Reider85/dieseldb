@@ -35,16 +35,23 @@ public class PerformanceTest {
 
     private void setupTable() {
         dropTable(); // Ensure table does not exist
-        String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+        String createTableQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
         LOGGER.log(Level.INFO, "Executing CREATE TABLE query in setupTable: {0}", createTableQuery);
         database.executeQuery(createTableQuery, null);
+
+        // Create clustered index on USER_CODE
+        String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
+        LOGGER.log(Level.INFO, "Executing: {0}", createIndexQuery);
+        database.executeQuery(createIndexQuery, null);
+        LOGGER.log(Level.INFO, "Unique clustered index created on USER_CODE");
+
         insertRecords(RECORD_COUNT);
         LOGGER.log(Level.INFO, "Setup completed: {0} records inserted into USERS table", RECORD_COUNT);
     }
 
     private void insertRecords(int count) {
         Random random = new Random();
-        List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
+        List<String> columns = Arrays.asList("ID", "USER_CODE", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
         String tableName = "USERS";
         Table table = database.getTable(tableName);
 
@@ -59,6 +66,7 @@ public class PerformanceTest {
     private List<Object> generateRecordValues(int index, Random random) {
         List<Object> values = new ArrayList<>();
         String id = String.valueOf(index);
+        String userCode = "CODE" + index; // Ensure unique USER_CODE for clustered index
         String name = "User" + index;
         int age = 18 + (index % 52);
         boolean active = (index % 2) == 0;
@@ -75,6 +83,7 @@ public class PerformanceTest {
         UUID sessionId = new UUID((long) index, (long) index);
 
         values.add(id);
+        values.add(userCode);
         values.add(name);
         values.add(age);
         values.add(active);
@@ -97,15 +106,17 @@ public class PerformanceTest {
         try {
             LOGGER.log(Level.INFO, "Starting INSERT performance test for {0} records", RECORD_COUNT);
 
-            List<String> columns = Arrays.asList("ID", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
+            List<String> columns = Arrays.asList("ID", "USER_CODE", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
             Random random = new Random();
 
             for (int i = 0; i < WARMUP_RUNS; i++) {
                 LOGGER.log(Level.INFO, "Warmup run {0}", i);
                 dropTable();
-                String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+                String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
                 LOGGER.log(Level.INFO, "Executing CREATE TABLE query in warmup: {0}", createQuery);
                 database.executeQuery(createQuery, null);
+                String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
+                database.executeQuery(createIndexQuery, null);
                 insertRecords(RECORD_COUNT);
             }
 
@@ -113,9 +124,11 @@ public class PerformanceTest {
             for (int i = 0; i < TEST_RUNS; i++) {
                 LOGGER.log(Level.INFO, "Test run {0}", i);
                 dropTable();
-                String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+                String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
                 LOGGER.log(Level.INFO, "Executing CREATE TABLE query in test run: {0}", createQuery);
                 database.executeQuery(createQuery, null);
+                String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
+                database.executeQuery(createIndexQuery, null);
                 long startTime = System.nanoTime();
                 insertRecords(RECORD_COUNT);
                 long endTime = System.nanoTime();
@@ -187,9 +200,11 @@ public class PerformanceTest {
             LOGGER.log(Level.INFO, "Warmup run {0}", i);
             dropTable();
             UUID txId = database.beginTransaction(null);
-            String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+            String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
             LOGGER.log(Level.INFO, "Executing CREATE TABLE query in transaction warmup: {0}", createQuery);
             database.executeQuery(createQuery, txId);
+            String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
+            database.executeQuery(createIndexQuery, txId);
             insertRecords(RECORD_COUNT);
             performUpdateRun(random);
             database.executeQuery("COMMIT TRANSACTION", txId);
@@ -201,9 +216,11 @@ public class PerformanceTest {
             dropTable();
             long startTime = System.nanoTime();
             UUID txId = database.beginTransaction(null);
-            String createQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
+            String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
             LOGGER.log(Level.INFO, "Executing CREATE TABLE query in transaction test: {0}", createQuery);
             database.executeQuery(createQuery, txId);
+            String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
+            database.executeQuery(createIndexQuery, txId);
             insertRecords(RECORD_COUNT);
             performUpdateRun(random);
             database.executeQuery("COMMIT TRANSACTION", txId);
@@ -236,15 +253,17 @@ public class PerformanceTest {
         for (int i = 0; i < WARMUP_RUNS; i++) {
             LOGGER.log(Level.INFO, "Warmup run {0}", i);
             dropTable();
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER)", null);
+            database.executeQuery("CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER)", null);
+            String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
+            database.executeQuery(createIndexQuery, null);
             UUID tx1Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
             UUID tx2Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
 
             // Transaction 1: Insert records
             Future<?> tx1 = executor.submit(() -> {
                 for (int j = 1; j <= RECORD_COUNT; j++) {
-                    String insertQuery = String.format("INSERT INTO USERS (ID, NAME, AGE) VALUES ('%d', 'User%d', %d)",
-                            j, j, 18 + (j % 52));
+                    String insertQuery = String.format("INSERT INTO USERS (ID, USER_CODE, NAME, AGE) VALUES ('%d', 'CODE%d', 'User%d', %d)",
+                            j, j, j, 18 + (j % 52));
                     database.executeQuery(insertQuery, tx1Id);
                 }
             });
@@ -274,15 +293,17 @@ public class PerformanceTest {
         for (int i = 0; i < TEST_RUNS; i++) {
             LOGGER.log(Level.INFO, "Test run {0}", i);
             dropTable();
-            database.executeQuery("CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER)", null);
+            database.executeQuery("CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER)", null);
+            String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
+            database.executeQuery(createIndexQuery, null);
             UUID tx1Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
             UUID tx2Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
 
             long startTime = System.nanoTime();
             Future<?> tx1 = executor.submit(() -> {
                 for (int j = 1; j <= RECORD_COUNT; j++) {
-                    String insertQuery = String.format("INSERT INTO USERS (ID, NAME, AGE) VALUES ('%d', 'User%d', %d)",
-                            j, j, 18 + (j % 52));
+                    String insertQuery = String.format("INSERT INTO USERS (ID, USER_CODE, NAME, AGE) VALUES ('%d', 'CODE%d', 'User%d', %d)",
+                            j, j, j, 18 + (j % 52));
                     database.executeQuery(insertQuery, tx1Id);
                 }
             });
@@ -337,7 +358,7 @@ public class PerformanceTest {
         Table table = database.getTable(tableName);
 
         for (int i = 1; i <= RECORD_COUNT; i++) {
-            String updateQuery = String.format(Locale.US, "UPDATE USERS SET SCORE = %f WHERE ID = '%d'",
+            String updateQuery = String.format(Locale.US, "UPDATE USERS SET SCORE = %f WHERE USER_CODE = 'CODE%d'",
                     50 + random.nextFloat() * 50, i);
             database.executeQuery(updateQuery, null);
             table.saveToFile(tableName);
@@ -362,12 +383,14 @@ public class PerformanceTest {
     private List<String> prepareQueries() {
         return Arrays.asList(
                 "SELECT NAME, AGE, ACTIVE FROM USERS WHERE AGE = 25",
-                "SELECT NAME, AGE, SCORE FROM USERS WHERE SCORE > 75.0",
+                "SELECT NAME, AGE, SCORE FROM USERS WHERE SCORE > 75.0", // Keep original case for testing
                 "SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE",
                 "SELECT NAME, AGE, LEVEL FROM USERS WHERE AGE > 40 OR LEVEL > 50",
                 "SELECT NAME, AGE, RANK FROM USERS WHERE NOT AGE = 30",
                 "SELECT NAME, AGE, PRECISION FROM USERS WHERE (AGE < 35 AND ACTIVE = TRUE) OR BALANCE > 500",
-                "SELECT NAME, AGE, INITIAL FROM USERS WHERE (AGE < 40 OR NOT ACTIVE = FALSE) AND RANK < 5"
+                "SELECT NAME, AGE, INITIAL FROM USERS WHERE (AGE < 40 OR NOT ACTIVE = FALSE) AND RANK < 5",
+                "SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'CODE50'", // Clustered index query
+                "SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'CODE50' AND AGE = 25" // Clustered index with additional condition
         );
     }
 

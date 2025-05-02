@@ -174,7 +174,7 @@ class QueryParser {
         String columnsPart = original.substring(original.indexOf("(") + 1, original.lastIndexOf(")")).trim();
         String[] columnDefs = columnsPart.split(",");
         List<String> columns = new ArrayList<>();
-        Map<String, Class<?>> columnTypes = new HashMap<>();
+        Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
@@ -262,6 +262,22 @@ class QueryParser {
         String tableName = tableAndCondition.split(" ")[0].trim();
         List<Condition> conditions = new ArrayList<>();
 
+        Table table = database.getTable(tableName);
+        if (table == null) {
+            throw new IllegalArgumentException("Table not found: " + tableName);
+        }
+        LOGGER.log(Level.FINE, "Table {0} column types: {1}", new Object[]{tableName, table.getColumnTypes()});
+
+        // Validate select columns
+        Map<String, Class<?>> columnTypes = table.getColumnTypes();
+        for (String column : columns) {
+            if (!columnTypes.containsKey(column)) {
+                LOGGER.log(Level.SEVERE, "Unknown column in SELECT: {0}, available columns: {1}",
+                        new Object[]{column, columnTypes.keySet()});
+                throw new IllegalArgumentException("Unknown column: " + column);
+            }
+        }
+
         if (tableAndCondition.contains("WHERE")) {
             String[] tableCondition = tableAndCondition.split("WHERE");
             if (tableCondition.length != 2) {
@@ -292,7 +308,6 @@ class QueryParser {
                 .map(String::trim)
                 .collect(Collectors.toList());
 
-        // Retrieve column types from the table schema
         Table table = database.getTable(tableName);
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
@@ -311,6 +326,8 @@ class QueryParser {
             String column = columns.get(i);
             Class<?> columnType = columnTypes.get(column);
             if (columnType == null) {
+                LOGGER.log(Level.SEVERE, "Unknown column in INSERT: {0}, available columns: {1}",
+                        new Object[]{column, columnTypes.keySet()});
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
             values.add(parseConditionValue(column, val, columnType));
@@ -331,7 +348,6 @@ class QueryParser {
         String tablePart = parts[0].replace("UPDATE", "").trim();
         String tableName = tablePart.split(" ")[0].trim();
 
-        // Retrieve column types from the table schema
         Table table = database.getTable(tableName);
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
@@ -362,6 +378,8 @@ class QueryParser {
             String valueStr = kv[1].trim();
             Class<?> columnType = columnTypes.get(column);
             if (columnType == null) {
+                LOGGER.log(Level.SEVERE, "Unknown column in UPDATE: {0}, available columns: {1}",
+                        new Object[]{column, columnTypes.keySet()});
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
             Object value = parseConditionValue(column, valueStr, columnType);
@@ -387,7 +405,7 @@ class QueryParser {
         LOGGER.log(Level.FINE, "Table and condition: {0}", tableAndCondition);
         String[] whereParts = tableAndCondition.split("(?i)WHERE\\s+", 2);
         String tableName = whereParts[0].trim();
-        List<QueryParser.Condition> conditions = new ArrayList<>();
+        List<Condition> conditions = new ArrayList<>();
 
         if (whereParts.length == 2) {
             String conditionStr = whereParts[1].trim();
@@ -433,7 +451,6 @@ class QueryParser {
                     throw new IllegalArgumentException("Boolean value '" + valueStr + "' does not match column type: " + columnType.getSimpleName());
                 }
             } else {
-                // Try parsing as a number
                 try {
                     if (columnType == BigDecimal.class) {
                         return new BigDecimal(valueStr);
@@ -491,6 +508,8 @@ class QueryParser {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
+        LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}",
+                new Object[]{tableName, columnTypes});
 
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
@@ -584,7 +603,6 @@ class QueryParser {
         String[] partsByOperator = null;
         Operator operator = null;
 
-        // Prioritize operators to avoid splitting on the wrong one
         if (condition.contains("!=")) {
             partsByOperator = condition.split("\\s*!=\\s*", 2);
             operator = Operator.NOT_EQUALS;
@@ -613,6 +631,8 @@ class QueryParser {
         }
         Class<?> columnType = columnTypes.get(conditionColumn);
         if (columnType == null) {
+            LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
+                    new Object[]{conditionColumn, columnTypes.keySet()});
             throw new IllegalArgumentException("Unknown column: " + conditionColumn);
         }
         Object conditionValue = parseConditionValue(conditionColumn, valueStr, columnType);
