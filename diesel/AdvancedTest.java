@@ -20,16 +20,19 @@ public class AdvancedTest {
             createTable();
 
             // Step 2: Create indexes
+            createUniqueIndex();
             createBTreeIndex();
             createHashIndex();
-            createUniqueIndex();
+            createUniqueClusteredIndex();
 
             // Step 3: Insert records
             insertRecords();
 
-            // Step 4: Run INSERT queries with unique index
+            // Step 4: Run INSERT queries
             insertWithUniqueIndex();
             insertWithDuplicateUniqueIndex();
+            insertWithUniqueClusteredIndex();
+            insertWithDuplicateUniqueClusteredIndex();
 
             // Step 5: Run SELECT queries
             selectWithoutWhere();
@@ -37,12 +40,15 @@ public class AdvancedTest {
             selectWithWhereHashIndex();
             selectWithWhereBTreeIndex();
             selectWithWhereUniqueIndex();
+            selectWithWhereUniqueClusteredIndex();
             selectWithWhereIndexedAndNonIndexed();
             selectWithWhereIndexedAndNonIndexedInParentheses();
             selectWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
             selectWithWhereTwoIndexed();
             selectWithWhereUniqueBTreeHashIndexed();
+            selectWithWhereUniqueClusteredBTreeHashIndexed();
             selectWithWhereUniqueBTreeHashIndexedInParentheses();
+            selectWithWhereUniqueClusteredBTreeHashIndexedInParentheses();
             selectWithWhereIndexedOrIndexed();
             selectWithWhereIndexedOrNonIndexed();
 
@@ -51,10 +57,13 @@ public class AdvancedTest {
             updateWithWhereHashIndex();
             updateWithWhereBTreeIndex();
             updateWithWhereUniqueIndex();
+            updateWithWhereUniqueClusteredIndex();
             updateWithWhereIndexedAndNonIndexed();
             updateWithWhereTwoIndexed();
             updateWithWhereUniqueBTreeHashIndexed();
+            updateWithWhereUniqueClusteredBTreeHashIndexed();
             updateWithWhereUniqueBTreeHashIndexedInParentheses();
+            updateWithWhereUniqueClusteredBTreeHashIndexedInParentheses();
             updateWithWhereIndexedOrIndexed();
             updateWithWhereIndexedOrNonIndexed();
             updateWithWhereIndexedAndNonIndexedInParentheses();
@@ -65,12 +74,15 @@ public class AdvancedTest {
             deleteWithWhereHashIndex();
             deleteWithWhereBTreeIndex();
             deleteWithWhereUniqueIndex();
+            deleteWithWhereUniqueClusteredIndex();
             deleteWithWhereIndexedAndNonIndexed();
             deleteWithWhereIndexedAndNonIndexedInParentheses();
             deleteWithWhereIndexedAndNonIndexedInParenthesesWithSpaces();
             deleteWithWhereTwoIndexed();
             deleteWithWhereUniqueBTreeHashIndexed();
+            deleteWithWhereUniqueClusteredBTreeHashIndexed();
             deleteWithWhereUniqueBTreeHashIndexedInParentheses();
+            deleteWithWhereUniqueClusteredBTreeHashIndexedInParentheses();
             deleteWithWhereIndexedOrIndexed();
             deleteWithWhereIndexedOrNonIndexed();
 
@@ -82,10 +94,17 @@ public class AdvancedTest {
 
     private void createTable() {
         dropTable();
-        String createTableQuery = "CREATE TABLE USERS (ID STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)";
+        String createTableQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)";
         LOGGER.log(Level.INFO, "Executing: {0}", createTableQuery);
         database.executeQuery(createTableQuery, null);
         LOGGER.log(Level.INFO, "Table USERS created");
+    }
+
+    private void createUniqueIndex() {
+        String createIndexQuery = "CREATE UNIQUE INDEX ON USERS (ID)";
+        LOGGER.log(Level.INFO, "Executing: {0}", createIndexQuery);
+        database.executeQuery(createIndexQuery, null);
+        LOGGER.log(Level.INFO, "Unique index created on ID");
     }
 
     private void createBTreeIndex() {
@@ -102,26 +121,27 @@ public class AdvancedTest {
         LOGGER.log(Level.INFO, "Hash index created on NAME");
     }
 
-    private void createUniqueIndex() {
-        String createIndexQuery = "CREATE UNIQUE INDEX ON USERS (ID)";
+    private void createUniqueClusteredIndex() {
+        String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
         LOGGER.log(Level.INFO, "Executing: {0}", createIndexQuery);
         database.executeQuery(createIndexQuery, null);
-        LOGGER.log(Level.INFO, "Unique index created on ID");
+        LOGGER.log(Level.INFO, "Unique clustered index created on USER_CODE");
     }
 
     private void insertRecords() {
         LOGGER.log(Level.INFO, "Inserting {0} records", RECORD_COUNT);
-        List<String> columns = Arrays.asList("ID", "NAME", "AGE", "BALANCE");
+        List<String> columns = Arrays.asList("ID", "USER_CODE", "NAME", "AGE", "BALANCE");
         Table table = database.getTable("USERS");
         Random random = new Random();
 
         long startTime = System.nanoTime();
         for (int i = 1; i <= RECORD_COUNT; i++) {
             List<Object> values = new ArrayList<>();
-            values.add(String.valueOf(i));
-            values.add("User" + i);
-            values.add(18 + (i % 82)); // Ages between 18 and 99
-            values.add(new BigDecimal(100 + (i % 9000)).setScale(2, BigDecimal.ROUND_HALF_UP));
+            values.add(String.valueOf(i)); // ID
+            values.add("CODE" + i); // USER_CODE
+            values.add("User" + i); // NAME
+            values.add(18 + (i % 82)); // AGE (18-99)
+            values.add(new BigDecimal(100 + (i % 9000)).setScale(2, BigDecimal.ROUND_HALF_UP)); // BALANCE
 
             InsertQuery insertQuery = new InsertQuery(columns, values);
             insertQuery.execute(table);
@@ -133,7 +153,7 @@ public class AdvancedTest {
     }
 
     private void insertWithUniqueIndex() {
-        String query = "INSERT INTO USERS (ID, NAME, AGE, BALANCE) VALUES ('1001', 'User1001', 25, 1500.00)";
+        String query = "INSERT INTO USERS (ID, USER_CODE, NAME, AGE, BALANCE) VALUES ('1001', 'CODE1001', 'User1001', 25, 1500.00)";
         LOGGER.log(Level.INFO, "Executing INSERT with unique index: {0}", query);
         long startTime = System.nanoTime();
         try {
@@ -149,7 +169,7 @@ public class AdvancedTest {
     }
 
     private void insertWithDuplicateUniqueIndex() {
-        String query = "INSERT INTO USERS (ID, NAME, AGE, BALANCE) VALUES ('1001', 'User1001Duplicate', 25, 1500.00)";
+        String query = "INSERT INTO USERS (ID, USER_CODE, NAME, AGE, BALANCE) VALUES ('1001', 'CODE1001DUP', 'User1001Duplicate', 25, 1500.00)";
         LOGGER.log(Level.INFO, "Executing INSERT with duplicate unique index: {0}", query);
         long startTime = System.nanoTime();
         try {
@@ -159,6 +179,37 @@ public class AdvancedTest {
             long endTime = System.nanoTime();
             double durationMs = (endTime - startTime) / 1_000_000.0;
             LOGGER.log(Level.INFO, "Insert with duplicate unique index failed as expected: {0}, Time: {1} ms",
+                    new Object[]{e.getMessage(), String.format("%.3f", durationMs)});
+        }
+    }
+
+    private void insertWithUniqueClusteredIndex() {
+        String query = "INSERT INTO USERS (ID, USER_CODE, NAME, AGE, BALANCE) VALUES ('1002', 'CODE1002', 'User1002', 26, 1600.00)";
+        LOGGER.log(Level.INFO, "Executing INSERT with unique clustered index: {0}", query);
+        long startTime = System.nanoTime();
+        try {
+            database.executeQuery(query, null);
+            database.getTable("USERS").saveToFile("USERS");
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / 1_000_000.0;
+            LOGGER.log(Level.INFO, "Insert with unique clustered index completed in {0} ms", String.format("%.3f", durationMs));
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Insert with unique clustered index failed: {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void insertWithDuplicateUniqueClusteredIndex() {
+        String query = "INSERT INTO USERS (ID, USER_CODE, NAME, AGE, BALANCE) VALUES ('1003', 'CODE1002', 'User1002Duplicate', 26, 1600.00)";
+        LOGGER.log(Level.INFO, "Executing INSERT with duplicate unique clustered index: {0}", query);
+        long startTime = System.nanoTime();
+        try {
+            database.executeQuery(query, null);
+            LOGGER.log(Level.WARNING, "Insert with duplicate unique clustered index succeeded unexpectedly");
+        } catch (IllegalStateException e) {
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / 1_000_000.0;
+            LOGGER.log(Level.INFO, "Insert with duplicate unique clustered index failed as expected: {0}, Time: {1} ms",
                     new Object[]{e.getMessage(), String.format("%.3f", durationMs)});
         }
     }
@@ -205,7 +256,7 @@ public class AdvancedTest {
     }
 
     private void selectWithoutWhere() {
-        String query = "SELECT ID, NAME, AGE, BALANCE FROM USERS";
+        String query = "SELECT ID, USER_CODE, NAME, AGE, BALANCE FROM USERS";
         executeSelectQuery(query);
     }
 
@@ -226,6 +277,11 @@ public class AdvancedTest {
 
     private void selectWithWhereUniqueIndex() {
         String query = "SELECT ID, NAME FROM USERS WHERE ID = '500'";
+        executeSelectQuery(query);
+    }
+
+    private void selectWithWhereUniqueClusteredIndex() {
+        String query = "SELECT ID, NAME FROM USERS WHERE USER_CODE = 'CODE500'";
         executeSelectQuery(query);
     }
 
@@ -254,8 +310,18 @@ public class AdvancedTest {
         executeSelectQuery(query);
     }
 
+    private void selectWithWhereUniqueClusteredBTreeHashIndexed() {
+        String query = "SELECT ID, NAME FROM USERS WHERE USER_CODE = 'CODE500' AND AGE = 50 AND NAME = 'User500'";
+        executeSelectQuery(query);
+    }
+
     private void selectWithWhereUniqueBTreeHashIndexedInParentheses() {
         String query = "SELECT ID, NAME FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
+        executeSelectQuery(query);
+    }
+
+    private void selectWithWhereUniqueClusteredBTreeHashIndexedInParentheses() {
+        String query = "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')";
         executeSelectQuery(query);
     }
 
@@ -289,6 +355,11 @@ public class AdvancedTest {
         executeUpdateQuery(query);
     }
 
+    private void updateWithWhereUniqueClusteredIndex() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE USER_CODE = 'CODE500'";
+        executeUpdateQuery(query);
+    }
+
     private void updateWithWhereIndexedAndNonIndexed() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE AGE = 50 AND BALANCE > 5000";
         executeUpdateQuery(query);
@@ -304,8 +375,18 @@ public class AdvancedTest {
         executeUpdateQuery(query);
     }
 
+    private void updateWithWhereUniqueClusteredBTreeHashIndexed() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE USER_CODE = 'CODE500' AND AGE = 50 AND NAME = 'User500'";
+        executeUpdateQuery(query);
+    }
+
     private void updateWithWhereUniqueBTreeHashIndexedInParentheses() {
         String query = "UPDATE USERS SET BALANCE = 6000 WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
+        executeUpdateQuery(query);
+    }
+
+    private void updateWithWhereUniqueClusteredBTreeHashIndexedInParentheses() {
+        String query = "UPDATE USERS SET BALANCE = 6000 WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')";
         executeUpdateQuery(query);
     }
 
@@ -349,6 +430,11 @@ public class AdvancedTest {
         executeDeleteQuery(query);
     }
 
+    private void deleteWithWhereUniqueClusteredIndex() {
+        String query = "DELETE FROM USERS WHERE USER_CODE = 'CODE500'";
+        executeDeleteQuery(query);
+    }
+
     private void deleteWithWhereIndexedAndNonIndexed() {
         String query = "DELETE FROM USERS WHERE AGE = 50 AND BALANCE > 5000";
         executeDeleteQuery(query);
@@ -374,8 +460,18 @@ public class AdvancedTest {
         executeDeleteQuery(query);
     }
 
+    private void deleteWithWhereUniqueClusteredBTreeHashIndexed() {
+        String query = "DELETE FROM USERS WHERE USER_CODE = 'CODE500' AND AGE = 50 AND NAME = 'User500'";
+        executeDeleteQuery(query);
+    }
+
     private void deleteWithWhereUniqueBTreeHashIndexedInParentheses() {
         String query = "DELETE FROM USERS WHERE (ID = '500') AND (AGE = 50) AND (NAME = 'User500')";
+        executeDeleteQuery(query);
+    }
+
+    private void deleteWithWhereUniqueClusteredBTreeHashIndexedInParentheses() {
+        String query = "DELETE FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')";
         executeDeleteQuery(query);
     }
 

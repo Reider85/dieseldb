@@ -49,3 +49,4 @@
 0.4.9 Advanced Delete Test fix
 0.5.0 Unique Index
 0.5.1 Test Unique Index
+0.5.2 Unique B-tree clustered index

@@ -100,6 +100,14 @@ class Database {
                     currentTransaction.updateTable(indexQuery.getTableName(), table);
                 }
                 return "Unique index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
+            } else if (parsedQuery instanceof CreateUniqueClusteredIndexQuery) {
+                CreateUniqueClusteredIndexQuery indexQuery = (CreateUniqueClusteredIndexQuery) parsedQuery;
+                Table table = getTable(indexQuery.getTableName());
+                indexQuery.execute(table);
+                if (currentTransaction != null && currentTransaction.isActive()) {
+                    currentTransaction.updateTable(indexQuery.getTableName(), table);
+                }
+                return "Unique clustered index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
             }
 
             LOGGER.log(Level.FINE, "Calling extractTableName for query: {0}", query);
@@ -214,7 +222,8 @@ class Database {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE TABLE");
             }
             return tablePart;
-        } else if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX") || normalized.startsWith("CREATE UNIQUE INDEX")) {
+        } else if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX") ||
+                normalized.startsWith("CREATE UNIQUE INDEX") || normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
             LOGGER.log(Level.FINE, "Processing CREATE INDEX query");
             String[] parts = normalized.split("(?i)ON\\s+", 2);
             if (parts.length < 2) {

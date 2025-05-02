@@ -75,6 +75,8 @@ class QueryParser {
                 return parseDeleteQuery(normalized, query);
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
+            } else if (normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
+                return parseCreateUniqueClusteredIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE UNIQUE INDEX")) {
                 return parseCreateUniqueIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE HASH INDEX")) {
@@ -148,6 +150,18 @@ class QueryParser {
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
         return new CreateUniqueIndexQuery(tableName, columnName);
+    }
+
+    private Query<Void> parseCreateUniqueClusteredIndexQuery(String normalized) {
+        String[] parts = normalized.split("ON");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid CREATE UNIQUE CLUSTERED INDEX query format");
+        }
+        String indexPart = parts[0].replace("CREATE UNIQUE CLUSTERED INDEX", "").trim();
+        String tableAndColumn = parts[1].trim();
+        String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
+        String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
+        return new CreateUniqueClusteredIndexQuery(tableName, columnName);
     }
 
     private Query<Void> parseCreateTableQuery(String normalized, String original) {
