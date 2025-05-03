@@ -179,7 +179,7 @@ class QueryParser {
         List<String> columnDefs = splitColumnDefinitions(columnsPart);
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        Map<String, Sequence> sequences = new HashMap<>();
+        Map<String, Sequence> sequences = new TreeMap<>(String.CASE_INSENSITIVE_ORDER); // Use case-insensitive map
         String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
@@ -189,12 +189,22 @@ class QueryParser {
             }
             String colName = colParts[0];
             String type = colParts[1].toUpperCase();
-            boolean isPrimaryKey = colParts.length > 2 && colParts[2].toUpperCase().contains("PRIMARY KEY");
+            String constraints = colParts.length > 2 ? colParts[2].toUpperCase() : "";
+            boolean isPrimaryKey = constraints.contains("PRIMARY KEY");
+            boolean hasSequence = constraints.contains("SEQUENCE") || type.endsWith("_SEQUENCE");
 
             columns.add(colName);
-            if (type.startsWith("LONG_SEQUENCE")) {
-                columnTypes.put(colName, Long.class);
-                String seqDef = colParts.length > 2 ? colParts[2].replaceAll(".*SEQUENCE\\(([^)]+)\\).*", "$1").trim() : "";
+
+            if (hasSequence) {
+                if (!type.equals("LONG") && !type.equals("INTEGER") && !type.startsWith("LONG_SEQUENCE") && !type.startsWith("INTEGER_SEQUENCE")) {
+                    throw new IllegalArgumentException("Sequence is only supported for LONG or INTEGER types: " + colDef);
+                }
+                String seqDef;
+                if (type.endsWith("_SEQUENCE")) {
+                    seqDef = colParts.length > 2 ? colParts[2].replaceAll(".*SEQUENCE\\(([^)]+)\\).*", "$1").trim() : "";
+                } else {
+                    seqDef = constraints.replaceAll(".*SEQUENCE\\(([^)]+)\\).*", "$1").trim();
+                }
                 String[] seqParts = seqDef.split("\\s+");
                 if (seqParts.length < 3) {
                     throw new IllegalArgumentException("Invalid SEQUENCE definition in column: " + colDef);
@@ -202,7 +212,9 @@ class QueryParser {
                 String seqName = seqParts[0];
                 long start = Long.parseLong(seqParts[1]);
                 long increment = Long.parseLong(seqParts[2]);
-                sequences.put(colName, new Sequence(seqName, Long.class, start, increment));
+                Class<?> seqType = type.equals("LONG") || type.startsWith("LONG_SEQUENCE") ? Long.class : Integer.class;
+                sequences.put(colName, new Sequence(seqName, seqType, start, increment));
+                columnTypes.put(colName, seqType);
             } else {
                 switch (type) {
                     case "STRING":
@@ -210,10 +222,6 @@ class QueryParser {
                         break;
                     case "INTEGER":
                         columnTypes.put(colName, Integer.class);
-                        break;
-                    case "INTEGER_SEQUENCE":
-                        columnTypes.put(colName, Integer.class);
-                        sequences.put(colName, new Sequence(tableName + "_" + colName + "_seq", Integer.class, 1, 1));
                         break;
                     case "LONG":
                         columnTypes.put(colName, Long.class);
@@ -267,7 +275,6 @@ class QueryParser {
 
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
     }
-
     // Helper method to split column definitions, respecting nested parentheses
     private List<String> splitColumnDefinitions(String columnsPart) {
         List<String> columnDefs = new ArrayList<>();
