@@ -30,13 +30,13 @@ public class AdvancedTest {
 
             // Step 4: Run INSERT queries
             insertWithSequencePrimaryKey();
-            insertWithDuplicateSequencePrimaryKey(); // No exception expected, as sequence ensures unique IDs
+            insertWithDuplicateSequencePrimaryKey();
             insertWithUniqueIndex();
             try {
                 insertWithDuplicateUniqueIndex();
                 throw new RuntimeException("insertWithDuplicateUniqueIndex succeeded unexpectedly, test failed");
             } catch (RuntimeException e) {
-                if (e.getCause() instanceof IllegalStateException) {
+                if (e.getCause() != null && e.getCause() instanceof IllegalStateException) {
                     LOGGER.log(Level.INFO, "Expected failure in insertWithDuplicateUniqueIndex: {0}", e.getCause().getMessage());
                 } else {
                     LOGGER.log(Level.SEVERE, "Unexpected error in insertWithDuplicateUniqueIndex: {0}", e.getMessage());
@@ -48,7 +48,7 @@ public class AdvancedTest {
                 insertWithDuplicateUniqueClusteredIndex();
                 throw new RuntimeException("insertWithDuplicateUniqueClusteredIndex succeeded unexpectedly, test failed");
             } catch (RuntimeException e) {
-                if (e.getCause() instanceof IllegalStateException) {
+                if (e.getCause() != null && e.getCause() instanceof IllegalStateException) {
                     LOGGER.log(Level.INFO, "Expected failure in insertWithDuplicateUniqueClusteredIndex: {0}", e.getCause().getMessage());
                 } else {
                     LOGGER.log(Level.SEVERE, "Unexpected error in insertWithDuplicateUniqueClusteredIndex: {0}", e.getMessage());
@@ -56,7 +56,7 @@ public class AdvancedTest {
                 }
             }
             insertWithPrimaryKey();
-            insertWithDuplicatePrimaryKey(); // No exception expected, as sequence ensures unique IDs
+            insertWithDuplicatePrimaryKey();
 
             // Step 5: Run SELECT queries
             selectWithWhereSequencePrimaryKey();
@@ -243,13 +243,20 @@ public class AdvancedTest {
         long startTime = System.nanoTime();
         try {
             database.executeQuery(query, null);
-            database.getTable("USERS").saveToFile("USERS");
             long endTime = System.nanoTime();
             double durationMs = (endTime - startTime) / 1_000_000.0;
             LOGGER.log(Level.WARNING, "Insert with duplicate unique index succeeded unexpectedly in {0} ms", String.format("%.3f", durationMs));
-        } catch (Exception e) {
-            LOGGER.log(Level.INFO, "Expected failure in insertWithDuplicateUniqueIndex: {0}", e.getMessage());
-            throw new RuntimeException("Expected failure in insertWithDuplicateUniqueIndex", e);
+            throw new RuntimeException("insertWithDuplicateUniqueIndex succeeded unexpectedly, test failed");
+        } catch (RuntimeException e) {
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / 1_000_000.0;
+            if (e.getCause() != null && e.getCause() instanceof IllegalStateException) {
+                LOGGER.log(Level.INFO, "Expected failure in insertWithDuplicateUniqueIndex: {0} in {1} ms", new Object[]{e.getCause().getMessage(), String.format("%.3f", durationMs)});
+                throw e; // Rethrow to allow runTests to validate
+            } else {
+                LOGGER.log(Level.SEVERE, "Unexpected error in insertWithDuplicateUniqueIndex: {0} in {1} ms", new Object[]{e.getMessage(), String.format("%.3f", durationMs)});
+                throw e;
+            }
         }
     }
 
@@ -275,13 +282,20 @@ public class AdvancedTest {
         long startTime = System.nanoTime();
         try {
             database.executeQuery(query, null);
-            database.getTable("USERS").saveToFile("USERS");
             long endTime = System.nanoTime();
             double durationMs = (endTime - startTime) / 1_000_000.0;
             LOGGER.log(Level.WARNING, "Insert with duplicate unique index succeeded unexpectedly in {0} ms", String.format("%.3f", durationMs));
-        } catch (Exception e) {
-            LOGGER.log(Level.INFO, "Expected failure in insertWithDuplicateUniqueClusteredIndex: {0}", e.getMessage());
-            throw new RuntimeException("Expected failure in insertWithDuplicateUniqueClusteredIndex", e);
+            throw new RuntimeException("insertWithDuplicateUniqueClusteredIndex succeeded unexpectedly, test failed");
+        } catch (RuntimeException e) {
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / 1_000_000.0;
+            if (e.getCause() != null && e.getCause() instanceof IllegalStateException) {
+                LOGGER.log(Level.INFO, "Expected failure in insertWithDuplicateUniqueClusteredIndex: {0} in {1} ms", new Object[]{e.getCause().getMessage(), String.format("%.3f", durationMs)});
+                throw e; // Rethrow to allow runTests to validate
+            } else {
+                LOGGER.log(Level.SEVERE, "Unexpected error in insertWithDuplicateUniqueClusteredIndex: {0} in {1} ms", new Object[]{e.getMessage(), String.format("%.3f", durationMs)});
+                throw e;
+            }
         }
     }
 
