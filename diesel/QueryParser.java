@@ -165,14 +165,18 @@ class QueryParser {
     }
 
     private Query<Void> parseCreateTableQuery(String normalized, String original) {
-        String[] parts = normalized.split("\\(");
-        if (parts.length != 2) {
-            throw new IllegalArgumentException("Invalid CREATE TABLE query format");
+        // Extract table name and column definitions
+        int firstParen = original.indexOf('(');
+        int lastParen = original.lastIndexOf(')');
+        if (firstParen == -1 || lastParen == -1 || lastParen < firstParen) {
+            throw new IllegalArgumentException("Invalid CREATE TABLE query format: missing or mismatched parentheses");
         }
 
-        String tableName = parts[0].replace("CREATE TABLE", "").trim();
-        String columnsPart = original.substring(original.indexOf("(") + 1, original.lastIndexOf(")")).trim();
-        String[] columnDefs = columnsPart.split(",\\s*(?=(?:[^']*'[^']*')*[^']*$)");
+        String tableName = original.substring(0, firstParen).replace("CREATE TABLE", "").trim();
+        String columnsPart = original.substring(firstParen + 1, lastParen).trim();
+
+        // Split column definitions, respecting commas outside of parentheses
+        List<String> columnDefs = splitColumnDefinitions(columnsPart);
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         Map<String, Sequence> sequences = new HashMap<>();
@@ -188,57 +192,66 @@ class QueryParser {
             boolean isPrimaryKey = colParts.length > 2 && colParts[2].toUpperCase().contains("PRIMARY KEY");
 
             columns.add(colName);
-            switch (type) {
-                case "STRING":
-                    columnTypes.put(colName, String.class);
-                    break;
-                case "INTEGER":
-                    columnTypes.put(colName, Integer.class);
-                    break;
-                case "INTEGER_SEQUENCE":
-                    columnTypes.put(colName, Integer.class);
-                    sequences.put(colName, new Sequence(tableName + "_" + colName + "_seq", Integer.class, 1, 1));
-                    break;
-                case "LONG":
-                    columnTypes.put(colName, Long.class);
-                    break;
-                case "LONG_SEQUENCE":
-                    columnTypes.put(colName, Long.class);
-                    sequences.put(colName, new Sequence(tableName + "_" + colName + "_seq", Long.class, 1, 1));
-                    break;
-                case "SHORT":
-                    columnTypes.put(colName, Short.class);
-                    break;
-                case "BYTE":
-                    columnTypes.put(colName, Byte.class);
-                    break;
-                case "BIGDECIMAL":
-                    columnTypes.put(colName, BigDecimal.class);
-                    break;
-                case "FLOAT":
-                    columnTypes.put(colName, Float.class);
-                    break;
-                case "DOUBLE":
-                    columnTypes.put(colName, Double.class);
-                    break;
-                case "CHAR":
-                    columnTypes.put(colName, Character.class);
-                    break;
-                case "UUID":
-                    columnTypes.put(colName, UUID.class);
-                    break;
-                case "BOOLEAN":
-                    columnTypes.put(colName, Boolean.class);
-                    break;
-                case "DATE":
-                    columnTypes.put(colName, LocalDate.class);
-                    break;
-                case "DATETIME":
-                case "DATETIME_MS":
-                    columnTypes.put(colName, LocalDateTime.class);
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unsupported column type: " + type);
+            if (type.startsWith("LONG_SEQUENCE")) {
+                columnTypes.put(colName, Long.class);
+                String seqDef = colParts.length > 2 ? colParts[2].replaceAll(".*SEQUENCE\\(([^)]+)\\).*", "$1").trim() : "";
+                String[] seqParts = seqDef.split("\\s+");
+                if (seqParts.length < 3) {
+                    throw new IllegalArgumentException("Invalid SEQUENCE definition in column: " + colDef);
+                }
+                String seqName = seqParts[0];
+                long start = Long.parseLong(seqParts[1]);
+                long increment = Long.parseLong(seqParts[2]);
+                sequences.put(colName, new Sequence(seqName, Long.class, start, increment));
+            } else {
+                switch (type) {
+                    case "STRING":
+                        columnTypes.put(colName, String.class);
+                        break;
+                    case "INTEGER":
+                        columnTypes.put(colName, Integer.class);
+                        break;
+                    case "INTEGER_SEQUENCE":
+                        columnTypes.put(colName, Integer.class);
+                        sequences.put(colName, new Sequence(tableName + "_" + colName + "_seq", Integer.class, 1, 1));
+                        break;
+                    case "LONG":
+                        columnTypes.put(colName, Long.class);
+                        break;
+                    case "SHORT":
+                        columnTypes.put(colName, Short.class);
+                        break;
+                    case "BYTE":
+                        columnTypes.put(colName, Byte.class);
+                        break;
+                    case "BIGDECIMAL":
+                        columnTypes.put(colName, BigDecimal.class);
+                        break;
+                    case "FLOAT":
+                        columnTypes.put(colName, Float.class);
+                        break;
+                    case "DOUBLE":
+                        columnTypes.put(colName, Double.class);
+                        break;
+                    case "CHAR":
+                        columnTypes.put(colName, Character.class);
+                        break;
+                    case "UUID":
+                        columnTypes.put(colName, UUID.class);
+                        break;
+                    case "BOOLEAN":
+                        columnTypes.put(colName, Boolean.class);
+                        break;
+                    case "DATE":
+                        columnTypes.put(colName, LocalDate.class);
+                        break;
+                    case "DATETIME":
+                    case "DATETIME_MS":
+                        columnTypes.put(colName, LocalDateTime.class);
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Unsupported column type: " + type);
+                }
             }
 
             if (isPrimaryKey) {
@@ -253,6 +266,45 @@ class QueryParser {
                 new Object[]{tableName, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
 
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
+    }
+
+    // Helper method to split column definitions, respecting nested parentheses
+    private List<String> splitColumnDefinitions(String columnsPart) {
+        List<String> columnDefs = new ArrayList<>();
+        StringBuilder currentDef = new StringBuilder();
+        int parenDepth = 0;
+        boolean inQuotes = false;
+
+        for (int i = 0; i < columnsPart.length(); i++) {
+            char c = columnsPart.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentDef.append(c);
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                } else if (c == ',' && parenDepth == 0) {
+                    String def = currentDef.toString().trim();
+                    if (!def.isEmpty()) {
+                        columnDefs.add(def);
+                    }
+                    currentDef = new StringBuilder();
+                    continue;
+                }
+            }
+            currentDef.append(c);
+        }
+
+        String lastDef = currentDef.toString().trim();
+        if (!lastDef.isEmpty()) {
+            columnDefs.add(lastDef);
+        }
+
+        return columnDefs;
     }
 
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
