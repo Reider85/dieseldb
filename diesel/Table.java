@@ -26,18 +26,17 @@ class Table implements Serializable {
     private final List<Map<String, Object>> rows;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
     private transient Map<String, Index> indexes;
-    private transient Map<String, Sequence> sequences; // Map to store sequences for columns
+    private transient Map<String, Sequence> sequences;
     private boolean isFileInitialized;
     private boolean hasClusteredIndex;
     private String clusteredIndexColumn;
     private transient BTreeClusteredIndex clusteredIndex;
-    private transient Database database; // New field to store Database reference
+    private transient Database database;
 
     public Table(Database database, String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
-        this.database = database; // Store Database reference
+        this.database = database;
         this.name = name;
         this.columns = new ArrayList<>(columns);
-        // Use case-insensitive map for column types
         this.columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         this.columnTypes.putAll(columnTypes);
         this.primaryKeyColumn = primaryKeyColumn;
@@ -50,10 +49,8 @@ class Table implements Serializable {
         this.clusteredIndexColumn = null;
         this.clusteredIndex = null;
 
-        // Validate schema
         validateSchema(columns, columnTypes);
 
-        // Automatically create a unique clustered index for the primary key if specified
         if (primaryKeyColumn != null) {
             if (!this.columnTypes.containsKey(primaryKeyColumn)) {
                 throw new IllegalArgumentException("Primary key column " + primaryKeyColumn + " does not exist");
@@ -70,7 +67,6 @@ class Table implements Serializable {
     }
 
     private void validateSchema(List<String> columns, Map<String, Class<?>> columnTypes) {
-        // Ensure all columns in the list have corresponding types
         for (String column : columns) {
             if (!columnTypes.containsKey(column)) {
                 LOGGER.log(Level.SEVERE, "Schema validation failed: Column {0} missing in columnTypes {1}",
@@ -78,7 +74,6 @@ class Table implements Serializable {
                 throw new IllegalArgumentException("Column " + column + " missing in columnTypes");
             }
         }
-        // Ensure all columnTypes have corresponding columns
         for (String column : columnTypes.keySet()) {
             if (!columns.contains(column)) {
                 LOGGER.log(Level.WARNING, "Column {0} in columnTypes but not in columns list {1}",
@@ -239,7 +234,6 @@ class Table implements Serializable {
     }
 
     public Map<String, Class<?>> getColumnTypes() {
-        // Return a case-insensitive copy
         return new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }};
     }
 
@@ -260,7 +254,6 @@ class Table implements Serializable {
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
-        // Ensure columnTypes is case-insensitive after deserialization
         Map<String, Class<?>> tempColumnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         tempColumnTypes.putAll(columnTypes);
         this.columnTypes.clear();
@@ -279,7 +272,7 @@ class Table implements Serializable {
                 }
             }
         }
-        this.database = null; // Database will need to be reinitialized after deserialization
+        this.database = null;
     }
 
     public void addRow(Map<String, Object> row) {
@@ -287,14 +280,11 @@ class Table implements Serializable {
         Map<String, Object> validatedRow = new HashMap<>();
         for (String col : columns) {
             Object value;
-            // Check if the column has a sequence
             Sequence sequence = sequences.get(col);
             if (sequence != null) {
-                // Prevent manual insertion of sequence-based primary key values
                 if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
                     throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
                 }
-                // Generate sequence value if not provided
                 if (!row.containsKey(col)) {
                     value = sequence.nextValue();
                 } else {
@@ -304,6 +294,13 @@ class Table implements Serializable {
                 throw new IllegalArgumentException("Missing value for column: " + col);
             } else {
                 value = row.get(col);
+            }
+            Index index = indexes.get(col);
+            if (index instanceof UniqueIndex || index instanceof BTreeClusteredIndex) {
+                if (value != null && index.search(value).size() > 0) {
+                    LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, col});
+                    throw new IllegalStateException("Duplicate key violation: key '" + value + "' already exists in column " + col);
+                }
             }
             Class<?> expectedType = columnTypes.get(col);
             if (value == null || expectedType == null) {
@@ -359,6 +356,7 @@ class Table implements Serializable {
             }
             List<Integer> existing = clusteredIndex.search(key);
             if (!existing.isEmpty()) {
+                LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
                 throw new IllegalStateException("Duplicate key violation: key '" + key + "' in column " + clusteredIndexColumn);
             }
 
@@ -429,7 +427,6 @@ class Table implements Serializable {
             Map<String, Object> row = rows.get(i);
             LOGGER.log(Level.FINE, "Processing row {0}: {1}", new Object[]{i, row});
 
-            // Update clustered index
             Object clusteredKey = row.get(clusteredIndexColumn);
             if (clusteredKey != null) {
                 List<Integer> clusteredIndices = clusteredIndex.search(clusteredKey);
@@ -441,7 +438,6 @@ class Table implements Serializable {
                 }
             }
 
-            // Update other indices
             for (Map.Entry<String, Index> entry : indexes.entrySet()) {
                 String column = entry.getKey();
                 Index index = entry.getValue();
@@ -516,7 +512,7 @@ class Table implements Serializable {
         String fileName = tableName + ".table";
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
             Table table = (Table) ois.readObject();
-            table.database = database; // Reassign Database after deserialization
+            table.database = database;
             table.setFileInitialized(true);
             LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
             return table;

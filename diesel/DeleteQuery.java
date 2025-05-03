@@ -83,7 +83,7 @@ class DeleteQuery implements Query<Void> {
                 }
             }
 
-            // Update indexes for remaining rows to ensure consistency
+            // Update indices for rows that have shifted
             for (int i = 0; i < rows.size(); i++) {
                 Map<String, Object> row = rows.get(i);
                 for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
@@ -91,7 +91,15 @@ class DeleteQuery implements Query<Void> {
                     Index index = entry.getValue();
                     Object key = row.get(column);
                     if (key != null) {
-                        index.remove(key, i);
+                        List<Integer> currentIndices = index.search(key);
+                        if (currentIndices.contains(i)) {
+                            continue; // Index is correct for this row
+                        }
+                        // Remove any stale index entries for this key
+                        for (Integer oldIndex : currentIndices) {
+                            index.remove(key, oldIndex);
+                        }
+                        // Insert the updated index entry
                         index.insert(key, i);
                     }
                 }

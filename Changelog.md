@@ -64,3 +64,4 @@
 0.6.4 INSERT fix
 0.6.5 Advanced Test fix
 0.6.6 Perfomance test encoding
+0.6.7 Advanced Test fix
