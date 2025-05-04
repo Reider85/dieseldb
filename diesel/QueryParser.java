@@ -39,7 +39,7 @@ class QueryParser {
             this.subConditions = null;
         }
 
-        // Конструктор для IN
+        // Конструктор для IN и NOT IN
         Condition(String column, List<Object> inValues, String conjunction, boolean not) {
             this.column = column;
             this.value = null;
@@ -704,13 +704,11 @@ class QueryParser {
     private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes) {
         LOGGER.log(Level.FINE, "Parsing condition: {0}", condition);
         boolean isNot = condition.startsWith("NOT ");
-        if (isNot) {
-            condition = condition.substring(4).trim();
-        }
+        String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
 
-        // Проверка на IN
-        if (condition.toUpperCase().contains(" IN ")) {
-            String[] parts = condition.split("\\s+IN\\s+", 2);
+        // Проверка на IN или NOT IN
+        if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
+            String[] parts = conditionWithoutNot.split("\\s+IN\\s+", 2);
             if (parts.length != 2) {
                 LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}", condition);
                 throw new IllegalArgumentException("Invalid IN clause: " + condition);
@@ -740,32 +738,32 @@ class QueryParser {
                 inValues.add(parseConditionValue(conditionColumn, val.trim(), columnType));
             }
 
-            LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}, not={2}, conjunction={3}",
-                    new Object[]{conditionColumn, inValues, isNot, conjunction});
+            LOGGER.log(Level.FINE, "Parsed {0} condition: column={1}, values={2}, not={3}, conjunction={4}",
+                    new Object[]{isNot ? "NOT IN" : "IN", conditionColumn, inValues, isNot, conjunction});
             return new Condition(conditionColumn, inValues, conjunction, isNot);
         }
 
         String[] partsByOperator = null;
         Operator operator = null;
 
-        if (condition.contains("!=")) {
-            partsByOperator = condition.split("\\s*!=\\s*", 2);
+        if (conditionWithoutNot.contains("!=")) {
+            partsByOperator = conditionWithoutNot.split("\\s*!=\\s*", 2);
             operator = Operator.NOT_EQUALS;
-        } else if (condition.contains("=")) {
-            partsByOperator = condition.split("\\s*=\\s*", 2);
+        } else if (conditionWithoutNot.contains("=")) {
+            partsByOperator = conditionWithoutNot.split("\\s*=\\s*", 2);
             operator = Operator.EQUALS;
-        } else if (condition.contains("<")) {
-            partsByOperator = condition.split("\\s*<\\s*", 2);
+        } else if (conditionWithoutNot.contains("<")) {
+            partsByOperator = conditionWithoutNot.split("\\s*<\\s*", 2);
             operator = Operator.LESS_THAN;
-        } else if (condition.contains(">")) {
-            partsByOperator = condition.split("\\s*>\\s*", 2);
+        } else if (conditionWithoutNot.contains(">")) {
+            partsByOperator = conditionWithoutNot.split("\\s*>\\s*", 2);
             operator = Operator.GREATER_THAN;
         }
 
         if (partsByOperator == null || partsByOperator.length != 2) {
             LOGGER.log(Level.SEVERE, "Invalid condition format: {0}, parts: {1}",
                     new Object[]{condition, partsByOperator == null ? "null" : Arrays.toString(partsByOperator)});
-            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, >, or IN with valid column and value");
+            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, >, IN, or NOT IN with valid column and value");
         }
 
         String conditionColumn = partsByOperator[0].trim();
