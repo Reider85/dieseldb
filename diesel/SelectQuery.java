@@ -3,9 +3,9 @@ package diesel;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
-import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
@@ -15,7 +15,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions) {
         this.columns = columns;
         this.conditions = conditions;
-        LOGGER.log(Level.FINE, "Created SelectQuery with columns: {0}, conditions: {1}", new Object[]{columns, conditions});
     }
 
     @Override
@@ -43,7 +42,24 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 LOGGER.log(Level.INFO, "Using unique index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
             }
         }
-        // Check for range queries (LESS_THAN or GREATER_THAN) - only for BTreeIndex
+        // Check for IN operator with single condition
+        else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
+            QueryParser.Condition condition = conditions.get(0);
+            Index index = table.getIndex(condition.column);
+            if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
+                candidateRowIndices = new ArrayList<>();
+                for (Object value : condition.inValues) {
+                    Object convertedValue = convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
+                    List<Integer> indices = index.search(convertedValue);
+                    candidateRowIndices.addAll(indices);
+                }
+                candidateRowIndices = candidateRowIndices.stream().distinct().sorted().collect(Collectors.toList());
+                LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
+                        new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
+                                condition.column, condition.inValues});
+            }
+        }
+        // Check for range queries (LESS_THAN or GREATER_THAN)
         else if (conditions.size() == 2 && !conditions.get(0).isGrouped() && !conditions.get(1).isGrouped() &&
                 conditions.get(0).column != null && conditions.get(1).column != null &&
                 conditions.get(0).column.equals(conditions.get(1).column) &&
@@ -98,23 +114,26 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
-    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        if (conditions == null || conditions.isEmpty()) {
-            return true;
+    private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
+        Map<String, Object> filtered = new LinkedHashMap<>();
+        for (String column : columns) {
+            filtered.put(column, row.get(column));
         }
+        return filtered;
+    }
 
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
         boolean result = true;
         String lastConjunction = null;
 
         for (QueryParser.Condition condition : conditions) {
             boolean conditionResult = evaluateCondition(row, condition, columnTypes);
 
-            // Apply conjunction logic
             if (lastConjunction == null) {
                 result = conditionResult;
-            } else if ("AND".equalsIgnoreCase(lastConjunction)) {
+            } else if (lastConjunction.equalsIgnoreCase("AND")) {
                 result = result && conditionResult;
-            } else if ("OR".equalsIgnoreCase(lastConjunction)) {
+            } else if (lastConjunction.equalsIgnoreCase("OR")) {
                 result = result || conditionResult;
             }
 
@@ -136,6 +155,28 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return false;
         }
 
+        if (condition.isInOperator()) {
+            boolean inResult = false;
+            for (Object value : condition.inValues) {
+                Object convertedValue = convertConditionValue(value, condition.column, rowValue.getClass(), columnTypes);
+                boolean isEqual;
+                if (rowValue instanceof Float && convertedValue instanceof Float) {
+                    isEqual = Math.abs(((Float) rowValue) - ((Float) convertedValue)) < 1e-7;
+                } else if (rowValue instanceof Double && convertedValue instanceof Double) {
+                    isEqual = Math.abs(((Double) rowValue) - ((Double) convertedValue)) < 1e-7;
+                } else if (rowValue instanceof BigDecimal && convertedValue instanceof BigDecimal) {
+                    isEqual = ((BigDecimal) rowValue).compareTo((BigDecimal) convertedValue) == 0;
+                } else {
+                    isEqual = String.valueOf(rowValue).equals(String.valueOf(convertedValue));
+                }
+                if (isEqual) {
+                    inResult = true;
+                    break;
+                }
+            }
+            return condition.not ? !inResult : inResult;
+        }
+
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
 
         LOGGER.log(Level.FINE, "Comparing rowValue={0} (type={1}), conditionValue={2} (type={3}), operator={4}, not={5}",
@@ -149,7 +190,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (rowValue instanceof Float && conditionValue instanceof Float) {
                 isEqual = Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;
             } else if (rowValue instanceof Double && conditionValue instanceof Double) {
-                isEqual = Math.abs(((Double) rowValue) - ((Double) conditionValue)) < 1e-7;
+                isEqual = Math.abs(((Double) rowValue) - ((Float) conditionValue)) < 1e-7;
             } else if (rowValue instanceof BigDecimal && conditionValue instanceof BigDecimal) {
                 isEqual = ((BigDecimal) rowValue).compareTo((BigDecimal) conditionValue) == 0;
             } else {
@@ -175,46 +216,49 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return condition.not ? !result : result;
     }
 
-    private Object convertConditionValue(Object conditionValue, String column, Class<?> rowValueType, Map<String, Class<?>> columnTypes) {
-        Class<?> expectedType = columnTypes.get(column);
-        if (expectedType == null) {
-            throw new IllegalArgumentException("Unknown column: " + column);
+    private Object convertConditionValue(Object value, String column, Class<?> targetType, Map<String, Class<?>> columnTypes) {
+        if (value == null) {
+            return null;
         }
 
-        if (conditionValue == null || rowValueType == conditionValue.getClass()) {
-            return conditionValue;
+        Class<?> valueType = value.getClass();
+        if (targetType.isAssignableFrom(valueType)) {
+            return value;
         }
 
+        String stringValue = String.valueOf(value);
         try {
-            if (expectedType == BigDecimal.class && !(conditionValue instanceof BigDecimal)) {
-                return new BigDecimal(conditionValue.toString());
-            } else if (expectedType == Float.class && !(conditionValue instanceof Float)) {
-                return Float.parseFloat(conditionValue.toString());
-            } else if (expectedType == Double.class && !(conditionValue instanceof Double)) {
-                return Double.parseDouble(conditionValue.toString());
-            } else if (expectedType == Integer.class && !(conditionValue instanceof Integer)) {
-                return Integer.parseInt(conditionValue.toString());
-            } else if (expectedType == Long.class && !(conditionValue instanceof Long)) {
-                return Long.parseLong(conditionValue.toString());
-            } else if (expectedType == Short.class && !(conditionValue instanceof Short)) {
-                return Short.parseShort(conditionValue.toString());
-            } else if (expectedType == Byte.class && !(conditionValue instanceof Byte)) {
-                return Byte.parseByte(conditionValue.toString());
+            if (targetType == String.class) {
+                return stringValue;
+            } else if (targetType == Integer.class) {
+                return Integer.parseInt(stringValue);
+            } else if (targetType == Long.class) {
+                return Long.parseLong(stringValue);
+            } else if (targetType == Short.class) {
+                return Short.parseShort(stringValue);
+            } else if (targetType == Byte.class) {
+                return Byte.parseByte(stringValue);
+            } else if (targetType == Float.class) {
+                return Float.parseFloat(stringValue);
+            } else if (targetType == Double.class) {
+                return Double.parseDouble(stringValue);
+            } else if (targetType == BigDecimal.class) {
+                return new BigDecimal(stringValue);
+            } else if (targetType == Boolean.class) {
+                return Boolean.parseBoolean(stringValue);
+            } else if (targetType == UUID.class) {
+                return UUID.fromString(stringValue);
+            } else if (targetType == Character.class) {
+                if (stringValue.length() == 1) {
+                    return stringValue.charAt(0);
+                } else {
+                    throw new IllegalArgumentException("Invalid character value for column " + column);
+                }
+            } else {
+                throw new IllegalArgumentException("Unsupported type conversion for column " + column + ": " + targetType.getSimpleName());
             }
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Cannot convert condition value '" + conditionValue + "' to type " + expectedType.getSimpleName());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Cannot convert value '" + stringValue + "' to type " + targetType.getSimpleName() + " for column " + column, e);
         }
-
-        return conditionValue;
-    }
-
-    private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
-        Map<String, Object> result = new HashMap<>();
-        for (String col : columns) {
-            if (row.containsKey(col)) {
-                result.put(col, row.get(col));
-            }
-        }
-        return result;
     }
 }

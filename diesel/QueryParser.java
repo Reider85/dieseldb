@@ -16,29 +16,45 @@ class QueryParser {
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
     enum Operator {
-        EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN
+        EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, IN
     }
 
     static class Condition {
         String column;
         Object value;
+        List<Object> inValues; // Для оператора IN
         Operator operator;
         String conjunction;
         boolean not;
         List<Condition> subConditions;
 
+        // Конструктор для обычных условий
         Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = value;
+            this.inValues = null;
             this.operator = operator;
             this.conjunction = conjunction;
             this.not = not;
             this.subConditions = null;
         }
 
+        // Конструктор для IN
+        Condition(String column, List<Object> inValues, String conjunction, boolean not) {
+            this.column = column;
+            this.value = null;
+            this.inValues = inValues;
+            this.operator = Operator.IN;
+            this.conjunction = conjunction;
+            this.not = not;
+            this.subConditions = null;
+        }
+
+        // Конструктор для групповых условий
         Condition(List<Condition> subConditions, String conjunction, boolean not) {
             this.column = null;
             this.value = null;
+            this.inValues = null;
             this.operator = null;
             this.conjunction = conjunction;
             this.not = not;
@@ -49,6 +65,10 @@ class QueryParser {
             return subConditions != null;
         }
 
+        boolean isInOperator() {
+            return operator == Operator.IN;
+        }
+
         @Override
         public String toString() {
             if (isGrouped()) {
@@ -56,6 +76,12 @@ class QueryParser {
                         .map(Condition::toString)
                         .collect(Collectors.joining(" "));
                 return (not ? "NOT " : "") + "(" + subCondStr + ")" + (conjunction != null ? " " + conjunction : "");
+            }
+            if (isInOperator()) {
+                String valuesStr = inValues.stream()
+                        .map(v -> v instanceof String ? "'" + v + "'" : v.toString())
+                        .collect(Collectors.joining(", "));
+                return (not ? "NOT " : "") + column + " IN (" + valuesStr + ")" + (conjunction != null ? " " + conjunction : "");
             }
             return (not ? "NOT " : "") + column + " " + operator + " " + value + (conjunction != null ? " " + conjunction : "");
         }
@@ -275,6 +301,7 @@ class QueryParser {
 
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
     }
+
     // Helper method to split column definitions, respecting nested parentheses
     private List<String> splitColumnDefinitions(String columnsPart) {
         List<String> columnDefs = new ArrayList<>();
@@ -681,6 +708,43 @@ class QueryParser {
             condition = condition.substring(4).trim();
         }
 
+        // Проверка на IN
+        if (condition.toUpperCase().contains(" IN ")) {
+            String[] parts = condition.split("\\s+IN\\s+", 2);
+            if (parts.length != 2) {
+                LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}", condition);
+                throw new IllegalArgumentException("Invalid IN clause: " + condition);
+            }
+
+            String conditionColumn = parts[0].trim();
+            String valuesPart = parts[1].trim();
+            if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
+                throw new IllegalArgumentException("Invalid IN clause: values must be enclosed in parentheses");
+            }
+
+            valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
+            if (valuesPart.isEmpty()) {
+                throw new IllegalArgumentException("IN clause cannot be empty");
+            }
+
+            String[] valueStrings = valuesPart.split(",(?=([^']*'[^']*')*[^']*$)");
+            List<Object> inValues = new ArrayList<>();
+            Class<?> columnType = columnTypes.get(conditionColumn);
+            if (columnType == null) {
+                LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
+                        new Object[]{conditionColumn, columnTypes.keySet()});
+                throw new IllegalArgumentException("Unknown column: " + conditionColumn);
+            }
+
+            for (String val : valueStrings) {
+                inValues.add(parseConditionValue(conditionColumn, val.trim(), columnType));
+            }
+
+            LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}, not={2}, conjunction={3}",
+                    new Object[]{conditionColumn, inValues, isNot, conjunction});
+            return new Condition(conditionColumn, inValues, conjunction, isNot);
+        }
+
         String[] partsByOperator = null;
         Operator operator = null;
 
@@ -701,7 +765,7 @@ class QueryParser {
         if (partsByOperator == null || partsByOperator.length != 2) {
             LOGGER.log(Level.SEVERE, "Invalid condition format: {0}, parts: {1}",
                     new Object[]{condition, partsByOperator == null ? "null" : Arrays.toString(partsByOperator)});
-            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, or > with valid column and value");
+            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, >, or IN with valid column and value");
         }
 
         String conditionColumn = partsByOperator[0].trim();

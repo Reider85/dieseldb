@@ -3,16 +3,16 @@ package diesel;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 class DeleteQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(DeleteQuery.class.getName());
     private final List<QueryParser.Condition> conditions;
 
     public DeleteQuery(List<QueryParser.Condition> conditions) {
-        this.conditions = conditions != null ? conditions : new ArrayList<>();
-        LOGGER.log(Level.FINE, "Created DeleteQuery with conditions: {0}", this.conditions);
+        this.conditions = conditions;
     }
 
     @Override
@@ -37,6 +37,22 @@ class DeleteQuery implements Query<Void> {
                     Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
                     rowsToDelete = ((BTreeIndex) index).search(conditionValue);
                     LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+                }
+            }
+            // Check for IN operator with single condition
+            else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
+                QueryParser.Condition condition = conditions.get(0);
+                Index index = table.getIndex(condition.column);
+                if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
+                    for (Object value : condition.inValues) {
+                        Object convertedValue = convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
+                        List<Integer> indices = index.search(convertedValue);
+                        rowsToDelete.addAll(indices);
+                    }
+                    rowsToDelete = rowsToDelete.stream().distinct().sorted().collect(Collectors.toList());
+                    LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
+                            new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
+                                    condition.column, condition.inValues});
                 }
             }
 
@@ -115,30 +131,23 @@ class DeleteQuery implements Query<Void> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        if (conditions.isEmpty()) {
-            LOGGER.log(Level.FINE, "No conditions provided; all rows match");
-            return true;
-        }
+        boolean result = true;
+        String lastConjunction = null;
 
-        boolean result = evaluateCondition(row, conditions.get(0), columnTypes);
-        LOGGER.log(Level.FINE, "Evaluated first condition: {0}, result: {1}", new Object[]{conditions.get(0), result});
+        for (QueryParser.Condition condition : conditions) {
+            boolean conditionResult = evaluateCondition(row, condition, columnTypes);
 
-        for (int i = 1; i < conditions.size(); i++) {
-            boolean currentResult = evaluateCondition(row, conditions.get(i), columnTypes);
-            String conjunction = conditions.get(i - 1).conjunction;
-            LOGGER.log(Level.FINE, "Evaluated condition: {0}, result: {1}, conjunction: {2}",
-                    new Object[]{conditions.get(i), currentResult, conjunction});
-            if ("AND".equalsIgnoreCase(conjunction)) {
-                result = result && currentResult;
-            } else if ("OR".equalsIgnoreCase(conjunction)) {
-                result = result || currentResult;
-            } else {
-                LOGGER.log(Level.WARNING, "Invalid conjunction: {0}, treating as AND", conjunction);
-                result = result && currentResult;
+            if (lastConjunction == null) {
+                result = conditionResult;
+            } else if (lastConjunction.equalsIgnoreCase("AND")) {
+                result = result && conditionResult;
+            } else if (lastConjunction.equalsIgnoreCase("OR")) {
+                result = result || conditionResult;
             }
+
+            lastConjunction = condition.conjunction;
         }
 
-        LOGGER.log(Level.FINE, "Final condition evaluation result: {0}", result);
         return result;
     }
 
@@ -154,6 +163,31 @@ class DeleteQuery implements Query<Void> {
         if (rowValue == null) {
             LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
             return false;
+        }
+
+        if (condition.isInOperator()) {
+            boolean inResult = false;
+            for (Object value : condition.inValues) {
+                Object convertedValue = convertConditionValue(value, condition.column, rowValue.getClass(), columnTypes);
+                boolean isEqual;
+                if (rowValue instanceof Float && convertedValue instanceof Float) {
+                    isEqual = Math.abs(((Float) rowValue) - ((Float) convertedValue)) < 1e-7;
+                } else if (rowValue instanceof Double && convertedValue instanceof Double) {
+                    isEqual = Math.abs(((Double) rowValue) - ((Double) convertedValue)) < 1e-7;
+                } else if (rowValue instanceof BigDecimal && convertedValue instanceof BigDecimal) {
+                    isEqual = ((BigDecimal) rowValue).compareTo((BigDecimal) convertedValue) == 0;
+                } else {
+                    isEqual = String.valueOf(rowValue).equals(String.valueOf(convertedValue));
+                }
+                if (isEqual) {
+                    inResult = true;
+                    break;
+                }
+            }
+            boolean result = condition.not ? !inResult : inResult;
+            LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue: {1}, values: {2}, result: {3}",
+                    new Object[]{condition, rowValue, condition.inValues, result});
+            return result;
         }
 
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
@@ -191,36 +225,49 @@ class DeleteQuery implements Query<Void> {
         return result;
     }
 
-    private Object convertConditionValue(Object conditionValue, String column, Class<?> rowValueType, Map<String, Class<?>> columnTypes) {
-        Class<?> expectedType = columnTypes.get(column);
-        if (expectedType == null) {
-            throw new IllegalArgumentException("Unknown column: " + column);
+    private Object convertConditionValue(Object value, String column, Class<?> targetType, Map<String, Class<?>> columnTypes) {
+        if (value == null) {
+            return null;
         }
 
-        if (conditionValue == null || rowValueType == conditionValue.getClass()) {
-            return conditionValue;
+        Class<?> valueType = value.getClass();
+        if (targetType.isAssignableFrom(valueType)) {
+            return value;
         }
 
+        String stringValue = String.valueOf(value);
         try {
-            if (expectedType == BigDecimal.class && !(conditionValue instanceof BigDecimal)) {
-                return new BigDecimal(conditionValue.toString());
-            } else if (expectedType == Float.class && !(conditionValue instanceof Float)) {
-                return Float.parseFloat(conditionValue.toString());
-            } else if (expectedType == Double.class && !(conditionValue instanceof Double)) {
-                return Double.parseDouble(conditionValue.toString());
-            } else if (expectedType == Integer.class && !(conditionValue instanceof Integer)) {
-                return Integer.parseInt(conditionValue.toString());
-            } else if (expectedType == Long.class && !(conditionValue instanceof Long)) {
-                return Long.parseLong(conditionValue.toString());
-            } else if (expectedType == Short.class && !(conditionValue instanceof Short)) {
-                return Short.parseShort(conditionValue.toString());
-            } else if (expectedType == Byte.class && !(conditionValue instanceof Byte)) {
-                return Byte.parseByte(conditionValue.toString());
+            if (targetType == String.class) {
+                return stringValue;
+            } else if (targetType == Integer.class) {
+                return Integer.parseInt(stringValue);
+            } else if (targetType == Long.class) {
+                return Long.parseLong(stringValue);
+            } else if (targetType == Short.class) {
+                return Short.parseShort(stringValue);
+            } else if (targetType == Byte.class) {
+                return Byte.parseByte(stringValue);
+            } else if (targetType == Float.class) {
+                return Float.parseFloat(stringValue);
+            } else if (targetType == Double.class) {
+                return Double.parseDouble(stringValue);
+            } else if (targetType == BigDecimal.class) {
+                return new BigDecimal(stringValue);
+            } else if (targetType == Boolean.class) {
+                return Boolean.parseBoolean(stringValue);
+            } else if (targetType == UUID.class) {
+                return UUID.fromString(stringValue);
+            } else if (targetType == Character.class) {
+                if (stringValue.length() == 1) {
+                    return stringValue.charAt(0);
+                } else {
+                    throw new IllegalArgumentException("Invalid character value for column " + column);
+                }
+            } else {
+                throw new IllegalArgumentException("Unsupported type conversion for column " + column + ": " + targetType.getSimpleName());
             }
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Cannot convert condition value '" + conditionValue + "' to type " + expectedType.getSimpleName());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Cannot convert value '" + stringValue + "' to type " + targetType.getSimpleName() + " for column " + column, e);
         }
-
-        return conditionValue;
     }
 }
