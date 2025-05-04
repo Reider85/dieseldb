@@ -189,9 +189,13 @@ class DeleteQuery implements Query<Void> {
                 throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String types");
             }
             String rowStr = (String) rowValue;
-            String pattern = ((String) conditionValue).replace("%", ".*").replace("_", ".");
-            boolean matches = rowStr.matches(pattern);
-            result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+            try {
+                String regex = QueryParser.convertLikePatternToRegex((String) conditionValue);
+                boolean matches = rowStr.matches(regex);
+                result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Invalid LIKE pattern: " + conditionValue, e);
+            }
         } else if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
             boolean isEqual;
             if (rowValue instanceof Float && conditionValue instanceof Float) {

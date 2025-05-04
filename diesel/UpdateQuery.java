@@ -94,7 +94,9 @@ class UpdateQuery implements Query<Void> {
     private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
         if (condition.isGrouped()) {
             boolean subResult = evaluateConditions(row, condition.subConditions, columnTypes);
-            return condition.not ? !subResult : subResult;
+            boolean result = condition.not ? !subResult : subResult;
+            LOGGER.log(Level.FINE, "Evaluated grouped condition: {0}, result: {1}", new Object[]{condition, result});
+            return result;
         }
 
         Object rowValue = row.get(condition.column);
@@ -122,10 +124,15 @@ class UpdateQuery implements Query<Void> {
                     break;
                 }
             }
-            return condition.not ? !inResult : inResult;
+            boolean result = condition.not ? !inResult : inResult;
+            LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue: {1}, values: {2}, result: {3}",
+                    new Object[]{condition, rowValue, condition.inValues, result});
+            return result;
         }
 
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
+        LOGGER.log(Level.FINE, "Condition values: rowValue={0}, conditionValue={1}, column={2}, operator={3}",
+                new Object[]{rowValue, conditionValue, condition.column, condition.operator});
 
         boolean result;
         if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
@@ -133,9 +140,13 @@ class UpdateQuery implements Query<Void> {
                 throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String types");
             }
             String rowStr = (String) rowValue;
-            String pattern = ((String) conditionValue).replace("%", ".*").replace("_", ".");
-            boolean matches = rowStr.matches(pattern);
-            result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+            try {
+                String regex = QueryParser.convertLikePatternToRegex((String) conditionValue);
+                boolean matches = rowStr.matches(regex);
+                result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Invalid LIKE pattern: " + conditionValue, e);
+            }
         } else if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
             boolean isEqual;
             if (rowValue instanceof Float && conditionValue instanceof Float) {
@@ -160,7 +171,10 @@ class UpdateQuery implements Query<Void> {
             result = condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
         }
 
-        return condition.not ? !result : result;
+        result = condition.not ? !result : result;
+        LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue: {1}, conditionValue: {2}, result: {3}",
+                new Object[]{condition, rowValue, conditionValue, result});
+        return result;
     }
 
     private Object convertConditionValue(Object value, String column, Class<?> targetType, Map<String, Class<?>> columnTypes) {

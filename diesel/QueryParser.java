@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -87,6 +88,30 @@ class QueryParser {
             };
             return (not ? "NOT " : "") + column + " " + operatorStr + " " + (value instanceof String ? "'" + value + "'" : value) + (conjunction != null ? " " + conjunction : "");
         }
+    }
+
+    public static String convertLikePatternToRegex(String pattern) {
+        if (pattern == null || pattern.isEmpty()) {
+            throw new IllegalArgumentException("LIKE pattern cannot be null or empty");
+        }
+
+        // Escape regex metacharacters
+        StringBuilder escapedPattern = new StringBuilder();
+        for (char c : pattern.toCharArray()) {
+            if (".^$*+?()[{\\|".indexOf(c) >= 0) {
+                escapedPattern.append('\\').append(c);
+            } else {
+                escapedPattern.append(c);
+            }
+        }
+
+        // Replace % and _ with regex equivalents
+        String regex = escapedPattern.toString()
+                .replace("%", ".*")
+                .replace("_", ".");
+
+        // Ensure the pattern matches the entire string
+        return "^" + regex + "$";
     }
 
     public Query<?> parse(String query, Database database) {
