@@ -24,7 +24,6 @@ class UpdateQuery implements Query<Void> {
         List<Integer> rowsToUpdate = new ArrayList<>();
 
         try {
-            // Identify rows to update
             for (int i = 0; i < rows.size(); i++) {
                 Map<String, Object> row = rows.get(i);
                 if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
@@ -32,14 +31,12 @@ class UpdateQuery implements Query<Void> {
                 }
             }
 
-            // Acquire write locks for rows to update
             for (int rowIndex : rowsToUpdate) {
                 ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
                 lock.writeLock().lock();
                 acquiredLocks.add(lock);
             }
 
-            // Perform updates
             for (int rowIndex : rowsToUpdate) {
                 Map<String, Object> row = rows.get(rowIndex);
                 for (Map.Entry<String, Object> update : updates.entrySet()) {
@@ -49,7 +46,6 @@ class UpdateQuery implements Query<Void> {
                     Object convertedValue = convertConditionValue(newValue, column, columnType, columnTypes);
                     Object oldValue = row.get(column);
 
-                    // Update indexes
                     if (!Objects.equals(oldValue, convertedValue)) {
                         Index index = table.getIndex(column);
                         if (index != null) {
@@ -132,7 +128,15 @@ class UpdateQuery implements Query<Void> {
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
 
         boolean result;
-        if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
+        if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
+            if (!(rowValue instanceof String) || !(conditionValue instanceof String)) {
+                throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String types");
+            }
+            String rowStr = (String) rowValue;
+            String pattern = ((String) conditionValue).replace("%", ".*").replace("_", ".");
+            boolean matches = rowStr.matches(pattern);
+            result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+        } else if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
             boolean isEqual;
             if (rowValue instanceof Float && conditionValue instanceof Float) {
                 isEqual = Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;

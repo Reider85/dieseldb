@@ -24,7 +24,6 @@ class DeleteQuery implements Query<Void> {
         List<Integer> rowsToDelete = new ArrayList<>();
 
         try {
-            // Check if we can use an index for a single equality condition
             if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
                 QueryParser.Condition condition = conditions.get(0);
                 Index index = table.getIndex(condition.column);
@@ -38,9 +37,7 @@ class DeleteQuery implements Query<Void> {
                     rowsToDelete = ((BTreeIndex) index).search(conditionValue);
                     LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
                 }
-            }
-            // Check for IN operator with single condition
-            else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
+            } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
                 QueryParser.Condition condition = conditions.get(0);
                 Index index = table.getIndex(condition.column);
                 if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
@@ -57,7 +54,6 @@ class DeleteQuery implements Query<Void> {
             }
 
             if (rowsToDelete.isEmpty() && !conditions.isEmpty()) {
-                // Full table scan if no index or no rows identified via index
                 for (int i = 0; i < rows.size(); i++) {
                     Map<String, Object> row = rows.get(i);
                     if (evaluateConditions(row, conditions, columnTypes)) {
@@ -65,13 +61,11 @@ class DeleteQuery implements Query<Void> {
                     }
                 }
             } else if (conditions.isEmpty()) {
-                // Delete all rows if no conditions
                 for (int i = 0; i < rows.size(); i++) {
                     rowsToDelete.add(i);
                 }
             }
 
-            // Acquire locks for rows to delete
             for (int rowIndex : rowsToDelete) {
                 if (rowIndex >= 0 && rowIndex < rows.size()) {
                     ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
@@ -80,12 +74,10 @@ class DeleteQuery implements Query<Void> {
                 }
             }
 
-            // Delete rows in reverse order to avoid index shifting
             Collections.sort(rowsToDelete, Collections.reverseOrder());
             for (int rowIndex : rowsToDelete) {
                 if (rowIndex >= 0 && rowIndex < rows.size()) {
                     Map<String, Object> row = rows.get(rowIndex);
-                    // Update indexes
                     for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
                         String column = entry.getKey();
                         Index index = entry.getValue();
@@ -99,7 +91,6 @@ class DeleteQuery implements Query<Void> {
                 }
             }
 
-            // Update indices for rows that have shifted
             for (int i = 0; i < rows.size(); i++) {
                 Map<String, Object> row = rows.get(i);
                 for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
@@ -109,13 +100,11 @@ class DeleteQuery implements Query<Void> {
                     if (key != null) {
                         List<Integer> currentIndices = index.search(key);
                         if (currentIndices.contains(i)) {
-                            continue; // Index is correct for this row
+                            continue;
                         }
-                        // Remove any stale index entries for this key
                         for (Integer oldIndex : currentIndices) {
                             index.remove(key, oldIndex);
                         }
-                        // Insert the updated index entry
                         index.insert(key, i);
                     }
                 }
@@ -195,7 +184,15 @@ class DeleteQuery implements Query<Void> {
                 new Object[]{rowValue, conditionValue, condition.column, condition.operator});
 
         boolean result;
-        if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
+        if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
+            if (!(rowValue instanceof String) || !(conditionValue instanceof String)) {
+                throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String types");
+            }
+            String rowStr = (String) rowValue;
+            String pattern = ((String) conditionValue).replace("%", ".*").replace("_", ".");
+            boolean matches = rowStr.matches(pattern);
+            result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+        } else if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
             boolean isEqual;
             if (rowValue instanceof Float && conditionValue instanceof Float) {
                 isEqual = Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;

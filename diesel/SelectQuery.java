@@ -24,7 +24,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
         List<Integer> candidateRowIndices = null;
 
-        // Check if we can use an index for a single equality condition
         if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
             QueryParser.Condition condition = conditions.get(0);
             Index index = table.getIndex(condition.column);
@@ -41,9 +40,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 candidateRowIndices = index.search(conditionValue);
                 LOGGER.log(Level.INFO, "Using unique index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
             }
-        }
-        // Check for IN operator with single condition
-        else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
+        } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
             QueryParser.Condition condition = conditions.get(0);
             Index index = table.getIndex(condition.column);
             if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
@@ -58,9 +55,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
                                 condition.column, condition.inValues});
             }
-        }
-        // Check for range queries (LESS_THAN or GREATER_THAN)
-        else if (conditions.size() == 2 && !conditions.get(0).isGrouped() && !conditions.get(1).isGrouped() &&
+        } else if (conditions.size() == 2 && !conditions.get(0).isGrouped() && !conditions.get(1).isGrouped() &&
                 conditions.get(0).column != null && conditions.get(1).column != null &&
                 conditions.get(0).column.equals(conditions.get(1).column) &&
                 ((conditions.get(0).operator == QueryParser.Operator.GREATER_THAN && conditions.get(1).operator == QueryParser.Operator.LESS_THAN) ||
@@ -83,7 +78,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         List<Map<String, Object>> result = new ArrayList<>();
         try {
             if (candidateRowIndices != null) {
-                // Use index results
                 for (int rowIndex : candidateRowIndices) {
                     if (rowIndex >= 0 && rowIndex < rows.size()) {
                         Map<String, Object> row = rows.get(rowIndex);
@@ -94,7 +88,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
                 }
             } else {
-                // Full table scan
                 for (int i = 0; i < rows.size(); i++) {
                     Map<String, Object> row = rows.get(i);
                     if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
@@ -185,12 +178,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         boolean result;
 
-        if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
+        if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
+            if (!(rowValue instanceof String) || !(conditionValue instanceof String)) {
+                throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String types");
+            }
+            String rowStr = (String) rowValue;
+            String pattern = ((String) conditionValue).replace("%", ".*").replace("_", ".");
+            boolean matches = rowStr.matches(pattern);
+            result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+        } else if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
             boolean isEqual;
             if (rowValue instanceof Float && conditionValue instanceof Float) {
                 isEqual = Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;
             } else if (rowValue instanceof Double && conditionValue instanceof Double) {
-                isEqual = Math.abs(((Double) rowValue) - ((Float) conditionValue)) < 1e-7;
+                isEqual = Math.abs(((Double) rowValue) - ((Double) conditionValue)) < 1e-7;
             } else if (rowValue instanceof BigDecimal && conditionValue instanceof BigDecimal) {
                 isEqual = ((BigDecimal) rowValue).compareTo((BigDecimal) conditionValue) == 0;
             } else {
