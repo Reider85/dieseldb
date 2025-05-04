@@ -67,3 +67,4 @@
 0.6.7 Advanced Test fix
 0.6.8 IN
 0.6.9 NOT IN
+0.7.0 tests IN
