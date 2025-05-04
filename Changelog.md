@@ -68,3 +68,4 @@
 0.6.8 IN
 0.6.9 NOT IN
 0.7.0 tests IN
+0.7.1 all tests IN fix

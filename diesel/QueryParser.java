@@ -205,7 +205,7 @@ class QueryParser {
         List<String> columnDefs = splitColumnDefinitions(columnsPart);
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        Map<String, Sequence> sequences = new TreeMap<>(String.CASE_INSENSITIVE_ORDER); // Use case-insensitive map
+        Map<String, Sequence> sequences = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
@@ -302,7 +302,6 @@ class QueryParser {
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
     }
 
-    // Helper method to split column definitions, respecting nested parentheses
     private List<String> splitColumnDefinitions(String columnsPart) {
         List<String> columnDefs = new ArrayList<>();
         StringBuilder currentDef = new StringBuilder();
@@ -347,7 +346,6 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid SELECT query format");
         }
 
-        // Extract columns from the original query to preserve case
         String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, original.indexOf("FROM")).trim();
         List<String> columns = Arrays.stream(selectPartOriginal.split(","))
                 .map(String::trim)
@@ -362,11 +360,9 @@ class QueryParser {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
 
-        // Log table schema for debugging
         LOGGER.log(Level.FINE, "Table {0} columns: {1}, column types: {2}",
                 new Object[]{tableName, table.getColumns(), table.getColumnTypes()});
 
-        // Validate select columns
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         if (columnTypes.isEmpty()) {
             LOGGER.log(Level.SEVERE, "Table {0} has no columns defined", tableName);
@@ -387,7 +383,7 @@ class QueryParser {
             }
             String conditionStr = tableCondition[1].trim();
             LOGGER.log(Level.FINE, "Parsing WHERE clause: {0}", conditionStr);
-            conditions = parseConditions(conditionStr, tableName, database);
+            conditions = parseConditions(conditionStr, tableName, database, original);
         }
 
         LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, table={1}, conditions={2}",
@@ -417,7 +413,6 @@ class QueryParser {
         Map<String, Sequence> sequences = table.getSequences();
         String primaryKeyColumn = table.getPrimaryKeyColumn();
 
-        // Validate that sequence-based primary key is not included in columns
         if (primaryKeyColumn != null && sequences.containsKey(primaryKeyColumn) && columns.contains(primaryKeyColumn)) {
             throw new IllegalArgumentException("Cannot specify value for sequence-based primary key column: " + primaryKeyColumn);
         }
@@ -470,7 +465,7 @@ class QueryParser {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
-            conditions = parseConditions(conditionStr, tableName, database);
+            conditions = parseConditions(conditionStr, tableName, database, original);
         } else {
             setPart = setAndWhere;
         }
@@ -522,7 +517,7 @@ class QueryParser {
                 LOGGER.log(Level.SEVERE, "Empty WHERE clause in DELETE query: {0}", normalized);
                 throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
             }
-            conditions = parseConditions(conditionStr, tableName, database);
+            conditions = parseConditions(conditionStr, tableName, database, original);
         } else {
             LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
         }
@@ -610,7 +605,7 @@ class QueryParser {
         }
     }
 
-    private List<Condition> parseConditions(String conditionStr, String tableName, Database database) {
+    private List<Condition> parseConditions(String conditionStr, String tableName, Database database, String originalQuery) {
         Table table = database.getTable(tableName);
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
@@ -648,7 +643,7 @@ class QueryParser {
                             if (isNot) {
                                 subConditionStr = subConditionStr.substring(4).trim();
                             }
-                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database);
+                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery);
                             String conjunction = determineConjunctionAfter(conditionStr, i);
                             conditions.add(new Condition(subConditions, conjunction, isNot));
                         }
@@ -661,7 +656,7 @@ class QueryParser {
                             (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "AND", columnTypes));
+                            conditions.add(parseSingleCondition(current, "AND", columnTypes, originalQuery));
                             LOGGER.log(Level.FINE, "Added condition with AND: {0}", current);
                         }
                         currentCondition = new StringBuilder();
@@ -672,7 +667,7 @@ class QueryParser {
                             (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "OR", columnTypes));
+                            conditions.add(parseSingleCondition(current, "OR", columnTypes, originalQuery));
                             LOGGER.log(Level.FINE, "Added condition with OR: {0}", current);
                         }
                         currentCondition = new StringBuilder();
@@ -687,7 +682,7 @@ class QueryParser {
         if (currentCondition.length() > 0 && parenDepth == 0) {
             String current = currentCondition.toString().trim();
             if (!current.isEmpty()) {
-                conditions.add(parseSingleCondition(current, null, columnTypes));
+                conditions.add(parseSingleCondition(current, null, columnTypes, originalQuery));
                 LOGGER.log(Level.FINE, "Added final condition: {0}", current);
             }
         }
@@ -701,14 +696,16 @@ class QueryParser {
         return conditions;
     }
 
-    private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes) {
+    private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes, String originalQuery) {
         LOGGER.log(Level.FINE, "Parsing condition: {0}", condition);
         boolean isNot = condition.startsWith("NOT ");
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
 
         // Проверка на IN или NOT IN
         if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
-            String[] parts = conditionWithoutNot.split("\\s+IN\\s+", 2);
+            // Извлекаем оригинальную часть условия из originalQuery для сохранения регистра
+            String originalCondition = extractOriginalCondition(originalQuery, condition);
+            String[] parts = originalCondition.split("\\s+IN\\s+", 2);
             if (parts.length != 2) {
                 LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}", condition);
                 throw new IllegalArgumentException("Invalid IN clause: " + condition);
@@ -716,16 +713,21 @@ class QueryParser {
 
             String conditionColumn = parts[0].trim();
             String valuesPart = parts[1].trim();
+
+            // Проверяем наличие скобок
             if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
                 throw new IllegalArgumentException("Invalid IN clause: values must be enclosed in parentheses");
             }
-
             valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
+
             if (valuesPart.isEmpty()) {
                 throw new IllegalArgumentException("IN clause cannot be empty");
             }
 
-            String[] valueStrings = valuesPart.split(",(?=([^']*'[^']*')*[^']*$)");
+            // Разделяем значения с помощью splitInValues
+            List<String> valueStrings = splitInValues(valuesPart);
+            LOGGER.log(Level.FINE, "Split IN values: {0}", Arrays.toString(valueStrings.toArray()));
+
             List<Object> inValues = new ArrayList<>();
             Class<?> columnType = columnTypes.get(conditionColumn);
             if (columnType == null) {
@@ -735,7 +737,9 @@ class QueryParser {
             }
 
             for (String val : valueStrings) {
-                inValues.add(parseConditionValue(conditionColumn, val.trim(), columnType));
+                String trimmedVal = val.trim();
+                if (trimmedVal.isEmpty()) continue; // Пропускаем пустые значения
+                inValues.add(parseConditionValue(conditionColumn, trimmedVal, columnType));
             }
 
             LOGGER.log(Level.FINE, "Parsed {0} condition: column={1}, values={2}, not={3}, conjunction={4}",
@@ -782,6 +786,102 @@ class QueryParser {
         LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
                 new Object[]{conditionColumn, operator, conditionValue, isNot, conjunction});
         return new Condition(conditionColumn, conditionValue, operator, conjunction, isNot);
+    }
+
+    private List<String> splitInValues(String valuesPart) {
+        List<String> values = new ArrayList<>();
+        StringBuilder currentValue = new StringBuilder();
+        boolean inQuotes = false;
+
+        for (int i = 0; i < valuesPart.length(); i++) {
+            char c = valuesPart.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentValue.append(c);
+                continue;
+            }
+            if (!inQuotes && c == ',') {
+                String value = currentValue.toString().trim();
+                if (!value.isEmpty()) {
+                    values.add(value);
+                }
+                currentValue = new StringBuilder();
+                continue;
+            }
+            currentValue.append(c);
+        }
+
+        String lastValue = currentValue.toString().trim();
+        if (!lastValue.isEmpty()) {
+            values.add(lastValue);
+        }
+
+        return values;
+    }
+
+    private String extractOriginalCondition(String originalQuery, String condition) {
+        String normalizedQuery = originalQuery.trim().toUpperCase();
+        int whereIndex = normalizedQuery.indexOf("WHERE");
+        if (whereIndex == -1) {
+            throw new IllegalArgumentException("No WHERE clause found in query");
+        }
+        String originalWhereClause = originalQuery.substring(whereIndex + 5).trim();
+
+        StringBuilder conditionBuilder = new StringBuilder();
+        boolean inQuotes = false;
+        int parenDepth = 0;
+        boolean foundIn = false;
+
+        for (int i = 0; i < originalWhereClause.length(); i++) {
+            char c = originalWhereClause.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                conditionBuilder.append(c);
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    conditionBuilder.append(c);
+                    continue;
+                }
+                if (c == ')') {
+                    parenDepth--;
+                    conditionBuilder.append(c);
+                    if (parenDepth == 0 && foundIn) {
+                        return conditionBuilder.toString().trim();
+                    }
+                    continue;
+                }
+                if (parenDepth == 0 && !foundIn && i + 2 <= originalWhereClause.length() &&
+                        originalWhereClause.substring(i, i + 2).equalsIgnoreCase("IN")) {
+                    foundIn = true;
+                    conditionBuilder.append(originalWhereClause.substring(i, i + 2));
+                    i += 1;
+                    continue;
+                }
+                if (parenDepth == 0 && foundIn && i + 3 <= originalWhereClause.length() &&
+                        originalWhereClause.substring(i, i + 3).equalsIgnoreCase("AND") &&
+                        (i == 0 || Character.isWhitespace(originalWhereClause.charAt(i - 1))) &&
+                        (i + 3 == originalWhereClause.length() || Character.isWhitespace(originalWhereClause.charAt(i + 3)))) {
+                    return conditionBuilder.toString().trim();
+                }
+                if (parenDepth == 0 && foundIn && i + 2 <= originalWhereClause.length() &&
+                        originalWhereClause.substring(i, i + 2).equalsIgnoreCase("OR") &&
+                        (i == 0 || Character.isWhitespace(originalWhereClause.charAt(i - 1))) &&
+                        (i + 2 == originalWhereClause.length() || Character.isWhitespace(originalWhereClause.charAt(i + 2)))) {
+                    return conditionBuilder.toString().trim();
+                }
+            }
+            conditionBuilder.append(c);
+        }
+
+        if (foundIn) {
+            return conditionBuilder.toString().trim();
+        }
+
+        LOGGER.log(Level.WARNING, "Could not precisely extract condition for: {0}, returning full WHERE clause", condition);
+        return originalWhereClause;
     }
 
     private String determineConjunctionAfter(String conditionStr, int index) {
