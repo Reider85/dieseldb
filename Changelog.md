@@ -75,3 +75,4 @@
 0.7.5 JOIN
 0.7.6 Join Test
 0.7.7 JOIN Test fix
+0.7.8 OUTER JOIN

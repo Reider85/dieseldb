@@ -21,6 +21,10 @@ class QueryParser {
         EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, IN, LIKE, NOT_LIKE
     }
 
+    enum JoinType {
+        INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER
+    }
+
     static class Condition {
         String column;
         Object value;
@@ -96,17 +100,19 @@ class QueryParser {
         String leftColumn;
         String rightColumn;
         String originalTable;
+        JoinType joinType;
 
-        JoinInfo(String originalTable, String tableName, String leftColumn, String rightColumn) {
+        JoinInfo(String originalTable, String tableName, String leftColumn, String rightColumn, JoinType joinType) {
             this.originalTable = originalTable;
             this.tableName = tableName;
             this.leftColumn = leftColumn;
             this.rightColumn = rightColumn;
+            this.joinType = joinType;
         }
 
         @Override
         public String toString() {
-            return "JoinInfo{originalTable=" + originalTable + ", table=" + tableName + ", leftColumn=" + leftColumn + ", rightColumn=" + rightColumn + "}";
+            return "JoinInfo{originalTable=" + originalTable + ", table=" + tableName + ", leftColumn=" + leftColumn + ", rightColumn=" + rightColumn + ", joinType=" + joinType + "}";
         }
     }
 
@@ -398,18 +404,52 @@ class QueryParser {
         String tableName;
         String conditionStr = null;
 
-        String[] joinParts = tableAndJoins.split("(?i)INNER JOIN");
-        tableName = joinParts[0].split(" ")[0].trim();
+        // Split by various join types
+        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+        Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
+        List<String> joinParts = new ArrayList<>();
+        int lastEnd = 0;
+        while (joinMatcher.find()) {
+            joinParts.add(tableAndJoins.substring(lastEnd, joinMatcher.start()).trim());
+            joinParts.add(joinMatcher.group(1).trim()); // Join type
+            lastEnd = joinMatcher.end();
+        }
+        joinParts.add(tableAndJoins.substring(lastEnd).trim());
+
+        // First part is the main table
+        tableName = joinParts.get(0).split(" ")[0].trim();
         Table mainTable = database.getTable(tableName);
         if (mainTable == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
 
-        for (int i = 1; i < joinParts.length; i++) {
-            String joinPart = joinParts[i].trim();
+        // Process joins (join type at index i, join details at i+1)
+        for (int i = 1; i < joinParts.size() - 1; i += 2) {
+            String joinTypeStr = joinParts.get(i).toUpperCase();
+            String joinPart = joinParts.get(i + 1).trim();
+
+            // Determine join type
+            JoinType joinType;
+            switch (joinTypeStr) {
+                case "INNER JOIN":
+                    joinType = JoinType.INNER;
+                    break;
+                case "LEFT OUTER JOIN":
+                    joinType = JoinType.LEFT_OUTER;
+                    break;
+                case "RIGHT OUTER JOIN":
+                    joinType = JoinType.RIGHT_OUTER;
+                    break;
+                case "FULL OUTER JOIN":
+                    joinType = JoinType.FULL_OUTER;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported join type: " + joinTypeStr);
+            }
+
             String[] onSplit = joinPart.split("(?i)ON\\s+", 2);
             if (onSplit.length != 2) {
-                throw new IllegalArgumentException("Invalid INNER JOIN format: missing ON clause");
+                throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing ON clause");
             }
 
             String joinTableName = onSplit[0].split(" ")[0].trim();
@@ -422,17 +462,27 @@ class QueryParser {
                 if (onWhereSplit.length > 1) {
                     conditionStr = onWhereSplit[1].trim();
                 }
-            } else if (onClause.toUpperCase().contains(" INNER JOIN ")) {
-                String[] onJoinSplit = onClause.split("(?i)\\s+INNER JOIN\\s+", 2);
-                onCondition = onJoinSplit[0].trim();
+            } else if (onClause.toUpperCase().contains(" INNER JOIN ") ||
+                    onClause.toUpperCase().contains(" LEFT OUTER JOIN ") ||
+                    onClause.toUpperCase().contains(" RIGHT OUTER JOIN ") ||
+                    onClause.toUpperCase().contains(" FULL OUTER JOIN ")) {
+                // If another join follows, split until the next join
+                Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+                Matcher nextJoinMatcher = nextJoinPattern.matcher(onClause);
+                if (nextJoinMatcher.find()) {
+                    onCondition = onClause.substring(0, nextJoinMatcher.start()).trim();
+                } else {
+                    onCondition = onClause;
+                }
             } else {
                 onCondition = onClause;
             }
 
             String[] conditionParts = onCondition.trim().split("\\s*=\\s*");
             if (conditionParts.length != 2) {
-                LOGGER.log(Level.SEVERE, "Invalid ON condition: {0}, expected format table1.column = table2.column", onCondition);
-                throw new IllegalArgumentException("Invalid ON condition: must be in format table1.column = table2.column");
+                LOGGER.log(Level.SEVERE, "Invalid ON condition in {0}: {1}, expected format table1.column = table2.column",
+                        new Object[]{joinTypeStr, onCondition});
+                throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must be in format table1.column = table2.column");
             }
 
             String leftCondition = conditionParts[0].trim();
@@ -443,8 +493,9 @@ class QueryParser {
             Matcher rightMatcher = tableColumnPattern.matcher(rightCondition);
 
             if (!leftMatcher.matches() || !rightMatcher.matches()) {
-                LOGGER.log(Level.SEVERE, "Invalid ON condition parts: left={0}, right={1}", new Object[]{leftCondition, rightCondition});
-                throw new IllegalArgumentException("Invalid ON condition: must specify table and column");
+                LOGGER.log(Level.SEVERE, "Invalid ON condition parts in {0}: left={1}, right={2}",
+                        new Object[]{joinTypeStr, leftCondition, rightCondition});
+                throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must specify table and column");
             }
 
             String leftTable = leftMatcher.group(1);
@@ -452,26 +503,26 @@ class QueryParser {
             String rightTable = rightMatcher.group(1);
             String rightColumn = rightMatcher.group(2);
 
-            LOGGER.log(Level.FINE, "Parsed ON condition: leftTable={0}, leftColumn={1}, rightTable={2}, rightColumn={3}",
-                    new Object[]{leftTable, leftColumn, rightTable, rightColumn});
+            LOGGER.log(Level.FINE, "Parsed ON condition for {0}: leftTable={1}, leftColumn={2}, rightTable={3}, rightColumn={4}",
+                    new Object[]{joinTypeStr, leftTable, leftColumn, rightTable, rightColumn});
 
             if (!leftTable.equalsIgnoreCase(tableName) && !leftTable.equalsIgnoreCase(joinTableName)) {
-                throw new IllegalArgumentException("Invalid left table in ON condition: " + leftTable);
+                throw new IllegalArgumentException("Invalid left table in ON condition for " + joinTypeStr + ": " + leftTable);
             }
             if (!rightTable.equalsIgnoreCase(tableName) && !rightTable.equalsIgnoreCase(joinTableName)) {
-                throw new IllegalArgumentException("Invalid right table in ON condition: " + rightTable);
+                throw new IllegalArgumentException("Invalid right table in ON condition for " + joinTypeStr + ": " + rightTable);
             }
 
             Table leftTableObj = database.getTable(leftTable);
             Table rightTableObj = database.getTable(rightTable);
             if (!leftTableObj.getColumnTypes().containsKey(leftColumn)) {
-                throw new IllegalArgumentException("Invalid column in ON condition: " + leftTable + "." + leftColumn);
+                throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + leftTable + "." + leftColumn);
             }
             if (!rightTableObj.getColumnTypes().containsKey(rightColumn)) {
-                throw new IllegalArgumentException("Invalid column in ON condition: " + rightTable + "." + rightColumn);
+                throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + rightTable + "." + rightColumn);
             }
 
-            joins.add(new JoinInfo(tableName, joinTableName, leftColumn, rightColumn));
+            joins.add(new JoinInfo(tableName, joinTableName, leftColumn, rightColumn, joinType));
             tableName = joinTableName;
         }
 
@@ -854,7 +905,6 @@ class QueryParser {
 
         if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
             String originalCondition = extractOriginalCondition(originalQuery, condition);
-            // Updated regex to match both qualified (TABLE.COLUMN) and unqualified (COLUMN) IN conditions
             Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+)\\s+IN\\s+\\(([^)]+)\\)");
             Matcher inMatcher = inPattern.matcher(originalCondition);
             if (!inMatcher.find()) {
@@ -865,7 +915,6 @@ class QueryParser {
             String parsedColumn = inMatcher.group(1).trim();
             String valuesPart = inMatcher.group(2).trim();
 
-            // Strip table prefix if present
             if (parsedColumn.contains(".")) {
                 parsedColumn = parsedColumn.split("\\.")[1].trim();
             }
@@ -1000,7 +1049,6 @@ class QueryParser {
         }
         String originalWhereClause = originalQuery.substring(whereIndex + 5).trim();
 
-        // Updated regex to match both qualified (TABLE.COLUMN) and unqualified (COLUMN) IN conditions
         Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+\\s+IN\\s+\\([^)]+\\))");
         Matcher matcher = inPattern.matcher(originalWhereClause);
         if (matcher.find()) {
