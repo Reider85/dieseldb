@@ -1,104 +1,107 @@
 package diesel;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
+import java.util.logging.Level;
+import java.util.regex.Pattern;
 
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
     private final List<String> columns;
     private final List<QueryParser.Condition> conditions;
+    private final List<QueryParser.JoinInfo> joins;
+    private final String mainTableName;
 
-    public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions) {
+    public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions, List<QueryParser.JoinInfo> joins, String mainTableName) {
         this.columns = columns;
-        this.conditions = conditions;
+        this.conditions = conditions != null ? conditions : new ArrayList<>();
+        this.joins = joins != null ? joins : new ArrayList<>();
+        this.mainTableName = mainTableName;
     }
 
     @Override
     public List<Map<String, Object>> execute(Table table) {
-        List<Map<String, Object>> rows = table.getRows();
-        Map<String, Class<?>> columnTypes = table.getColumnTypes();
+        Database database = table.getDatabase();
+        List<Map<String, Object>> result = new ArrayList<>();
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
-        List<Integer> candidateRowIndices = null;
+        Map<String, Table> tables = new HashMap<>();
+        tables.put(mainTableName, table);
 
-        if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
-            QueryParser.Condition condition = conditions.get(0);
-            Index index = table.getIndex(condition.column);
-            if (index instanceof HashIndex) {
-                Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                candidateRowIndices = index.search(conditionValue);
-                LOGGER.log(Level.INFO, "Using hash index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
-            } else if (index instanceof BTreeIndex) {
-                Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                candidateRowIndices = ((BTreeIndex) index).search(conditionValue);
-                LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
-            } else if (index instanceof UniqueIndex) {
-                Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                candidateRowIndices = index.search(conditionValue);
-                LOGGER.log(Level.INFO, "Using unique index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+        // Загружаем все таблицы для JOIN
+        for (QueryParser.JoinInfo join : joins) {
+            Table joinTable = database.getTable(join.tableName);
+            if (joinTable == null) {
+                throw new IllegalArgumentException("Join table not found: " + join.tableName);
             }
-        } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
-            QueryParser.Condition condition = conditions.get(0);
-            Index index = table.getIndex(condition.column);
-            if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
-                candidateRowIndices = new ArrayList<>();
-                for (Object value : condition.inValues) {
-                    Object convertedValue = convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
-                    List<Integer> indices = index.search(convertedValue);
-                    candidateRowIndices.addAll(indices);
-                }
-                candidateRowIndices = candidateRowIndices.stream().distinct().sorted().collect(Collectors.toList());
-                LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
-                        new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
-                                condition.column, condition.inValues});
-            }
-        } else if (conditions.size() == 2 && !conditions.get(0).isGrouped() && !conditions.get(1).isGrouped() &&
-                conditions.get(0).column != null && conditions.get(1).column != null &&
-                conditions.get(0).column.equals(conditions.get(1).column) &&
-                ((conditions.get(0).operator == QueryParser.Operator.GREATER_THAN && conditions.get(1).operator == QueryParser.Operator.LESS_THAN) ||
-                        (conditions.get(0).operator == QueryParser.Operator.LESS_THAN && conditions.get(1).operator == QueryParser.Operator.GREATER_THAN)) &&
-                conditions.get(0).conjunction.equalsIgnoreCase("AND") && !conditions.get(0).not && !conditions.get(1).not) {
-            QueryParser.Condition cond1 = conditions.get(0);
-            QueryParser.Condition cond2 = conditions.get(1);
-            Index index = table.getIndex(cond1.column);
-            if (index instanceof BTreeIndex) {
-                Object low = convertConditionValue(cond1.operator == QueryParser.Operator.GREATER_THAN ? cond1.value : cond2.value,
-                        cond1.column, columnTypes.get(cond1.column), columnTypes);
-                Object high = convertConditionValue(cond1.operator == QueryParser.Operator.LESS_THAN ? cond1.value : cond2.value,
-                        cond1.column, columnTypes.get(cond1.column), columnTypes);
-                candidateRowIndices = ((BTreeIndex) index).rangeSearch(low, high);
-                LOGGER.log(Level.INFO, "Using B-tree index for range query on column {0} between {1} and {2}",
-                        new Object[]{cond1.column, low, high});
-            }
+            tables.put(join.tableName, joinTable);
         }
 
-        List<Map<String, Object>> result = new ArrayList<>();
+        // Получаем все строки главной таблицы
+        List<Map<String, Object>> mainRows = table.getRows();
+        Map<String, Class<?>> combinedColumnTypes = new HashMap<>(table.getColumnTypes());
+
+        // Собираем все типы колонок
+        for (QueryParser.JoinInfo join : joins) {
+            Table joinTable = tables.get(join.tableName);
+            combinedColumnTypes.putAll(joinTable.getColumnTypes());
+        }
+
         try {
-            if (candidateRowIndices != null) {
-                for (int rowIndex : candidateRowIndices) {
-                    if (rowIndex >= 0 && rowIndex < rows.size()) {
-                        Map<String, Object> row = rows.get(rowIndex);
-                        ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
-                        lock.readLock().lock();
-                        acquiredLocks.add(lock);
-                        result.add(filterColumns(row, columns));
+            // Для каждой строки главной таблицы
+            for (int i = 0; i < mainRows.size(); i++) {
+                Map<String, Object> mainRow = mainRows.get(i);
+                ReentrantReadWriteLock mainLock = table.getRowLock(i);
+                mainLock.readLock().lock();
+                acquiredLocks.add(mainLock);
+
+                List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
+                joinedRows.add(new HashMap<>() {{ put(mainTableName, mainRow); }});
+
+                // Выполняем JOIN для каждой таблицы
+                for (QueryParser.JoinInfo join : joins) {
+                    Table joinTable = tables.get(join.tableName);
+                    List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+                    List<Map<String, Object>> joinRows = joinTable.getRows();
+
+                    for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
+                        Map<String, Object> leftRow = currentJoin.get(join.originalTable);
+                        Object leftValue = leftRow.get(join.leftColumn);
+
+                        for (int j = 0; j < joinRows.size(); j++) {
+                            Map<String, Object> rightRow = joinRows.get(j);
+                            Object rightValue = rightRow.get(join.rightColumn);
+
+                            // Проверяем условие JOIN
+                            if (valuesEqual(leftValue, rightValue)) {
+                                Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
+                                newRow.put(join.tableName, rightRow);
+                                newJoinedRows.add(newRow);
+
+                                // Блокируем строку из присоединяемой таблицы
+                                ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
+                                joinLock.readLock().lock();
+                                acquiredLocks.add(joinLock);
+                            }
+                        }
                     }
+                    joinedRows = newJoinedRows;
                 }
-            } else {
-                for (int i = 0; i < rows.size(); i++) {
-                    Map<String, Object> row = rows.get(i);
-                    if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
-                        ReentrantReadWriteLock lock = table.getRowLock(i);
-                        lock.readLock().lock();
-                        acquiredLocks.add(lock);
-                        result.add(filterColumns(row, columns));
+
+                // Применяем WHERE и выбираем колонки
+                for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
+                    Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
+                    if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
+                        result.add(filterColumns(flattenedRow, columns));
                     }
                 }
             }
-            LOGGER.log(Level.INFO, "Selected {0} rows from table {1}", new Object[]{result.size(), table.getName()});
+
+            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}",
+                    new Object[]{result.size(), mainTableName, joins});
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -107,12 +110,29 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
-    private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
-        Map<String, Object> filtered = new LinkedHashMap<>();
-        for (String column : columns) {
-            filtered.put(column, row.get(column));
+    private boolean valuesEqual(Object left, Object right) {
+        if (left == null || right == null) {
+            return false;
         }
-        return filtered;
+        if (left instanceof Float && right instanceof Float) {
+            return Math.abs(((Float) left) - ((Float) right)) < 1e-7;
+        } else if (left instanceof Double && right instanceof Double) {
+            return Math.abs(((Double) left) - ((Double) right)) < 1e-7;
+        } else if (left instanceof BigDecimal && right instanceof BigDecimal) {
+            return ((BigDecimal) left).compareTo((BigDecimal) right) == 0;
+        }
+        return String.valueOf(left).equals(String.valueOf(right));
+    }
+
+    private Map<String, Object> flattenJoinedRow(Map<String, Map<String, Object>> joinedRow) {
+        Map<String, Object> flattened = new HashMap<>();
+        for (Map.Entry<String, Map<String, Object>> entry : joinedRow.entrySet()) {
+            String tableName = entry.getKey();
+            for (Map.Entry<String, Object> column : entry.getValue().entrySet()) {
+                flattened.put(tableName + "." + column.getKey(), column.getValue());
+            }
+        }
+        return flattened;
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
@@ -144,131 +164,117 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return result;
         }
 
+        if (condition.isInOperator()) {
+            Object rowValue = row.get(condition.column);
+            if (rowValue == null) {
+                LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
+                return condition.not;
+            }
+            boolean inResult = condition.inValues.contains(rowValue);
+            boolean result = condition.not ? !inResult : inResult;
+            LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue={1}, result={2}",
+                    new Object[]{condition, rowValue, result});
+            return result;
+        }
+
         Object rowValue = row.get(condition.column);
         if (rowValue == null) {
             LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
             return false;
         }
 
-        if (condition.isInOperator()) {
-            boolean inResult = false;
-            for (Object value : condition.inValues) {
-                Object convertedValue = convertConditionValue(value, condition.column, rowValue.getClass(), columnTypes);
-                boolean isEqual;
-                if (rowValue instanceof Float && convertedValue instanceof Float) {
-                    isEqual = Math.abs(((Float) rowValue) - ((Float) convertedValue)) < 1e-7;
-                } else if (rowValue instanceof Double && convertedValue instanceof Double) {
-                    isEqual = Math.abs(((Double) rowValue) - ((Double) convertedValue)) < 1e-7;
-                } else if (rowValue instanceof BigDecimal && convertedValue instanceof BigDecimal) {
-                    isEqual = ((BigDecimal) rowValue).compareTo((BigDecimal) convertedValue) == 0;
-                } else {
-                    isEqual = String.valueOf(rowValue).equals(String.valueOf(convertedValue));
-                }
-                if (isEqual) {
-                    inResult = true;
-                    break;
-                }
+        Object conditionValue = condition.value;
+        Class<?> columnType = columnTypes.get(condition.column);
+        if (columnType == null) {
+            throw new IllegalArgumentException("Unknown column type for: " + condition.column);
+        }
+
+        if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
+            if (!(rowValue instanceof String) || !(conditionValue instanceof String)) {
+                throw new IllegalArgumentException("LIKE/NOT LIKE requires String values");
             }
-            boolean result = condition.not ? !inResult : inResult;
-            LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue: {1}, values: {2}, result: {3}",
-                    new Object[]{condition, rowValue, condition.inValues, result});
+            String regex = QueryParser.convertLikePatternToRegex((String) conditionValue);
+            boolean matches = Pattern.matches(regex, (String) rowValue);
+            boolean result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+            result = condition.not ? !result : result;
+            LOGGER.log(Level.FINE, "Evaluated LIKE condition: {0}, rowValue={1}, regex={2}, result={3}",
+                    new Object[]{condition, rowValue, regex, result});
             return result;
         }
 
-        Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
-        LOGGER.log(Level.FINE, "Condition values: rowValue={0}, conditionValue={1}, column={2}, operator={3}",
-                new Object[]{rowValue, conditionValue, condition.column, condition.operator});
-
+        int comparison = compareValues(rowValue, conditionValue, columnType);
         boolean result;
-        if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
-            if (!(rowValue instanceof String) || !(conditionValue instanceof String)) {
-                throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String types");
-            }
-            String rowStr = (String) rowValue;
-            try {
-                String regex = QueryParser.convertLikePatternToRegex((String) conditionValue);
-                boolean matches = rowStr.matches(regex);
-                result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Invalid LIKE pattern: " + conditionValue, e);
-            }
-        } else if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
-            boolean isEqual;
-            if (rowValue instanceof Float && conditionValue instanceof Float) {
-                isEqual = Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;
-            } else if (rowValue instanceof Double && conditionValue instanceof Double) {
-                isEqual = Math.abs(((Double) rowValue) - ((Double) conditionValue)) < 1e-7;
-            } else if (rowValue instanceof BigDecimal && conditionValue instanceof BigDecimal) {
-                isEqual = ((BigDecimal) rowValue).compareTo((BigDecimal) conditionValue) == 0;
-            } else {
-                isEqual = String.valueOf(rowValue).equals(String.valueOf(conditionValue));
-            }
-            result = condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
-        } else {
-            if (!(rowValue instanceof Comparable) || !(conditionValue instanceof Comparable)) {
-                LOGGER.log(Level.WARNING, "Comparison operators < or > not supported for types: rowValue={0}, conditionValue={1}",
-                        new Object[]{rowValue.getClass().getSimpleName(), conditionValue.getClass().getSimpleName()});
-                throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
-            }
 
-            @SuppressWarnings("unchecked")
-            Comparable<Object> rowComparable = (Comparable<Object>) rowValue;
-            @SuppressWarnings("unchecked")
-            Comparable<Object> conditionComparable = (Comparable<Object>) conditionValue;
-
-            int comparison = rowComparable.compareTo(conditionValue);
-            result = condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
+        switch (condition.operator) {
+            case EQUALS:
+                result = comparison == 0;
+                break;
+            case NOT_EQUALS:
+                result = comparison != 0;
+                break;
+            case LESS_THAN:
+                result = comparison < 0;
+                break;
+            case GREATER_THAN:
+                result = comparison > 0;
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported operator: " + condition.operator);
         }
 
         result = condition.not ? !result : result;
-        LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue: {1}, conditionValue: {2}, result: {3}",
+        LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue={1}, conditionValue={2}, result={3}",
                 new Object[]{condition, rowValue, conditionValue, result});
         return result;
     }
 
-    private Object convertConditionValue(Object value, String column, Class<?> targetType, Map<String, Class<?>> columnTypes) {
-        if (value == null) {
-            return null;
+    private int compareValues(Object rowValue, Object conditionValue, Class<?> columnType) {
+        if (rowValue == null || conditionValue == null) {
+            return rowValue == conditionValue ? 0 : (rowValue == null ? -1 : 1);
         }
 
-        Class<?> valueType = value.getClass();
-        if (targetType.isAssignableFrom(valueType)) {
-            return value;
+        if (columnType == String.class || columnType == Character.class || columnType == UUID.class) {
+            String rowStr = rowValue.toString();
+            String condStr = conditionValue.toString();
+            return rowStr.compareTo(condStr);
+        } else if (columnType == Integer.class || columnType == Long.class || columnType == Short.class || columnType == Byte.class) {
+            long rowNum = ((Number) rowValue).longValue();
+            long condNum = ((Number) conditionValue).longValue();
+            return Long.compare(rowNum, condNum);
+        } else if (columnType == Float.class) {
+            float rowNum = ((Number) rowValue).floatValue();
+            float condNum = ((Number) conditionValue).floatValue();
+            return Float.compare(rowNum, condNum);
+        } else if (columnType == Double.class) {
+            double rowNum = ((Number) rowValue).doubleValue();
+            double condNum = ((Number) conditionValue).doubleValue();
+            return Double.compare(rowNum, condNum);
+        } else if (columnType == BigDecimal.class) {
+            BigDecimal rowNum = (BigDecimal) rowValue;
+            BigDecimal condNum = (BigDecimal) conditionValue;
+            return rowNum.compareTo(condNum);
+        } else if (columnType == Boolean.class) {
+            boolean rowBool = (Boolean) rowValue;
+            boolean condBool = (Boolean) conditionValue;
+            return Boolean.compare(rowBool, condBool);
+        } else if (columnType == LocalDate.class) {
+            LocalDate rowDate = (LocalDate) rowValue;
+            LocalDate condDate = (LocalDate) conditionValue;
+            return rowDate.compareTo(condDate);
+        } else if (columnType == LocalDateTime.class) {
+            LocalDateTime rowDateTime = (LocalDateTime) rowValue;
+            LocalDateTime condDateTime = (LocalDateTime) conditionValue;
+            return rowDateTime.compareTo(condDateTime);
+        } else {
+            throw new IllegalArgumentException("Unsupported column type for comparison: " + columnType.getSimpleName());
         }
+    }
 
-        String stringValue = String.valueOf(value);
-        try {
-            if (targetType == String.class) {
-                return stringValue;
-            } else if (targetType == Integer.class) {
-                return Integer.parseInt(stringValue);
-            } else if (targetType == Long.class) {
-                return Long.parseLong(stringValue);
-            } else if (targetType == Short.class) {
-                return Short.parseShort(stringValue);
-            } else if (targetType == Byte.class) {
-                return Byte.parseByte(stringValue);
-            } else if (targetType == Float.class) {
-                return Float.parseFloat(stringValue);
-            } else if (targetType == Double.class) {
-                return Double.parseDouble(stringValue);
-            } else if (targetType == BigDecimal.class) {
-                return new BigDecimal(stringValue);
-            } else if (targetType == Boolean.class) {
-                return Boolean.parseBoolean(stringValue);
-            } else if (targetType == UUID.class) {
-                return UUID.fromString(stringValue);
-            } else if (targetType == Character.class) {
-                if (stringValue.length() == 1) {
-                    return stringValue.charAt(0);
-                } else {
-                    throw new IllegalArgumentException("Invalid character value for column " + column);
-                }
-            } else {
-                throw new IllegalArgumentException("Unsupported type conversion for column " + column + ": " + targetType.getSimpleName());
-            }
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Cannot convert value '" + stringValue + "' to type " + targetType.getSimpleName() + " for column " + column, e);
+    private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
+        Map<String, Object> filtered = new LinkedHashMap<>();
+        for (String column : columns) {
+            filtered.put(column, row.get(column));
         }
+        return filtered;
     }
 }

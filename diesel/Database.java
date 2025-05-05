@@ -2,7 +2,6 @@ package diesel;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -169,12 +168,16 @@ class Database {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid SELECT format");
             }
             LOGGER.log(Level.FINE, "SELECT query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
-            String tablePart = parts[1].split("(?i)WHERE")[0].trim();
-            LOGGER.log(Level.FINE, "Table part after WHERE split: {0}", tablePart);
-            if (tablePart.isEmpty()) {
+            // Extract the first table before any INNER JOIN or WHERE
+            String tablePart = parts[1].split("(?i)(INNER JOIN|WHERE)\\s")[0].trim();
+            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
+            // Handle alias by taking the first word
+            String tableName = tablePart.split("\\s+")[0].trim();
+            LOGGER.log(Level.FINE, "Extracted table name: {0}", tableName);
+            if (tableName.isEmpty()) {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in SELECT");
             }
-            return tablePart;
+            return tableName;
         } else if (normalized.startsWith("INSERT INTO")) {
             LOGGER.log(Level.FINE, "Processing INSERT query");
             String[] parts = normalized.split("(?i)INSERT INTO\\s+", 2);

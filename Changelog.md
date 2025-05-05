@@ -72,3 +72,4 @@
 0.7.2 LIKE
 0.7.3 % and  _ in LIKE
 0.7.4 Like tests
+0.7.5 JOIN
