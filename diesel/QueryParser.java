@@ -22,7 +22,7 @@ class QueryParser {
     }
 
     enum JoinType {
-        INNER, LEFT_INNER, RIGHT_INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER
+        INNER, LEFT_INNER, RIGHT_INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER, CROSS
     }
 
     static class Condition {
@@ -405,7 +405,7 @@ class QueryParser {
         String conditionStr = null;
 
         // Split by various join types
-        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
         List<String> joinParts = new ArrayList<>();
         int lastEnd = 0;
@@ -452,88 +452,114 @@ class QueryParser {
                 case "RIGHT INNER JOIN":
                     joinType = JoinType.RIGHT_INNER;
                     break;
+                case "CROSS JOIN":
+                    joinType = JoinType.CROSS;
+                    break;
                 default:
                     throw new IllegalArgumentException("Unsupported join type: " + joinTypeStr);
             }
 
-            String[] onSplit = joinPart.split("(?i)ON\\s+", 2);
-            if (onSplit.length != 2) {
-                throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing ON clause");
-            }
+            String joinTableName;
+            String leftColumn = null;
+            String rightColumn = null;
 
-            String joinTableName = onSplit[0].split(" ")[0].trim();
-            String onClause = onSplit[1].trim();
-
-            String onCondition;
-            if (onClause.toUpperCase().contains(" WHERE ")) {
-                String[] onWhereSplit = onClause.split("(?i)\\s+WHERE\\s+", 2);
-                onCondition = onWhereSplit[0].trim();
-                if (onWhereSplit.length > 1) {
-                    conditionStr = onWhereSplit[1].trim();
+            if (joinType == JoinType.CROSS) {
+                // For CROSS JOIN, extract table name without expecting an ON clause
+                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|$))", 2);
+                joinTableName = crossSplit[0].trim();
+                if (crossSplit.length > 1 && !crossSplit[1].trim().isEmpty()) {
+                    String remaining = crossSplit[1].trim();
+                    if (remaining.toUpperCase().startsWith("WHERE ")) {
+                        conditionStr = remaining.substring(6).trim();
+                    }
+                    // If there's an ON clause, it's invalid for CROSS JOIN
+                    if (remaining.toUpperCase().contains(" ON ")) {
+                        throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
+                    }
                 }
-            } else if (onClause.toUpperCase().contains(" INNER JOIN ") ||
-                    onClause.toUpperCase().contains(" LEFT JOIN ") ||
-                    onClause.toUpperCase().contains(" RIGHT JOIN ") ||
-                    onClause.toUpperCase().contains(" FULL JOIN ") ||
-                    onClause.toUpperCase().contains(" LEFT INNER JOIN ") ||
-                    onClause.toUpperCase().contains(" RIGHT INNER JOIN ") ||
-                    onClause.toUpperCase().contains(" LEFT OUTER JOIN ") ||
-                    onClause.toUpperCase().contains(" RIGHT OUTER JOIN ") ||
-                    onClause.toUpperCase().contains(" FULL OUTER JOIN ")) {
-                // If another join follows, split until the next join
-                Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
-                Matcher nextJoinMatcher = nextJoinPattern.matcher(onClause);
-                if (nextJoinMatcher.find()) {
-                    onCondition = onClause.substring(0, nextJoinMatcher.start()).trim();
+                LOGGER.log(Level.FINE, "Parsed CROSS JOIN: table={0}", joinTableName);
+            } else {
+                // For other joins, expect an ON clause
+                String[] onSplit = joinPart.split("(?i)ON\\s+", 2);
+                if (onSplit.length != 2) {
+                    throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing ON clause");
+                }
+
+                joinTableName = onSplit[0].split(" ")[0].trim();
+                String onClause = onSplit[1].trim();
+
+                String onCondition;
+                if (onClause.toUpperCase().contains(" WHERE ")) {
+                    String[] onWhereSplit = onClause.split("(?i)\\s+WHERE\\s+", 2);
+                    onCondition = onWhereSplit[0].trim();
+                    if (onWhereSplit.length > 1) {
+                        conditionStr = onWhereSplit[1].trim();
+                    }
+                } else if (onClause.toUpperCase().contains(" INNER JOIN ") ||
+                        onClause.toUpperCase().contains(" LEFT JOIN ") ||
+                        onClause.toUpperCase().contains(" RIGHT JOIN ") ||
+                        onClause.toUpperCase().contains(" FULL JOIN ") ||
+                        onClause.toUpperCase().contains(" CROSS JOIN ") ||
+                        onClause.toUpperCase().contains(" LEFT INNER JOIN ") ||
+                        onClause.toUpperCase().contains(" RIGHT INNER JOIN ") ||
+                        onClause.toUpperCase().contains(" LEFT OUTER JOIN ") ||
+                        onClause.toUpperCase().contains(" RIGHT OUTER JOIN ") ||
+                        onClause.toUpperCase().contains(" FULL OUTER JOIN ")) {
+                    // If another join follows, split until the next join
+                    Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+                    Matcher nextJoinMatcher = nextJoinPattern.matcher(onClause);
+                    if (nextJoinMatcher.find()) {
+                        onCondition = onClause.substring(0, nextJoinMatcher.start()).trim();
+                    } else {
+                        onCondition = onClause;
+                    }
                 } else {
                     onCondition = onClause;
                 }
-            } else {
-                onCondition = onClause;
-            }
 
-            String[] conditionParts = onCondition.trim().split("\\s*=\\s*");
-            if (conditionParts.length != 2) {
-                LOGGER.log(Level.SEVERE, "Invalid ON condition in {0}: {1}, expected format table1.column = table2.column",
-                        new Object[]{joinTypeStr, onCondition});
-                throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must be in format table1.column = table2.column");
-            }
+                String[] conditionParts = onCondition.trim().split("\\s*=\\s*");
+                if (conditionParts.length != 2) {
+                    LOGGER.log(Level.SEVERE, "Invalid ON condition in {0}: {1}, expected format table1.column = table2.column",
+                            new Object[]{joinTypeStr, onCondition});
+                    throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must be in format table1.column = table2.column");
+                }
 
-            String leftCondition = conditionParts[0].trim();
-            String rightCondition = conditionParts[1].trim();
+                String leftCondition = conditionParts[0].trim();
+                String rightCondition = conditionParts[1].trim();
 
-            Pattern tableColumnPattern = Pattern.compile("(\\w+)\\.(\\w+)");
-            Matcher leftMatcher = tableColumnPattern.matcher(leftCondition);
-            Matcher rightMatcher = tableColumnPattern.matcher(rightCondition);
+                Pattern tableColumnPattern = Pattern.compile("(\\w+)\\.(\\w+)");
+                Matcher leftMatcher = tableColumnPattern.matcher(leftCondition);
+                Matcher rightMatcher = tableColumnPattern.matcher(rightCondition);
 
-            if (!leftMatcher.matches() || !rightMatcher.matches()) {
-                LOGGER.log(Level.SEVERE, "Invalid ON condition parts in {0}: left={1}, right={2}",
-                        new Object[]{joinTypeStr, leftCondition, rightCondition});
-                throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must specify table and column");
-            }
+                if (!leftMatcher.matches() || !rightMatcher.matches()) {
+                    LOGGER.log(Level.SEVERE, "Invalid ON condition parts in {0}: left={1}, right={2}",
+                            new Object[]{joinTypeStr, leftCondition, rightCondition});
+                    throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must specify table and column");
+                }
 
-            String leftTable = leftMatcher.group(1);
-            String leftColumn = leftMatcher.group(2);
-            String rightTable = rightMatcher.group(1);
-            String rightColumn = rightMatcher.group(2);
+                String leftTable = leftMatcher.group(1);
+                leftColumn = leftMatcher.group(2);
+                String rightTable = rightMatcher.group(1);
+                rightColumn = rightMatcher.group(2);
 
-            LOGGER.log(Level.FINE, "Parsed ON condition for {0}: leftTable={1}, leftColumn={2}, rightTable={3}, rightColumn={4}",
-                    new Object[]{joinTypeStr, leftTable, leftColumn, rightTable, rightColumn});
+                LOGGER.log(Level.FINE, "Parsed ON condition for {0}: leftTable={1}, leftColumn={2}, rightTable={3}, rightColumn={4}",
+                        new Object[]{joinTypeStr, leftTable, leftColumn, rightTable, rightColumn});
 
-            if (!leftTable.equalsIgnoreCase(tableName) && !leftTable.equalsIgnoreCase(joinTableName)) {
-                throw new IllegalArgumentException("Invalid left table in ON condition for " + joinTypeStr + ": " + leftTable);
-            }
-            if (!rightTable.equalsIgnoreCase(tableName) && !rightTable.equalsIgnoreCase(joinTableName)) {
-                throw new IllegalArgumentException("Invalid right table in ON condition for " + joinTypeStr + ": " + rightTable);
-            }
+                if (!leftTable.equalsIgnoreCase(tableName) && !leftTable.equalsIgnoreCase(joinTableName)) {
+                    throw new IllegalArgumentException("Invalid left table in ON condition for " + joinTypeStr + ": " + leftTable);
+                }
+                if (!rightTable.equalsIgnoreCase(tableName) && !rightTable.equalsIgnoreCase(joinTableName)) {
+                    throw new IllegalArgumentException("Invalid right table in ON condition for " + joinTypeStr + ": " + rightTable);
+                }
 
-            Table leftTableObj = database.getTable(leftTable);
-            Table rightTableObj = database.getTable(rightTable);
-            if (!leftTableObj.getColumnTypes().containsKey(leftColumn)) {
-                throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + leftTable + "." + leftColumn);
-            }
-            if (!rightTableObj.getColumnTypes().containsKey(rightColumn)) {
-                throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + rightTable + "." + rightColumn);
+                Table leftTableObj = database.getTable(leftTable);
+                Table rightTableObj = database.getTable(rightTable);
+                if (!leftTableObj.getColumnTypes().containsKey(leftColumn)) {
+                    throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + leftTable + "." + leftColumn);
+                }
+                if (!rightTableObj.getColumnTypes().containsKey(rightColumn)) {
+                    throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + rightTable + "." + rightColumn);
+                }
             }
 
             joins.add(new JoinInfo(tableName, joinTableName, leftColumn, rightColumn, joinType));
