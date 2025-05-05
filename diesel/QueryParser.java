@@ -22,7 +22,7 @@ class QueryParser {
     }
 
     enum JoinType {
-        INNER, LEFT_INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER
+        INNER, LEFT_INNER, RIGHT_INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER
     }
 
     static class Condition {
@@ -405,7 +405,7 @@ class QueryParser {
         String conditionStr = null;
 
         // Split by various join types
-        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
         List<String> joinParts = new ArrayList<>();
         int lastEnd = 0;
@@ -437,6 +437,9 @@ class QueryParser {
                 case "LEFT INNER JOIN":
                     joinType = JoinType.LEFT_INNER;
                     break;
+                case "RIGHT INNER JOIN":
+                    joinType = JoinType.RIGHT_INNER;
+                    break;
                 case "LEFT OUTER JOIN":
                     joinType = JoinType.LEFT_OUTER;
                     break;
@@ -467,11 +470,12 @@ class QueryParser {
                 }
             } else if (onClause.toUpperCase().contains(" INNER JOIN ") ||
                     onClause.toUpperCase().contains(" LEFT INNER JOIN ") ||
+                    onClause.toUpperCase().contains(" RIGHT INNER JOIN ") ||
                     onClause.toUpperCase().contains(" LEFT OUTER JOIN ") ||
                     onClause.toUpperCase().contains(" RIGHT OUTER JOIN ") ||
                     onClause.toUpperCase().contains(" FULL OUTER JOIN ")) {
                 // If another join follows, split until the next join
-                Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+                Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
                 Matcher nextJoinMatcher = nextJoinPattern.matcher(onClause);
                 if (nextJoinMatcher.find()) {
                     onCondition = onClause.substring(0, nextJoinMatcher.start()).trim();
@@ -900,7 +904,7 @@ class QueryParser {
         if (conditionWithoutNot.contains(".")) {
             String[] colParts = conditionWithoutNot.split("\\.", 2);
             if (colParts.length < 2) {
-                throw new IllegalArgumentException("Invalid table-qualified kiln: " + conditionWithoutNot);
+                throw new IllegalArgumentException("Invalid table-qualified column: " + conditionWithoutNot);
             }
             conditionColumn = colParts[1].trim().split("\\s+")[0];
         } else {
