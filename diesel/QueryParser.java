@@ -405,7 +405,7 @@ class QueryParser {
         String conditionStr = null;
 
         // Split by various join types
-        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
         List<String> joinParts = new ArrayList<>();
         int lastEnd = 0;
@@ -438,14 +438,15 @@ class QueryParser {
                 case "LEFT OUTER JOIN":
                     joinType = JoinType.LEFT_OUTER;
                     break;
+                case "RIGHT JOIN":
+                case "RIGHT OUTER JOIN":
+                    joinType = JoinType.RIGHT_OUTER;
+                    break;
                 case "LEFT INNER JOIN":
                     joinType = JoinType.LEFT_INNER;
                     break;
                 case "RIGHT INNER JOIN":
                     joinType = JoinType.RIGHT_INNER;
-                    break;
-                case "RIGHT OUTER JOIN":
-                    joinType = JoinType.RIGHT_OUTER;
                     break;
                 case "FULL OUTER JOIN":
                     joinType = JoinType.FULL_OUTER;
@@ -471,13 +472,14 @@ class QueryParser {
                 }
             } else if (onClause.toUpperCase().contains(" INNER JOIN ") ||
                     onClause.toUpperCase().contains(" LEFT JOIN ") ||
+                    onClause.toUpperCase().contains(" RIGHT JOIN ") ||
                     onClause.toUpperCase().contains(" LEFT INNER JOIN ") ||
                     onClause.toUpperCase().contains(" RIGHT INNER JOIN ") ||
                     onClause.toUpperCase().contains(" LEFT OUTER JOIN ") ||
                     onClause.toUpperCase().contains(" RIGHT OUTER JOIN ") ||
                     onClause.toUpperCase().contains(" FULL OUTER JOIN ")) {
                 // If another join follows, split until the next join
-                Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+                Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
                 Matcher nextJoinMatcher = nextJoinPattern.matcher(onClause);
                 if (nextJoinMatcher.find()) {
                     onCondition = onClause.substring(0, nextJoinMatcher.start()).trim();
