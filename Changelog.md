@@ -65,11 +65,4 @@
 0.6.5 Advanced Test fix
 0.6.6 Perfomance test encoding
 0.6.7 Advanced Test fix
-0.6.8 IN
-0.6.9 NOT IN
-0.7.0 tests IN
-0.7.1 all tests IN fix
-0.7.2 LIKE
-0.7.3 % and  _ in LIKE
-0.7.4 Like tests
-0.7.5 JOIN
+0.6.8 Join Test
