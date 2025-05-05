@@ -74,3 +74,4 @@
 0.7.4 Like tests
 0.7.5 JOIN
 0.7.6 Join Test
+0.7.7 JOIN Test fix
