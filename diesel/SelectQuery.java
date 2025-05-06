@@ -16,13 +16,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.JoinInfo> joins;
     private final String mainTableName;
     private final Integer limit; // Поле для LIMIT
+    private final Integer offset; // Поле для OFFSET
 
-    public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions, List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit) {
+    public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions, List<QueryParser.JoinInfo> joins,
+                       String mainTableName, Integer limit, Integer offset) {
         this.columns = columns;
         this.conditions = conditions != null ? conditions : new ArrayList<>();
         this.joins = joins != null ? joins : new ArrayList<>();
         this.mainTableName = mainTableName;
         this.limit = limit;
+        this.offset = offset;
     }
 
     @Override
@@ -156,18 +159,26 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 joinedRows = newJoinedRows;
             }
 
+            // Apply WHERE conditions and collect results, respecting LIMIT and OFFSET
+            int rowsAdded = 0;
+            int rowsSkipped = (offset != null) ? offset : 0;
             for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
                 Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
                 if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
+                    if (rowsSkipped > 0) {
+                        rowsSkipped--;
+                        continue; // Skip rows until offset is satisfied
+                    }
                     result.add(filterColumns(flattenedRow, columns));
-                    if (limit != null && result.size() >= limit) {
-                        break;
+                    rowsAdded++;
+                    if (limit != null && rowsAdded >= limit) {
+                        break; // Stop once limit is reached
                     }
                 }
             }
 
-            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, limit={3}",
-                    new Object[]{result.size(), mainTableName, joins, limit});
+            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, limit={3}, offset={4}",
+                    new Object[]{result.size(), mainTableName, joins, limit, offset});
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -254,148 +265,86 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     private Map<String, Object> flattenJoinedRow(Map<String, Map<String, Object>> joinedRow) {
         Map<String, Object> flattened = new HashMap<>();
-        for (Map.Entry<String, Map<String, Object>> entry : joinedRow.entrySet()) {
-            String tableName = entry.getKey();
-            for (Map.Entry<String, Object> column : entry.getValue().entrySet()) {
-                flattened.put(tableName + "." + column.getKey(), column.getValue());
+        for (Map.Entry<String, Map<String, Object>> tableEntry : joinedRow.entrySet()) {
+            String tableName = tableEntry.getKey();
+            Map<String, Object> row = tableEntry.getValue();
+            for (Map.Entry<String, Object> columnEntry : row.entrySet()) {
+                String columnName = tableName + "." + columnEntry.getKey();
+                flattened.put(columnName, columnEntry.getValue());
             }
         }
         return flattened;
     }
 
-    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes) {
         boolean result = true;
         String lastConjunction = null;
 
         for (QueryParser.Condition condition : conditions) {
-            boolean conditionResult = evaluateCondition(row, condition, columnTypes);
-
+            boolean conditionResult = evaluateCondition(row, condition, combinedColumnTypes);
             if (lastConjunction == null) {
                 result = conditionResult;
-            } else if (lastConjunction.equalsIgnoreCase("AND")) {
+            } else if (lastConjunction.equals("AND")) {
                 result = result && conditionResult;
-            } else if (lastConjunction.equalsIgnoreCase("OR")) {
+            } else if (lastConjunction.equals("OR")) {
                 result = result || conditionResult;
             }
-
             lastConjunction = condition.conjunction;
-            LOGGER.log(Level.FINEST, "Evaluated condition: {0}, result: {1}, conjunction: {2}, cumulative result: {3}",
-                    new Object[]{condition, conditionResult, lastConjunction, result});
         }
 
         return result;
     }
 
-    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
+    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> combinedColumnTypes) {
         if (condition.isGrouped()) {
-            boolean subResult = evaluateConditions(row, condition.subConditions, columnTypes);
-            boolean result = condition.not ? !subResult : subResult;
-            LOGGER.log(Level.FINE, "Evaluated grouped condition: {0}, result: {1}", new Object[]{condition, result});
-            return result;
-        }
-
-        if (condition.isInOperator()) {
-            Object rowValue = row.get(condition.column);
-            if (rowValue == null) {
-                LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
-                return condition.not;
-            }
-            boolean inResult = false;
-            for (Object inValue : condition.inValues) {
-                Class<?> columnType = columnTypes.get(condition.column.split("\\.")[1]);
-                if (columnType == null) {
-                    throw new IllegalArgumentException("Unknown column type for: " + condition.column);
-                }
-                int comparison = compareValues(rowValue, inValue, columnType);
-                if (comparison == 0) {
-                    inResult = true;
-                    break;
-                }
-            }
-            boolean result = condition.not ? !inResult : inResult;
-            LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue={1}, inValues={2}, result={3}",
-                    new Object[]{condition, rowValue, condition.inValues, result});
-            return result;
-        }
-
-        if (condition.isColumnComparison()) {
-            Object leftValue = row.get(condition.column);
-            Object rightValue = row.get(condition.rightColumn);
-            if (leftValue == null || rightValue == null) {
-                LOGGER.log(Level.WARNING, "Row value for column {0} or {1} is null", new Object[]{condition.column, condition.rightColumn});
-                return false;
-            }
-
-            Class<?> columnType = columnTypes.get(condition.column.split("\\.")[1]);
-            if (columnType == null) {
-                throw new IllegalArgumentException("Unknown column type for: " + condition.column);
-            }
-
-            int comparison = compareValues(leftValue, rightValue, columnType);
-            boolean result;
-
-            switch (condition.operator) {
-                case EQUALS:
-                    result = comparison == 0;
-                    break;
-                case NOT_EQUALS:
-                    result = comparison != 0;
-                    break;
-                case LESS_THAN:
-                    result = comparison < 0;
-                    break;
-                case GREATER_THAN:
-                    result = comparison > 0;
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unsupported operator for column comparison: " + condition.operator);
-            }
-
-            result = condition.not ? !result : result;
-            LOGGER.log(Level.FINE, "Evaluated column comparison condition: {0}, leftValue={1}, rightValue={2}, result={3}",
-                    new Object[]{condition, leftValue, rightValue, result});
-            return result;
+            boolean subResult = evaluateConditions(row, condition.subConditions, combinedColumnTypes);
+            return condition.not ? !subResult : subResult;
         }
 
         if (condition.isNullOperator()) {
-            Object rowValue = row.get(condition.column);
-            boolean result;
-            if (condition.operator == QueryParser.Operator.IS_NULL) {
-                result = rowValue == null;
-            } else {
-                result = rowValue != null;
+            Object value = row.get(condition.column);
+            boolean isNull = value == null;
+            boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
+            return condition.not ? !result : result;
+        }
+
+        if (condition.isInOperator()) {
+            Object value = row.get(condition.column);
+            if (value == null) {
+                return condition.not;
             }
-            result = condition.not ? !result : result;
-            LOGGER.log(Level.FINE, "Evaluated null condition: {0}, rowValue={1}, result={2}",
-                    new Object[]{condition, rowValue, result});
-            return result;
+            boolean inResult = condition.inValues.stream().anyMatch(v -> valuesEqual(v, value));
+            return condition.not ? !inResult : inResult;
         }
 
-        Object rowValue = row.get(condition.column);
-        if (rowValue == null) {
-            LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
-            return false;
+        Object leftValue = row.get(condition.column);
+        if (leftValue == null) {
+            return condition.not;
         }
 
-        Class<?> columnType = columnTypes.get(condition.column.split("\\.")[1]);
-        if (columnType == null) {
-            throw new IllegalArgumentException("Unknown column type for: " + condition.column);
+        Object rightValue;
+        if (condition.isColumnComparison()) {
+            rightValue = row.get(condition.rightColumn);
+            if (rightValue == null) {
+                return condition.not;
+            }
+        } else {
+            rightValue = condition.value;
         }
 
+        int comparison;
         if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
-            String rowStr = rowValue.toString();
-            String pattern = QueryParser.convertLikePatternToRegex((String) condition.value);
-            boolean matches = Pattern.matches(pattern, rowStr);
+            if (!(leftValue instanceof String) || !(rightValue instanceof String)) {
+                return condition.not;
+            }
+            String pattern = QueryParser.convertLikePatternToRegex((String) rightValue);
+            boolean matches = Pattern.matches(pattern, (String) leftValue);
             boolean result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
-            result = condition.not ? !result : result;
-            LOGGER.log(Level.FINE, "Evaluated LIKE condition: {0}, rowValue={1}, pattern={2}, result={3}",
-                    new Object[]{condition, rowValue, pattern, result});
-            return result;
+            return condition.not ? !result : result;
         }
 
-        int comparison = compareValues(rowValue, condition.value, columnType);
+        comparison = compareValues(leftValue, rightValue);
         boolean result;
-
         switch (condition.operator) {
             case EQUALS:
                 result = comparison == 0;
@@ -410,75 +359,54 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 result = comparison > 0;
                 break;
             default:
-                throw new IllegalArgumentException("Unsupported operator: " + condition.operator);
+                throw new IllegalStateException("Unsupported operator: " + condition.operator);
         }
 
-        result = condition.not ? !result : result;
-        LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue={1}, conditionValue={2}, result={3}",
-                new Object[]{condition, rowValue, condition.value, result});
-        return result;
+        return condition.not ? !result : result;
     }
 
-    private int compareValues(Object left, Object right, Class<?> columnType) {
+    private int compareValues(Object left, Object right) {
         if (left == null || right == null) {
             return left == right ? 0 : (left == null ? -1 : 1);
         }
 
-        if (columnType == String.class || columnType == UUID.class || columnType == Character.class) {
-            return String.valueOf(left).compareTo(String.valueOf(right));
-        } else if (columnType == Integer.class) {
-            Integer leftInt = (Integer) left;
-            Integer rightInt = (Integer) right;
-            return leftInt.compareTo(rightInt);
-        } else if (columnType == Long.class) {
-            Long leftLong = (Long) left;
-            Long rightLong = (Long) right;
-            return leftLong.compareTo(rightLong);
-        } else if (columnType == Short.class) {
-            Short leftShort = (Short) left;
-            Short rightShort = (Short) right;
-            return leftShort.compareTo(rightShort);
-        } else if (columnType == Byte.class) {
-            Byte leftByte = (Byte) left;
-            Byte rightByte = (Byte) right;
-            return leftByte.compareTo(rightByte);
-        } else if (columnType == Float.class) {
-            Float leftFloat = (Float) left;
-            Float rightFloat = (Float) right;
-            return Float.compare(leftFloat, rightFloat);
-        } else if (columnType == Double.class) {
-            Double leftDouble = (Double) left;
-            Double rightDouble = (Double) right;
-            return Double.compare(leftDouble, rightDouble);
-        } else if (columnType == BigDecimal.class) {
-            BigDecimal leftBD = (BigDecimal) left;
-            BigDecimal rightBD = (BigDecimal) right;
+        if (left instanceof Number && right instanceof Number) {
+            if (left instanceof BigDecimal && right instanceof BigDecimal) {
+                return ((BigDecimal) left).compareTo((BigDecimal) right);
+            }
+            BigDecimal leftBD = new BigDecimal(left.toString());
+            BigDecimal rightBD = new BigDecimal(right.toString());
             return leftBD.compareTo(rightBD);
-        } else if (columnType == Boolean.class) {
-            Boolean leftBool = (Boolean) left;
-            Boolean rightBool = (Boolean) right;
-            return leftBool.compareTo(rightBool);
-        } else if (columnType == LocalDate.class) {
-            LocalDate leftDate = (LocalDate) left;
-            LocalDate rightDate = (LocalDate) right;
-            return leftDate.compareTo(rightDate);
-        } else if (columnType == LocalDateTime.class) {
-            LocalDateTime leftDateTime = (LocalDateTime) left;
-            LocalDateTime rightDateTime = (LocalDateTime) right;
-            return leftDateTime.compareTo(rightDateTime);
+        } else if (left instanceof LocalDate && right instanceof LocalDate) {
+            return ((LocalDate) left).compareTo((LocalDate) right);
+        } else if (left instanceof LocalDateTime && right instanceof LocalDateTime) {
+            return ((LocalDateTime) left).compareTo((LocalDateTime) right);
+        } else if (left instanceof Boolean && right instanceof Boolean) {
+            return ((Boolean) left).compareTo((Boolean) right);
+        } else if (left instanceof UUID && right instanceof UUID) {
+            return ((UUID) left).compareTo((UUID) right);
+        } else if (left instanceof String && right instanceof String) {
+            return ((String) left).compareTo((String) right);
+        } else if (left instanceof Character && right instanceof Character) {
+            return ((Character) left).compareTo((Character) right);
         } else {
-            throw new IllegalArgumentException("Unsupported column type for comparison: " + columnType.getSimpleName());
+            throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
         }
     }
 
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
         Map<String, Object> filtered = new HashMap<>();
         for (String column : columns) {
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1] : column;
-            for (Map.Entry<String, Object> entry : row.entrySet()) {
-                String entryColumn = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1] : entry.getKey();
-                if (entryColumn.equalsIgnoreCase(unqualifiedColumn)) {
-                    filtered.put(entry.getKey(), entry.getValue());
+            String unqualifiedColumn = column.contains(".") ? column : mainTableName + "." + column;
+            if (row.containsKey(unqualifiedColumn)) {
+                filtered.put(unqualifiedColumn, row.get(unqualifiedColumn));
+            } else {
+                String colName = column.contains(".") ? column.split("\\.")[1] : column;
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    if (entry.getKey().endsWith("." + colName)) {
+                        filtered.put(entry.getKey(), entry.getValue());
+                        break;
+                    }
                 }
             }
         }

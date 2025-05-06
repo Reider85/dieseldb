@@ -462,7 +462,8 @@ class QueryParser {
         List<JoinInfo> joins = new ArrayList<>();
         String tableName;
         String conditionStr = null;
-        Integer limit = null; // Переменная для LIMIT
+        Integer limit = null;
+        Integer offset = null; // Added for OFFSET
 
         // Разделяем по JOIN
         Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
@@ -524,7 +525,7 @@ class QueryParser {
             List<Condition> onConditions = new ArrayList<>();
 
             if (joinType == JoinType.CROSS) {
-                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|$))", 2);
+                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|OFFSET|$))", 2);
                 joinTableName = crossSplit[0].trim();
                 Table joinTable = database.getTable(joinTableName);
                 if (joinTable == null) {
@@ -536,7 +537,13 @@ class QueryParser {
                     if (remaining.toUpperCase().startsWith("WHERE ")) {
                         conditionStr = remaining.substring(6).trim();
                     } else if (remaining.toUpperCase().startsWith("LIMIT ")) {
-                        limit = parseLimitClause(remaining);
+                        String[] limitSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
+                        limit = parseLimitClause("LIMIT " + limitSplit[0].substring(6).trim());
+                        if (limitSplit.length > 1) {
+                            offset = parseOffsetClause("OFFSET " + limitSplit[1].trim());
+                        }
+                    } else if (remaining.toUpperCase().startsWith("OFFSET ")) {
+                        offset = parseOffsetClause(remaining);
                     }
                     if (remaining.toUpperCase().contains(" ON ")) {
                         throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
@@ -562,7 +569,18 @@ class QueryParser {
                             String[] whereLimitSplit = remaining.split("(?i)\\s+LIMIT\\s+", 2);
                             conditionStr = whereLimitSplit[0].trim();
                             if (whereLimitSplit.length > 1) {
-                                limit = parseLimitClause("LIMIT " + whereLimitSplit[1].trim());
+                                String limitClause = "LIMIT " + whereLimitSplit[1].trim();
+                                String[] limitOffsetSplit = limitClause.split("(?i)\\s+OFFSET\\s+", 2);
+                                limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].substring(6).trim());
+                                if (limitOffsetSplit.length > 1) {
+                                    offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+                                }
+                            }
+                        } else if (remaining.toUpperCase().contains(" OFFSET ")) {
+                            String[] whereOffsetSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
+                            conditionStr = whereOffsetSplit[0].trim();
+                            if (whereOffsetSplit.length > 1) {
+                                offset = parseOffsetClause("OFFSET " + whereOffsetSplit[1].trim());
                             }
                         } else {
                             conditionStr = remaining;
@@ -572,7 +590,18 @@ class QueryParser {
                     String[] onLimitSplit = onClause.split("(?i)\\s+LIMIT\\s+", 2);
                     onCondition = onLimitSplit[0].trim();
                     if (onLimitSplit.length > 1) {
-                        limit = parseLimitClause("LIMIT " + onLimitSplit[1].trim());
+                        String limitClause = "LIMIT " + onLimitSplit[1].trim();
+                        String[] limitOffsetSplit = limitClause.split("(?i)\\s+OFFSET\\s+", 2);
+                        limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].substring(6).trim());
+                        if (limitOffsetSplit.length > 1) {
+                            offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+                        }
+                    }
+                } else if (onClause.toUpperCase().contains(" OFFSET ")) {
+                    String[] onOffsetSplit = onClause.split("(?i)\\s+OFFSET\\s+", 2);
+                    onCondition = onOffsetSplit[0].trim();
+                    if (onOffsetSplit.length > 1) {
+                        offset = parseOffsetClause("OFFSET " + onOffsetSplit[1].trim());
                     }
                 } else {
                     onCondition = onClause;
@@ -607,7 +636,18 @@ class QueryParser {
                 String[] whereLimitSplit = remaining.split("(?i)\\s+LIMIT\\s+", 2);
                 conditionStr = whereLimitSplit[0].trim();
                 if (whereLimitSplit.length > 1) {
-                    limit = parseLimitClause("LIMIT " + whereLimitSplit[1].trim());
+                    String limitClause = "LIMIT " + whereLimitSplit[1].trim();
+                    String[] limitOffsetSplit = limitClause.split("(?i)\\s+OFFSET\\s+", 2);
+                    limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].substring(6).trim());
+                    if (limitOffsetSplit.length > 1) {
+                        offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+                    }
+                }
+            } else if (remaining.toUpperCase().contains(" OFFSET ")) {
+                String[] whereOffsetSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
+                conditionStr = whereOffsetSplit[0].trim();
+                if (whereOffsetSplit.length > 1) {
+                    offset = parseOffsetClause("OFFSET " + whereOffsetSplit[1].trim());
                 }
             } else {
                 conditionStr = remaining;
@@ -616,7 +656,17 @@ class QueryParser {
         } else if (tableAndJoins.toUpperCase().contains(" LIMIT ")) {
             String[] limitSplit = tableAndJoins.split("(?i)\\s+LIMIT\\s+", 2);
             if (limitSplit.length > 1) {
-                limit = parseLimitClause("LIMIT " + limitSplit[1].trim());
+                String limitClause = "LIMIT " + limitSplit[1].trim();
+                String[] limitOffsetSplit = limitClause.split("(?i)\\s+OFFSET\\s+", 2);
+                limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].substring(6).trim());
+                if (limitOffsetSplit.length > 1) {
+                    offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+                }
+            }
+        } else if (tableAndJoins.toUpperCase().contains(" OFFSET ")) {
+            String[] offsetSplit = tableAndJoins.split("(?i)\\s+OFFSET\\s+", 2);
+            if (offsetSplit.length > 1) {
+                offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
             }
         }
 
@@ -641,10 +691,10 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, mainTable={1}, joins={2}, conditions={3}, limit={4}",
-                new Object[]{columns, mainTable.getName(), joins, conditions, limit});
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, mainTable={1}, joins={2}, conditions={3}, limit={4}, offset={5}",
+                new Object[]{columns, mainTable.getName(), joins, conditions, limit, offset});
 
-        return new SelectQuery(columns, conditions, joins, mainTable.getName(), limit);
+        return new SelectQuery(columns, conditions, joins, mainTable.getName(), limit, offset);
     }
 
     private Integer parseLimitClause(String limitClause) {
@@ -658,6 +708,20 @@ class QueryParser {
             return limitValue;
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Invalid LIMIT value: " + normalized);
+        }
+    }
+
+    private Integer parseOffsetClause(String offsetClause) {
+        String normalized = offsetClause.toUpperCase().replace("OFFSET", "").trim();
+        try {
+            int offsetValue = Integer.parseInt(normalized);
+            if (offsetValue < 0) {
+                throw new IllegalArgumentException("OFFSET value must be non-negative: " + offsetValue);
+            }
+            LOGGER.log(Level.FINE, "Parsed OFFSET clause: {0}", offsetValue);
+            return offsetValue;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid OFFSET value: " + normalized);
         }
     }
 

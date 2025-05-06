@@ -97,3 +97,4 @@
 0.9.7  JOIN Test add IS NULL and IS NOT NULL tests
 0.9.8 Hash JOIN
 0.9.9 LIMIT
+1.0.0 OFFSET
