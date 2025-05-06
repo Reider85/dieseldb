@@ -88,7 +88,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 }
                                 newJoinedRows.add(newRow);
                             } else if (!join.onConditions.isEmpty()) {
-                                // Evaluate ON conditions, supporting AND and OR conjunctions
+                                // Evaluate ON conditions, including IN operator
                                 if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
                                     continue;
                                 }
@@ -189,10 +189,21 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
                 return condition.not;
             }
-            boolean inResult = condition.inValues.contains(rowValue);
+            boolean inResult = false;
+            for (Object inValue : condition.inValues) {
+                Class<?> columnType = columnTypes.get(condition.column.split("\\.")[1]);
+                if (columnType == null) {
+                    throw new IllegalArgumentException("Unknown column type for: " + condition.column);
+                }
+                int comparison = compareValues(rowValue, inValue, columnType);
+                if (comparison == 0) {
+                    inResult = true;
+                    break;
+                }
+            }
             boolean result = condition.not ? !inResult : inResult;
-            LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue={1}, result={2}",
-                    new Object[]{condition, rowValue, result});
+            LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue={1}, inValues={2}, result={3}",
+                    new Object[]{condition, rowValue, condition.inValues, result});
             return result;
         }
 
