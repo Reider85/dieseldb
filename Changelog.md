@@ -88,3 +88,4 @@
 0.8.8 JOIN Test fix
 0.8.9 () in ON
 0.9.0 (()) in ON
+0.9.1 JOIN Test fix
