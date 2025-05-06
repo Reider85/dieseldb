@@ -86,3 +86,4 @@
 0.8.6 AND in ON
 0.8.7 OR in ON
 0.8.8 JOIN Test fix
+0.8.9 () in ON

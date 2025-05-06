@@ -865,8 +865,8 @@ class QueryParser {
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
-        LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}",
-                new Object[]{tableName, combinedColumnTypes});
+        LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}, isOnClause: {2}",
+                new Object[]{tableName, combinedColumnTypes, isOnClause});
 
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
@@ -886,20 +886,22 @@ class QueryParser {
                 if (c == '(') {
                     parenDepth++;
                     if (parenDepth == 1) {
-                        continue;
+                        continue; // Skip opening parenthesis
                     }
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth == 0) {
                         String subConditionStr = currentCondition.toString().trim();
                         if (!subConditionStr.isEmpty()) {
-                            boolean isNot = subConditionStr.startsWith("NOT ");
+                            boolean isNot = subConditionStr.toUpperCase().startsWith("NOT ");
                             if (isNot) {
                                 subConditionStr = subConditionStr.substring(4).trim();
                             }
+                            LOGGER.log(Level.FINE, "Parsing grouped condition: {0}, isNot: {1}", new Object[]{subConditionStr, isNot});
                             List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
                             String conjunction = determineConjunctionAfter(conditionStr, i);
                             conditions.add(new Condition(subConditions, conjunction, isNot));
+                            LOGGER.log(Level.FINE, "Added grouped condition with subconditions: {0}, conjunction: {1}", new Object[]{subConditions, conjunction});
                         }
                         currentCondition = new StringBuilder();
                         continue;
@@ -942,7 +944,7 @@ class QueryParser {
         }
 
         if (parenDepth != 0) {
-            throw new IllegalArgumentException("Mismatched parentheses in condition clause");
+            throw new IllegalArgumentException("Mismatched parentheses in condition clause: " + conditionStr);
         }
 
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
@@ -951,7 +953,7 @@ class QueryParser {
     }
 
     private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes, String originalQuery, boolean isOnClause, String tableName) {
-        LOGGER.log(Level.FINE, "Parsing condition: {0}", condition);
+        LOGGER.log(Level.FINE, "Parsing single condition: {0}, isOnClause: {1}", new Object[]{condition, isOnClause});
         boolean isNot = condition.toUpperCase().startsWith("NOT ");
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
 
@@ -964,6 +966,9 @@ class QueryParser {
             conditionColumn = colParts[0] + "." + colParts[1].trim().split("\\s+")[0];
         } else {
             conditionColumn = conditionWithoutNot.split("\\s+")[0].trim();
+            if (!isOnClause) {
+                conditionColumn = tableName + "." + conditionColumn;
+            }
         }
 
         if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
@@ -976,13 +981,13 @@ class QueryParser {
             }
 
             String parsedColumn = inMatcher.group(1).trim();
-            String valuesPart = inMatcher.group(2).trim();
-
             if (parsedColumn.contains(".")) {
                 parsedColumn = parsedColumn;
             } else {
                 parsedColumn = tableName + "." + parsedColumn;
             }
+
+            String valuesPart = inMatcher.group(2).trim();
 
             if (valuesPart.isEmpty()) {
                 throw new IllegalArgumentException("IN clause cannot be empty");
