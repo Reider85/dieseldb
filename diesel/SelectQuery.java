@@ -31,26 +31,24 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Map<String, Table> tables = new HashMap<>();
         tables.put(mainTableName, table);
 
-        // Load all tables for JOIN
+        // Load all tables for JOIN and collect column types
+        Map<String, Class<?>> combinedColumnTypes = new HashMap<>(table.getColumnTypes());
         for (QueryParser.JoinInfo join : joins) {
             Table joinTable = database.getTable(join.tableName);
             if (joinTable == null) {
                 throw new IllegalArgumentException("Join table not found: " + join.tableName);
             }
             tables.put(join.tableName, joinTable);
-        }
-
-        // Get all rows from main table
-        List<Map<String, Object>> mainRows = table.getRows();
-        Map<String, Class<?>> combinedColumnTypes = new HashMap<>(table.getColumnTypes());
-
-        // Collect all column types
-        for (QueryParser.JoinInfo join : joins) {
-            Table joinTable = tables.get(join.tableName);
             combinedColumnTypes.putAll(joinTable.getColumnTypes());
         }
 
         try {
+            // Get main table rows, optionally using index if conditions allow
+            List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
+            if (mainRows == null) {
+                mainRows = table.getRows();
+            }
+
             // For each row in main table
             for (int i = 0; i < mainRows.size(); i++) {
                 Map<String, Object> mainRow = mainRows.get(i);
@@ -65,7 +63,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 for (QueryParser.JoinInfo join : joins) {
                     Table joinTable = tables.get(join.tableName);
                     List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
-                    List<Map<String, Object>> joinRows = joinTable.getRows();
+
+                    // Try to use index for join conditions
+                    List<Map<String, Object>> joinRows = getIndexedRows(joinTable, join.onConditions, join.tableName, combinedColumnTypes);
+                    if (joinRows == null) {
+                        joinRows = joinTable.getRows();
+                    }
 
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
                         for (int j = 0; j < joinRows.size(); j++) {
@@ -76,7 +79,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             // Check JOIN conditions
                             Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
                             if (join.joinType == QueryParser.JoinType.CROSS) {
-                                // CROSS JOIN does not require ON conditions
                                 newJoinedRows.add(newRow);
                             } else if (join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null) {
                                 // Backward compatibility for old format
@@ -88,7 +90,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 }
                                 newJoinedRows.add(newRow);
                             } else if (!join.onConditions.isEmpty()) {
-                                // Evaluate ON conditions, including LIKE and IN operators
                                 if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
                                     continue;
                                 }
@@ -125,6 +126,59 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 lock.readLock().unlock();
             }
         }
+    }
+
+    private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
+        if (conditions == null || conditions.isEmpty()) {
+            return null;
+        }
+
+        // Look for a single equality condition or IN condition on an indexed column
+        for (QueryParser.Condition condition : conditions) {
+            if (condition.isGrouped() || condition.isColumnComparison()) {
+                continue;
+            }
+
+            String columnName = condition.column.contains(".") ? condition.column.split("\\.")[1] : condition.column;
+            Index index = table.getIndex(columnName);
+            if (index == null && table.hasClusteredIndex() && columnName.equals(table.getClusteredIndexColumn())) {
+                index = table.getClusteredIndex();
+            }
+
+            if (index != null) {
+                List<Integer> rowIndices = new ArrayList<>();
+                if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
+                    rowIndices.addAll(index.search(condition.value));
+                    LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
+                            new Object[]{tableName, columnName, rowIndices.size()});
+                } else if (condition.isInOperator() && condition.inValues != null) {
+                    for (Object inValue : condition.inValues) {
+                        rowIndices.addAll(index.search(inValue));
+                    }
+                    LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
+                            new Object[]{tableName, columnName, rowIndices.size()});
+                } else if (index instanceof BTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN || condition.operator == QueryParser.Operator.GREATER_THAN)) {
+                    BTreeIndex bTreeIndex = (BTreeIndex) index;
+                    Object low = condition.operator == QueryParser.Operator.GREATER_THAN ? condition.value : null;
+                    Object high = condition.operator == QueryParser.Operator.LESS_THAN ? condition.value : null;
+                    rowIndices.addAll(bTreeIndex.rangeSearch(low, high));
+                    LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for range condition {2}, found {3} rows",
+                            new Object[]{tableName, columnName, condition.operator, rowIndices.size()});
+                }
+
+                if (!rowIndices.isEmpty()) {
+                    List<Map<String, Object>> indexedRows = new ArrayList<>();
+                    for (int idx : rowIndices) {
+                        if (idx >= 0 && idx < table.getRows().size()) {
+                            indexedRows.add(table.getRows().get(idx));
+                        }
+                    }
+                    return indexedRows;
+                }
+            }
+        }
+
+        return null; // Fallback to full scan if no suitable index found
     }
 
     private boolean valuesEqual(Object left, Object right) {

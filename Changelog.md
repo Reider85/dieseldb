@@ -92,3 +92,4 @@
 0.9.2 IN in ON
 0.9.3 LIKE in ON
 0.9.4 JOIN Test fix IN and LIKE
+0.9.5 INDEX TO JOIN AND ON
