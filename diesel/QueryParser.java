@@ -18,7 +18,7 @@ class QueryParser {
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
     enum Operator {
-        EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, IN, LIKE, NOT_LIKE
+        EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, IN, LIKE, NOT_LIKE, IS_NULL, IS_NOT_NULL
     }
 
     enum JoinType {
@@ -83,6 +83,18 @@ class QueryParser {
             this.subConditions = null;
         }
 
+        // Constructor for IS NULL/IS NOT NULL
+        Condition(String column, Operator operator, String conjunction, boolean not) {
+            this.column = column;
+            this.value = null;
+            this.rightColumn = null;
+            this.inValues = null;
+            this.operator = operator;
+            this.conjunction = conjunction;
+            this.not = not;
+            this.subConditions = null;
+        }
+
         boolean isGrouped() {
             return subConditions != null;
         }
@@ -93,6 +105,10 @@ class QueryParser {
 
         boolean isColumnComparison() {
             return rightColumn != null;
+        }
+
+        boolean isNullOperator() {
+            return operator == Operator.IS_NULL || operator == Operator.IS_NOT_NULL;
         }
 
         @Override
@@ -116,6 +132,10 @@ class QueryParser {
                     default -> operator.toString();
                 };
                 return (not ? "NOT " : "") + column + " " + operatorStr + " " + rightColumn + (conjunction != null ? " " + conjunction : "");
+            }
+            if (isNullOperator()) {
+                String operatorStr = operator == Operator.IS_NULL ? "IS NULL" : "IS NOT NULL";
+                return (not ? "NOT " : "") + column + " " + operatorStr + (conjunction != null ? " " + conjunction : "");
             }
             String operatorStr = switch (operator) {
                 case LIKE -> "LIKE";
@@ -1037,7 +1057,13 @@ class QueryParser {
         String[] partsByOperator = null;
         Operator operator = null;
 
-        if (conditionWithoutNot.toUpperCase().contains(" NOT LIKE ")) {
+        if (conditionWithoutNot.toUpperCase().contains(" IS NOT NULL")) {
+            partsByOperator = conditionWithoutNot.split("\\s*IS NOT NULL\\s*", 2);
+            operator = Operator.IS_NOT_NULL;
+        } else if (conditionWithoutNot.toUpperCase().contains(" IS NULL")) {
+            partsByOperator = conditionWithoutNot.split("\\s*IS NULL\\s*", 2);
+            operator = Operator.IS_NULL;
+        } else if (conditionWithoutNot.toUpperCase().contains(" NOT LIKE ")) {
             partsByOperator = conditionWithoutNot.split("\\s*NOT LIKE\\s*", 2);
             operator = Operator.NOT_LIKE;
         } else if (conditionWithoutNot.toUpperCase().contains(" LIKE ")) {
@@ -1057,10 +1083,10 @@ class QueryParser {
             operator = Operator.GREATER_THAN;
         }
 
-        if (partsByOperator == null || partsByOperator.length != 2) {
+        if (partsByOperator == null || partsByOperator.length < 1) {
             LOGGER.log(Level.SEVERE, "Invalid condition format: {0}, parts: {1}",
                     new Object[]{condition, partsByOperator == null ? "null" : Arrays.toString(partsByOperator)});
-            throw new IllegalArgumentException("Invalid condition clause: must contain =, !=, <, >, IN, NOT IN, LIKE, or NOT LIKE with valid column and value");
+            throw new IllegalArgumentException("Invalid condition clause: must contain =, !=, <, >, IN, NOT IN, LIKE, NOT LIKE, IS NULL, or IS NOT NULL with valid column");
         }
 
         String parsedColumn = partsByOperator[0].trim();
@@ -1068,11 +1094,6 @@ class QueryParser {
             parsedColumn = parsedColumn;
         } else if (!isOnClause) {
             parsedColumn = tableName + "." + parsedColumn;
-        }
-        String valueStr = partsByOperator[1].trim();
-        if (parsedColumn.isEmpty() || valueStr.isEmpty()) {
-            LOGGER.log(Level.SEVERE, "Invalid condition clause: column or value is empty in condition: {0}", condition);
-            throw new IllegalArgumentException("Invalid condition clause: column or value is empty in condition: " + condition);
         }
 
         String unqualifiedColumn = parsedColumn.contains(".") ? parsedColumn.split("\\.")[1].trim() : parsedColumn;
@@ -1087,6 +1108,27 @@ class QueryParser {
             LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
                     new Object[]{parsedColumn, columnTypes.keySet()});
             throw new IllegalArgumentException("Unknown column: " + parsedColumn);
+        }
+
+        if (operator == Operator.IS_NULL || operator == Operator.IS_NOT_NULL) {
+            if (partsByOperator.length > 1 && !partsByOperator[1].trim().isEmpty()) {
+                throw new IllegalArgumentException("IS NULL/IS NOT NULL conditions should not have a value: " + condition);
+            }
+            LOGGER.log(Level.FINE, "Parsed {0} condition: column={1}, not={2}, conjunction={3}",
+                    new Object[]{operator == Operator.IS_NULL ? "IS NULL" : "IS NOT NULL", parsedColumn, isNot, conjunction});
+            return new Condition(parsedColumn, operator, conjunction, isNot);
+        }
+
+        if (partsByOperator.length != 2) {
+            LOGGER.log(Level.SEVERE, "Invalid condition format: {0}, parts: {1}",
+                    new Object[]{condition, Arrays.toString(partsByOperator)});
+            throw new IllegalArgumentException("Invalid condition clause: must contain =, !=, <, >, IN, NOT IN, LIKE, or NOT LIKE with valid column and value");
+        }
+
+        String valueStr = partsByOperator[1].trim();
+        if (parsedColumn.isEmpty() || valueStr.isEmpty()) {
+            LOGGER.log(Level.SEVERE, "Invalid condition clause: column or value is empty in condition: {0}", condition);
+            throw new IllegalArgumentException("Invalid condition clause: column or value is empty in condition: " + condition);
         }
 
         if ((operator == Operator.LIKE || operator == Operator.NOT_LIKE) && columnType != String.class) {

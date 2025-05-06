@@ -300,6 +300,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return result;
         }
 
+        if (condition.isNullOperator()) {
+            Object rowValue = row.get(condition.column);
+            boolean result;
+            if (condition.operator == QueryParser.Operator.IS_NULL) {
+                result = rowValue == null;
+            } else { // IS_NOT_NULL
+                result = rowValue != null;
+            }
+            result = condition.not ? !result : result;
+            LOGGER.log(Level.FINE, "Evaluated {0} condition: column={1}, rowValue={2}, result={3}",
+                    new Object[]{condition.operator == QueryParser.Operator.IS_NULL ? "IS NULL" : "IS NOT NULL", condition.column, rowValue, result});
+            return result;
+        }
+
         Object rowValue = row.get(condition.column);
         if (rowValue == null) {
             LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
@@ -389,15 +403,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             LocalDateTime condDateTime = (LocalDateTime) conditionValue;
             return rowDateTime.compareTo(condDateTime);
         } else {
-            throw new IllegalArgumentException("Unsupported column type for comparison: " + columnType.getSimpleName());
+            throw new IllegalArgumentException("Unsupported column type for comparison: " + columnType);
         }
     }
 
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
-        Map<String, Object> filtered = new LinkedHashMap<>();
+        Map<String, Object> filtered = new HashMap<>();
         for (String column : columns) {
-            String unqualifiedColumn = column.contains(".") ? column : mainTableName + "." + column;
-            filtered.put(column, row.get(unqualifiedColumn));
+            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1] : column;
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                String rowColumn = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1] : entry.getKey();
+                if (rowColumn.equalsIgnoreCase(unqualifiedColumn)) {
+                    filtered.put(entry.getKey(), entry.getValue());
+                }
+            }
         }
         return filtered;
     }
