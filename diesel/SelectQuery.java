@@ -88,11 +88,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 }
                                 newJoinedRows.add(newRow);
                             } else if (!join.onConditions.isEmpty()) {
-                                // New behavior: evaluate ON conditions
+                                // Evaluate ON conditions, supporting AND and OR conjunctions
                                 if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
                                     continue;
                                 }
                                 newJoinedRows.add(newRow);
+                                LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
+                                        new Object[]{join.tableName, join.onConditions});
                             } else {
                                 throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
                             }
@@ -166,6 +168,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
 
             lastConjunction = condition.conjunction;
+            LOGGER.log(Level.FINEST, "Evaluated condition: {0}, result: {1}, conjunction: {2}, cumulative result: {3}",
+                    new Object[]{condition, conditionResult, lastConjunction, result});
         }
 
         return result;
