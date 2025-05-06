@@ -91,3 +91,4 @@
 0.9.1 JOIN Test fix
 0.9.2 IN in ON
 0.9.3 LIKE in ON
+0.9.4 JOIN Test fix IN and LIKE
