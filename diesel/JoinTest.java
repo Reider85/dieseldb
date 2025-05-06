@@ -116,7 +116,7 @@ public class JoinTest {
             selectWithInnerJoinOnUniqueIndexWithNestedAndOr();
             selectWithInnerJoinOnNonIndexedFieldWithNestedAndOr();
 
-            // New JOIN tests with AND, LIKE, IN, and OR
+            // JOIN tests with AND, LIKE, IN, and OR
             selectWithInnerJoinOnPrimaryKeyWithAndLikeInOr();
             selectWithInnerJoinOnBTreeIndexWithAndLikeInOr();
             selectWithInnerJoinOnHashIndexWithAndLikeInOr();
@@ -127,6 +127,10 @@ public class JoinTest {
             selectWithLeftOuterJoinOnHashIndexWithAndLikeInOr();
             selectWithLeftOuterJoinOnUniqueIndexWithAndLikeInOr();
             selectWithLeftOuterJoinOnNonIndexedFieldWithAndLikeInOr();
+
+            // New JOIN tests with IS NULL and IS NOT NULL
+            selectWithInnerJoinOnHashIndexWithIsNullAndIsNotNull();
+            selectWithLeftOuterJoinOnPrimaryKeyWithIsNullAndIsNotNull();
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error running tests: {0}", e.getMessage());
@@ -1188,7 +1192,7 @@ public class JoinTest {
         }
     }
 
-    // New JOIN Tests with AND, LIKE, IN, and OR
+    // JOIN Tests with AND, LIKE, IN, and OR
     private void selectWithInnerJoinOnPrimaryKeyWithAndLikeInOr() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectWithInnerJoinOnPrimaryKeyWithAndLikeInOr");
@@ -1278,7 +1282,7 @@ public class JoinTest {
             LOGGER.log(Level.INFO, "Starting test: selectWithLeftOuterJoinOnBTreeIndexWithAndLikeInOr");
             String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                     "FROM USERS LEFT OUTER JOIN USER_DETAILS ON USERS.AGE = USER_DETAILS.AGE AND USERS.NAME LIKE 'User%' OR USERS.USER_CODE = USER_DETAILS.USER_CODE " +
-                    "WHERE USERS.AGE IN (50, 51, 52)";
+            "WHERE USERS.AGE IN (50, 51, 52)";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectWithLeftOuterJoinOnBTreeIndexWithAndLikeInOr: OK");
         } catch (Exception e) {
@@ -1325,6 +1329,34 @@ public class JoinTest {
             LOGGER.log(Level.INFO, "Test selectWithLeftOuterJoinOnNonIndexedFieldWithAndLikeInOr: OK");
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Test selectWithLeftOuterJoinOnNonIndexedFieldWithAndLikeInOr: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithInnerJoinOnHashIndexWithIsNullAndIsNotNull() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithInnerJoinOnHashIndexWithIsNullAndIsNotNull");
+            String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                    "FROM USERS INNER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME AND USERS.NAME IS NOT NULL AND USER_DETAILS.INFO IS NULL " +
+                    "WHERE USERS.NAME IN ('User500', 'User501', 'User502')";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithInnerJoinOnHashIndexWithIsNullAndIsNotNull: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithInnerJoinOnHashIndexWithIsNullAndIsNotNull: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithLeftOuterJoinOnPrimaryKeyWithIsNullAndIsNotNull() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithLeftOuterJoinOnPrimaryKeyWithIsNullAndIsNotNull");
+            String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                    "FROM USERS LEFT OUTER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID AND USERS.ID IS NOT NULL AND USER_DETAILS.INFO IS NULL " +
+                    "WHERE USERS.ID IN (500, 501, 502)";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithLeftOuterJoinOnPrimaryKeyWithIsNullAndIsNotNull: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithLeftOuterJoinOnPrimaryKeyWithIsNullAndIsNotNull: FAIL - {0}", e.getMessage());
             throw e;
         }
     }
