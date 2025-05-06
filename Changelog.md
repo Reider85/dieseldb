@@ -96,3 +96,4 @@
 0.9.6 IS NULL and IS NOT NULL in ON
 0.9.7  JOIN Test add IS NULL and IS NOT NULL tests
 0.9.8 Hash JOIN
+0.9.9 LIMIT

@@ -462,8 +462,9 @@ class QueryParser {
         List<JoinInfo> joins = new ArrayList<>();
         String tableName;
         String conditionStr = null;
+        Integer limit = null; // Переменная для LIMIT
 
-        // Split by various join types
+        // Разделяем по JOIN
         Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
         List<String> joinParts = new ArrayList<>();
@@ -475,22 +476,20 @@ class QueryParser {
         }
         joinParts.add(tableAndJoins.substring(lastEnd).trim());
 
-        // First part is the main table
+        // Первый элемент — основная таблица
         tableName = joinParts.get(0).split(" ")[0].trim();
         Table mainTable = database.getTable(tableName);
         if (mainTable == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
 
-        // Aggregate column types from main table and all joined tables
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
 
-        // Process joins (join type at index i, join details at i+1)
+        // Обрабатываем JOIN'ы
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
             String joinPart = joinParts.get(i + 1).trim();
 
-            // Determine join type
             JoinType joinType;
             switch (joinTypeStr) {
                 case "INNER JOIN":
@@ -525,9 +524,8 @@ class QueryParser {
             List<Condition> onConditions = new ArrayList<>();
 
             if (joinType == JoinType.CROSS) {
-                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|$))", 2);
+                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|$))", 2);
                 joinTableName = crossSplit[0].trim();
-                // Add columns from the joined table to combinedColumnTypes
                 Table joinTable = database.getTable(joinTableName);
                 if (joinTable == null) {
                     throw new IllegalArgumentException("Join table not found: " + joinTableName);
@@ -537,6 +535,8 @@ class QueryParser {
                     String remaining = crossSplit[1].trim();
                     if (remaining.toUpperCase().startsWith("WHERE ")) {
                         conditionStr = remaining.substring(6).trim();
+                    } else if (remaining.toUpperCase().startsWith("LIMIT ")) {
+                        limit = parseLimitClause(remaining);
                     }
                     if (remaining.toUpperCase().contains(" ON ")) {
                         throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
@@ -557,40 +557,35 @@ class QueryParser {
                     String[] onWhereSplit = onClause.split("(?i)\\s+WHERE\\s+", 2);
                     onCondition = onWhereSplit[0].trim();
                     if (onWhereSplit.length > 1) {
-                        conditionStr = onWhereSplit[1].trim();
+                        String remaining = onWhereSplit[1].trim();
+                        if (remaining.toUpperCase().contains(" LIMIT ")) {
+                            String[] whereLimitSplit = remaining.split("(?i)\\s+LIMIT\\s+", 2);
+                            conditionStr = whereLimitSplit[0].trim();
+                            if (whereLimitSplit.length > 1) {
+                                limit = parseLimitClause("LIMIT " + whereLimitSplit[1].trim());
+                            }
+                        } else {
+                            conditionStr = remaining;
+                        }
                     }
-                } else if (onClause.toUpperCase().contains(" INNER JOIN ") ||
-                        onClause.toUpperCase().contains(" LEFT JOIN ") ||
-                        onClause.toUpperCase().contains(" RIGHT JOIN ") ||
-                        onClause.toUpperCase().contains(" FULL JOIN ") ||
-                        onClause.toUpperCase().contains(" CROSS JOIN ") ||
-                        onClause.toUpperCase().contains(" LEFT INNER JOIN ") ||
-                        onClause.toUpperCase().contains(" RIGHT INNER JOIN ") ||
-                        onClause.toUpperCase().contains(" LEFT OUTER JOIN ") ||
-                        onClause.toUpperCase().contains(" RIGHT OUTER JOIN ") ||
-                        onClause.toUpperCase().contains(" FULL OUTER JOIN ")) {
-                    Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
-                    Matcher nextJoinMatcher = nextJoinPattern.matcher(onClause);
-                    if (nextJoinMatcher.find()) {
-                        onCondition = onClause.substring(0, nextJoinMatcher.start()).trim();
-                    } else {
-                        onCondition = onClause;
+                } else if (onClause.toUpperCase().contains(" LIMIT ")) {
+                    String[] onLimitSplit = onClause.split("(?i)\\s+LIMIT\\s+", 2);
+                    onCondition = onLimitSplit[0].trim();
+                    if (onLimitSplit.length > 1) {
+                        limit = parseLimitClause("LIMIT " + onLimitSplit[1].trim());
                     }
                 } else {
                     onCondition = onClause;
                 }
 
-                // Add columns from the joined table to combinedColumnTypes
                 Table joinTable = database.getTable(joinTableName);
                 if (joinTable == null) {
                     throw new IllegalArgumentException("Join table not found: " + joinTableName);
                 }
                 combinedColumnTypes.putAll(joinTable.getColumnTypes());
 
-                // Parse ON conditions with combined column types
                 onConditions = parseConditions(onCondition, tableName, database, original, true, combinedColumnTypes);
 
-                // Validate that conditions reference the correct tables
                 for (Condition cond : onConditions) {
                     validateJoinCondition(cond, tableName, joinTableName);
                 }
@@ -607,8 +602,22 @@ class QueryParser {
             if (tableCondition.length != 2) {
                 throw new IllegalArgumentException("Invalid WHERE clause format");
             }
-            conditionStr = tableCondition[1].trim();
+            String remaining = tableCondition[1].trim();
+            if (remaining.toUpperCase().contains(" LIMIT ")) {
+                String[] whereLimitSplit = remaining.split("(?i)\\s+LIMIT\\s+", 2);
+                conditionStr = whereLimitSplit[0].trim();
+                if (whereLimitSplit.length > 1) {
+                    limit = parseLimitClause("LIMIT " + whereLimitSplit[1].trim());
+                }
+            } else {
+                conditionStr = remaining;
+            }
             LOGGER.log(Level.FINE, "Parsing WHERE clause: {0}", conditionStr);
+        } else if (tableAndJoins.toUpperCase().contains(" LIMIT ")) {
+            String[] limitSplit = tableAndJoins.split("(?i)\\s+LIMIT\\s+", 2);
+            if (limitSplit.length > 1) {
+                limit = parseLimitClause("LIMIT " + limitSplit[1].trim());
+            }
         }
 
         List<Condition> conditions = new ArrayList<>();
@@ -616,7 +625,6 @@ class QueryParser {
             conditions = parseConditions(conditionStr, mainTable.getName(), database, original, false, combinedColumnTypes);
         }
 
-        // Validate selected columns
         for (String column : columns) {
             String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
             boolean found = false;
@@ -633,10 +641,24 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, mainTable={1}, joins={2}, conditions={3}",
-                new Object[]{columns, mainTable.getName(), joins, conditions});
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, mainTable={1}, joins={2}, conditions={3}, limit={4}",
+                new Object[]{columns, mainTable.getName(), joins, conditions, limit});
 
-        return new SelectQuery(columns, conditions, joins, mainTable.getName());
+        return new SelectQuery(columns, conditions, joins, mainTable.getName(), limit);
+    }
+
+    private Integer parseLimitClause(String limitClause) {
+        String normalized = limitClause.toUpperCase().replace("LIMIT", "").trim();
+        try {
+            int limitValue = Integer.parseInt(normalized);
+            if (limitValue < 0) {
+                throw new IllegalArgumentException("LIMIT value must be non-negative: " + limitValue);
+            }
+            LOGGER.log(Level.FINE, "Parsed LIMIT clause: {0}", limitValue);
+            return limitValue;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid LIMIT value: " + normalized);
+        }
     }
 
     private void validateJoinCondition(Condition condition, String leftTable, String rightTable) {
@@ -1135,7 +1157,6 @@ class QueryParser {
             throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String columns: " + parsedColumn);
         }
 
-        // Check if valueStr is a column name (for ON conditions)
         if (isOnClause && valueStr.matches("[a-zA-Z_][a-zA-Z0-9_]*\\.[a-zA-Z_][a-zA-Z0-9_]*")) {
             String rightColumn = valueStr;
             String unqualifiedRightColumn = rightColumn.contains(".") ? rightColumn.split("\\.")[1].trim() : rightColumn;
