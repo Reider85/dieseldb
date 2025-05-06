@@ -575,8 +575,7 @@ class QueryParser {
                     validateJoinCondition(cond, tableName, joinTableName);
                 }
 
-                LOGGER.log(Level.FINE, "Parsed ON conditions for {0}: {1}",
-                        new Object[]{joinTypeStr, onConditions});
+                LOGGER.log(Level.FINE, "Parsed ON conditions for {0}: {1}", new Object[]{joinTypeStr, onConditions});
             }
 
             joins.add(new JoinInfo(tableName, joinTableName, null, null, joinType, onConditions));
@@ -621,6 +620,7 @@ class QueryParser {
     }
 
     private void validateJoinCondition(Condition condition, String leftTable, String rightTable) {
+        LOGGER.log(Level.FINEST, "Validating condition: {0} for tables {1}, {2}", new Object[]{condition, leftTable, rightTable});
         if (condition.isGrouped()) {
             for (Condition subCond : condition.subConditions) {
                 validateJoinCondition(subCond, leftTable, rightTable);
@@ -865,15 +865,14 @@ class QueryParser {
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
-        LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}, isOnClause: {2}",
-                new Object[]{tableName, combinedColumnTypes, isOnClause});
+        LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}, isOnClause: {2}, condition: {3}",
+                new Object[]{tableName, combinedColumnTypes, isOnClause, conditionStr});
 
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
         int parenDepth = 0;
-
-        LOGGER.log(Level.FINE, "Processing condition string: {0}", conditionStr);
+        int nestingLevel = 0;
 
         for (int i = 0; i < conditionStr.length(); i++) {
             char c = conditionStr.charAt(i);
@@ -885,11 +884,13 @@ class QueryParser {
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
+                    nestingLevel++;
                     if (parenDepth == 1) {
                         continue; // Skip opening parenthesis
                     }
                 } else if (c == ')') {
                     parenDepth--;
+                    nestingLevel--;
                     if (parenDepth == 0) {
                         String subConditionStr = currentCondition.toString().trim();
                         if (!subConditionStr.isEmpty()) {
@@ -897,11 +898,21 @@ class QueryParser {
                             if (isNot) {
                                 subConditionStr = subConditionStr.substring(4).trim();
                             }
-                            LOGGER.log(Level.FINE, "Parsing grouped condition: {0}, isNot: {1}", new Object[]{subConditionStr, isNot});
+                            if (subConditionStr.isEmpty()) {
+                                throw new IllegalArgumentException("Empty grouped condition in clause: " + conditionStr);
+                            }
+                            LOGGER.log(Level.FINE, "Parsing nested condition at level {0}: {1}, isNot: {2}",
+                                    new Object[]{nestingLevel + 1, subConditionStr, isNot});
                             List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
+                            if (subConditions.isEmpty()) {
+                                throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);
+                            }
                             String conjunction = determineConjunctionAfter(conditionStr, i);
                             conditions.add(new Condition(subConditions, conjunction, isNot));
-                            LOGGER.log(Level.FINE, "Added grouped condition with subconditions: {0}, conjunction: {1}", new Object[]{subConditions, conjunction});
+                            LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}",
+                                    new Object[]{subConditions.size(), conjunction});
+                        } else {
+                            throw new IllegalArgumentException("Empty grouped condition in clause: " + conditionStr);
                         }
                         currentCondition = new StringBuilder();
                         continue;
@@ -953,7 +964,8 @@ class QueryParser {
     }
 
     private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes, String originalQuery, boolean isOnClause, String tableName) {
-        LOGGER.log(Level.FINE, "Parsing single condition: {0}, isOnClause: {1}", new Object[]{condition, isOnClause});
+        LOGGER.log(Level.FINE, "Parsing single condition: {0}, isOnClause: {1}, conjunction: {2}",
+                new Object[]{condition, isOnClause, conjunction});
         boolean isNot = condition.toUpperCase().startsWith("NOT ");
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
 
@@ -1054,7 +1066,7 @@ class QueryParser {
         String parsedColumn = partsByOperator[0].trim();
         if (parsedColumn.contains(".")) {
             parsedColumn = parsedColumn;
-        } else {
+        } else if (!isOnClause) {
             parsedColumn = tableName + "." + parsedColumn;
         }
         String valueStr = partsByOperator[1].trim();
