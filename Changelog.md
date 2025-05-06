@@ -99,3 +99,4 @@
 0.9.9 LIMIT
 1.0.0 OFFSET
 1.0.1 Advanced Test fix
+1.0.2 ORDER BY

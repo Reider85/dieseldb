@@ -15,17 +15,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.Condition> conditions;
     private final List<QueryParser.JoinInfo> joins;
     private final String mainTableName;
-    private final Integer limit; // Поле для LIMIT
-    private final Integer offset; // Поле для OFFSET
+    private final Integer limit;
+    private final Integer offset;
+    private final List<QueryParser.OrderByInfo> orderBy;
 
     public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions, List<QueryParser.JoinInfo> joins,
-                       String mainTableName, Integer limit, Integer offset) {
+                       String mainTableName, Integer limit, Integer offset, List<QueryParser.OrderByInfo> orderBy) {
         this.columns = columns;
         this.conditions = conditions != null ? conditions : new ArrayList<>();
         this.joins = joins != null ? joins : new ArrayList<>();
         this.mainTableName = mainTableName;
         this.limit = limit;
         this.offset = offset;
+        this.orderBy = orderBy != null ? orderBy : new ArrayList<>();
     }
 
     @Override
@@ -159,32 +161,67 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 joinedRows = newJoinedRows;
             }
 
-            // Apply WHERE conditions and collect results, respecting LIMIT and OFFSET
-            int rowsAdded = 0;
-            int rowsSkipped = (offset != null) ? offset : 0;
+            // Применяем WHERE условия
+            List<Map<String, Object>> filteredRows = new ArrayList<>();
             for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
                 Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
                 if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
-                    if (rowsSkipped > 0) {
-                        rowsSkipped--;
-                        continue; // Skip rows until offset is satisfied
-                    }
-                    result.add(filterColumns(flattenedRow, columns));
-                    rowsAdded++;
-                    if (limit != null && rowsAdded >= limit) {
-                        break; // Stop once limit is reached
-                    }
+                    filteredRows.add(filterColumns(flattenedRow, columns));
                 }
             }
 
-            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, limit={3}, offset={4}",
-                    new Object[]{result.size(), mainTableName, joins, limit, offset});
+            // Применяем ORDER BY
+            if (!orderBy.isEmpty()) {
+                filteredRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
+                LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses", orderBy.size());
+            }
+
+            // Применяем OFFSET и LIMIT
+            int rowsSkipped = (offset != null) ? offset : 0;
+            int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
+            List<Map<String, Object>> finalRows = new ArrayList<>();
+            for (int i = 0; i < filteredRows.size() && finalRows.size() < maxRows; i++) {
+                if (rowsSkipped > 0) {
+                    rowsSkipped--;
+                    continue;
+                }
+                finalRows.add(filteredRows.get(i));
+            }
+
+            result = finalRows;
+
+            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, limit={3}, offset={4}, orderBy={5}",
+                    new Object[]{result.size(), mainTableName, joins, limit, offset, orderBy});
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
                 lock.readLock().unlock();
             }
         }
+    }
+
+    private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
+        for (QueryParser.OrderByInfo order : orderBy) {
+            String column = order.column.contains(".") ? order.column : mainTableName + "." + order.column;
+            Object value1 = row1.get(column);
+            Object value2 = row2.get(column);
+
+            if (value1 == null && value2 == null) {
+                continue;
+            }
+            if (value1 == null) {
+                return order.ascending ? -1 : 1;
+            }
+            if (value2 == null) {
+                return order.ascending ? 1 : -1;
+            }
+
+            int comparison = compareValues(value1, value2);
+            if (comparison != 0) {
+                return order.ascending ? comparison : -comparison;
+            }
+        }
+        return 0;
     }
 
     private boolean canUseHashJoin(QueryParser.JoinInfo join, Map<String, Class<?>> combinedColumnTypes) {

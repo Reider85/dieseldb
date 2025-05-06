@@ -175,6 +175,21 @@ class QueryParser {
         }
     }
 
+    static class OrderByInfo {
+        String column;
+        boolean ascending;
+
+        OrderByInfo(String column, boolean ascending) {
+            this.column = column;
+            this.ascending = ascending;
+        }
+
+        @Override
+        public String toString() {
+            return column + (ascending ? " ASC" : " DESC");
+        }
+    }
+
     public static String convertLikePatternToRegex(String pattern) {
         if (pattern == null || pattern.isEmpty()) {
             throw new IllegalArgumentException("LIKE pattern cannot be null or empty");
@@ -463,7 +478,8 @@ class QueryParser {
         String tableName;
         String conditionStr = null;
         Integer limit = null;
-        Integer offset = null; // Added for OFFSET
+        Integer offset = null;
+        List<OrderByInfo> orderBy = new ArrayList<>();
 
         // Разделяем по JOIN
         Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
@@ -525,7 +541,7 @@ class QueryParser {
             List<Condition> onConditions = new ArrayList<>();
 
             if (joinType == JoinType.CROSS) {
-                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|OFFSET|$))", 2);
+                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|OFFSET|ORDER BY|$))", 2);
                 joinTableName = crossSplit[0].trim();
                 Table joinTable = database.getTable(joinTableName);
                 if (joinTable == null) {
@@ -544,6 +560,8 @@ class QueryParser {
                         }
                     } else if (remaining.toUpperCase().startsWith("OFFSET ")) {
                         offset = parseOffsetClause(remaining);
+                    } else if (remaining.toUpperCase().startsWith("ORDER BY ")) {
+                        orderBy = parseOrderByClause(remaining.substring(9).trim(), combinedColumnTypes);
                     }
                     if (remaining.toUpperCase().contains(" ON ")) {
                         throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
@@ -582,6 +600,12 @@ class QueryParser {
                             if (whereOffsetSplit.length > 1) {
                                 offset = parseOffsetClause("OFFSET " + whereOffsetSplit[1].trim());
                             }
+                        } else if (remaining.toUpperCase().contains(" ORDER BY ")) {
+                            String[] whereOrderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
+                            conditionStr = whereOrderBySplit[0].trim();
+                            if (whereOrderBySplit.length > 1) {
+                                orderBy = parseOrderByClause(whereOrderBySplit[1].trim(), combinedColumnTypes);
+                            }
                         } else {
                             conditionStr = remaining;
                         }
@@ -602,6 +626,12 @@ class QueryParser {
                     onCondition = onOffsetSplit[0].trim();
                     if (onOffsetSplit.length > 1) {
                         offset = parseOffsetClause("OFFSET " + onOffsetSplit[1].trim());
+                    }
+                } else if (onClause.toUpperCase().contains(" ORDER BY ")) {
+                    String[] onOrderBySplit = onClause.split("(?i)\\s+ORDER BY\\s+", 2);
+                    onCondition = onOrderBySplit[0].trim();
+                    if (onOrderBySplit.length > 1) {
+                        orderBy = parseOrderByClause(onOrderBySplit[1].trim(), combinedColumnTypes);
                     }
                 } else {
                     onCondition = onClause;
@@ -649,6 +679,12 @@ class QueryParser {
                 if (whereOffsetSplit.length > 1) {
                     offset = parseOffsetClause("OFFSET " + whereOffsetSplit[1].trim());
                 }
+            } else if (remaining.toUpperCase().contains(" ORDER BY ")) {
+                String[] whereOrderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
+                conditionStr = whereOrderBySplit[0].trim();
+                if (whereOrderBySplit.length > 1) {
+                    orderBy = parseOrderByClause(whereOrderBySplit[1].trim(), combinedColumnTypes);
+                }
             } else {
                 conditionStr = remaining;
             }
@@ -667,6 +703,11 @@ class QueryParser {
             String[] offsetSplit = tableAndJoins.split("(?i)\\s+OFFSET\\s+", 2);
             if (offsetSplit.length > 1) {
                 offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
+            }
+        } else if (tableAndJoins.toUpperCase().contains(" ORDER BY ")) {
+            String[] orderBySplit = tableAndJoins.split("(?i)\\s+ORDER BY\\s+", 2);
+            if (orderBySplit.length > 1) {
+                orderBy = parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes);
             }
         }
 
@@ -691,10 +732,49 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, mainTable={1}, joins={2}, conditions={3}, limit={4}, offset={5}",
-                new Object[]{columns, mainTable.getName(), joins, conditions, limit, offset});
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, mainTable={1}, joins={2}, conditions={3}, limit={4}, offset={5}, orderBy={6}",
+                new Object[]{columns, mainTable.getName(), joins, conditions, limit, offset, orderBy});
 
-        return new SelectQuery(columns, conditions, joins, mainTable.getName(), limit, offset);
+        return new SelectQuery(columns, conditions, joins, mainTable.getName(), limit, offset, orderBy);
+    }
+
+    private List<OrderByInfo> parseOrderByClause(String orderByClause, Map<String, Class<?>> combinedColumnTypes) {
+        List<OrderByInfo> orderBy = new ArrayList<>();
+        String[] orderByParts = orderByClause.split(",");
+        for (String part : orderByParts) {
+            String[] tokens = part.trim().split("\\s+");
+            if (tokens.length == 0) {
+                throw new IllegalArgumentException("Invalid ORDER BY clause: empty expression");
+            }
+            String column = tokens[0].trim();
+            boolean ascending = true;
+            if (tokens.length > 1) {
+                String direction = tokens[1].toUpperCase();
+                if (direction.equals("DESC")) {
+                    ascending = false;
+                } else if (!direction.equals("ASC")) {
+                    throw new IllegalArgumentException("Invalid ORDER BY direction: " + direction);
+                }
+            }
+
+            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+            boolean found = false;
+            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                LOGGER.log(Level.SEVERE, "Unknown column in ORDER BY: {0}, available columns: {1}",
+                        new Object[]{column, combinedColumnTypes.keySet()});
+                throw new IllegalArgumentException("Unknown column in ORDER BY: " + column);
+            }
+
+            orderBy.add(new OrderByInfo(column, ascending));
+            LOGGER.log(Level.FINE, "Parsed ORDER BY: column={0}, ascending={1}", new Object[]{column, ascending});
+        }
+        return orderBy;
     }
 
     private Integer parseLimitClause(String limitClause) {
