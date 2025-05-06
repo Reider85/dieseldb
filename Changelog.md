@@ -98,3 +98,4 @@
 0.9.8 Hash JOIN
 0.9.9 LIMIT
 1.0.0 OFFSET
+1.0.1 Advanced Test fix

@@ -62,6 +62,8 @@ public class AdvancedTest {
             selectWithWherePrimaryKeyBTreeHashIndexedInParentheses();
             selectWithWhereIndexedOrIndexed();
             selectWithWhereIndexedOrNonIndexed();
+            selectWithWhereIndexedOrNonIndexedWithLimit();
+            selectWithWhereIndexedOrNonIndexedWithLimitAndOffset();
 
             // Step 6: Run UPDATE queries
             updateWithWhereSequencePrimaryKey();
@@ -381,6 +383,7 @@ public class AdvancedTest {
             }
         }
     }
+
     private void dropTable() {
         try {
             database.dropTable("USERS");
@@ -705,6 +708,30 @@ public class AdvancedTest {
             LOGGER.log(Level.INFO, "Test selectWithWhereIndexedOrNonIndexed: OK");
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Test selectWithWhereIndexedOrNonIndexed: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithWhereIndexedOrNonIndexedWithLimit() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithWhereIndexedOrNonIndexedWithLimit");
+            String query = "SELECT ID, NAME FROM USERS WHERE AGE = 50 OR BALANCE > 5000 LIMIT 10";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithWhereIndexedOrNonIndexedWithLimit: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithWhereIndexedOrNonIndexedWithLimit: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithWhereIndexedOrNonIndexedWithLimitAndOffset() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithWhereIndexedOrNonIndexedWithLimitAndOffset");
+            String query = "SELECT ID, NAME FROM USERS WHERE AGE = 50 OR BALANCE > 5000 LIMIT 10 OFFSET 5";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithWhereIndexedOrNonIndexedWithLimitAndOffset: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithWhereIndexedOrNonIndexedWithLimitAndOffset: FAIL - {0}", e.getMessage());
             throw e;
         }
     }
