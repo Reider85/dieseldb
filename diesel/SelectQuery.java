@@ -50,21 +50,78 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
 
             // For each row in main table
-            for (int i = 0; i < mainRows.size(); i++) {
-                Map<String, Object> mainRow = mainRows.get(i);
-                ReentrantReadWriteLock mainLock = table.getRowLock(i);
-                mainLock.readLock().lock();
-                acquiredLocks.add(mainLock);
-
-                List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
+            List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
+            for (Map<String, Object> mainRow : mainRows) {
                 joinedRows.add(new HashMap<>() {{ put(mainTableName, mainRow); }});
+            }
 
-                // Process JOINs
-                for (QueryParser.JoinInfo join : joins) {
-                    Table joinTable = tables.get(join.tableName);
-                    List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+            // Process JOINs
+            for (QueryParser.JoinInfo join : joins) {
+                Table joinTable = tables.get(join.tableName);
+                List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
 
-                    // Try to use index for join conditions
+                // Check if hash join is applicable
+                boolean useHashJoin = canUseHashJoin(join, combinedColumnTypes);
+                LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
+
+                if (useHashJoin) {
+                    // Determine build and probe tables
+                    Table buildTable = joinTable.getRows().size() <= mainRows.size() ? joinTable : tables.get(mainTableName);
+                    Table probeTable = buildTable == joinTable ? tables.get(mainTableName) : joinTable;
+                    String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
+                    String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
+
+                    // Extract join columns
+                    QueryParser.Condition equalityCondition = join.onConditions.stream()
+                            .filter(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison())
+                            .findFirst()
+                            .orElse(null);
+                    if (equalityCondition == null) {
+                        throw new IllegalStateException("No equality condition for hash join");
+                    }
+                    String buildColumn = equalityCondition.rightColumn.contains(buildTableName) ? equalityCondition.rightColumn : equalityCondition.column;
+                    String probeColumn = equalityCondition.rightColumn.contains(probeTableName) ? equalityCondition.rightColumn : equalityCondition.column;
+
+                    // Build hash table
+                    Map<Object, List<Map<String, Object>>> hashTable = new HashMap<>();
+                    List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, combinedColumnTypes);
+                    if (buildRows == null) {
+                        buildRows = buildTable.getRows();
+                    }
+                    for (int i = 0; i < buildRows.size(); i++) {
+                        Map<String, Object> row = buildRows.get(i);
+                        Object key = row.get(buildColumn.split("\\.")[1]);
+                        if (key != null) {
+                            hashTable.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+                            ReentrantReadWriteLock lock = buildTable.getRowLock(i);
+                            lock.readLock().lock();
+                            acquiredLocks.add(lock);
+                        }
+                    }
+
+                    // Probe phase
+                    for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
+                        Map<String, Object> probeRow = currentJoin.get(probeTableName);
+                        Object probeKey = probeRow.get(probeColumn.split("\\.")[1]);
+                        if (probeKey != null) {
+                            List<Map<String, Object>> matches = hashTable.get(probeKey);
+                            if (matches != null) {
+                                for (Map<String, Object> buildRow : matches) {
+                                    Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
+                                    newRow.put(buildTableName, buildRow);
+                                    Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
+                                    if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
+                                        newJoinedRows.add(newRow);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
+                            new Object[]{newJoinedRows.size(), join.tableName});
+                } else {
+                    // Fallback to nested loop join
                     List<Map<String, Object>> joinRows = getIndexedRows(joinTable, join.onConditions, join.tableName, combinedColumnTypes);
                     if (joinRows == null) {
                         joinRows = joinTable.getRows();
@@ -81,7 +138,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             if (join.joinType == QueryParser.JoinType.CROSS) {
                                 newJoinedRows.add(newRow);
                             } else if (join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null) {
-                                // Backward compatibility for old format
                                 Map<String, Object> leftRow = currentJoin.get(join.originalTable);
                                 Object leftValue = leftRow.get(join.leftColumn);
                                 Object rightValue = rightRow.get(join.rightColumn);
@@ -100,21 +156,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
                             }
 
-                            // Lock row from joined table
                             ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
                             joinLock.readLock().lock();
                             acquiredLocks.add(joinLock);
                         }
                     }
-                    joinedRows = newJoinedRows;
                 }
+                joinedRows = newJoinedRows;
+            }
 
-                // Apply WHERE and select columns
-                for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
-                    Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
-                    if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
-                        result.add(filterColumns(flattenedRow, columns));
-                    }
+            // Apply WHERE and select columns
+            for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
+                Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
+                if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
+                    result.add(filterColumns(flattenedRow, columns));
                 }
             }
 
@@ -128,12 +183,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
+    private boolean canUseHashJoin(QueryParser.JoinInfo join, Map<String, Class<?>> combinedColumnTypes) {
+        if (join.joinType != QueryParser.JoinType.INNER &&
+                join.joinType != QueryParser.JoinType.LEFT_INNER &&
+                join.joinType != QueryParser.JoinType.RIGHT_INNER) {
+            return false;
+        }
+        // Check for at least one equality-based column comparison condition
+        return join.onConditions.stream()
+                .anyMatch(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison());
+    }
+
     private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
         if (conditions == null || conditions.isEmpty()) {
             return null;
         }
 
-        // Look for a single equality condition or IN condition on an indexed column
         for (QueryParser.Condition condition : conditions) {
             if (condition.isGrouped() || condition.isColumnComparison()) {
                 continue;
@@ -178,7 +243,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
 
-        return null; // Fallback to full scan if no suitable index found
+        return null;
     }
 
     private boolean valuesEqual(Object left, Object right) {
@@ -305,7 +370,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             boolean result;
             if (condition.operator == QueryParser.Operator.IS_NULL) {
                 result = rowValue == null;
-            } else { // IS_NOT_NULL
+            } else {
                 result = rowValue != null;
             }
             result = condition.not ? !result : result;

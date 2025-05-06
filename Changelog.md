@@ -95,3 +95,4 @@
 0.9.5 INDEX TO JOIN AND ON
 0.9.6 IS NULL and IS NOT NULL in ON
 0.9.7  JOIN Test add IS NULL and IS NOT NULL tests
+0.9.8 Hash JOIN
