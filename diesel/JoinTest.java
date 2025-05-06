@@ -95,6 +95,13 @@ public class JoinTest {
             selectWithCrossJoinOnUniqueIndex();
             selectWithCrossJoinOnNonIndexedField();
 
+            // New JOIN tests with AND and OR in ON clause
+            selectWithInnerJoinOnPrimaryKeyWithAndOr();
+            selectWithInnerJoinOnBTreeIndexWithAndOr();
+            selectWithInnerJoinOnHashIndexWithAndOr();
+            selectWithInnerJoinOnUniqueIndexWithAndOr();
+            selectWithInnerJoinOnNonIndexedFieldWithAndOr();
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error running tests: {0}", e.getMessage());
             e.printStackTrace();
@@ -339,7 +346,7 @@ public class JoinTest {
                     "FROM USERS LEFT INNER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME " +
                     "WHERE USERS.NAME IN ('User500', 'User501', 'User502')";
             executeSelectQuery(query);
-            LOGGER.log(Level.INFO, "Test selectWithLeftInnerJoinOnNonIndexedField: OK");
+            LOGGER.log(Level.INFO, "Test selectWithLeftInnerJoinOnHashIndex: OK");
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Test selectWithLeftInnerJoinOnHashIndex: FAIL - {0}", e.getMessage());
             throw e;
@@ -938,6 +945,77 @@ public class JoinTest {
             LOGGER.log(Level.INFO, "Test selectWithCrossJoinOnNonIndexedField: OK");
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Test selectWithCrossJoinOnNonIndexedField: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    // New JOIN Tests with AND and OR in ON clause
+    private void selectWithInnerJoinOnPrimaryKeyWithAndOr() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithInnerJoinOnPrimaryKeyWithAndOr");
+            String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                    "FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID AND USERS.NAME = USER_DETAILS.NAME OR USERS.USER_CODE = USER_DETAILS.USER_CODE " +
+                    "WHERE USERS.ID IN (500, 501, 502)";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithInnerJoinOnPrimaryKeyWithAndOr: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithInnerJoinOnPrimaryKeyWithAndOr: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithInnerJoinOnBTreeIndexWithAndOr() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithInnerJoinOnBTreeIndexWithAndOr");
+            String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                    "FROM USERS INNER JOIN USER_DETAILS ON USERS.AGE = USER_DETAILS.AGE AND USERS.NAME = USER_DETAILS.NAME OR USERS.USER_CODE = USER_DETAILS.USER_CODE " +
+                    "WHERE USERS.AGE IN (50, 51, 52)";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithInnerJoinOnBTreeIndexWithAndOr: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithInnerJoinOnBTreeIndexWithAndOr: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithInnerJoinOnHashIndexWithAndOr() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithInnerJoinOnHashIndexWithAndOr");
+            String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                    "FROM USERS INNER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME AND USERS.AGE = USER_DETAILS.AGE OR USERS.USER_CODE = USER_DETAILS.USER_CODE " +
+                    "WHERE USERS.NAME IN ('User500', 'User501', 'User502')";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithInnerJoinOnHashIndexWithAndOr: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithInnerJoinOnHashIndexWithAndOr: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithInnerJoinOnUniqueIndexWithAndOr() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithInnerJoinOnUniqueIndexWithAndOr");
+            String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                    "FROM USERS INNER JOIN USER_DETAILS ON USERS.USER_CODE = USER_DETAILS.USER_CODE AND USERS.AGE = USER_DETAILS.AGE OR USERS.NAME = USER_DETAILS.NAME " +
+                    "WHERE USERS.USER_CODE IN ('CODE500', 'CODE501', 'CODE502')";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithInnerJoinOnUniqueIndexWithAndOr: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithInnerJoinOnUniqueIndexWithAndOr: FAIL - {0}", e.getMessage());
+            throw e;
+        }
+    }
+
+    private void selectWithInnerJoinOnNonIndexedFieldWithAndOr() {
+        try {
+            LOGGER.log(Level.INFO, "Starting test: selectWithInnerJoinOnNonIndexedFieldWithAndOr");
+            String query = "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                    "FROM USERS INNER JOIN USER_DETAILS ON USERS.BALANCE = USER_DETAILS.BALANCE AND USERS.AGE = USER_DETAILS.AGE OR USERS.NAME = USER_DETAILS.NAME " +
+                    "WHERE USERS.BALANCE = 5100.00";
+            executeSelectQuery(query);
+            LOGGER.log(Level.INFO, "Test selectWithInnerJoinOnNonIndexedFieldWithAndOr: OK");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Test selectWithInnerJoinOnNonIndexedFieldWithAndOr: FAIL - {0}", e.getMessage());
             throw e;
         }
     }
