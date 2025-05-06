@@ -26,17 +26,20 @@ class QueryParser {
     }
 
     static class Condition {
-        String column;
-        Object value;
-        List<Object> inValues;
+        String column; // Left column of the condition
+        Object value; // Value for comparison (if not column comparison)
+        String rightColumn; // Right column (for column comparisons)
+        List<Object> inValues; // Values for IN
         Operator operator;
-        String conjunction;
-        boolean not;
-        List<Condition> subConditions;
+        String conjunction; // AND or OR
+        boolean not; // Whether NOT is applied
+        List<Condition> subConditions; // For grouped conditions
 
+        // Constructor for value comparison
         Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = value;
+            this.rightColumn = null;
             this.inValues = null;
             this.operator = operator;
             this.conjunction = conjunction;
@@ -44,9 +47,11 @@ class QueryParser {
             this.subConditions = null;
         }
 
+        // Constructor for IN
         Condition(String column, List<Object> inValues, String conjunction, boolean not) {
             this.column = column;
             this.value = null;
+            this.rightColumn = null;
             this.inValues = inValues;
             this.operator = Operator.IN;
             this.conjunction = conjunction;
@@ -54,14 +59,28 @@ class QueryParser {
             this.subConditions = null;
         }
 
+        // Constructor for grouped conditions
         Condition(List<Condition> subConditions, String conjunction, boolean not) {
             this.column = null;
             this.value = null;
+            this.rightColumn = null;
             this.inValues = null;
             this.operator = null;
             this.conjunction = conjunction;
             this.not = not;
             this.subConditions = subConditions;
+        }
+
+        // Constructor for column comparison
+        Condition(String column, String rightColumn, Operator operator, String conjunction, boolean not) {
+            this.column = column;
+            this.value = null;
+            this.rightColumn = rightColumn;
+            this.inValues = null;
+            this.operator = operator;
+            this.conjunction = conjunction;
+            this.not = not;
+            this.subConditions = null;
         }
 
         boolean isGrouped() {
@@ -70,6 +89,10 @@ class QueryParser {
 
         boolean isInOperator() {
             return operator == Operator.IN;
+        }
+
+        boolean isColumnComparison() {
+            return rightColumn != null;
         }
 
         @Override
@@ -86,6 +109,14 @@ class QueryParser {
                         .collect(Collectors.joining(", "));
                 return (not ? "NOT " : "") + column + " IN (" + valuesStr + ")" + (conjunction != null ? " " + conjunction : "");
             }
+            if (isColumnComparison()) {
+                String operatorStr = switch (operator) {
+                    case LIKE -> "LIKE";
+                    case NOT_LIKE -> "NOT LIKE";
+                    default -> operator.toString();
+                };
+                return (not ? "NOT " : "") + column + " " + operatorStr + " " + rightColumn + (conjunction != null ? " " + conjunction : "");
+            }
             String operatorStr = switch (operator) {
                 case LIKE -> "LIKE";
                 case NOT_LIKE -> "NOT LIKE";
@@ -101,18 +132,26 @@ class QueryParser {
         String rightColumn;
         String originalTable;
         JoinType joinType;
+        List<Condition> onConditions;
 
         JoinInfo(String originalTable, String tableName, String leftColumn, String rightColumn, JoinType joinType) {
+            this(originalTable, tableName, leftColumn, rightColumn, joinType, new ArrayList<>());
+        }
+
+        JoinInfo(String originalTable, String tableName, String leftColumn, String rightColumn, JoinType joinType, List<Condition> onConditions) {
             this.originalTable = originalTable;
             this.tableName = tableName;
             this.leftColumn = leftColumn;
             this.rightColumn = rightColumn;
             this.joinType = joinType;
+            this.onConditions = onConditions;
         }
 
         @Override
         public String toString() {
-            return "JoinInfo{originalTable=" + originalTable + ", table=" + tableName + ", leftColumn=" + leftColumn + ", rightColumn=" + rightColumn + ", joinType=" + joinType + "}";
+            return "JoinInfo{originalTable=" + originalTable + ", table=" + tableName +
+                    ", leftColumn=" + leftColumn + ", rightColumn=" + rightColumn +
+                    ", joinType=" + joinType + ", onConditions=" + onConditions + "}";
         }
     }
 
@@ -411,7 +450,7 @@ class QueryParser {
         int lastEnd = 0;
         while (joinMatcher.find()) {
             joinParts.add(tableAndJoins.substring(lastEnd, joinMatcher.start()).trim());
-            joinParts.add(joinMatcher.group(1).trim()); // Join type
+            joinParts.add(joinMatcher.group(1).trim());
             lastEnd = joinMatcher.end();
         }
         joinParts.add(tableAndJoins.substring(lastEnd).trim());
@@ -422,6 +461,9 @@ class QueryParser {
         if (mainTable == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
+
+        // Aggregate column types from main table and all joined tables
+        Map<String, Class<?>> combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
 
         // Process joins (join type at index i, join details at i+1)
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
@@ -460,26 +502,28 @@ class QueryParser {
             }
 
             String joinTableName;
-            String leftColumn = null;
-            String rightColumn = null;
+            List<Condition> onConditions = new ArrayList<>();
 
             if (joinType == JoinType.CROSS) {
-                // For CROSS JOIN, extract table name without expecting an ON clause
                 String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|$))", 2);
                 joinTableName = crossSplit[0].trim();
+                // Add columns from the joined table to combinedColumnTypes
+                Table joinTable = database.getTable(joinTableName);
+                if (joinTable == null) {
+                    throw new IllegalArgumentException("Join table not found: " + joinTableName);
+                }
+                combinedColumnTypes.putAll(joinTable.getColumnTypes());
                 if (crossSplit.length > 1 && !crossSplit[1].trim().isEmpty()) {
                     String remaining = crossSplit[1].trim();
                     if (remaining.toUpperCase().startsWith("WHERE ")) {
                         conditionStr = remaining.substring(6).trim();
                     }
-                    // If there's an ON clause, it's invalid for CROSS JOIN
                     if (remaining.toUpperCase().contains(" ON ")) {
                         throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
                     }
                 }
                 LOGGER.log(Level.FINE, "Parsed CROSS JOIN: table={0}", joinTableName);
             } else {
-                // For other joins, expect an ON clause
                 String[] onSplit = joinPart.split("(?i)ON\\s+", 2);
                 if (onSplit.length != 2) {
                     throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing ON clause");
@@ -505,7 +549,6 @@ class QueryParser {
                         onClause.toUpperCase().contains(" LEFT OUTER JOIN ") ||
                         onClause.toUpperCase().contains(" RIGHT OUTER JOIN ") ||
                         onClause.toUpperCase().contains(" FULL OUTER JOIN ")) {
-                    // If another join follows, split until the next join
                     Pattern nextJoinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
                     Matcher nextJoinMatcher = nextJoinPattern.matcher(onClause);
                     if (nextJoinMatcher.find()) {
@@ -517,52 +560,26 @@ class QueryParser {
                     onCondition = onClause;
                 }
 
-                String[] conditionParts = onCondition.trim().split("\\s*=\\s*");
-                if (conditionParts.length != 2) {
-                    LOGGER.log(Level.SEVERE, "Invalid ON condition in {0}: {1}, expected format table1.column = table2.column",
-                            new Object[]{joinTypeStr, onCondition});
-                    throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must be in format table1.column = table2.column");
+                // Add columns from the joined table to combinedColumnTypes
+                Table joinTable = database.getTable(joinTableName);
+                if (joinTable == null) {
+                    throw new IllegalArgumentException("Join table not found: " + joinTableName);
+                }
+                combinedColumnTypes.putAll(joinTable.getColumnTypes());
+
+                // Parse ON conditions with combined column types
+                onConditions = parseConditions(onCondition, tableName, database, original, true, combinedColumnTypes);
+
+                // Validate that conditions reference the correct tables
+                for (Condition cond : onConditions) {
+                    validateJoinCondition(cond, tableName, joinTableName);
                 }
 
-                String leftCondition = conditionParts[0].trim();
-                String rightCondition = conditionParts[1].trim();
-
-                Pattern tableColumnPattern = Pattern.compile("(\\w+)\\.(\\w+)");
-                Matcher leftMatcher = tableColumnPattern.matcher(leftCondition);
-                Matcher rightMatcher = tableColumnPattern.matcher(rightCondition);
-
-                if (!leftMatcher.matches() || !rightMatcher.matches()) {
-                    LOGGER.log(Level.SEVERE, "Invalid ON condition parts in {0}: left={1}, right={2}",
-                            new Object[]{joinTypeStr, leftCondition, rightCondition});
-                    throw new IllegalArgumentException("Invalid ON condition in " + joinTypeStr + ": must specify table and column");
-                }
-
-                String leftTable = leftMatcher.group(1);
-                leftColumn = leftMatcher.group(2);
-                String rightTable = rightMatcher.group(1);
-                rightColumn = rightMatcher.group(2);
-
-                LOGGER.log(Level.FINE, "Parsed ON condition for {0}: leftTable={1}, leftColumn={2}, rightTable={3}, rightColumn={4}",
-                        new Object[]{joinTypeStr, leftTable, leftColumn, rightTable, rightColumn});
-
-                if (!leftTable.equalsIgnoreCase(tableName) && !leftTable.equalsIgnoreCase(joinTableName)) {
-                    throw new IllegalArgumentException("Invalid left table in ON condition for " + joinTypeStr + ": " + leftTable);
-                }
-                if (!rightTable.equalsIgnoreCase(tableName) && !rightTable.equalsIgnoreCase(joinTableName)) {
-                    throw new IllegalArgumentException("Invalid right table in ON condition for " + joinTypeStr + ": " + rightTable);
-                }
-
-                Table leftTableObj = database.getTable(leftTable);
-                Table rightTableObj = database.getTable(rightTable);
-                if (!leftTableObj.getColumnTypes().containsKey(leftColumn)) {
-                    throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + leftTable + "." + leftColumn);
-                }
-                if (!rightTableObj.getColumnTypes().containsKey(rightColumn)) {
-                    throw new IllegalArgumentException("Invalid column in ON condition for " + joinTypeStr + ": " + rightTable + "." + rightColumn);
-                }
+                LOGGER.log(Level.FINE, "Parsed ON conditions for {0}: {1}",
+                        new Object[]{joinTypeStr, onConditions});
             }
 
-            joins.add(new JoinInfo(tableName, joinTableName, leftColumn, rightColumn, joinType));
+            joins.add(new JoinInfo(tableName, joinTableName, null, null, joinType, onConditions));
             tableName = joinTableName;
         }
 
@@ -577,21 +594,14 @@ class QueryParser {
 
         List<Condition> conditions = new ArrayList<>();
         if (conditionStr != null && !conditionStr.isEmpty()) {
-            conditions = parseConditions(conditionStr, mainTable.getName(), database, original);
+            conditions = parseConditions(conditionStr, mainTable.getName(), database, original, false, combinedColumnTypes);
         }
 
-        Map<String, Class<?>> columnTypes = new HashMap<>();
-        columnTypes.putAll(mainTable.getColumnTypes());
-        for (JoinInfo join : joins) {
-            Table joinTable = database.getTable(join.tableName);
-            columnTypes.putAll(joinTable.getColumnTypes());
-        }
-
-        // Verify selected columns, handling table-qualified names
+        // Validate selected columns
         for (String column : columns) {
             String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
             boolean found = false;
-            for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
+            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
                 if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
                     found = true;
                     break;
@@ -599,7 +609,7 @@ class QueryParser {
             }
             if (!found) {
                 LOGGER.log(Level.SEVERE, "Unknown column in SELECT: {0}, available columns: {1}",
-                        new Object[]{column, columnTypes.keySet()});
+                        new Object[]{column, combinedColumnTypes.keySet()});
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
         }
@@ -608,6 +618,29 @@ class QueryParser {
                 new Object[]{columns, mainTable.getName(), joins, conditions});
 
         return new SelectQuery(columns, conditions, joins, mainTable.getName());
+    }
+
+    private void validateJoinCondition(Condition condition, String leftTable, String rightTable) {
+        if (condition.isGrouped()) {
+            for (Condition subCond : condition.subConditions) {
+                validateJoinCondition(subCond, leftTable, rightTable);
+            }
+            return;
+        }
+        if (condition.column != null) {
+            String tableName = condition.column.contains(".") ? condition.column.split("\\.")[0] : null;
+            if (tableName != null && !tableName.equalsIgnoreCase(leftTable) && !tableName.equalsIgnoreCase(rightTable)) {
+                throw new IllegalArgumentException("Invalid table in ON condition: " + tableName +
+                        ", expected " + leftTable + " or " + rightTable);
+            }
+        }
+        if (condition.rightColumn != null) {
+            String tableName = condition.rightColumn.contains(".") ? condition.rightColumn.split("\\.")[0] : null;
+            if (tableName != null && !tableName.equalsIgnoreCase(leftTable) && !tableName.equalsIgnoreCase(rightTable)) {
+                throw new IllegalArgumentException("Invalid table in ON condition (right column): " + tableName +
+                        ", expected " + leftTable + " or " + rightTable);
+            }
+        }
     }
 
     private Query<Void> parseInsertQuery(String normalized, String original, Database database) {
@@ -683,7 +716,7 @@ class QueryParser {
             String[] setWhereParts = setAndWhere.split("WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
-            conditions = parseConditions(conditionStr, tableName, database, original);
+            conditions = parseConditions(conditionStr, tableName, database, original, false, columnTypes);
         } else {
             setPart = setAndWhere;
         }
@@ -735,7 +768,11 @@ class QueryParser {
                 LOGGER.log(Level.SEVERE, "Empty WHERE clause in DELETE query: {0}", normalized);
                 throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
             }
-            conditions = parseConditions(conditionStr, tableName, database, original);
+            Table table = database.getTable(tableName);
+            if (table == null) {
+                throw new IllegalArgumentException("Table not found: " + tableName);
+            }
+            conditions = parseConditions(conditionStr, tableName, database, original, false, table.getColumnTypes());
         } else {
             LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
         }
@@ -823,27 +860,13 @@ class QueryParser {
         }
     }
 
-    private List<Condition> parseConditions(String conditionStr, String tableName, Database database, String originalQuery) {
+    private List<Condition> parseConditions(String conditionStr, String tableName, Database database, String originalQuery, boolean isOnClause, Map<String, Class<?>> combinedColumnTypes) {
         Table table = database.getTable(tableName);
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
-        Map<String, Class<?>> columnTypes = table.getColumnTypes();
         LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}",
-                new Object[]{tableName, columnTypes});
-
-        Map<String, Class<?>> combinedColumnTypes = new HashMap<>(columnTypes);
-        String[] joinParts = conditionStr.toUpperCase().split("(?i)INNER JOIN");
-        String currentTable = tableName;
-        for (int i = 1; i < joinParts.length; i++) {
-            String joinPart = joinParts[i].trim();
-            String joinTableName = joinPart.split(" ")[0].trim();
-            Table joinTable = database.getTable(joinTableName);
-            if (joinTable != null) {
-                combinedColumnTypes.putAll(joinTable.getColumnTypes());
-            }
-            currentTable = joinTableName;
-        }
+                new Object[]{tableName, combinedColumnTypes});
 
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
@@ -874,7 +897,7 @@ class QueryParser {
                             if (isNot) {
                                 subConditionStr = subConditionStr.substring(4).trim();
                             }
-                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery);
+                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
                             String conjunction = determineConjunctionAfter(conditionStr, i);
                             conditions.add(new Condition(subConditions, conjunction, isNot));
                         }
@@ -887,7 +910,7 @@ class QueryParser {
                             (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "AND", combinedColumnTypes, originalQuery));
+                            conditions.add(parseSingleCondition(current, "AND", combinedColumnTypes, originalQuery, isOnClause, tableName));
                             LOGGER.log(Level.FINE, "Added condition with AND: {0}", current);
                         }
                         currentCondition = new StringBuilder();
@@ -898,7 +921,7 @@ class QueryParser {
                             (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "OR", combinedColumnTypes, originalQuery));
+                            conditions.add(parseSingleCondition(current, "OR", combinedColumnTypes, originalQuery, isOnClause, tableName));
                             LOGGER.log(Level.FINE, "Added condition with OR: {0}", current);
                         }
                         currentCondition = new StringBuilder();
@@ -913,13 +936,13 @@ class QueryParser {
         if (currentCondition.length() > 0 && parenDepth == 0) {
             String current = currentCondition.toString().trim();
             if (!current.isEmpty()) {
-                conditions.add(parseSingleCondition(current, null, combinedColumnTypes, originalQuery));
+                conditions.add(parseSingleCondition(current, null, combinedColumnTypes, originalQuery, isOnClause, tableName));
                 LOGGER.log(Level.FINE, "Added final condition: {0}", current);
             }
         }
 
         if (parenDepth != 0) {
-            throw new IllegalArgumentException("Mismatched parentheses in WHERE clause");
+            throw new IllegalArgumentException("Mismatched parentheses in condition clause");
         }
 
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
@@ -927,7 +950,7 @@ class QueryParser {
         return conditions;
     }
 
-    private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes, String originalQuery) {
+    private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes, String originalQuery, boolean isOnClause, String tableName) {
         LOGGER.log(Level.FINE, "Parsing condition: {0}", condition);
         boolean isNot = condition.toUpperCase().startsWith("NOT ");
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
@@ -938,7 +961,7 @@ class QueryParser {
             if (colParts.length < 2) {
                 throw new IllegalArgumentException("Invalid table-qualified column: " + conditionWithoutNot);
             }
-            conditionColumn = colParts[1].trim().split("\\s+")[0];
+            conditionColumn = colParts[0] + "." + colParts[1].trim().split("\\s+")[0];
         } else {
             conditionColumn = conditionWithoutNot.split("\\s+")[0].trim();
         }
@@ -956,7 +979,9 @@ class QueryParser {
             String valuesPart = inMatcher.group(2).trim();
 
             if (parsedColumn.contains(".")) {
-                parsedColumn = parsedColumn.split("\\.")[1].trim();
+                parsedColumn = parsedColumn;
+            } else {
+                parsedColumn = tableName + "." + parsedColumn;
             }
 
             if (valuesPart.isEmpty()) {
@@ -968,8 +993,9 @@ class QueryParser {
 
             List<Object> inValues = new ArrayList<>();
             Class<?> columnType = null;
+            String unqualifiedColumn = parsedColumn.contains(".") ? parsedColumn.split("\\.")[1].trim() : parsedColumn;
             for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(parsedColumn)) {
+                if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
                     columnType = entry.getValue();
                     break;
                 }
@@ -1017,21 +1043,25 @@ class QueryParser {
         if (partsByOperator == null || partsByOperator.length != 2) {
             LOGGER.log(Level.SEVERE, "Invalid condition format: {0}, parts: {1}",
                     new Object[]{condition, partsByOperator == null ? "null" : Arrays.toString(partsByOperator)});
-            throw new IllegalArgumentException("Invalid WHERE clause: must contain =, !=, <, >, IN, NOT IN, LIKE, or NOT LIKE with valid column and value");
+            throw new IllegalArgumentException("Invalid condition clause: must contain =, !=, <, >, IN, NOT IN, LIKE, or NOT LIKE with valid column and value");
         }
 
         String parsedColumn = partsByOperator[0].trim();
         if (parsedColumn.contains(".")) {
-            parsedColumn = parsedColumn.split("\\.")[1].trim();
+            parsedColumn = parsedColumn;
+        } else {
+            parsedColumn = tableName + "." + parsedColumn;
         }
         String valueStr = partsByOperator[1].trim();
         if (parsedColumn.isEmpty() || valueStr.isEmpty()) {
-            LOGGER.log(Level.SEVERE, "Invalid WHERE clause: column or value is empty in condition: {0}", condition);
-            throw new IllegalArgumentException("Invalid WHERE clause: column or value is empty in condition: " + condition);
+            LOGGER.log(Level.SEVERE, "Invalid condition clause: column or value is empty in condition: {0}", condition);
+            throw new IllegalArgumentException("Invalid condition clause: column or value is empty in condition: " + condition);
         }
+
+        String unqualifiedColumn = parsedColumn.contains(".") ? parsedColumn.split("\\.")[1].trim() : parsedColumn;
         Class<?> columnType = null;
         for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-            if (entry.getKey().equalsIgnoreCase(parsedColumn)) {
+            if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
                 columnType = entry.getValue();
                 break;
             }
@@ -1041,9 +1071,36 @@ class QueryParser {
                     new Object[]{parsedColumn, columnTypes.keySet()});
             throw new IllegalArgumentException("Unknown column: " + parsedColumn);
         }
+
         if ((operator == Operator.LIKE || operator == Operator.NOT_LIKE) && columnType != String.class) {
             throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String columns: " + parsedColumn);
         }
+
+        // Check if valueStr is a column name (for ON conditions)
+        if (isOnClause && valueStr.matches("[a-zA-Z_][a-zA-Z0-9_]*\\.[a-zA-Z_][a-zA-Z0-9_]*")) {
+            String rightColumn = valueStr;
+            String unqualifiedRightColumn = rightColumn.contains(".") ? rightColumn.split("\\.")[1].trim() : rightColumn;
+            Class<?> rightColumnType = null;
+            for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
+                if (entry.getKey().equalsIgnoreCase(unqualifiedRightColumn)) {
+                    rightColumnType = entry.getValue();
+                    break;
+                }
+            }
+            if (rightColumnType == null) {
+                LOGGER.log(Level.SEVERE, "Unknown right column: {0}, available columns: {1}",
+                        new Object[]{rightColumn, columnTypes.keySet()});
+                throw new IllegalArgumentException("Unknown right column: " + rightColumn);
+            }
+            if (!rightColumnType.equals(columnType)) {
+                throw new IllegalArgumentException("Type mismatch between columns: " + parsedColumn + " (" + columnType.getSimpleName() +
+                        ") and " + rightColumn + " (" + rightColumnType.getSimpleName() + ")");
+            }
+            LOGGER.log(Level.FINE, "Parsed column comparison condition: leftColumn={0}, rightColumn={1}, operator={2}, not={3}, conjunction={4}",
+                    new Object[]{parsedColumn, rightColumn, operator, isNot, conjunction});
+            return new Condition(parsedColumn, rightColumn, operator, conjunction, isNot);
+        }
+
         Object conditionValue = parseConditionValue(parsedColumn, valueStr, columnType);
         LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
                 new Object[]{parsedColumn, operator, conditionValue, isNot, conjunction});
@@ -1084,19 +1141,21 @@ class QueryParser {
     private String extractOriginalCondition(String originalQuery, String condition) {
         String normalizedQuery = originalQuery.trim().toUpperCase();
         int whereIndex = normalizedQuery.indexOf("WHERE");
-        if (whereIndex == -1) {
-            throw new IllegalArgumentException("No WHERE clause found in query");
+        int onIndex = normalizedQuery.indexOf(" ON ");
+        int startIndex = whereIndex != -1 ? whereIndex + 5 : (onIndex != -1 ? onIndex + 4 : -1);
+        if (startIndex == -1) {
+            throw new IllegalArgumentException("No WHERE or ON clause found in query");
         }
-        String originalWhereClause = originalQuery.substring(whereIndex + 5).trim();
+        String originalClause = originalQuery.substring(startIndex).trim();
 
         Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+\\s+IN\\s+\\([^)]+\\))");
-        Matcher matcher = inPattern.matcher(originalWhereClause);
+        Matcher matcher = inPattern.matcher(originalClause);
         if (matcher.find()) {
             return matcher.group(1).trim();
         }
 
-        LOGGER.log(Level.WARNING, "Could not precisely extract IN condition for: {0}, returning full WHERE clause", condition);
-        return originalWhereClause;
+        LOGGER.log(Level.WARNING, "Could not precisely extract IN condition for: {0}, returning full clause", condition);
+        return originalClause;
     }
 
     private String determineConjunctionAfter(String conditionStr, int index) {

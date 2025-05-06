@@ -31,7 +31,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Map<String, Table> tables = new HashMap<>();
         tables.put(mainTableName, table);
 
-        // Загружаем все таблицы для JOIN
+        // Load all tables for JOIN
         for (QueryParser.JoinInfo join : joins) {
             Table joinTable = database.getTable(join.tableName);
             if (joinTable == null) {
@@ -40,18 +40,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             tables.put(join.tableName, joinTable);
         }
 
-        // Получаем все строки главной таблицы
+        // Get all rows from main table
         List<Map<String, Object>> mainRows = table.getRows();
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>(table.getColumnTypes());
 
-        // Собираем все типы колонок
+        // Collect all column types
         for (QueryParser.JoinInfo join : joins) {
             Table joinTable = tables.get(join.tableName);
             combinedColumnTypes.putAll(joinTable.getColumnTypes());
         }
 
         try {
-            // Для каждой строки главной таблицы
+            // For each row in main table
             for (int i = 0; i < mainRows.size(); i++) {
                 Map<String, Object> mainRow = mainRows.get(i);
                 ReentrantReadWriteLock mainLock = table.getRowLock(i);
@@ -61,37 +61,52 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
                 joinedRows.add(new HashMap<>() {{ put(mainTableName, mainRow); }});
 
-                // Выполняем JOIN для каждой таблицы
+                // Process JOINs
                 for (QueryParser.JoinInfo join : joins) {
                     Table joinTable = tables.get(join.tableName);
                     List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
                     List<Map<String, Object>> joinRows = joinTable.getRows();
 
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
-                        Map<String, Object> leftRow = currentJoin.get(join.originalTable);
-                        Object leftValue = leftRow.get(join.leftColumn);
-
                         for (int j = 0; j < joinRows.size(); j++) {
                             Map<String, Object> rightRow = joinRows.get(j);
-                            Object rightValue = rightRow.get(join.rightColumn);
+                            Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
+                            newRow.put(join.tableName, rightRow);
 
-                            // Проверяем условие JOIN
-                            if (valuesEqual(leftValue, rightValue)) {
-                                Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
-                                newRow.put(join.tableName, rightRow);
+                            // Check JOIN conditions
+                            Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
+                            if (join.joinType == QueryParser.JoinType.CROSS) {
+                                // CROSS JOIN does not require ON conditions
                                 newJoinedRows.add(newRow);
-
-                                // Блокируем строку из присоединяемой таблицы
-                                ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
-                                joinLock.readLock().lock();
-                                acquiredLocks.add(joinLock);
+                            } else if (join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null) {
+                                // Backward compatibility for old format
+                                Map<String, Object> leftRow = currentJoin.get(join.originalTable);
+                                Object leftValue = leftRow.get(join.leftColumn);
+                                Object rightValue = rightRow.get(join.rightColumn);
+                                if (!valuesEqual(leftValue, rightValue)) {
+                                    continue;
+                                }
+                                newJoinedRows.add(newRow);
+                            } else if (!join.onConditions.isEmpty()) {
+                                // New behavior: evaluate ON conditions
+                                if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
+                                    continue;
+                                }
+                                newJoinedRows.add(newRow);
+                            } else {
+                                throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
                             }
+
+                            // Lock row from joined table
+                            ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
+                            joinLock.readLock().lock();
+                            acquiredLocks.add(joinLock);
                         }
                     }
                     joinedRows = newJoinedRows;
                 }
 
-                // Применяем WHERE и выбираем колонки
+                // Apply WHERE and select columns
                 for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
                     Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
                     if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
@@ -177,6 +192,45 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return result;
         }
 
+        if (condition.isColumnComparison()) {
+            Object leftValue = row.get(condition.column);
+            Object rightValue = row.get(condition.rightColumn);
+            if (leftValue == null || rightValue == null) {
+                LOGGER.log(Level.WARNING, "Row value for column {0} or {1} is null", new Object[]{condition.column, condition.rightColumn});
+                return false;
+            }
+
+            Class<?> columnType = columnTypes.get(condition.column.split("\\.")[1]);
+            if (columnType == null) {
+                throw new IllegalArgumentException("Unknown column type for: " + condition.column);
+            }
+
+            int comparison = compareValues(leftValue, rightValue, columnType);
+            boolean result;
+
+            switch (condition.operator) {
+                case EQUALS:
+                    result = comparison == 0;
+                    break;
+                case NOT_EQUALS:
+                    result = comparison != 0;
+                    break;
+                case LESS_THAN:
+                    result = comparison < 0;
+                    break;
+                case GREATER_THAN:
+                    result = comparison > 0;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported operator for column comparison: " + condition.operator);
+            }
+
+            result = condition.not ? !result : result;
+            LOGGER.log(Level.FINE, "Evaluated column comparison condition: {0}, leftValue={1}, rightValue={2}, result={3}",
+                    new Object[]{condition, leftValue, rightValue, result});
+            return result;
+        }
+
         Object rowValue = row.get(condition.column);
         if (rowValue == null) {
             LOGGER.log(Level.WARNING, "Row value for column {0} is null", condition.column);
@@ -184,7 +238,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         Object conditionValue = condition.value;
-        Class<?> columnType = columnTypes.get(condition.column);
+        Class<?> columnType = columnTypes.get(condition.column.split("\\.")[1]);
         if (columnType == null) {
             throw new IllegalArgumentException("Unknown column type for: " + condition.column);
         }
@@ -273,7 +327,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
         Map<String, Object> filtered = new LinkedHashMap<>();
         for (String column : columns) {
-            filtered.put(column, row.get(column));
+            String unqualifiedColumn = column.contains(".") ? column : mainTableName + "." + column;
+            filtered.put(column, row.get(unqualifiedColumn));
         }
         return filtered;
     }

@@ -83,3 +83,4 @@
 0.8.3 FULL JOIN
 0.8.4 CROSS JOIN
 0.8.5 JOIN Test fix
+0.8.6 JOIN Test fix
