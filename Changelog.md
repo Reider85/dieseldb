@@ -90,3 +90,4 @@
 0.9.0 (()) in ON
 0.9.1 JOIN Test fix
 0.9.2 IN in ON
+0.9.3 LIKE in ON

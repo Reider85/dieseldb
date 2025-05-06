@@ -88,7 +88,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 }
                                 newJoinedRows.add(newRow);
                             } else if (!join.onConditions.isEmpty()) {
-                                // Evaluate ON conditions, including IN operator
+                                // Evaluate ON conditions, including LIKE and IN operators
                                 if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
                                     continue;
                                 }
@@ -260,14 +260,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
             if (!(rowValue instanceof String) || !(conditionValue instanceof String)) {
-                throw new IllegalArgumentException("LIKE/NOT LIKE requires String values");
+                throw new IllegalArgumentException("LIKE/NOT LIKE requires String values for column: " + condition.column);
             }
             String regex = QueryParser.convertLikePatternToRegex((String) conditionValue);
             boolean matches = Pattern.matches(regex, (String) rowValue);
             boolean result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
             result = condition.not ? !result : result;
-            LOGGER.log(Level.FINE, "Evaluated LIKE condition: {0}, rowValue={1}, regex={2}, result={3}",
-                    new Object[]{condition, rowValue, regex, result});
+            LOGGER.log(Level.FINE, "Evaluated LIKE condition in {0}: column={1}, rowValue={2}, pattern={3}, regex={4}, result={5}",
+                    new Object[]{condition.isGrouped() ? "grouped condition" : "ON/WHERE clause", condition.column, rowValue, conditionValue, regex, result});
             return result;
         }
 
