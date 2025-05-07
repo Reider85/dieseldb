@@ -102,3 +102,4 @@
 1.0.2 ORDER BY
 1.0.3 ORDER BY tests
 1.0.4 Float fix
+1.0.5 JOIN fix

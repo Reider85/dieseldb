@@ -476,7 +476,7 @@ class QueryParser {
         Integer offset = null;
         List<OrderByInfo> orderBy = new ArrayList<>();
 
-        Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
+        Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
         List<String> joinParts = new ArrayList<>();
         int lastEnd = 0;
@@ -501,6 +501,7 @@ class QueryParser {
 
             JoinType joinType;
             switch (joinTypeStr) {
+                case "JOIN":
                 case "INNER JOIN":
                     joinType = JoinType.INNER;
                     break;
@@ -533,7 +534,7 @@ class QueryParser {
             List<Condition> onConditions = new ArrayList<>();
 
             if (joinType == JoinType.CROSS) {
-                String[] crossSplit = joinPart.split("\\s+(?=(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|OFFSET|ORDER BY|$))", 2);
+                String[] crossSplit = joinPart.split("\\s+(?=(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|OFFSET|ORDER BY|$))", 2);
                 joinTableName = crossSplit[0].trim();
                 Table joinTable = database.getTable(joinTableName);
                 if (joinTable == null) {
