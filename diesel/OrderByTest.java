@@ -3,14 +3,17 @@ package diesel;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.Locale;
 
 public class OrderByTest {
     private static final Logger LOGGER = Logger.getLogger(OrderByTest.class.getName());
     private static final int RECORD_COUNT = 1000;
     private final Database database;
+    private static final SimpleDateFormat TIMESTAMP_MS_FORMATTER = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
     public OrderByTest() {
         this.database = new Database();
@@ -69,7 +72,7 @@ public class OrderByTest {
         try {
             LOGGER.log(Level.INFO, "Starting test: createTable");
             dropTable();
-            String createTableQuery = "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL, BYTE_FIELD BYTE, SHORT_FIELD SHORT, FLOAT_FIELD FLOAT, DOUBLE_FIELD DOUBLE, CHAR_FIELD CHAR(1), DATE_FIELD DATE, DATETIME_FIELD TIMESTAMP, DATETIME_MILLIS_FIELD TIMESTAMP)";
+            String createTableQuery = "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL, BYTE_FIELD BYTE, SHORT_FIELD SHORT, FLOAT_FIELD FLOAT, DOUBLE_FIELD DOUBLE, CHAR_FIELD CHAR, DATE_FIELD DATE, DATETIME_FIELD DATETIME, DATETIME_MILLIS_FIELD DATETIME_MS)";
             LOGGER.log(Level.INFO, "Executing: {0}", createTableQuery);
             database.executeQuery(createTableQuery, null);
             LOGGER.log(Level.INFO, "Test createTable: OK");
@@ -171,7 +174,9 @@ public class OrderByTest {
 
             long startTime = System.nanoTime();
             for (int i = 1; i <= RECORD_COUNT; i++) {
-                String query = String.format(
+                Timestamp datetime = new Timestamp(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000));
+                Timestamp datetimeMillis = new Timestamp(System.currentTimeMillis() - (i * 1000) + (i % 1000));
+                String query = String.format(Locale.US,
                         "INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE, BYTE_FIELD, SHORT_FIELD, FLOAT_FIELD, DOUBLE_FIELD, CHAR_FIELD, DATE_FIELD, DATETIME_FIELD, DATETIME_MILLIS_FIELD) " +
                                 "VALUES ('CODE%d', 'User%d', %d, %s, %d, %d, %f, %f, '%c', '%s', '%s', '%s')",
                         i, i, 18 + (i % 82),
@@ -179,8 +184,8 @@ public class OrderByTest {
                         (byte) (i % 127), (short) (i % 32767), (float) (i % 1000) / 10.0, (double) (i % 1000) / 10.0,
                         (char) ('A' + (i % 26)),
                         new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)),
-                        new Timestamp(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)),
-                        new Timestamp(System.currentTimeMillis() - (i * 1000) + (i % 1000))
+                        TIMESTAMP_MS_FORMATTER.format(datetime),
+                        TIMESTAMP_MS_FORMATTER.format(datetimeMillis)
                 );
                 database.executeQuery(query, null);
             }
@@ -535,7 +540,7 @@ public class OrderByTest {
     private void selectJoinPrimaryKeyOrderByPrimaryKey() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectJoinPrimaryKeyOrderByPrimaryKey");
-            String query = "SELECT u.ID, u.NAME, p.PROFILE_NAME FROM USERS u JOIN PROFILES p ON u.ID = p.USER_ID AND p.USER_ID > 0 OR p.USER_ID IS NOT NULL ORDER BY u.ID";
+            String query = "SELECT USERS.ID, USERS.NAME, PROFILES.PROFILE_NAME FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.USER_ID > 0 OR PROFILES.USER_ID IS NOT NULL ORDER BY USERS.ID";
             executeSelectQuery(query, "ID");
             LOGGER.log(Level.INFO, "Test selectJoinPrimaryKeyOrderByPrimaryKey: OK");
         } catch (Exception e) {
@@ -547,7 +552,7 @@ public class OrderByTest {
     private void selectJoinBTreeIndexOrderByBTree() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectJoinBTreeIndexOrderByBTree");
-            String query = "SELECT u.ID, u.AGE, p.PROFILE_AGE FROM USERS u JOIN PROFILES p ON u.AGE = p.PROFILE_AGE AND p.PROFILE_AGE > 18 OR p.PROFILE_AGE < 100 ORDER BY u.AGE";
+            String query = "SELECT USERS.ID, USERS.AGE, PROFILES.PROFILE_AGE FROM USERS JOIN PROFILES ON USERS.AGE = PROFILES.PROFILE_AGE AND PROFILES.PROFILE_AGE > 18 OR PROFILES.PROFILE_AGE < 100 ORDER BY USERS.AGE";
             executeSelectQuery(query, "AGE");
             LOGGER.log(Level.INFO, "Test selectJoinBTreeIndexOrderByBTree: OK");
         } catch (Exception e) {
@@ -559,7 +564,7 @@ public class OrderByTest {
     private void selectJoinHashIndexOrderByHash() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectJoinHashIndexOrderByHash");
-            String query = "SELECT u.ID, u.NAME, p.PROFILE_NAME FROM USERS u JOIN PROFILES p ON u.NAME = p.PROFILE_NAME AND p.PROFILE_NAME LIKE 'Profile%' OR p.PROFILE_NAME IS NOT NULL ORDER BY u.NAME";
+            String query = "SELECT USERS.ID, USERS.NAME, PROFILES.PROFILE_NAME FROM USERS JOIN PROFILES ON USERS.NAME = PROFILES.PROFILE_NAME AND PROFILES.PROFILE_NAME LIKE 'Profile%' OR PROFILES.PROFILE_NAME IS NOT NULL ORDER BY USERS.NAME";
             executeSelectQuery(query, "NAME");
             LOGGER.log(Level.INFO, "Test selectJoinHashIndexOrderByHash: OK");
         } catch (Exception e) {
@@ -571,7 +576,7 @@ public class OrderByTest {
     private void selectJoinUniqueIndexOrderByUnique() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectJoinUniqueIndexOrderByUnique");
-            String query = "SELECT u.ID, u.USER_CODE, p.PROFILE_CODE FROM USERS u JOIN PROFILES p ON u.USER_CODE = p.PROFILE_CODE AND p.PROFILE_CODE LIKE 'PCODE%' OR p.PROFILE_CODE IS NOT NULL ORDER BY u.USER_CODE";
+            String query = "SELECT USERS.ID, USERS.USER_CODE, PROFILES.PROFILE_CODE FROM USERS JOIN PROFILES ON USERS.USER_CODE = PROFILES.PROFILE_CODE AND PROFILES.PROFILE_CODE LIKE 'PCODE%' OR PROFILES.PROFILE_CODE IS NOT NULL ORDER BY USERS.USER_CODE";
             executeSelectQuery(query, "USER_CODE");
             LOGGER.log(Level.INFO, "Test selectJoinUniqueIndexOrderByUnique: OK");
         } catch (Exception e) {
@@ -583,7 +588,7 @@ public class OrderByTest {
     private void selectJoinNonIndexedOrderByNonIndexed() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectJoinNonIndexedOrderByNonIndexed");
-            String query = "SELECT u.ID, u.BALANCE, p.NON_INDEXED FROM USERS u JOIN PROFILES p ON u.BALANCE = CAST(p.NON_INDEXED AS BIGDECIMAL) AND p.NON_INDEXED LIKE 'Non%' OR p.NON_INDEXED IS NOT NULL ORDER BY u.BALANCE";
+            String query = "SELECT USERS.ID, USERS.BALANCE, PROFILES.NON_INDEXED FROM USERS JOIN PROFILES ON USERS.BALANCE = CAST(PROFILES.NON_INDEXED AS BIGDECIMAL) AND PROFILES.NON_INDEXED LIKE 'Non%' OR PROFILES.NON_INDEXED IS NOT NULL ORDER BY USERS.BALANCE";
             executeSelectQuery(query, "BALANCE");
             LOGGER.log(Level.INFO, "Test selectJoinNonIndexedOrderByNonIndexed: OK");
         } catch (Exception e) {

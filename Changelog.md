@@ -101,3 +101,4 @@
 1.0.1 Advanced Test fix
 1.0.2 ORDER BY
 1.0.3 ORDER BY tests
+1.0.4 Float fix

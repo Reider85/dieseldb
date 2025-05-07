@@ -26,16 +26,15 @@ class QueryParser {
     }
 
     static class Condition {
-        String column; // Left column of the condition
-        Object value; // Value for comparison (if not column comparison)
-        String rightColumn; // Right column (for column comparisons)
-        List<Object> inValues; // Values for IN
+        String column;
+        Object value;
+        String rightColumn;
+        List<Object> inValues;
         Operator operator;
-        String conjunction; // AND or OR
-        boolean not; // Whether NOT is applied
-        List<Condition> subConditions; // For grouped conditions
+        String conjunction;
+        boolean not;
+        List<Condition> subConditions;
 
-        // Constructor for value comparison
         Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = value;
@@ -47,7 +46,6 @@ class QueryParser {
             this.subConditions = null;
         }
 
-        // Constructor for IN
         Condition(String column, List<Object> inValues, String conjunction, boolean not) {
             this.column = column;
             this.value = null;
@@ -59,7 +57,6 @@ class QueryParser {
             this.subConditions = null;
         }
 
-        // Constructor for grouped conditions
         Condition(List<Condition> subConditions, String conjunction, boolean not) {
             this.column = null;
             this.value = null;
@@ -71,7 +68,6 @@ class QueryParser {
             this.subConditions = subConditions;
         }
 
-        // Constructor for column comparison
         Condition(String column, String rightColumn, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = null;
@@ -83,7 +79,6 @@ class QueryParser {
             this.subConditions = null;
         }
 
-        // Constructor for IS NULL/IS NOT NULL
         Condition(String column, Operator operator, String conjunction, boolean not) {
             this.column = column;
             this.value = null;
@@ -226,7 +221,7 @@ class QueryParser {
             } else if (normalized.startsWith("CREATE TABLE")) {
                 return parseCreateTableQuery(normalized, query);
             } else if (normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
-                return parseCreateUniqueClusteredIndexQuery(normalized);
+                return parseCreateUniqueDurableClusteredIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE UNIQUE INDEX")) {
                 return parseCreateUniqueIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE HASH INDEX")) {
@@ -302,7 +297,7 @@ class QueryParser {
         return new CreateUniqueIndexQuery(tableName, columnName);
     }
 
-    private Query<Void> parseCreateUniqueClusteredIndexQuery(String normalized) {
+    private Query<Void> parseCreateUniqueDurableClusteredIndexQuery(String normalized) {
         String[] parts = normalized.split("ON");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE UNIQUE CLUSTERED INDEX query format");
@@ -481,7 +476,6 @@ class QueryParser {
         Integer offset = null;
         List<OrderByInfo> orderBy = new ArrayList<>();
 
-        // Разделяем по JOIN
         Pattern joinPattern = Pattern.compile("(?i)\\s*(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
         List<String> joinParts = new ArrayList<>();
@@ -493,7 +487,6 @@ class QueryParser {
         }
         joinParts.add(tableAndJoins.substring(lastEnd).trim());
 
-        // Первый элемент — основная таблица
         tableName = joinParts.get(0).split(" ")[0].trim();
         Table mainTable = database.getTable(tableName);
         if (mainTable == null) {
@@ -502,7 +495,6 @@ class QueryParser {
 
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
 
-        // Обрабатываем JOIN'ы
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
             String joinPart = joinParts.get(i + 1).trim();
@@ -717,7 +709,8 @@ class QueryParser {
         }
 
         for (String column : columns) {
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+            String normalizedColumn = normalizeColumnName(column, mainTable.getName());
+            String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
             boolean found = false;
             for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
                 if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
@@ -740,9 +733,9 @@ class QueryParser {
 
     private List<OrderByInfo> parseOrderByClause(String orderByClause, Map<String, Class<?>> combinedColumnTypes) {
         List<OrderByInfo> orderBy = new ArrayList<>();
-        String[] orderByParts = orderByClause.split(",");
+        String[] orderByParts = splitOrderByClause(orderByClause);
         for (String part : orderByParts) {
-            String[] tokens = part.trim().split("\\s+");
+            String[] tokens = part.trim().split("\\s+", 2);
             if (tokens.length == 0) {
                 throw new IllegalArgumentException("Invalid ORDER BY clause: empty expression");
             }
@@ -775,6 +768,37 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Parsed ORDER BY: column={0}, ascending={1}", new Object[]{column, ascending});
         }
         return orderBy;
+    }
+
+    private String[] splitOrderByClause(String orderByClause) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder currentPart = new StringBuilder();
+        boolean inQuotes = false;
+
+        for (int i = 0; i < orderByClause.length(); i++) {
+            char c = orderByClause.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentPart.append(c);
+                continue;
+            }
+            if (!inQuotes && c == ',') {
+                String part = currentPart.toString().trim();
+                if (!part.isEmpty()) {
+                    parts.add(part);
+                }
+                currentPart = new StringBuilder();
+                continue;
+            }
+            currentPart.append(c);
+        }
+
+        String lastPart = currentPart.toString().trim();
+        if (!lastPart.isEmpty()) {
+            parts.add(lastPart);
+        }
+
+        return parts.toArray(new String[0]);
     }
 
     private Integer parseLimitClause(String limitClause) {
@@ -1000,20 +1024,18 @@ class QueryParser {
                         return new BigDecimal(valueStr);
                     } else if (columnType == Float.class) {
                         BigDecimal bd = new BigDecimal(valueStr);
-                        if (bd.abs().compareTo(new BigDecimal(Float.MAX_VALUE)) <= 0 &&
-                                bd.abs().compareTo(new BigDecimal(Float.MIN_VALUE)) >= 0) {
-                            return bd.floatValue();
-                        } else {
+                        float floatValue = bd.floatValue();
+                        if (Float.isInfinite(floatValue) || Float.isNaN(floatValue)) {
                             throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Float");
                         }
+                        return floatValue;
                     } else if (columnType == Double.class) {
                         BigDecimal bd = new BigDecimal(valueStr);
-                        if (bd.abs().compareTo(new BigDecimal(Double.MAX_VALUE)) <= 0 &&
-                                bd.abs().compareTo(new BigDecimal(Double.MIN_VALUE)) >= 0) {
-                            return bd.doubleValue();
-                        } else {
+                        double doubleValue = bd.doubleValue();
+                        if (Double.isInfinite(doubleValue) || Double.isNaN(doubleValue)) {
                             throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Double");
                         }
+                        return doubleValue;
                     } else if (columnType == Byte.class) {
                         long parsedLong = Long.parseLong(valueStr);
                         if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
@@ -1072,7 +1094,7 @@ class QueryParser {
                     parenDepth++;
                     nestingLevel++;
                     if (parenDepth == 1) {
-                        continue; // Skip opening parenthesis
+                        continue;
                     }
                 } else if (c == ')') {
                     parenDepth--;
@@ -1155,19 +1177,7 @@ class QueryParser {
         boolean isNot = condition.toUpperCase().startsWith("NOT ");
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
 
-        String conditionColumn;
-        if (conditionWithoutNot.contains(".")) {
-            String[] colParts = conditionWithoutNot.split("\\.", 2);
-            if (colParts.length < 2) {
-                throw new IllegalArgumentException("Invalid table-qualified column: " + conditionWithoutNot);
-            }
-            conditionColumn = colParts[0] + "." + colParts[1].trim().split("\\s+")[0];
-        } else {
-            conditionColumn = conditionWithoutNot.split("\\s+")[0].trim();
-            if (!isOnClause) {
-                conditionColumn = tableName + "." + conditionColumn;
-            }
-        }
+        String conditionColumn = normalizeColumnName(conditionWithoutNot.split("\\s+")[0].trim(), isOnClause ? null : tableName);
 
         if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
             String originalCondition = extractOriginalCondition(originalQuery, condition);
@@ -1178,13 +1188,7 @@ class QueryParser {
                 throw new IllegalArgumentException("Invalid IN clause: " + originalCondition);
             }
 
-            String parsedColumn = inMatcher.group(1).trim();
-            if (parsedColumn.contains(".")) {
-                parsedColumn = parsedColumn;
-            } else {
-                parsedColumn = tableName + "." + parsedColumn;
-            }
-
+            String parsedColumn = normalizeColumnName(inMatcher.group(1).trim(), isOnClause ? null : tableName);
             String valuesPart = inMatcher.group(2).trim();
 
             if (valuesPart.isEmpty()) {
@@ -1195,14 +1199,7 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Split IN values: {0}", Arrays.toString(valueStrings.toArray()));
 
             List<Object> inValues = new ArrayList<>();
-            Class<?> columnType = null;
-            String unqualifiedColumn = parsedColumn.contains(".") ? parsedColumn.split("\\.")[1].trim() : parsedColumn;
-            for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
-                    columnType = entry.getValue();
-                    break;
-                }
-            }
+            Class<?> columnType = getColumnType(parsedColumn, columnTypes);
             if (columnType == null) {
                 LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
                         new Object[]{parsedColumn, columnTypes.keySet()});
@@ -1223,16 +1220,17 @@ class QueryParser {
         String[] partsByOperator = null;
         Operator operator = null;
 
-        if (conditionWithoutNot.toUpperCase().contains(" IS NOT NULL")) {
+        String upperCondition = conditionWithoutNot.toUpperCase();
+        if (upperCondition.contains(" IS NOT NULL")) {
             partsByOperator = conditionWithoutNot.split("\\s*IS NOT NULL\\s*", 2);
             operator = Operator.IS_NOT_NULL;
-        } else if (conditionWithoutNot.toUpperCase().contains(" IS NULL")) {
+        } else if (upperCondition.contains(" IS NULL")) {
             partsByOperator = conditionWithoutNot.split("\\s*IS NULL\\s*", 2);
             operator = Operator.IS_NULL;
-        } else if (conditionWithoutNot.toUpperCase().contains(" NOT LIKE ")) {
+        } else if (upperCondition.contains(" NOT LIKE ")) {
             partsByOperator = conditionWithoutNot.split("\\s*NOT LIKE\\s*", 2);
             operator = Operator.NOT_LIKE;
-        } else if (conditionWithoutNot.toUpperCase().contains(" LIKE ")) {
+        } else if (upperCondition.contains(" LIKE ")) {
             partsByOperator = conditionWithoutNot.split("\\s*LIKE\\s*", 2);
             operator = Operator.LIKE;
         } else if (conditionWithoutNot.contains("!=")) {
@@ -1255,21 +1253,8 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid condition clause: must contain =, !=, <, >, IN, NOT IN, LIKE, NOT LIKE, IS NULL, or IS NOT NULL with valid column");
         }
 
-        String parsedColumn = partsByOperator[0].trim();
-        if (parsedColumn.contains(".")) {
-            parsedColumn = parsedColumn;
-        } else if (!isOnClause) {
-            parsedColumn = tableName + "." + parsedColumn;
-        }
-
-        String unqualifiedColumn = parsedColumn.contains(".") ? parsedColumn.split("\\.")[1].trim() : parsedColumn;
-        Class<?> columnType = null;
-        for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-            if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
-                columnType = entry.getValue();
-                break;
-            }
-        }
+        String parsedColumn = normalizeColumnName(partsByOperator[0].trim(), isOnClause ? null : tableName);
+        Class<?> columnType = getColumnType(parsedColumn, columnTypes);
         if (columnType == null) {
             LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
                     new Object[]{parsedColumn, columnTypes.keySet()});
@@ -1303,14 +1288,7 @@ class QueryParser {
 
         if (isOnClause && valueStr.matches("[a-zA-Z_][a-zA-Z0-9_]*\\.[a-zA-Z_][a-zA-Z0-9_]*")) {
             String rightColumn = valueStr;
-            String unqualifiedRightColumn = rightColumn.contains(".") ? rightColumn.split("\\.")[1].trim() : rightColumn;
-            Class<?> rightColumnType = null;
-            for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(unqualifiedRightColumn)) {
-                    rightColumnType = entry.getValue();
-                    break;
-                }
-            }
+            Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
             if (rightColumnType == null) {
                 LOGGER.log(Level.SEVERE, "Unknown right column: {0}, available columns: {1}",
                         new Object[]{rightColumn, columnTypes.keySet()});
@@ -1393,6 +1371,23 @@ class QueryParser {
         } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
                 (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
             return "OR";
+        }
+        return null;
+    }
+
+    private String normalizeColumnName(String column, String defaultTable) {
+        if (column.contains(".")) {
+            return column;
+        }
+        return defaultTable != null ? defaultTable + "." + column : column;
+    }
+
+    private Class<?> getColumnType(String column, Map<String, Class<?>> columnTypes) {
+        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+        for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
+                return entry.getValue();
+            }
         }
         return null;
     }
