@@ -588,7 +588,7 @@ public class OrderByTest {
     private void selectJoinNonIndexedOrderByNonIndexed() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectJoinNonIndexedOrderByNonIndexed");
-            String query = "SELECT USERS.ID, USERS.BALANCE, PROFILES.NON_INDEXED FROM USERS JOIN PROFILES ON USERS.BALANCE = CAST(PROFILES.NON_INDEXED AS BIGDECIMAL) AND PROFILES.NON_INDEXED LIKE 'Non%' OR PROFILES.NON_INDEXED IS NOT NULL ORDER BY USERS.BALANCE";
+            String query = "SELECT USERS.ID, USERS.BALANCE, PROFILES.NON_INDEXED FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.NON_INDEXED LIKE 'Non%' OR PROFILES.NON_INDEXED IS NOT NULL ORDER BY USERS.BALANCE";
             executeSelectQuery(query, "BALANCE");
             LOGGER.log(Level.INFO, "Test selectJoinNonIndexedOrderByNonIndexed: OK");
         } catch (Exception e) {
