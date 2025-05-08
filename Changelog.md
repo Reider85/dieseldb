@@ -105,3 +105,4 @@
 1.0.5 JOIN fix
 1.0.6 ORDER BY tests fix
 1.0.7 COUNT
+1.0.8 GROUP BY

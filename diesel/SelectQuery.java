@@ -8,6 +8,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
@@ -19,18 +20,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final Integer limit;
     private final Integer offset;
     private final List<QueryParser.OrderByInfo> orderBy;
+    private final List<String> groupBy;
 
     public SelectQuery(List<String> columns, List<QueryParser.AggregateFunction> aggregates, List<QueryParser.Condition> conditions,
                        List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
-                       List<QueryParser.OrderByInfo> orderBy) {
-        this.columns = columns != null ? columns : new ArrayList<>();
-        this.aggregates = aggregates != null ? aggregates : new ArrayList<>();
-        this.conditions = conditions != null ? conditions : new ArrayList<>();
-        this.joins = joins != null ? joins : new ArrayList<>();
+                       List<QueryParser.OrderByInfo> orderBy, List<String> groupBy) {
+        this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
+        this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
+        this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
+        this.joins = joins != null ? new ArrayList<>(joins) : new ArrayList<>();
         this.mainTableName = mainTableName;
         this.limit = limit;
         this.offset = offset;
-        this.orderBy = orderBy != null ? orderBy : new ArrayList<>();
+        this.orderBy = orderBy != null ? new ArrayList<>(orderBy) : new ArrayList<>();
+        this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
     }
 
     @Override
@@ -173,54 +176,115 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
 
+            // Apply GROUP BY if specified
+            List<Map<String, Object>> finalRows;
+            if (!groupBy.isEmpty()) {
+                // Group rows by the GROUP BY columns
+                Map<List<Object>, List<Map<String, Object>>> groupedRows = filteredRows.stream()
+                        .collect(Collectors.groupingBy(row -> groupBy.stream()
+                                .map(col -> row.get(col))
+                                .collect(Collectors.toList())));
+
+                finalRows = new ArrayList<>();
+                for (List<Object> groupKey : groupedRows.keySet()) {
+                    List<Map<String, Object>> group = groupedRows.get(groupKey);
+                    Map<String, Object> resultRow = new HashMap<>();
+
+                    // Include GROUP BY columns in the result
+                    for (int i = 0; i < groupBy.size(); i++) {
+                        String column = groupBy.get(i);
+                        resultRow.put(column, groupKey.get(i));
+                    }
+
+                    // Compute aggregates for the group
+                    for (QueryParser.AggregateFunction agg : aggregates) {
+                        if (agg.functionName.equals("COUNT")) {
+                            long count;
+                            if (agg.column == null) {
+                                // COUNT(*): Count all rows in the group
+                                count = group.size();
+                            } else {
+                                // COUNT(column): Count non-null values
+                                String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                                count = group.stream()
+                                        .filter(row -> row.get(columnKey) != null)
+                                        .count();
+                            }
+                            String resultKey = agg.alias != null ? agg.alias : agg.toString();
+                            resultRow.put(resultKey, count);
+                        } else {
+                            throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
+                        }
+                    }
+
+                    // Include non-aggregated columns if they are in GROUP BY
+                    for (String column : columns) {
+                        if (groupBy.contains(column) && !resultRow.containsKey(column)) {
+                            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1] : column;
+                            Object value = group.get(0).get(column);
+                            resultRow.put(column, value);
+                        }
+                    }
+
+                    finalRows.add(resultRow);
+                }
+                LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
+                        new Object[]{groupBy.size(), finalRows.size()});
+            } else {
+                finalRows = filteredRows;
+            }
+
             // Apply ORDER BY if specified
             if (!orderBy.isEmpty()) {
-                filteredRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
+                finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
                 LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses", orderBy.size());
             }
 
             // Apply OFFSET and LIMIT
             int rowsSkipped = (offset != null) ? offset : 0;
             int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
-            List<Map<String, Object>> finalRows = new ArrayList<>();
-            for (int i = 0; i < filteredRows.size() && finalRows.size() < maxRows; i++) {
+            List<Map<String, Object>> selectedRows = new ArrayList<>();
+            for (int i = 0; i < finalRows.size() && selectedRows.size() < maxRows; i++) {
                 if (rowsSkipped > 0) {
                     rowsSkipped--;
                     continue;
                 }
-                finalRows.add(filteredRows.get(i));
+                selectedRows.add(finalRows.get(i));
             }
 
-            // Compute aggregates if present
-            if (!aggregates.isEmpty()) {
+            // Prepare final result
+            if (!aggregates.isEmpty() && groupBy.isEmpty()) {
+                // Compute aggregates for the entire result set (no GROUP BY)
                 Map<String, Object> resultRow = new HashMap<>();
                 for (QueryParser.AggregateFunction agg : aggregates) {
                     if (agg.functionName.equals("COUNT")) {
                         long count;
                         if (agg.column == null) {
                             // COUNT(*): Count all rows
-                            count = finalRows.size();
+                            count = selectedRows.size();
                         } else {
                             // COUNT(column): Count non-null values
                             String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
-                            count = finalRows.stream()
+                            count = selectedRows.stream()
                                     .filter(row -> row.get(columnKey) != null)
                                     .count();
                         }
                         String resultKey = agg.alias != null ? agg.alias : agg.toString();
                         resultRow.put(resultKey, count);
+                    } else {
+                        throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                     }
                 }
                 result.add(resultRow);
             } else {
-                // No aggregates: Return selected columns
-                for (Map<String, Object> row : finalRows) {
+                // Return selected columns, filtered by requested columns
+                for (Map<String, Object> row : selectedRows) {
                     result.add(filterColumns(row, columns));
                 }
             }
 
-            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, limit={4}, offset={5}, orderBy={6}",
-                    new Object[]{result.size(), mainTableName, joins, aggregates, limit, offset, orderBy});
+            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, limit={5}, offset={6}, orderBy={7}",
+                    new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, limit, offset, orderBy});
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -477,5 +541,101 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         return filtered;
+    }
+
+    public List<String> getColumns() {
+        return Collections.unmodifiableList(columns);
+    }
+
+    public List<QueryParser.AggregateFunction> getAggregates() {
+        return Collections.unmodifiableList(aggregates);
+    }
+
+    public List<QueryParser.Condition> getConditions() {
+        return Collections.unmodifiableList(conditions);
+    }
+
+    public List<QueryParser.JoinInfo> getJoins() {
+        return Collections.unmodifiableList(joins);
+    }
+
+    public String getTableName() {
+        return mainTableName;
+    }
+
+    public Integer getLimit() {
+        return limit;
+    }
+
+    public Integer getOffset() {
+        return offset;
+    }
+
+    public List<QueryParser.OrderByInfo> getOrderBy() {
+        return Collections.unmodifiableList(orderBy);
+    }
+
+    public List<String> getGroupBy() {
+        return Collections.unmodifiableList(groupBy);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("SELECT ");
+
+        // Append columns and aggregates
+        List<String> selectItems = new ArrayList<>();
+        selectItems.addAll(columns);
+        selectItems.addAll(aggregates.stream().map(QueryParser.AggregateFunction::toString).toList());
+        sb.append(String.join(", ", selectItems));
+
+        // Append FROM clause
+        sb.append(" FROM ").append(mainTableName);
+
+        // Append JOIN clauses
+        for (QueryParser.JoinInfo join : joins) {
+            sb.append(" ").append(join.joinType.toString().replace("_", " ")).append(" ");
+            sb.append(join.tableName);
+            if (!join.onConditions.isEmpty()) {
+                sb.append(" ON ");
+                sb.append(join.onConditions.stream()
+                        .map(QueryParser.Condition::toString)
+                        .collect(Collectors.joining(" ")));
+            }
+        }
+
+        // Append WHERE clause
+        if (!conditions.isEmpty()) {
+            sb.append(" WHERE ");
+            sb.append(conditions.stream()
+                    .map(QueryParser.Condition::toString)
+                    .collect(Collectors.joining(" ")));
+        }
+
+        // Append GROUP BY clause
+        if (!groupBy.isEmpty()) {
+            sb.append(" GROUP BY ");
+            sb.append(String.join(", ", groupBy));
+        }
+
+        // Append ORDER BY clause
+        if (!orderBy.isEmpty()) {
+            sb.append(" ORDER BY ");
+            sb.append(orderBy.stream()
+                    .map(QueryParser.OrderByInfo::toString)
+                    .collect(Collectors.joining(", ")));
+        }
+
+        // Append LIMIT clause
+        if (limit != null) {
+            sb.append(" LIMIT ").append(limit);
+        }
+
+        // Append OFFSET clause
+        if (offset != null) {
+            sb.append(" OFFSET ").append(offset);
+        }
+
+        return sb.toString();
     }
 }
