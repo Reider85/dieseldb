@@ -193,11 +193,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     // Include GROUP BY columns in the result
                     for (int i = 0; i < groupBy.size(); i++) {
                         String column = groupBy.get(i);
-                        resultRow.put(column, groupKey.get(i));
+                        String columnAlias = column.contains(".") ? column.split("\\.")[1] : column;
+                        resultRow.put(columnAlias, groupKey.get(i));
                     }
 
                     // Compute aggregates for the group
                     for (QueryParser.AggregateFunction agg : aggregates) {
+                        String resultKey = agg.alias != null ? agg.alias : agg.toString();
                         if (agg.functionName.equals("COUNT")) {
                             long count;
                             if (agg.column == null) {
@@ -210,8 +212,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                         .filter(row -> row.get(columnKey) != null)
                                         .count();
                             }
-                            String resultKey = agg.alias != null ? agg.alias : agg.toString();
                             resultRow.put(resultKey, count);
+                        } else if (agg.functionName.equals("MIN")) {
+                            if (agg.column == null) {
+                                throw new IllegalArgumentException("MIN requires a column argument");
+                            }
+                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            Object minValue = group.stream()
+                                    .map(row -> row.get(columnKey))
+                                    .filter(Objects::nonNull)
+                                    .min(this::compareValues)
+                                    .orElse(null);
+                            resultRow.put(resultKey, minValue);
                         } else {
                             throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                         }
@@ -222,7 +234,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (groupBy.contains(column) && !resultRow.containsKey(column)) {
                             String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1] : column;
                             Object value = group.get(0).get(column);
-                            resultRow.put(column, value);
+                            resultRow.put(unqualifiedColumn, value);
                         }
                     }
 
@@ -257,6 +269,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 // Compute aggregates for the entire result set (no GROUP BY)
                 Map<String, Object> resultRow = new HashMap<>();
                 for (QueryParser.AggregateFunction agg : aggregates) {
+                    String resultKey = agg.alias != null ? agg.alias : agg.toString();
                     if (agg.functionName.equals("COUNT")) {
                         long count;
                         if (agg.column == null) {
@@ -269,8 +282,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     .filter(row -> row.get(columnKey) != null)
                                     .count();
                         }
-                        String resultKey = agg.alias != null ? agg.alias : agg.toString();
                         resultRow.put(resultKey, count);
+                    } else if (agg.functionName.equals("MIN")) {
+                        if (agg.column == null) {
+                            throw new IllegalArgumentException("MIN requires a column argument");
+                        }
+                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        Object minValue = selectedRows.stream()
+                                .map(row -> row.get(columnKey))
+                                .filter(Objects::nonNull)
+                                .min(this::compareValues)
+                                .orElse(null);
+                        resultRow.put(resultKey, minValue);
                     } else {
                         throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                     }
@@ -296,8 +319,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
         for (QueryParser.OrderByInfo order : orderBy) {
             String column = order.column.contains(".") ? order.column : mainTableName + "." + order.column;
-            Object value1 = row1.get(column);
-            Object value2 = row2.get(column);
+            String columnAlias = column.contains(".") ? column.split("\\.")[1] : column;
+            Object value1 = row1.get(columnAlias);
+            Object value2 = row2.get(columnAlias);
 
             if (value1 == null && value2 == null) {
                 continue;
@@ -529,12 +553,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (String column : columns) {
             String unqualifiedColumn = column.contains(".") ? column : mainTableName + "." + column;
             if (row.containsKey(unqualifiedColumn)) {
-                filtered.put(unqualifiedColumn, row.get(unqualifiedColumn));
+                String columnAlias = column.contains(".") ? column.split("\\.")[1] : column;
+                filtered.put(columnAlias, row.get(unqualifiedColumn));
             } else {
                 String colName = column.contains(".") ? column.split("\\.")[1] : column;
                 for (Map.Entry<String, Object> entry : row.entrySet()) {
                     if (entry.getKey().endsWith("." + colName)) {
-                        filtered.put(entry.getKey(), entry.getValue());
+                        filtered.put(colName, entry.getValue());
                         break;
                     }
                 }

@@ -494,10 +494,12 @@ class QueryParser {
         List<AggregateFunction> aggregates = new ArrayList<>();
 
         Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
             Matcher countMatcher = countPattern.matcher(trimmedItem);
+            Matcher minMatcher = minPattern.matcher(trimmedItem);
             if (countMatcher.matches()) {
                 String countArg = countMatcher.group(1);
                 String alias = countMatcher.group(2);
@@ -505,6 +507,12 @@ class QueryParser {
                 aggregates.add(new AggregateFunction("COUNT", column, alias));
                 LOGGER.log(Level.FINE, "Parsed aggregate function: COUNT({0}){1}",
                         new Object[]{column == null ? "*" : column, alias != null ? " AS " + alias : ""});
+            } else if (minMatcher.matches()) {
+                String column = minMatcher.group(1);
+                String alias = minMatcher.group(2);
+                aggregates.add(new AggregateFunction("MIN", column, alias));
+                LOGGER.log(Level.FINE, "Parsed aggregate function: MIN({0}){1}",
+                        new Object[]{column, alias != null ? " AS " + alias : ""});
             } else {
                 columns.add(trimmedItem);
             }
@@ -1574,7 +1582,6 @@ class QueryParser {
         }
         String originalClause = normalizedQuery.substring(startIndex).trim();
 
-        // Use a regex to match the condition, including IN clauses with parentheses
         String escapedCondition = Pattern.quote(condition.split("\\s+IN\\s+")[0].trim());
         Pattern conditionPattern = Pattern.compile(
                 "\\b" + escapedCondition + "\\s+IN\\s*\\([^)]+\\)",
@@ -1585,25 +1592,8 @@ class QueryParser {
             return matcher.group();
         }
 
-        // Fallback to original condition if not found
         LOGGER.log(Level.WARNING, "Condition not found in original query: {0}, clause: {1}", new Object[]{condition, originalClause});
         return condition;
-    }
-
-
-    private int findClosingParenthesis(String text, int openPos) {
-        int closePos = openPos;
-        int counter = 1;
-        while (counter > 0 && closePos < text.length() - 1) {
-            closePos++;
-            char c = text.charAt(closePos);
-            if (c == '(') {
-                counter++;
-            } else if (c == ')') {
-                counter--;
-            }
-        }
-        return counter == 0 ? closePos : -1;
     }
 
     private String normalizeColumnName(String column, String tableName) {

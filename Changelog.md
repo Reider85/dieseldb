@@ -108,3 +108,4 @@
 1.0.8 GROUP BY
 1.0.9 fix AdvancedTests after GROUP BY
 1.0.10 IN fix and IN Tests fix
+1.1.1 MIN in GROUP BY
