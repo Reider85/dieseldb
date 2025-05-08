@@ -1393,8 +1393,8 @@ class QueryParser {
         String conditionColumn = normalizeColumnName(conditionWithoutNot.split("\\s+")[0].trim(), isOnClause ? null : tableName);
 
         if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
-            String originalCondition = extractOriginalCondition(originalQuery, condition);
-            Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+)\\s+IN\\s+\\(([^)]+)\\)");
+            String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
+            Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+)\\s+IN\\s*\\(([^)]+)\\)");
             Matcher inMatcher = inPattern.matcher(originalCondition);
             if (!inMatcher.find()) {
                 LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}", originalCondition);
@@ -1526,6 +1526,7 @@ class QueryParser {
         List<String> values = new ArrayList<>();
         StringBuilder currentValue = new StringBuilder();
         boolean inQuotes = false;
+        int parenDepth = 0;
 
         for (int i = 0; i < valuesPart.length(); i++) {
             char c = valuesPart.charAt(i);
@@ -1534,13 +1535,23 @@ class QueryParser {
                 currentValue.append(c);
                 continue;
             }
-            if (!inQuotes && c == ',') {
-                String value = currentValue.toString().trim();
-                if (!value.isEmpty()) {
-                    values.add(value);
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    currentValue.append(c);
+                    continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    currentValue.append(c);
+                    continue;
+                } else if (c == ',' && parenDepth == 0) {
+                    String value = currentValue.toString().trim();
+                    if (!value.isEmpty()) {
+                        values.add(value);
+                    }
+                    currentValue = new StringBuilder();
+                    continue;
                 }
-                currentValue = new StringBuilder();
-                continue;
             }
             currentValue.append(c);
         }
@@ -1554,32 +1565,56 @@ class QueryParser {
     }
 
     private String extractOriginalCondition(String originalQuery, String condition) {
-        String normalizedQuery = originalQuery.trim().toUpperCase();
-        int whereIndex = normalizedQuery.indexOf("WHERE");
-        int onIndex = normalizedQuery.indexOf(" ON ");
+        String normalizedQuery = originalQuery.trim();
+        int whereIndex = normalizedQuery.toUpperCase().indexOf("WHERE");
+        int onIndex = normalizedQuery.toUpperCase().indexOf(" ON ");
         int startIndex = whereIndex != -1 ? whereIndex + 5 : (onIndex != -1 ? onIndex + 4 : -1);
         if (startIndex == -1) {
             throw new IllegalArgumentException("No WHERE or ON clause found in query");
         }
-        String originalClause = originalQuery.substring(startIndex).trim();
+        String originalClause = normalizedQuery.substring(startIndex).trim();
 
-        Pattern conditionPattern = Pattern.compile("\\b" + Pattern.quote(condition.toUpperCase()) + "\\b", Pattern.CASE_INSENSITIVE);
+        // Use a regex to match the condition, including IN clauses with parentheses
+        String escapedCondition = Pattern.quote(condition.split("\\s+IN\\s+")[0].trim());
+        Pattern conditionPattern = Pattern.compile(
+                "\\b" + escapedCondition + "\\s+IN\\s*\\([^)]+\\)",
+                Pattern.CASE_INSENSITIVE
+        );
         Matcher matcher = conditionPattern.matcher(originalClause);
         if (matcher.find()) {
-            return originalClause.substring(matcher.start(), matcher.end());
+            return matcher.group();
         }
+
+        // Fallback to original condition if not found
+        LOGGER.log(Level.WARNING, "Condition not found in original query: {0}, clause: {1}", new Object[]{condition, originalClause});
         return condition;
     }
 
-    private String normalizeColumnName(String column, String defaultTable) {
+
+    private int findClosingParenthesis(String text, int openPos) {
+        int closePos = openPos;
+        int counter = 1;
+        while (counter > 0 && closePos < text.length() - 1) {
+            closePos++;
+            char c = text.charAt(closePos);
+            if (c == '(') {
+                counter++;
+            } else if (c == ')') {
+                counter--;
+            }
+        }
+        return counter == 0 ? closePos : -1;
+    }
+
+    private String normalizeColumnName(String column, String tableName) {
         if (column == null || column.isEmpty()) {
-            throw new IllegalArgumentException("Column name cannot be null or empty");
+            return column;
         }
-        String trimmedColumn = column.trim();
-        if (!trimmedColumn.contains(".") && defaultTable != null) {
-            return defaultTable + "." + trimmedColumn;
+        String normalized = column.trim();
+        if (tableName != null && !normalized.contains(".")) {
+            normalized = tableName + "." + normalized;
         }
-        return trimmedColumn;
+        return normalized;
     }
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> columnTypes) {
