@@ -94,7 +94,7 @@
 0.9.4 JOIN Test fix IN and LIKE
 0.9.5 INDEX TO JOIN AND ON
 0.9.6 IS NULL and IS NOT NULL in ON
-0.9.7  JOIN Test add IS NULL and IS NOT NULL tests
+0.9.7 JOIN Test add IS NULL and IS NOT NULL tests
 0.9.8 Hash JOIN
 0.9.9 LIMIT
 1.0.0 OFFSET
@@ -106,3 +106,4 @@
 1.0.6 ORDER BY tests fix
 1.0.7 COUNT
 1.0.8 GROUP BY
+1.0.9 fix AdvancedTests after GROUP BY

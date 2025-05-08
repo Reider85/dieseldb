@@ -187,8 +187,8 @@ class QueryParser {
 
     static class AggregateFunction {
         String functionName;
-        String column; // null for COUNT(*), otherwise the column name
-        String alias; // Optional alias for the aggregate function
+        String column;
+        String alias;
 
         AggregateFunction(String functionName, String column, String alias) {
             this.functionName = functionName.toUpperCase();
@@ -487,14 +487,12 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid SELECT query format");
         }
 
-        // Extract the SELECT part from the original query
         String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, original.indexOf("FROM")).trim();
         List<String> selectItems = splitSelectItems(selectPartOriginal);
 
         List<String> columns = new ArrayList<>();
         List<AggregateFunction> aggregates = new ArrayList<>();
 
-        // Regular expression for COUNT function
         Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
 
         for (String item : selectItems) {
@@ -519,7 +517,7 @@ class QueryParser {
         Integer limit = null;
         Integer offset = null;
         List<OrderByInfo> orderBy = new ArrayList<>();
-        List<String> groupBy = new ArrayList<>(); // New field for GROUP BY columns
+        List<String> groupBy = new ArrayList<>();
 
         Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
@@ -621,24 +619,22 @@ class QueryParser {
                     onCondition = onWhereSplit[0].trim();
                     if (onWhereSplit.length > 1) {
                         String remaining = onWhereSplit[1].trim();
-                        if (remaining.toUpperCase().contains(" LIMIT ")) {
-                            String[] whereLimitSplit = remaining.split("(?i)\\s+LIMIT\\s+", 2);
+                        if (remaining.toUpperCase().startsWith("LIMIT ")) {
+                            String[] whereLimitSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
                             conditionStr = whereLimitSplit[0].trim();
                             if (whereLimitSplit.length > 1) {
-                                String limitClause = "LIMIT " + whereLimitSplit[1].trim();
-                                String[] limitOffsetSplit = limitClause.split("(?i)\\s+OFFSET\\s+", 2);
-                                limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].substring(6).trim());
-                                if (limitOffsetSplit.length > 1) {
-                                    offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
-                                }
+                                limit = parseLimitClause("LIMIT " + whereLimitSplit[0].substring(6).trim());
+                                offset = parseOffsetClause("OFFSET " + whereLimitSplit[1].trim());
+                            } else {
+                                limit = parseLimitClause("LIMIT " + whereLimitSplit[0].trim());
                             }
-                        } else if (remaining.toUpperCase().contains(" OFFSET ")) {
+                        } else if (remaining.toUpperCase().startsWith("OFFSET ")) {
                             String[] whereOffsetSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
                             conditionStr = whereOffsetSplit[0].trim();
                             if (whereOffsetSplit.length > 1) {
                                 offset = parseOffsetClause("OFFSET " + whereOffsetSplit[1].trim());
                             }
-                        } else if (remaining.toUpperCase().contains(" ORDER BY ")) {
+                        } else if (remaining.toUpperCase().startsWith("ORDER BY ")) {
                             String[] whereOrderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
                             conditionStr = whereOrderBySplit[0].trim();
                             if (whereOrderBySplit.length > 1) {
@@ -648,26 +644,21 @@ class QueryParser {
                             conditionStr = remaining;
                         }
                     }
-                } else if (onClause.toUpperCase().contains(" LIMIT ")) {
-                    String[] onLimitSplit = onClause.split("(?i)\\s+LIMIT\\s+", 2);
-                    onCondition = onLimitSplit[0].trim();
+                } else if (onClause.toUpperCase().startsWith("LIMIT ")) {
+                    String[] onLimitSplit = onClause.split("(?i)\\s+OFFSET\\s+", 2);
+                    onCondition = "";
                     if (onLimitSplit.length > 1) {
-                        String limitClause = "LIMIT " + onLimitSplit[1].trim();
-                        String[] limitOffsetSplit = limitClause.split("(?i)\\s+OFFSET\\s+", 2);
-                        limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].substring(6).trim());
-                        if (limitOffsetSplit.length > 1) {
-                            offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
-                        }
+                        limit = parseLimitClause("LIMIT " + onLimitSplit[0].substring(6).trim());
+                        offset = parseOffsetClause("OFFSET " + onLimitSplit[1].trim());
+                    } else {
+                        limit = parseLimitClause("LIMIT " + onLimitSplit[0].trim());
                     }
-                } else if (onClause.toUpperCase().contains(" OFFSET ")) {
-                    String[] onOffsetSplit = onClause.split("(?i)\\s+OFFSET\\s+", 2);
-                    onCondition = onOffsetSplit[0].trim();
-                    if (onOffsetSplit.length > 1) {
-                        offset = parseOffsetClause("OFFSET " + onOffsetSplit[1].trim());
-                    }
-                } else if (onClause.toUpperCase().contains(" ORDER BY ")) {
+                } else if (onClause.toUpperCase().startsWith("OFFSET ")) {
+                    onCondition = "";
+                    offset = parseOffsetClause(onClause);
+                } else if (onClause.toUpperCase().startsWith("ORDER BY ")) {
                     String[] onOrderBySplit = onClause.split("(?i)\\s+ORDER BY\\s+", 2);
-                    onCondition = onOrderBySplit[0].trim();
+                    onCondition = "";
                     if (onOrderBySplit.length > 1) {
                         orderBy = parseOrderByClause(onOrderBySplit[1].trim(), combinedColumnTypes);
                     }
@@ -694,7 +685,6 @@ class QueryParser {
             tableName = joinTableName;
         }
 
-        // Parse WHERE, GROUP BY, ORDER BY, LIMIT, OFFSET
         String remaining = joinParts.get(joinParts.size() - 1);
         if (remaining.toUpperCase().contains(" WHERE ")) {
             String[] whereSplit = remaining.split("(?i)\\s+WHERE\\s+", 2);
@@ -702,22 +692,55 @@ class QueryParser {
             remaining = whereSplit[0].trim();
         }
 
-        if (conditionStr != null && conditionStr.toUpperCase().contains(" GROUP BY ")) {
-            String[] groupBySplit = conditionStr.split("(?i)\\s+GROUP BY\\s+", 2);
+        if (conditionStr != null && !conditionStr.isEmpty()) {
+            String[] limitSplit = conditionStr.toUpperCase().contains(" LIMIT ")
+                    ? conditionStr.split("(?i)\\s+LIMIT\\s+", 2)
+                    : new String[]{conditionStr, ""};
+            conditionStr = limitSplit[0].trim();
+            if (limitSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
+                String limitClause = limitSplit[1].trim();
+                String[] limitOffsetSplit = limitClause.toUpperCase().contains(" OFFSET ")
+                        ? limitClause.split("(?i)\\s+OFFSET\\s+", 2)
+                        : new String[]{limitClause, ""};
+                limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].trim());
+                if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
+                    offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+                }
+            }
+
+            String[] offsetSplit = conditionStr.toUpperCase().contains(" OFFSET ")
+                    ? conditionStr.split("(?i)\\s+OFFSET\\s+", 2)
+                    : new String[]{conditionStr, ""};
+            conditionStr = offsetSplit[0].trim();
+            if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
+                offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
+            }
+
+            String[] orderBySplit = conditionStr.toUpperCase().contains(" ORDER BY ")
+                    ? conditionStr.split("(?i)\\s+ORDER BY\\s+", 2)
+                    : new String[]{conditionStr, ""};
+            conditionStr = orderBySplit[0].trim();
+            if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
+                orderBy = parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes);
+            }
+
+            String[] groupBySplit = conditionStr.toUpperCase().contains(" GROUP BY ")
+                    ? conditionStr.split("(?i)\\s+GROUP BY\\s+", 2)
+                    : new String[]{conditionStr, ""};
             conditionStr = groupBySplit[0].trim();
-            String groupByPart = groupBySplit[1].trim();
-            // Parse GROUP BY columns
-            groupBy = Arrays.stream(groupByPart.split(","))
-                    .map(col -> normalizeColumnName(col.trim(), mainTable.getName()))
-                    .collect(Collectors.toList());
-            remaining = groupByPart;
-            LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
+            if (groupBySplit.length > 1 && !groupBySplit[1].trim().isEmpty()) {
+                String groupByPart = groupBySplit[1].trim();
+                groupBy = Arrays.stream(groupByPart.split(","))
+                        .map(col -> normalizeColumnName(col.trim(), mainTable.getName()))
+                        .collect(Collectors.toList());
+                LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
+            }
         }
 
         if (remaining.toUpperCase().contains(" ORDER BY ")) {
             String[] orderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
             remaining = orderBySplit[0].trim();
-            if (orderBySplit.length > 1) {
+            if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
                 orderBy = parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes);
             }
         }
@@ -725,11 +748,13 @@ class QueryParser {
         if (remaining.toUpperCase().contains(" LIMIT ")) {
             String[] limitSplit = remaining.split("(?i)\\s+LIMIT\\s+", 2);
             remaining = limitSplit[0].trim();
-            if (limitSplit.length > 1) {
-                String limitClause = "LIMIT " + limitSplit[1].trim();
-                String[] limitOffsetSplit = limitClause.split("(?i)\\s+OFFSET\\s+", 2);
-                limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].substring(6).trim());
-                if (limitOffsetSplit.length > 1) {
+            if (limitSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
+                String limitClause = limitSplit[1].trim();
+                String[] limitOffsetSplit = limitClause.toUpperCase().contains(" OFFSET ")
+                        ? limitClause.split("(?i)\\s+OFFSET\\s+", 2)
+                        : new String[]{limitClause, ""};
+                limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].trim());
+                if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
                     offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
                 }
             }
@@ -738,7 +763,7 @@ class QueryParser {
         if (remaining.toUpperCase().contains(" OFFSET ")) {
             String[] offsetSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
             remaining = offsetSplit[0].trim();
-            if (offsetSplit.length > 1) {
+            if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
                 offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
             }
         }
@@ -748,7 +773,6 @@ class QueryParser {
             conditions = parseConditions(conditionStr, mainTable.getName(), database, original, false, combinedColumnTypes);
         }
 
-        // Validate columns and aggregates
         for (String column : columns) {
             String normalizedColumn = normalizeColumnName(column, mainTable.getName());
             String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
@@ -785,7 +809,6 @@ class QueryParser {
             }
         }
 
-        // Validate GROUP BY columns
         for (String column : groupBy) {
             String normalizedColumn = normalizeColumnName(column, mainTable.getName());
             String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
@@ -803,7 +826,6 @@ class QueryParser {
             }
         }
 
-        // Validate that non-aggregated columns are in GROUP BY
         if (!groupBy.isEmpty()) {
             for (String column : columns) {
                 String normalizedColumn = normalizeColumnName(column, mainTable.getName());
@@ -937,6 +959,10 @@ class QueryParser {
 
     private Integer parseLimitClause(String limitClause) {
         String normalized = limitClause.toUpperCase().replace("LIMIT", "").trim();
+        if (normalized.isEmpty()) {
+            LOGGER.log(Level.WARNING, "Empty LIMIT clause detected");
+            return null; // No LIMIT specified
+        }
         try {
             int limitValue = Integer.parseInt(normalized);
             if (limitValue < 0) {
@@ -945,12 +971,17 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Parsed LIMIT clause: {0}", limitValue);
             return limitValue;
         } catch (NumberFormatException e) {
+            LOGGER.log(Level.SEVERE, "Invalid LIMIT value: {0}", normalized);
             throw new IllegalArgumentException("Invalid LIMIT value: " + normalized);
         }
     }
 
     private Integer parseOffsetClause(String offsetClause) {
         String normalized = offsetClause.toUpperCase().replace("OFFSET", "").trim();
+        if (normalized.isEmpty()) {
+            LOGGER.log(Level.WARNING, "Empty OFFSET clause detected");
+            return null; // No OFFSET specified
+        }
         try {
             int offsetValue = Integer.parseInt(normalized);
             if (offsetValue < 0) {
@@ -959,6 +990,7 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Parsed OFFSET clause: {0}", offsetValue);
             return offsetValue;
         } catch (NumberFormatException e) {
+            LOGGER.log(Level.SEVERE, "Invalid OFFSET value: {0}", normalized);
             throw new IllegalArgumentException("Invalid OFFSET value: " + normalized);
         }
     }
@@ -1210,14 +1242,51 @@ class QueryParser {
         LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}, isOnClause: {2}, condition: {3}",
                 new Object[]{tableName, combinedColumnTypes, isOnClause, conditionStr});
 
+        String cleanConditionStr = conditionStr;
+        String[] limitSplit = cleanConditionStr.toUpperCase().contains(" LIMIT ")
+                ? cleanConditionStr.split("(?i)\\s+LIMIT\\s+", 2)
+                : new String[]{cleanConditionStr, ""};
+        cleanConditionStr = limitSplit[0].trim();
+        if (limitSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
+            LOGGER.log(Level.FINE, "Detected LIMIT clause in condition string, stopping at: {0}", cleanConditionStr);
+        }
+
+        String[] offsetSplit = cleanConditionStr.toUpperCase().contains(" OFFSET ")
+                ? cleanConditionStr.split("(?i)\\s+OFFSET\\s+", 2)
+                : new String[]{cleanConditionStr, ""};
+        cleanConditionStr = offsetSplit[0].trim();
+        if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
+            LOGGER.log(Level.FINE, "Detected OFFSET clause in condition string, stopping at: {0}", cleanConditionStr);
+        }
+
+        String[] orderBySplit = cleanConditionStr.toUpperCase().contains(" ORDER BY ")
+                ? cleanConditionStr.split("(?i)\\s+ORDER BY\\s+", 2)
+                : new String[]{cleanConditionStr, ""};
+        cleanConditionStr = orderBySplit[0].trim();
+        if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
+            LOGGER.log(Level.FINE, "Detected ORDER BY clause in condition string, stopping at: {0}", cleanConditionStr);
+        }
+
+        String[] groupBySplit = cleanConditionStr.toUpperCase().contains(" GROUP BY ")
+                ? cleanConditionStr.split("(?i)\\s+GROUP BY\\s+", 2)
+                : new String[]{cleanConditionStr, ""};
+        cleanConditionStr = groupBySplit[0].trim();
+        if (groupBySplit.length > 1 && !groupBySplit[1].trim().isEmpty()) {
+            LOGGER.log(Level.FINE, "Detected GROUP BY clause in condition string, stopping at: {0}", cleanConditionStr);
+        }
+
+        if (cleanConditionStr.isEmpty()) {
+            return new ArrayList<>();
+        }
+
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
         int parenDepth = 0;
         int nestingLevel = 0;
 
-        for (int i = 0; i < conditionStr.length(); i++) {
-            char c = conditionStr.charAt(i);
+        for (int i = 0; i < cleanConditionStr.length(); i++) {
+            char c = cleanConditionStr.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 currentCondition.append(c);
@@ -1241,7 +1310,7 @@ class QueryParser {
                                 subConditionStr = subConditionStr.substring(4).trim();
                             }
                             if (subConditionStr.isEmpty()) {
-                                throw new IllegalArgumentException("Empty grouped condition in clause: " + conditionStr);
+                                throw new IllegalArgumentException("Empty grouped condition in clause: " + cleanConditionStr);
                             }
                             LOGGER.log(Level.FINE, "Parsing nested condition at level {0}: {1}, isNot: {2}",
                                     new Object[]{nestingLevel + 1, subConditionStr, isNot});
@@ -1249,20 +1318,20 @@ class QueryParser {
                             if (subConditions.isEmpty()) {
                                 throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);
                             }
-                            String conjunction = determineConjunctionAfter(conditionStr, i);
+                            String conjunction = determineConjunctionAfter(cleanConditionStr, i);
                             conditions.add(new Condition(subConditions, conjunction, isNot));
                             LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}",
                                     new Object[]{subConditions.size(), conjunction});
                         } else {
-                            throw new IllegalArgumentException("Empty grouped condition in clause: " + conditionStr);
+                            throw new IllegalArgumentException("Empty grouped condition in clause: " + cleanConditionStr);
                         }
                         currentCondition = new StringBuilder();
                         continue;
                     }
                 } else if (parenDepth == 0) {
-                    if (i + 3 <= conditionStr.length() && conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
-                            (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
-                            (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
+                    if (i + 3 <= cleanConditionStr.length() && cleanConditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
+                            (i == 0 || Character.isWhitespace(cleanConditionStr.charAt(i - 1))) &&
+                            (i + 3 == cleanConditionStr.length() || Character.isWhitespace(cleanConditionStr.charAt(i + 3)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
                             conditions.add(parseSingleCondition(current, "AND", combinedColumnTypes, originalQuery, isOnClause, tableName));
@@ -1271,9 +1340,9 @@ class QueryParser {
                         currentCondition = new StringBuilder();
                         i += 2;
                         continue;
-                    } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
-                            (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
-                            (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
+                    } else if (i + 2 <= cleanConditionStr.length() && cleanConditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
+                            (i == 0 || Character.isWhitespace(cleanConditionStr.charAt(i - 1))) &&
+                            (i + 2 == cleanConditionStr.length() || Character.isWhitespace(cleanConditionStr.charAt(i + 2)))) {
                         String current = currentCondition.toString().trim();
                         if (!current.isEmpty()) {
                             conditions.add(parseSingleCondition(current, "OR", combinedColumnTypes, originalQuery, isOnClause, tableName));
@@ -1297,7 +1366,7 @@ class QueryParser {
         }
 
         if (parenDepth != 0) {
-            throw new IllegalArgumentException("Mismatched parentheses in condition clause: " + conditionStr);
+            throw new IllegalArgumentException("Mismatched parentheses in condition clause: " + cleanConditionStr);
         }
 
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
