@@ -185,6 +185,30 @@ class QueryParser {
         }
     }
 
+    static class AggregateFunction {
+        String functionName;
+        String column; // null for COUNT(*), otherwise the column name
+        String alias; // Optional alias for the aggregate function
+
+        AggregateFunction(String functionName, String column, String alias) {
+            this.functionName = functionName.toUpperCase();
+            this.column = column;
+            this.alias = alias;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append(functionName).append("(");
+            sb.append(column == null ? "*" : column);
+            sb.append(")");
+            if (alias != null) {
+                sb.append(" AS ").append(alias);
+            }
+            return sb.toString();
+        }
+    }
+
     public static String convertLikePatternToRegex(String pattern) {
         if (pattern == null || pattern.isEmpty()) {
             throw new IllegalArgumentException("LIKE pattern cannot be null or empty");
@@ -463,10 +487,30 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid SELECT query format");
         }
 
+        // Extract the SELECT part from the original query
         String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, original.indexOf("FROM")).trim();
-        List<String> columns = Arrays.stream(selectPartOriginal.split(","))
-                .map(String::trim)
-                .collect(Collectors.toList());
+        List<String> selectItems = splitSelectItems(selectPartOriginal);
+
+        List<String> columns = new ArrayList<>();
+        List<AggregateFunction> aggregates = new ArrayList<>();
+
+        // Regular expression for COUNT function: COUNT(*) or COUNT(column) with optional AS alias
+        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
+
+        for (String item : selectItems) {
+            String trimmedItem = item.trim();
+            Matcher countMatcher = countPattern.matcher(trimmedItem);
+            if (countMatcher.matches()) {
+                String countArg = countMatcher.group(1);
+                String alias = countMatcher.group(2);
+                String column = countArg.equals("*") ? null : countArg;
+                aggregates.add(new AggregateFunction("COUNT", column, alias));
+                LOGGER.log(Level.FINE, "Parsed aggregate function: COUNT({0}){1}",
+                        new Object[]{column == null ? "*" : column, alias != null ? " AS " + alias : ""});
+            } else {
+                columns.add(trimmedItem);
+            }
+        }
 
         String tableAndJoins = parts[1].trim();
         List<JoinInfo> joins = new ArrayList<>();
@@ -709,6 +753,7 @@ class QueryParser {
             conditions = parseConditions(conditionStr, mainTable.getName(), database, original, false, combinedColumnTypes);
         }
 
+        // Validate columns and aggregates
         for (String column : columns) {
             String normalizedColumn = normalizeColumnName(column, mainTable.getName());
             String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
@@ -726,10 +771,71 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, mainTable={1}, joins={2}, conditions={3}, limit={4}, offset={5}, orderBy={6}",
-                new Object[]{columns, mainTable.getName(), joins, conditions, limit, offset, orderBy});
+        for (AggregateFunction agg : aggregates) {
+            if (agg.column != null) {
+                String normalizedColumn = normalizeColumnName(agg.column, mainTable.getName());
+                String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
+                boolean found = false;
+                for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                    if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    LOGGER.log(Level.SEVERE, "Unknown column in {0}: {1}, available columns: {2}",
+                            new Object[]{agg.toString(), agg.column, combinedColumnTypes.keySet()});
+                    throw new IllegalArgumentException("Unknown column in " + agg.toString() + ": " + agg.column);
+                }
+            }
+        }
 
-        return new SelectQuery(columns, conditions, joins, mainTable.getName(), limit, offset, orderBy);
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, aggregates={1}, mainTable={2}, joins={3}, conditions={4}, limit={5}, offset={6}, orderBy={7}",
+                new Object[]{columns, aggregates, mainTable.getName(), joins, conditions, limit, offset, orderBy});
+
+        return new SelectQuery(columns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy);
+    }
+
+    private List<String> splitSelectItems(String selectPart) {
+        List<String> items = new ArrayList<>();
+        StringBuilder currentItem = new StringBuilder();
+        boolean inQuotes = false;
+        int parenDepth = 0;
+
+        for (int i = 0; i < selectPart.length(); i++) {
+            char c = selectPart.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentItem.append(c);
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    currentItem.append(c);
+                    continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    currentItem.append(c);
+                    continue;
+                } else if (c == ',' && parenDepth == 0) {
+                    String item = currentItem.toString().trim();
+                    if (!item.isEmpty()) {
+                        items.add(item);
+                    }
+                    currentItem = new StringBuilder();
+                    continue;
+                }
+            }
+            currentItem.append(c);
+        }
+
+        String lastItem = currentItem.toString().trim();
+        if (!lastItem.isEmpty()) {
+            items.add(lastItem);
+        }
+
+        return items;
     }
 
     private List<OrderByInfo> parseOrderByClause(String orderByClause, Map<String, Class<?>> combinedColumnTypes) {

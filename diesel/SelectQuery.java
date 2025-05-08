@@ -12,6 +12,7 @@ import java.util.regex.Pattern;
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
     private final List<String> columns;
+    private final List<QueryParser.AggregateFunction> aggregates;
     private final List<QueryParser.Condition> conditions;
     private final List<QueryParser.JoinInfo> joins;
     private final String mainTableName;
@@ -19,9 +20,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final Integer offset;
     private final List<QueryParser.OrderByInfo> orderBy;
 
-    public SelectQuery(List<String> columns, List<QueryParser.Condition> conditions, List<QueryParser.JoinInfo> joins,
-                       String mainTableName, Integer limit, Integer offset, List<QueryParser.OrderByInfo> orderBy) {
-        this.columns = columns;
+    public SelectQuery(List<String> columns, List<QueryParser.AggregateFunction> aggregates, List<QueryParser.Condition> conditions,
+                       List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
+                       List<QueryParser.OrderByInfo> orderBy) {
+        this.columns = columns != null ? columns : new ArrayList<>();
+        this.aggregates = aggregates != null ? aggregates : new ArrayList<>();
         this.conditions = conditions != null ? conditions : new ArrayList<>();
         this.joins = joins != null ? joins : new ArrayList<>();
         this.mainTableName = mainTableName;
@@ -161,22 +164,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 joinedRows = newJoinedRows;
             }
 
-            // Применяем WHERE условия
+            // Apply WHERE conditions and collect rows
             List<Map<String, Object>> filteredRows = new ArrayList<>();
             for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
                 Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
                 if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
-                    filteredRows.add(filterColumns(flattenedRow, columns));
+                    filteredRows.add(flattenedRow);
                 }
             }
 
-            // Применяем ORDER BY
+            // Apply ORDER BY if specified
             if (!orderBy.isEmpty()) {
                 filteredRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
                 LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses", orderBy.size());
             }
 
-            // Применяем OFFSET и LIMIT
+            // Apply OFFSET and LIMIT
             int rowsSkipped = (offset != null) ? offset : 0;
             int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
             List<Map<String, Object>> finalRows = new ArrayList<>();
@@ -188,10 +191,36 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 finalRows.add(filteredRows.get(i));
             }
 
-            result = finalRows;
+            // Compute aggregates if present
+            if (!aggregates.isEmpty()) {
+                Map<String, Object> resultRow = new HashMap<>();
+                for (QueryParser.AggregateFunction agg : aggregates) {
+                    if (agg.functionName.equals("COUNT")) {
+                        long count;
+                        if (agg.column == null) {
+                            // COUNT(*): Count all rows
+                            count = finalRows.size();
+                        } else {
+                            // COUNT(column): Count non-null values
+                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            count = finalRows.stream()
+                                    .filter(row -> row.get(columnKey) != null)
+                                    .count();
+                        }
+                        String resultKey = agg.alias != null ? agg.alias : agg.toString();
+                        resultRow.put(resultKey, count);
+                    }
+                }
+                result.add(resultRow);
+            } else {
+                // No aggregates: Return selected columns
+                for (Map<String, Object> row : finalRows) {
+                    result.add(filterColumns(row, columns));
+                }
+            }
 
-            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, limit={3}, offset={4}, orderBy={5}",
-                    new Object[]{result.size(), mainTableName, joins, limit, offset, orderBy});
+            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, limit={4}, offset={5}, orderBy={6}",
+                    new Object[]{result.size(), mainTableName, joins, aggregates, limit, offset, orderBy});
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
