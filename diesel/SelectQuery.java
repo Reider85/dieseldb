@@ -224,6 +224,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     .min(this::compareValues)
                                     .orElse(null);
                             resultRow.put(resultKey, minValue);
+                        } else if (agg.functionName.equals("MAX")) {
+                            if (agg.column == null) {
+                                throw new IllegalArgumentException("MAX requires a column argument");
+                            }
+                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            Object maxValue = group.stream()
+                                    .map(row -> row.get(columnKey))
+                                    .filter(Objects::nonNull)
+                                    .max(this::compareValues)
+                                    .orElse(null);
+                            resultRow.put(resultKey, maxValue);
                         } else {
                             throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                         }
@@ -294,6 +305,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 .min(this::compareValues)
                                 .orElse(null);
                         resultRow.put(resultKey, minValue);
+                    } else if (agg.functionName.equals("MAX")) {
+                        if (agg.column == null) {
+                            throw new IllegalArgumentException("MAX requires a column argument");
+                        }
+                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        Object maxValue = selectedRows.stream()
+                                .map(row -> row.get(columnKey))
+                                .filter(Objects::nonNull)
+                                .max(this::compareValues)
+                                .orElse(null);
+                        resultRow.put(resultKey, maxValue);
                     } else {
                         throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                     }

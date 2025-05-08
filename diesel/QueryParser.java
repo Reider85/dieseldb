@@ -495,11 +495,13 @@ class QueryParser {
 
         Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
             Matcher countMatcher = countPattern.matcher(trimmedItem);
             Matcher minMatcher = minPattern.matcher(trimmedItem);
+            Matcher maxMatcher = maxPattern.matcher(trimmedItem);
             if (countMatcher.matches()) {
                 String countArg = countMatcher.group(1);
                 String alias = countMatcher.group(2);
@@ -512,6 +514,12 @@ class QueryParser {
                 String alias = minMatcher.group(2);
                 aggregates.add(new AggregateFunction("MIN", column, alias));
                 LOGGER.log(Level.FINE, "Parsed aggregate function: MIN({0}){1}",
+                        new Object[]{column, alias != null ? " AS " + alias : ""});
+            } else if (maxMatcher.matches()) {
+                String column = maxMatcher.group(1);
+                String alias = maxMatcher.group(2);
+                aggregates.add(new AggregateFunction("MAX", column, alias));
+                LOGGER.log(Level.FINE, "Parsed aggregate function: MAX({0}){1}",
                         new Object[]{column, alias != null ? " AS " + alias : ""});
             } else {
                 columns.add(trimmedItem);
