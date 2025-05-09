@@ -110,3 +110,4 @@
 1.0.10 IN fix and IN Tests fix
 1.1.1 MIN in GROUP BY
 1.1.2 MAX in GROUP BY
+1.1.3 AVG in GROUP BY

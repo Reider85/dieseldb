@@ -235,6 +235,48 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     .max(this::compareValues)
                                     .orElse(null);
                             resultRow.put(resultKey, maxValue);
+                        } else if (agg.functionName.equals("AVG")) {
+                            if (agg.column == null) {
+                                throw new IllegalArgumentException("AVG requires a column argument");
+                            }
+                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            List<Object> values = group.stream()
+                                    .map(row -> row.get(columnKey))
+                                    .filter(Objects::nonNull)
+                                    .collect(Collectors.toList());
+                            if (values.isEmpty()) {
+                                resultRow.put(resultKey, null);
+                            } else {
+                                BigDecimal sum = BigDecimal.ZERO;
+                                long count = 0;
+                                for (Object value : values) {
+                                    if (value instanceof Number) {
+                                        sum = sum.add(new BigDecimal(value.toString()));
+                                        count++;
+                                    }
+                                }
+                                if (count > 0) {
+                                    BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, BigDecimal.ROUND_HALF_UP);
+                                    Class<?> columnType = combinedColumnTypes.get(columnKey);
+                                    if (columnType == Float.class) {
+                                        resultRow.put(resultKey, avg.floatValue());
+                                    } else if (columnType == Double.class) {
+                                        resultRow.put(resultKey, avg.doubleValue());
+                                    } else if (columnType == Integer.class) {
+                                        resultRow.put(resultKey, avg.intValue());
+                                    } else if (columnType == Long.class) {
+                                        resultRow.put(resultKey, avg.longValue());
+                                    } else if (columnType == Short.class) {
+                                        resultRow.put(resultKey, avg.shortValue());
+                                    } else if (columnType == Byte.class) {
+                                        resultRow.put(resultKey, avg.byteValue());
+                                    } else {
+                                        resultRow.put(resultKey, avg);
+                                    }
+                                } else {
+                                    resultRow.put(resultKey, null);
+                                }
+                            }
                         } else {
                             throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                         }
@@ -316,6 +358,48 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 .max(this::compareValues)
                                 .orElse(null);
                         resultRow.put(resultKey, maxValue);
+                    } else if (agg.functionName.equals("AVG")) {
+                        if (agg.column == null) {
+                            throw new IllegalArgumentException("AVG requires a column argument");
+                        }
+                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        List<Object> values = selectedRows.stream()
+                                .map(row -> row.get(columnKey))
+                                .filter(Objects::nonNull)
+                                .collect(Collectors.toList());
+                        if (values.isEmpty()) {
+                            resultRow.put(resultKey, null);
+                        } else {
+                            BigDecimal sum = BigDecimal.ZERO;
+                            long count = 0;
+                            for (Object value : values) {
+                                if (value instanceof Number) {
+                                    sum = sum.add(new BigDecimal(value.toString()));
+                                    count++;
+                                }
+                            }
+                            if (count > 0) {
+                                BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, BigDecimal.ROUND_HALF_UP);
+                                Class<?> columnType = combinedColumnTypes.get(columnKey);
+                                if (columnType == Float.class) {
+                                    resultRow.put(resultKey, avg.floatValue());
+                                } else if (columnType == Double.class) {
+                                    resultRow.put(resultKey, avg.doubleValue());
+                                } else if (columnType == Integer.class) {
+                                    resultRow.put(resultKey, avg.intValue());
+                                } else if (columnType == Long.class) {
+                                    resultRow.put(resultKey, avg.longValue());
+                                } else if (columnType == Short.class) {
+                                    resultRow.put(resultKey, avg.shortValue());
+                                } else if (columnType == Byte.class) {
+                                    resultRow.put(resultKey, avg.byteValue());
+                                } else {
+                                    resultRow.put(resultKey, avg);
+                                }
+                            } else {
+                                resultRow.put(resultKey, null);
+                            }
+                        }
                     } else {
                         throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                     }
