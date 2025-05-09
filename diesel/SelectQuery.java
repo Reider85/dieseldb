@@ -201,6 +201,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     for (QueryParser.AggregateFunction agg : aggregates) {
                         String resultKey = agg.alias != null ? agg.alias : agg.toString();
                         if (agg.functionName.equals("COUNT")) {
+                            // Compute COUNT for the group, always returning a Long for consistency
                             long count;
                             if (agg.column == null) {
                                 // COUNT(*): Count all rows in the group
