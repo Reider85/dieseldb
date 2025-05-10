@@ -117,3 +117,4 @@
 1.1.7 GROUP BY tests
 1.1.8 HAVING <,>,=
 1.1.9 HAVING COUNT(*)
+1.2.0 HAVING fixes
