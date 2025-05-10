@@ -527,56 +527,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return condition.not ? !subResult : subResult;
         }
 
-        if (condition.isNullOperator()) {
-            Object value = row.get(condition.column);
-            boolean isNull = value == null;
-            boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
-            return condition.not ? !result : result;
-        }
-
-        if (condition.isInOperator()) {
-            Object value = row.get(condition.column);
-            if (value == null) {
-                return condition.not;
-            }
-            boolean inResult = condition.inValues.stream().anyMatch(v -> valuesEqual(v, value));
-            return condition.not ? !inResult : inResult;
-        }
-
         Object leftValue = row.get(condition.column);
         if (leftValue == null) {
             return condition.not;
         }
 
-        Object rightValue;
-        if (condition.isColumnComparison()) {
-            rightValue = row.get(condition.rightColumn);
-            if (rightValue == null) {
-                return condition.not;
-            }
-        } else {
-            rightValue = condition.value;
-        }
+        Object rightValue = condition.value;
 
-        int comparison;
-        if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
-            if (!(leftValue instanceof String) || !(rightValue instanceof String)) {
-                return condition.not;
-            }
-            String pattern = QueryParser.convertLikePatternToRegex((String) rightValue);
-            boolean matches = Pattern.matches(pattern, (String) leftValue);
-            boolean result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
-            return condition.not ? !result : result;
-        }
-
-        comparison = compareValues(leftValue, rightValue);
+        int comparison = compareValues(leftValue, rightValue);
         boolean result;
         switch (condition.operator) {
             case EQUALS:
                 result = comparison == 0;
-                break;
-            case NOT_EQUALS:
-                result = comparison != 0;
                 break;
             case LESS_THAN:
                 result = comparison < 0;
@@ -585,7 +547,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 result = comparison > 0;
                 break;
             default:
-                throw new IllegalStateException("Unsupported operator: " + condition.operator);
+                throw new IllegalStateException("Unsupported operator in HAVING: " + condition.operator);
         }
 
         return condition.not ? !result : result;

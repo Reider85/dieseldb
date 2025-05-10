@@ -1014,6 +1014,13 @@ class QueryParser {
                 }
             }
         }
+
+        // Validate supported operators for HAVING
+        if (!(condition.operator == Operator.EQUALS ||
+                condition.operator == Operator.LESS_THAN ||
+                condition.operator == Operator.GREATER_THAN)) {
+            throw new IllegalArgumentException("HAVING clause only supports =, <, > operators: " + condition);
+        }
     }
 
     private List<String> splitSelectItems(String selectPart) {
