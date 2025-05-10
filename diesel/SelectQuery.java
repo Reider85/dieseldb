@@ -7,6 +7,7 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -527,12 +528,44 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return condition.not ? !subResult : subResult;
         }
 
-        Object leftValue = row.get(condition.column);
-        if (leftValue == null) {
-            return condition.not;
+        // Pattern to match aggregate functions like COUNT(*), MIN(column), etc.
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)$");
+        Matcher aggMatcher = aggPattern.matcher(condition.column);
+
+        Object leftValue;
+        if (aggMatcher.matches()) {
+            // Handle aggregate function
+            String aggFunction = aggMatcher.group(1).toUpperCase();
+            String aggColumn = aggMatcher.group(2);
+            String aggKey = condition.column; // e.g., "COUNT(*)"
+            // Check if the aggregate has an alias or use the function string
+            for (QueryParser.AggregateFunction agg : aggregates) {
+                String resultKey = agg.alias != null ? agg.alias : agg.toString();
+                if (aggKey.equalsIgnoreCase(agg.toString()) || (agg.alias != null && agg.alias.equalsIgnoreCase(condition.column))) {
+                    leftValue = row.get(resultKey);
+                    break;
+                }
+            }
+            leftValue = row.get(condition.column);
+            if (leftValue == null) {
+                LOGGER.log(Level.WARNING, "No value found for aggregate function in HAVING: {0}", condition.column);
+                return condition.not;
+            }
+        } else {
+            // Handle GROUP BY column
+            String unqualifiedColumn = condition.column.contains(".") ? condition.column.split("\\.")[1] : condition.column;
+            leftValue = row.get(unqualifiedColumn);
+            if (leftValue == null) {
+                LOGGER.log(Level.WARNING, "No value found for GROUP BY column in HAVING: {0}", condition.column);
+                return condition.not;
+            }
         }
 
         Object rightValue = condition.value;
+        if (rightValue == null) {
+            LOGGER.log(Level.WARNING, "No value specified for HAVING condition: {0}", condition);
+            return condition.not;
+        }
 
         int comparison = compareValues(leftValue, rightValue);
         boolean result;

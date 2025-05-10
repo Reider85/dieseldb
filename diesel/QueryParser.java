@@ -973,7 +973,8 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid HAVING condition: no column specified");
         }
 
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)$");
+        // Updated pattern to handle COUNT(*) explicitly
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)$");
         Matcher aggMatcher = aggPattern.matcher(column);
 
         boolean isAggregate = aggMatcher.matches();
@@ -996,7 +997,11 @@ class QueryParser {
         }
 
         if (isAggregate) {
+            String aggFunction = aggMatcher.group(1).toUpperCase();
             String aggColumn = aggMatcher.group(2);
+            if (!aggFunction.equals("COUNT") && aggColumn == null) {
+                throw new IllegalArgumentException("Aggregate function " + aggFunction + " requires a column argument in HAVING clause");
+            }
             if (aggColumn != null && !aggColumn.equals("*")) {
                 String normalizedAggColumn = normalizeColumnName(aggColumn, null);
                 String unqualifiedAggColumn = normalizedAggColumn.contains(".") ? normalizedAggColumn.split("\\.")[1].trim() : normalizedAggColumn;
