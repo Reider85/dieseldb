@@ -12,9 +12,10 @@ class SelectQueryParser {
     private final ConditionParser conditionParser = new ConditionParser();
     private final OrderByParser orderByParser = new OrderByParser();
     private final GroupByParser groupByParser = new GroupByParser();
+    private final HavingParser havingParser = new HavingParser(conditionParser, orderByParser);
 
     Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
-        LOGGER.log(Level.FINE, "Parsing SELECT query: normalized={0}, original={1}", new Object[]{normalized, original});LOGGER.log(Level.FINE, "Parsing SELECT query: normalized={0}, original={1}", new Object[]{normalized, original});
+        LOGGER.log(Level.FINE, "Parsing SELECT query: normalized={0}, original={1}", new Object[]{normalized, original});
         String[] parts = normalized.split("FROM");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid SELECT query format");
@@ -309,7 +310,6 @@ class SelectQueryParser {
         }
 
         if (remaining.toUpperCase().contains(" GROUP BY ")) {
-            // Extract GROUP BY part from original query to preserve syntax
             String originalRemaining = original.substring(original.toUpperCase().indexOf("FROM") + 4).trim();
             String[] groupBySplit = originalRemaining.split("(?i)\\s+GROUP BY\\s+", 2);
             remaining = groupBySplit[0].trim();
@@ -333,57 +333,6 @@ class SelectQueryParser {
                 LOGGER.log(Level.FINE, "Parsing GROUP BY clause: {0}", groupByPart);
                 groupBy = groupByParser.parseGroupByClause(groupByPart, mainTable.getName());
                 LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
-            }
-        }
-
-        if (havingStr != null && !havingStr.isEmpty()) {
-            LOGGER.log(Level.FINE, "Cleaning up HAVING clause: {0}", havingStr);
-            String originalHavingStr = havingStr;
-
-            if (havingStr.toUpperCase().contains(" ORDER BY ")) {
-                String[] orderBySplit = havingStr.split("(?i)\\s+ORDER BY\\s+", 2);
-                havingStr = orderBySplit[0].trim();
-                LOGGER.log(Level.FINE, "After ORDER BY split: {0}, original: {1}", new Object[]{havingStr, originalHavingStr});
-                if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
-                    orderBy = orderByParser.parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes);
-                }
-            } else {
-                LOGGER.log(Level.FINE, "No ORDER BY clause detected in HAVING");
-            }
-
-            if (havingStr.toUpperCase().contains(" LIMIT ")) {
-                String[] limitSplit = havingStr.split("(?i)\\s+LIMIT\\s+", 2);
-                havingStr = limitSplit[0].trim();
-                LOGGER.log(Level.FINE, "After LIMIT split: {0}, original: {1}", new Object[]{havingStr, originalHavingStr});
-                if (limitSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
-                    String limitClause = limitSplit[1].trim();
-                    String[] limitOffsetSplit = limitClause.toUpperCase().contains(" OFFSET ")
-                            ? limitClause.split("(?i)\\s+OFFSET\\s+", 2)
-                            : new String[]{limitClause, ""};
-                    limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].trim());
-                    if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
-                        offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
-                    }
-                }
-            } else {
-                LOGGER.log(Level.FINE, "No LIMIT clause detected in HAVING");
-            }
-
-            if (havingStr.toUpperCase().contains(" OFFSET ")) {
-                String[] offsetSplit = havingStr.split("(?i)\\s+OFFSET\\s+", 2);
-                havingStr = offsetSplit[0].trim();
-                LOGGER.log(Level.FINE, "After OFFSET split: {0}, original: {1}", new Object[]{havingStr, originalHavingStr});
-                if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
-                    offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
-                }
-            } else {
-                LOGGER.log(Level.FINE, "No OFFSET clause detected in HAVING");
-            }
-
-            if (!havingStr.equals(originalHavingStr)) {
-                LOGGER.log(Level.WARNING, "HAVING clause modified unexpectedly: original={0}, modified={1}",
-                        new Object[]{originalHavingStr, havingStr});
-                havingStr = originalHavingStr;
             }
         }
 
@@ -429,10 +378,14 @@ class SelectQueryParser {
             if (groupBy.isEmpty()) {
                 throw new IllegalArgumentException("HAVING clause requires a GROUP BY clause");
             }
-            LOGGER.log(Level.FINE, "Passing HAVING clause to parseHavingConditions: {0}", havingStr);
-            havingConditions = conditionParser.parseHavingConditions(havingStr, mainTable.getName(), database, original, aggregates, groupBy, combinedColumnTypes);
+            Integer[] limitAndOffset = new Integer[]{limit, offset};
+            havingConditions = havingParser.parseHavingClause(havingStr, mainTable.getName(), database, original,
+                    aggregates, groupBy, combinedColumnTypes, orderBy, limitAndOffset);
+            limit = limitAndOffset[0];
+            offset = limitAndOffset[1];
             LOGGER.log(Level.FINE, "Parsed HAVING clause: {0}", havingConditions);
         }
+
         validateSelectColumns(columns, aggregates, groupBy, combinedColumnTypes, mainTable.getName());
 
         LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, aggregates={1}, mainTable={2}, joins={3}, conditions={4}, groupBy={5}, havingConditions={6}, limit={7}, offset={8}, orderBy={9}",

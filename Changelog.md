@@ -129,3 +129,4 @@
 1.2.9 HAVING fixes retry 4
 1.3.0 HAVING fixes retry 5
 1.3.1 HAVING parser
+1.3.1.1 HAVING fixes retry 6

@@ -51,55 +51,81 @@ class HavingParser {
     private String cleanHavingClause(String havingStr, Map<String, Class<?>> combinedColumnTypes,
                                      List<OrderByInfo> orderBy, Integer[] limitAndOffset) {
         String originalHavingStr = havingStr;
-        String cleanedHavingStr = havingStr;
+        String cleanedHavingStr = havingStr.trim();
+        boolean inQuotes = false;
+        int parenDepth = 0;
+        StringBuilder currentClause = new StringBuilder();
+        List<String> clauses = new ArrayList<>();
 
-        if (havingStr.toUpperCase().contains(" ORDER BY ")) {
-            String[] orderBySplit = havingStr.split("(?i)\\s+ORDER BY\\s+", 2);
-            cleanedHavingStr = orderBySplit[0].trim();
-            LOGGER.log(Level.FINE, "After ORDER BY split: {0}, original: {1}", new Object[]{cleanedHavingStr, originalHavingStr});
-            if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
-                orderBy.addAll(orderByParser.parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes));
-                LOGGER.log(Level.FINE, "Parsed ORDER BY from HAVING: {0}", orderBy);
+        // Split the clause while preserving aggregate functions
+        for (int i = 0; i < cleanedHavingStr.length(); i++) {
+            char c = cleanedHavingStr.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentClause.append(c);
+                continue;
             }
-        } else {
-            LOGGER.log(Level.FINE, "No ORDER BY clause detected in HAVING");
-        }
-
-        if (cleanedHavingStr.toUpperCase().contains(" LIMIT ")) {
-            String[] limitSplit = cleanedHavingStr.split("(?i)\\s+LIMIT\\s+", 2);
-            cleanedHavingStr = limitSplit[0].trim();
-            LOGGER.log(Level.FINE, "After LIMIT split: {0}, original: {1}", new Object[]{cleanedHavingStr, originalHavingStr});
-            if (limitSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
-                String limitClause = limitSplit[1].trim();
-                String[] limitOffsetSplit = limitClause.toUpperCase().contains(" OFFSET ")
-                        ? limitClause.split("(?i)\\s+OFFSET\\s+", 2)
-                        : new String[]{limitClause, ""};
-                limitAndOffset[0] = parseLimitClause("LIMIT " + limitOffsetSplit[0].trim());
-                if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
-                    limitAndOffset[1] = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    currentClause.append(c);
+                    continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    currentClause.append(c);
+                    continue;
+                }
+                // Check for keywords only at parenDepth 0 and outside quotes
+                if (parenDepth == 0) {
+                    if (i + 9 <= cleanedHavingStr.length() && cleanedHavingStr.substring(i).toUpperCase().startsWith(" ORDER BY ")) {
+                        clauses.add(currentClause.toString().trim());
+                        orderBy.addAll(orderByParser.parseOrderByClause(cleanedHavingStr.substring(i + 9).trim(), combinedColumnTypes));
+                        LOGGER.log(Level.FINE, "Parsed ORDER BY from HAVING: {0}", orderBy);
+                        currentClause = new StringBuilder();
+                        break;
+                    } else if (i + 7 <= cleanedHavingStr.length() && cleanedHavingStr.substring(i).toUpperCase().startsWith(" LIMIT ")) {
+                        clauses.add(currentClause.toString().trim());
+                        String limitClause = cleanedHavingStr.substring(i + 7).trim();
+                        String[] limitOffsetSplit = limitClause.toUpperCase().contains(" OFFSET ")
+                                ? limitClause.split("(?i)\\s+OFFSET\\s+", 2)
+                                : new String[]{limitClause, ""};
+                        limitAndOffset[0] = parseLimitClause("LIMIT " + limitOffsetSplit[0].trim());
+                        if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
+                            limitAndOffset[1] = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+                        }
+                        LOGGER.log(Level.FINE, "Parsed LIMIT from HAVING: {0}, OFFSET: {1}", new Object[]{limitAndOffset[0], limitAndOffset[1]});
+                        currentClause = new StringBuilder();
+                        break;
+                    } else if (i + 8 <= cleanedHavingStr.length() && cleanedHavingStr.substring(i).toUpperCase().startsWith(" OFFSET ")) {
+                        clauses.add(currentClause.toString().trim());
+                        limitAndOffset[1] = parseOffsetClause("OFFSET " + cleanedHavingStr.substring(i + 8).trim());
+                        LOGGER.log(Level.FINE, "Parsed OFFSET from HAVING: {0}", limitAndOffset[1]);
+                        currentClause = new StringBuilder();
+                        break;
+                    }
                 }
             }
-        } else {
-            LOGGER.log(Level.FINE, "No LIMIT clause detected in HAVING");
+            currentClause.append(c);
         }
 
-        if (cleanedHavingStr.toUpperCase().contains(" OFFSET ")) {
-            String[] offsetSplit = cleanedHavingStr.split("(?i)\\s+OFFSET\\s+", 2);
-            cleanedHavingStr = offsetSplit[0].trim();
-            LOGGER.log(Level.FINE, "After OFFSET split: {0}, original: {1}", new Object[]{cleanedHavingStr, originalHavingStr});
-            if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
-                limitAndOffset[1] = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
-            }
-        } else {
-            LOGGER.log(Level.FINE, "No OFFSET clause detected in HAVING");
+        // Add the last clause if it exists
+        if (currentClause.length() > 0) {
+            clauses.add(currentClause.toString().trim());
         }
 
-        if (!cleanedHavingStr.equals(originalHavingStr)) {
+        // The first non-empty clause should be the HAVING condition
+        String finalHavingClause = clauses.stream()
+                .filter(clause -> !clause.isEmpty())
+                .findFirst()
+                .orElse("");
+        LOGGER.log(Level.FINE, "Final HAVING clause after cleanup: {0}", finalHavingClause);
+
+        if (!finalHavingClause.equals(originalHavingStr)) {
             LOGGER.log(Level.WARNING, "HAVING clause modified: original={0}, modified={1}",
-                    new Object[]{originalHavingStr, cleanedHavingStr});
+                    new Object[]{originalHavingStr, finalHavingClause});
         }
 
-        return cleanedHavingStr;
+        return finalHavingClause;
     }
 
     private void validateHavingCondition(Condition condition, List<AggregateFunction> aggregates, List<String> groupBy,

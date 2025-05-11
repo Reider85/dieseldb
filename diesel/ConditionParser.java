@@ -30,7 +30,7 @@ class ConditionParser {
                 ? cleanConditionStr.split("(?i)\\s+OFFSET\\s+", 2)
                 : new String[]{cleanConditionStr, ""};
         cleanConditionStr = offsetSplit[0].trim();
-        if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
+        if (offsetSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
             LOGGER.log(Level.FINE, "Detected OFFSET clause in condition string, stopping at: {0}", cleanConditionStr);
         }
 
@@ -247,22 +247,26 @@ class ConditionParser {
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
         LOGGER.log(Level.FINE, "Condition without NOT: {0}", conditionWithoutNot);
 
+        // Normalize condition for regex matching
+        String normalizedCondition = conditionWithoutNot.trim();
         Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
-        Matcher aggMatcher = aggPattern.matcher(conditionWithoutNot);
+        Matcher aggMatcher = aggPattern.matcher(normalizedCondition);
         String conditionColumn = null;
         int aggEndIndex = -1;
         boolean isAggregate = false;
-        LOGGER.log(Level.FINE, "Checking aggregate condition: {0}", conditionWithoutNot);
+        LOGGER.log(Level.FINE, "Checking aggregate condition: {0}", normalizedCondition);
         if (aggMatcher.find()) {
-            conditionColumn = conditionWithoutNot.substring(0, aggMatcher.end()).trim();
+            conditionColumn = aggMatcher.group(0).trim(); // Full match, e.g., "COUNT(*)"
             aggEndIndex = aggMatcher.end();
             isAggregate = true;
+            LOGGER.log(Level.FINE, "Aggregate matched: function={0}, argument={1}, fullMatch={2}, endIndex={3}",
+                    new Object[]{aggMatcher.group(1), aggMatcher.group(2), conditionColumn, aggEndIndex});
         } else {
-            LOGGER.log(Level.FINE, "No valid aggregate function found in: {0}", conditionWithoutNot);
+            LOGGER.log(Level.FINE, "No valid aggregate function found in: {0}", normalizedCondition);
         }
 
         // Handle IN conditions
-        if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
+        if (normalizedCondition.toUpperCase().contains(" IN ")) {
             String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
             LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
 
@@ -303,47 +307,72 @@ class ConditionParser {
             return new Condition(parsedColumn, inValues, conjunction, isNot);
         }
 
-        String remainingCondition = aggEndIndex >= 0 ? conditionWithoutNot.substring(aggEndIndex).trim() : conditionWithoutNot;
+        String remainingCondition = aggEndIndex >= 0 ? normalizedCondition.substring(aggEndIndex).trim() : normalizedCondition;
+        LOGGER.log(Level.FINE, "Remaining condition after aggregate: {0}", remainingCondition);
 
         if (isAggregate) {
-            String[] partsByOperator = null;
-            QueryParser.Operator operator = null;
-            String upperRemaining = remainingCondition.toUpperCase();
-
-            if (upperRemaining.contains(" = ")) {
-                partsByOperator = remainingCondition.split("\\s*=\\s*", 2);
-                operator = QueryParser.Operator.EQUALS;
-            } else if (upperRemaining.contains(" < ")) {
-                partsByOperator = remainingCondition.split("\\s*<\\s*", 2);
-                operator = QueryParser.Operator.LESS_THAN;
-            } else if (upperRemaining.contains(" > ")) {
-                partsByOperator = remainingCondition.split("\\s*>\\s*", 2);
-                operator = QueryParser.Operator.GREATER_THAN;
-            } else if (upperRemaining.contains(" != ")) {
-                partsByOperator = remainingCondition.split("\\s*!=\\s*", 2);
-                operator = QueryParser.Operator.NOT_EQUALS;
-            } else if (upperRemaining.contains(" <> ")) {
-                partsByOperator = remainingCondition.split("\\s*<>\\s*", 2);
-                operator = QueryParser.Operator.NOT_EQUALS;
-            } else {
-                LOGGER.log(Level.SEVERE, "Invalid or missing operator in aggregate condition: condition={0}, remaining={1}, originalHaving={2}",
-                        new Object[]{conditionWithoutNot, remainingCondition, condition});
-                throw new IllegalArgumentException("Invalid or missing operator in aggregate condition: " + conditionWithoutNot);
+            // Ensure remainingCondition is not empty
+            if (remainingCondition.isEmpty()) {
+                LOGGER.log(Level.SEVERE, "No operator found after aggregate function: condition={0}, originalCondition={1}",
+                        new Object[]{normalizedCondition, condition});
+                throw new IllegalArgumentException("No operator found after aggregate function: " + normalizedCondition);
             }
 
-            if (partsByOperator.length != 2 || partsByOperator[1].trim().isEmpty()) {
-                LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: condition={0}, parts={1}, originalHaving={2}",
-                        new Object[]{conditionWithoutNot, Arrays.toString(partsByOperator), condition});
-                throw new IllegalArgumentException("Invalid aggregate condition format: " + conditionWithoutNot);
+            String[] partsByOperator = null;
+            QueryParser.Operator operator = null;
+            String upperRemaining = remainingCondition.toUpperCase().trim();
+
+            // Try to match operators with proper boundary checks
+            Pattern operatorPattern = Pattern.compile("^(>=|<=|>|<|=|!=|<>)\\s*(.*)$");
+            Matcher operatorMatcher = operatorPattern.matcher(remainingCondition);
+            if (operatorMatcher.find()) {
+                String op = operatorMatcher.group(1);
+                String rightOperand = operatorMatcher.group(2).trim();
+                switch (op) {
+                    case "=":
+                        operator = QueryParser.Operator.EQUALS;
+                        break;
+                    case "<":
+                        operator = QueryParser.Operator.LESS_THAN;
+                        break;
+                    case ">":
+                        operator = QueryParser.Operator.GREATER_THAN;
+                        break;
+                    case "!=":
+                    case "<>":
+                        operator = QueryParser.Operator.NOT_EQUALS;
+                        break;
+                    case ">=":
+                        operator = QueryParser.Operator.GREATER_THAN_OR_EQUAL;
+                        break;
+                    case "<=":
+                        operator = QueryParser.Operator.LESS_THAN_OR_EQUAL;
+                        break;
+                }
+                partsByOperator = new String[]{ "", rightOperand };
+            }
+
+            if (partsByOperator == null || partsByOperator.length != 2 || partsByOperator[1].trim().isEmpty()) {
+                LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: condition={0}, remaining={1}, originalCondition={2}",
+                        new Object[]{normalizedCondition, remainingCondition, condition});
+                throw new IllegalArgumentException("Invalid aggregate condition format: " + normalizedCondition);
             }
 
             String rightOperand = partsByOperator[1].trim();
             Class<?> valueType = conditionColumn.toUpperCase().startsWith("COUNT") ? Long.class : Double.class;
-            Object value = QueryParser.parseConditionValue(conditionColumn, rightOperand, valueType);
+            Object value;
+            try {
+                value = QueryParser.parseConditionValue(conditionColumn, rightOperand, valueType);
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.SEVERE, "Failed to parse value in aggregate condition: value={0}, condition={1}, error={2}",
+                        new Object[]{rightOperand, normalizedCondition, e.getMessage()});
+                throw new IllegalArgumentException("Invalid value in aggregate condition: " + rightOperand, e);
+            }
             LOGGER.log(Level.FINE, "Parsed aggregate condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
                     new Object[]{conditionColumn, operator, value, isNot, conjunction});
             return new Condition(conditionColumn, value, operator, conjunction, isNot);
         }
+
         // Handle non-aggregate conditions
         String[] partsByOperator = null;
         QueryParser.Operator operator = null;
@@ -377,6 +406,7 @@ class ConditionParser {
             partsByOperator = remainingCondition.split("\\s*>\\s*", 2);
             operator = QueryParser.Operator.GREATER_THAN;
         } else {
+            LOGGER.log(Level.SEVERE, "Invalid condition operator in non-aggregate condition: {0}", remainingCondition);
             throw new IllegalArgumentException("Invalid condition operator in: " + conditionWithoutNot);
         }
 
