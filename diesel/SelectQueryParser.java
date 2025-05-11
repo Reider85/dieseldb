@@ -316,7 +316,7 @@ class SelectQueryParser {
                 String groupByPart = groupBySplit[1].trim();
                 LOGGER.log(Level.FINE, "GroupBy part: {0}", groupByPart);
                 String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
-                        ? groupByPart.split("(?i)\\s*HAVING\\s*", 2)
+                        ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
                         : new String[]{groupByPart, ""};
                 groupByPart = havingSplit[0].trim();
                 LOGGER.log(Level.FINE, "After HAVING split: groupByPart={0}, havingStr={1}",
@@ -425,10 +425,10 @@ class SelectQueryParser {
             if (groupBy.isEmpty()) {
                 throw new IllegalArgumentException("HAVING clause requires a GROUP BY clause");
             }
+            LOGGER.log(Level.FINE, "Passing HAVING clause to parseHavingConditions: {0}", havingStr);
             havingConditions = conditionParser.parseHavingConditions(havingStr, mainTable.getName(), database, original, aggregates, groupBy, combinedColumnTypes);
             LOGGER.log(Level.FINE, "Parsed HAVING clause: {0}", havingConditions);
         }
-
         validateSelectColumns(columns, aggregates, groupBy, combinedColumnTypes, mainTable.getName());
 
         LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, aggregates={1}, mainTable={2}, joins={3}, conditions={4}, groupBy={5}, havingConditions={6}, limit={7}, offset={8}, orderBy={9}",

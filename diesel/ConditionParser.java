@@ -326,10 +326,14 @@ class ConditionParser {
                 partsByOperator = remainingCondition.split("\\s*<>\\s*", 2);
                 operator = QueryParser.Operator.NOT_EQUALS;
             } else {
-                throw new IllegalArgumentException("Invalid condition operator for aggregate function in: " + conditionWithoutNot);
+                LOGGER.log(Level.SEVERE, "Invalid or missing operator in aggregate condition: {0}, remaining: {1}",
+                        new Object[]{conditionWithoutNot, remainingCondition});
+                throw new IllegalArgumentException("Invalid or missing operator in aggregate condition: " + conditionWithoutNot);
             }
 
-            if (partsByOperator.length != 2) {
+            if (partsByOperator.length != 2 || partsByOperator[1].trim().isEmpty()) {
+                LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: {0}, parts: {1}",
+                        new Object[]{conditionWithoutNot, Arrays.toString(partsByOperator)});
                 throw new IllegalArgumentException("Invalid aggregate condition format: " + conditionWithoutNot);
             }
 

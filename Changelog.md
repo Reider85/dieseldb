@@ -126,3 +126,4 @@
 1.2.6 HAVING fixes
 1.2.7 HAVING fixes retry 2
 1.2.8 HAVING fixes retry 3
+1.2.9 HAVING fixes retry 4
