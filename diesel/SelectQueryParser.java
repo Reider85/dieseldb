@@ -14,6 +14,7 @@ class SelectQueryParser {
     private final GroupByParser groupByParser = new GroupByParser();
 
     Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
+        LOGGER.log(Level.FINE, "Parsing SELECT query: normalized={0}, original={1}", new Object[]{normalized, original});
         String[] parts = normalized.split("FROM");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid SELECT query format");
@@ -309,6 +310,8 @@ class SelectQueryParser {
         if (remaining.toUpperCase().contains(" GROUP BY ")) {
             String[] groupBySplit = remaining.split("(?i)\\s+GROUP BY\\s+", 2);
             remaining = groupBySplit[0].trim();
+            LOGGER.log(Level.FINE, "After GROUP BY split: remaining={0}, groupByPart={1}",
+                    new Object[]{remaining, groupBySplit.length > 1 ? groupBySplit[1].trim() : ""});
             if (groupBySplit.length > 1 && !groupBySplit[1].trim().isEmpty()) {
                 String groupByPart = groupBySplit[1].trim();
                 LOGGER.log(Level.FINE, "GroupBy part: {0}", groupByPart);
@@ -324,6 +327,7 @@ class SelectQueryParser {
                 } else {
                     LOGGER.log(Level.FINE, "No HAVING clause detected");
                 }
+                LOGGER.log(Level.FINE, "Parsing GROUP BY clause: {0}", groupByPart);
                 groupBy = groupByParser.parseGroupByClause(groupByPart, mainTable.getName());
                 LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
             }
@@ -376,6 +380,7 @@ class SelectQueryParser {
             if (!havingStr.equals(originalHavingStr)) {
                 LOGGER.log(Level.WARNING, "HAVING clause modified unexpectedly: original={0}, modified={1}",
                         new Object[]{originalHavingStr, havingStr});
+                havingStr = originalHavingStr;
             }
         }
 

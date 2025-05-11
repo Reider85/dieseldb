@@ -125,3 +125,4 @@
 1.2.5 GROUP BY logging
 1.2.6 HAVING fixes
 1.2.7 HAVING fixes retry 2
+1.2.8 HAVING fixes retry 3

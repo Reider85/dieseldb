@@ -247,7 +247,7 @@ class ConditionParser {
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
         LOGGER.log(Level.FINE, "Condition without NOT: {0}", conditionWithoutNot);
 
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)");
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
         Matcher aggMatcher = aggPattern.matcher(conditionWithoutNot);
         String conditionColumn = null;
         int aggEndIndex = -1;
@@ -257,9 +257,8 @@ class ConditionParser {
             conditionColumn = conditionWithoutNot.substring(0, aggMatcher.end()).trim();
             aggEndIndex = aggMatcher.end();
             isAggregate = true;
-        } else if (conditionWithoutNot.matches("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\*.*")) {
-            LOGGER.log(Level.WARNING, "Invalid aggregate syntax detected: {0}", conditionWithoutNot);
-            throw new IllegalArgumentException("Invalid aggregate function syntax: expected parentheses, e.g., COUNT(*), got: " + conditionWithoutNot);
+        } else {
+            LOGGER.log(Level.FINE, "No valid aggregate function found in: {0}", conditionWithoutNot);
         }
 
         // Handle IN conditions
