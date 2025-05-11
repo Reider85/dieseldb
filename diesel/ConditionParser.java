@@ -59,142 +59,132 @@ class ConditionParser {
             return new ArrayList<>();
         }
 
-        // Try parsing as a single condition first to avoid recursion for simple cases
-        try {
-            Condition singleCondition = parseSingleCondition(cleanConditionStr, null, combinedColumnTypes, originalQuery, isOnClause, tableName);
-            LOGGER.log(Level.FINE, "Parsed as single condition: {0}", singleCondition);
-            return Collections.singletonList(singleCondition);
-        } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.FINE, "Not a single condition, proceeding with full parsing: {0}", cleanConditionStr);
-        }
+        // Parse the condition string into a list of conditions
+        return parseComplexConditions(cleanConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
+    }
 
+    private List<Condition> parseComplexConditions(String conditionStr, String tableName, Database database, String originalQuery, boolean isOnClause, Map<String, Class<?>> combinedColumnTypes) {
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
         int parenDepth = 0;
-        int nestingLevel = 0;
         boolean inAggregateFunction = false;
-        StringBuilder currentToken = new StringBuilder();
+        boolean inInClause = false;
+        String lastConjunction = null;
 
-        for (int i = 0; i < cleanConditionStr.length(); i++) {
-            char c = cleanConditionStr.charAt(i);
+        for (int i = 0; i < conditionStr.length(); i++) {
+            char c = conditionStr.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 currentCondition.append(c);
                 continue;
             }
-            if (!inQuotes) {
-                if (c == '(') {
-                    String tokenSoFar = currentToken.toString().trim().toUpperCase();
-                    if (tokenSoFar != null && !tokenSoFar.isEmpty() && tokenSoFar.matches("COUNT|MIN|MAX|AVG|SUM")) {
-                        inAggregateFunction = true;
-                        currentCondition.append(tokenSoFar).append(c);
-                        currentToken = new StringBuilder();
-                        parenDepth++;
-                        continue;
+            if (inQuotes) {
+                currentCondition.append(c);
+                continue;
+            }
+            if (c == '(') {
+                parenDepth++;
+                // Check if this is part of an IN clause
+                String current = currentCondition.toString().trim().toUpperCase();
+                if (parenDepth == 1 && current.endsWith(" IN")) {
+                    inInClause = true;
+                    LOGGER.log(Level.FINE, "Detected IN clause start at index {0}: {1}", new Object[]{i, current});
+                }
+                currentCondition.append(c);
+                continue;
+            }
+            if (c == ')') {
+                parenDepth--;
+                currentCondition.append(c);
+                if (parenDepth == 0 && inAggregateFunction) {
+                    inAggregateFunction = false;
+                }
+                if (parenDepth == 0 && inInClause) {
+                    inInClause = false;
+                    // Handle the entire IN condition
+                    String subConditionStr = currentCondition.toString().trim();
+                    if (!subConditionStr.isEmpty()) {
+                        boolean isNot = subConditionStr.toUpperCase().startsWith("NOT ");
+                        if (isNot) {
+                            subConditionStr = subConditionStr.substring(4).trim();
+                        }
+                        conditions.add(parseSingleCondition(subConditionStr, lastConjunction, combinedColumnTypes, originalQuery, isOnClause, tableName));
+                        LOGGER.log(Level.FINE, "Parsed IN condition: {0}, conjunction: {1}", new Object[]{subConditionStr, lastConjunction});
+                        currentCondition = new StringBuilder();
+                        lastConjunction = determineConjunctionAfter(conditionStr, i);
                     }
-                    parenDepth++;
-                    nestingLevel++;
-                    currentCondition.append(c);
-                    currentToken = new StringBuilder();
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    nestingLevel--;
-                    currentCondition.append(c);
-                    if (parenDepth == 0 && inAggregateFunction) {
-                        inAggregateFunction = false;
-                        currentToken = new StringBuilder();
-                        continue;
-                    }
-                    if (parenDepth == 0 && nestingLevel == 0) {
-                        String subConditionStr = currentCondition.toString().trim();
+                }
+                if (parenDepth == 0 && !inInClause) {
+                    String subConditionStr = currentCondition.toString().trim();
+                    if (!subConditionStr.isEmpty() && !subConditionStr.toUpperCase().contains(" IN ")) {
+                        boolean isNot = subConditionStr.toUpperCase().startsWith("NOT ");
+                        if (isNot) {
+                            subConditionStr = subConditionStr.substring(4).trim();
+                        }
+                        if (subConditionStr.startsWith("(") && subConditionStr.endsWith(")")) {
+                            subConditionStr = subConditionStr.substring(1, subConditionStr.length() - 1).trim();
+                        }
                         if (!subConditionStr.isEmpty()) {
-                            boolean isNot = subConditionStr.toUpperCase().startsWith("NOT ");
-                            if (isNot) {
-                                subConditionStr = subConditionStr.substring(4).trim();
+                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
+                            if (!subConditions.isEmpty()) {
+                                conditions.add(new Condition(subConditions, lastConjunction, isNot));
+                                LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}", new Object[]{subConditions.size(), lastConjunction});
                             }
-                            if (subConditionStr.isEmpty()) {
-                                throw new IllegalArgumentException("Empty grouped condition in clause: " + cleanConditionStr);
-                            }
-                            if (subConditionStr.startsWith("(") && subConditionStr.endsWith(")")) {
-                                subConditionStr = subConditionStr.substring(1, subConditionStr.length() - 1).trim();
-                            }
-                            if (subConditionStr.isEmpty()) {
-                                throw new IllegalArgumentException("Empty grouped condition after removing parentheses: " + cleanConditionStr);
-                            }
-                            LOGGER.log(Level.FINE, "Parsing nested condition at level {0}: {1}, isNot: {2}",
-                                    new Object[]{nestingLevel + 1, subConditionStr, isNot});
-                            String conjunction = determineConjunctionAfter(cleanConditionStr, i);
-                            // Try parsing as single condition first to avoid deep recursion
-                            try {
-                                Condition singleCondition = parseSingleCondition(subConditionStr, conjunction, combinedColumnTypes, originalQuery, isOnClause, tableName);
-                                conditions.add(new Condition(Collections.singletonList(singleCondition), conjunction, isNot));
-                                LOGGER.log(Level.FINE, "Added grouped condition with single subcondition, conjunction: {0}", conjunction);
-                            } catch (IllegalArgumentException e) {
-                                List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
-                                if (subConditions.isEmpty()) {
-                                    throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);
-                                }
-                                conditions.add(new Condition(subConditions, conjunction, isNot));
-                                LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}",
-                                        new Object[]{subConditions.size(), conjunction});
-                            }
-                            currentCondition = new StringBuilder();
-                            continue;
-                        } else {
-                            throw new IllegalArgumentException("Empty grouped condition in clause: " + cleanConditionStr);
                         }
+                        currentCondition = new StringBuilder();
+                        lastConjunction = determineConjunctionAfter(conditionStr, i);
                     }
+                }
+                continue;
+            }
+            if (parenDepth == 0 && !inAggregateFunction && !inInClause) {
+                if (i + 3 <= conditionStr.length() && conditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
+                        (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
+                        (i + 3 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 3)))) {
+                    String current = currentCondition.toString().trim();
+                    if (!current.isEmpty()) {
+                        conditions.add(parseSingleCondition(current, "AND", combinedColumnTypes, originalQuery, isOnClause, tableName));
+                        LOGGER.log(Level.FINE, "Added condition with AND: {0}", current);
+                    }
+                    currentCondition = new StringBuilder();
+                    lastConjunction = "AND";
+                    i += 2;
                     continue;
-                } else if (parenDepth == 0 && !inAggregateFunction) {
-                    if (i + 3 <= cleanConditionStr.length() && cleanConditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
-                            (i == 0 || Character.isWhitespace(cleanConditionStr.charAt(i - 1))) &&
-                            (i + 3 == cleanConditionStr.length() || Character.isWhitespace(cleanConditionStr.charAt(i + 3)))) {
-                        String current = currentCondition.toString().trim();
-                        if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "AND", combinedColumnTypes, originalQuery, isOnClause, tableName));
-                            LOGGER.log(Level.FINE, "Added condition with AND: {0}", current);
-                        }
-                        currentCondition = new StringBuilder();
-                        i += 2;
-                        continue;
-                    } else if (i + 2 <= cleanConditionStr.length() && cleanConditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
-                            (i == 0 || Character.isWhitespace(cleanConditionStr.charAt(i - 1))) &&
-                            (i + 2 == cleanConditionStr.length() || Character.isWhitespace(cleanConditionStr.charAt(i + 2)))) {
-                        String current = currentCondition.toString().trim();
-                        if (!current.isEmpty()) {
-                            conditions.add(parseSingleCondition(current, "OR", combinedColumnTypes, originalQuery, isOnClause, tableName));
-                            LOGGER.log(Level.FINE, "Added condition with OR: {0}", current);
-                        }
-                        currentCondition = new StringBuilder();
-                        i += 1;
-                        continue;
+                } else if (i + 2 <= conditionStr.length() && conditionStr.substring(i, i + 2).equalsIgnoreCase("OR") &&
+                        (i == 0 || Character.isWhitespace(conditionStr.charAt(i - 1))) &&
+                        (i + 2 == conditionStr.length() || Character.isWhitespace(conditionStr.charAt(i + 2)))) {
+                    String current = currentCondition.toString().trim();
+                    if (!current.isEmpty()) {
+                        conditions.add(parseSingleCondition(current, "OR", combinedColumnTypes, originalQuery, isOnClause, tableName));
+                        LOGGER.log(Level.FINE, "Added condition with OR: {0}", current);
                     }
+                    currentCondition = new StringBuilder();
+                    lastConjunction = "OR";
+                    i += 1;
+                    continue;
                 }
             }
             currentCondition.append(c);
-            if (!inQuotes && !Character.isWhitespace(c)) {
-                currentToken.append(c);
-            } else {
-                currentToken = new StringBuilder();
+            // Check for aggregate functions
+            if (!inQuotes && parenDepth == 0 && c == '(' && currentCondition.toString().trim().toUpperCase().matches(".*\\b(COUNT|MIN|MAX|AVG|SUM)\\s*$")) {
+                inAggregateFunction = true;
             }
         }
 
         if (currentCondition.length() > 0 && parenDepth == 0) {
             String current = currentCondition.toString().trim();
             if (!current.isEmpty()) {
-                conditions.add(parseSingleCondition(current, null, combinedColumnTypes, originalQuery, isOnClause, tableName));
+                conditions.add(parseSingleCondition(current, lastConjunction, combinedColumnTypes, originalQuery, isOnClause, tableName));
                 LOGGER.log(Level.FINE, "Added final condition: {0}", current);
             }
         }
 
         if (parenDepth != 0) {
-            throw new IllegalArgumentException("Mismatched parentheses in condition clause: " + cleanConditionStr);
+            throw new IllegalArgumentException("Mismatched parentheses in condition clause: " + conditionStr);
         }
 
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
-
         return conditions;
     }
 
@@ -328,7 +318,7 @@ class ConditionParser {
             String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
             LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
 
-            Pattern inPattern = Pattern.compile("(?i)((?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.)?)?[a-zA-Z_][a-zA-Z0-9_]*)\\s+IN\\s*(?:\\(([^)]+)\\)|([^)]+))");
+            Pattern inPattern = Pattern.compile("(?i)((?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.)?)?[a-zA-Z_][a-zA-Z0-9_]*)\\s+IN\\s*\\(([^)]+)\\)");
             Matcher inMatcher = inPattern.matcher(originalCondition);
             if (!inMatcher.find()) {
                 LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}, original query: {1}",
@@ -337,7 +327,7 @@ class ConditionParser {
             }
 
             String parsedColumn = NormalizationUtils.normalizeColumnName(inMatcher.group(1).trim(), isOnClause ? null : tableName);
-            String valuesPart = inMatcher.group(2) != null ? inMatcher.group(2).trim() : inMatcher.group(3).trim();
+            String valuesPart = inMatcher.group(2).trim();
 
             if (valuesPart.isEmpty()) {
                 throw new IllegalArgumentException("IN clause cannot be empty");
@@ -377,8 +367,6 @@ class ConditionParser {
 
             String[] partsByOperator = null;
             QueryParser.Operator operator = null;
-            String upperRemaining = remainingCondition.toUpperCase().trim();
-
             Pattern operatorPattern = Pattern.compile("^(>=|<=|>|<|=|!=|<>)\\s*(.*)$");
             Matcher operatorMatcher = operatorPattern.matcher(remainingCondition);
             if (operatorMatcher.find()) {
@@ -533,7 +521,7 @@ class ConditionParser {
                 throw new IllegalArgumentException("LIKE pattern must be a string literal: " + rightOperand);
             }
             String pattern = rightOperand.substring(1, rightOperand.length() - 1);
-            value = NormalizationUtils.convertLikePatternToRegex(pattern);
+            value = QueryParser.convertLikePatternToRegex(pattern);
         } else {
             try {
                 value = QueryParser.parseConditionValue(column, rightOperand, columnType);
@@ -556,13 +544,18 @@ class ConditionParser {
     }
 
     private String extractOriginalCondition(String originalQuery, String conditionWithoutNot) {
-        String normalizedCondition = conditionWithoutNot.toUpperCase();
-        String originalUpper = originalQuery.toUpperCase();
-        int startIdx = originalUpper.indexOf(normalizedCondition);
+        // Normalize both query and condition to handle case sensitivity and extra spaces
+        String normalizedQuery = originalQuery.replaceAll("\\s+", " ").trim();
+        String normalizedCondition = conditionWithoutNot.replaceAll("\\s+", " ").trim();
+        String originalUpper = normalizedQuery.toUpperCase();
+        String conditionUpper = normalizedCondition.toUpperCase();
+        int startIdx = originalUpper.indexOf(conditionUpper);
         if (startIdx == -1) {
+            LOGGER.log(Level.WARNING, "Condition not found in original query: {0}, returning as is", conditionWithoutNot);
             return conditionWithoutNot;
         }
-        return originalQuery.substring(startIdx, startIdx + conditionWithoutNot.length());
+        // Extract the exact substring from the original query
+        return normalizedQuery.substring(startIdx, startIdx + normalizedCondition.length());
     }
 
     private List<String> splitInValues(String valuesPart) {

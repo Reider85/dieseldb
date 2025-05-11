@@ -505,48 +505,52 @@ class SelectQueryParser {
             return;
         }
 
-        // For non-comparison operators (LIKE, IS NULL, IS NOT NULL, IN), check that the column is from one of the joining tables
+        String leftCol = condition.column;
+        if (leftCol == null) {
+            throw new IllegalArgumentException("Invalid JOIN condition: missing column: " + condition);
+        }
+
+        // Check that the left column references one of the joining tables
+        String leftTableName = leftCol.contains(".") ? leftCol.split("\\.")[0] : "";
+        if (!leftTableName.equalsIgnoreCase(leftTable) && !leftTableName.equalsIgnoreCase(rightTable)) {
+            throw new IllegalArgumentException("JOIN condition must reference the joining tables: " + condition);
+        }
+
+        // Allow LIKE, NOT LIKE, IS NULL, IS NOT NULL, and IN operators
         if (condition.operator == QueryParser.Operator.LIKE ||
                 condition.operator == QueryParser.Operator.NOT_LIKE ||
                 condition.operator == QueryParser.Operator.IS_NULL ||
                 condition.operator == QueryParser.Operator.IS_NOT_NULL ||
                 condition.operator == QueryParser.Operator.IN) {
-            String leftCol = condition.column;
-            if (leftCol == null) {
-                throw new IllegalArgumentException("Invalid JOIN condition: missing column: " + condition);
-            }
-            String leftTableName = leftCol.contains(".") ? leftCol.split("\\.")[0] : "";
-            if (!leftTableName.equalsIgnoreCase(leftTable) && !leftTableName.equalsIgnoreCase(rightTable)) {
-                throw new IllegalArgumentException("JOIN condition must reference the joining tables: " + condition);
-            }
+            LOGGER.log(Level.FINE, "Validated JOIN condition with operator {0}: {1}", new Object[]{condition.operator, condition});
             return;
         }
 
-        // For comparison operators, ensure it's a column-to-column comparison between the joining tables
-        if (!condition.isColumnComparison()) {
-            throw new IllegalArgumentException("JOIN ON clause must compare columns or use LIKE/IS NULL/IN: " + condition);
-        }
-
-        String leftCol = condition.column;
+        // For comparison operators, allow both column-to-column and column-to-literal comparisons
         String rightCol = condition.rightColumn;
-
-        if (leftCol == null || rightCol == null) {
-            throw new IllegalArgumentException("Invalid JOIN condition: missing column(s): " + condition);
+        if (rightCol != null) {
+            // Column-to-column comparison
+            String rightTableName = rightCol.contains(".") ? rightCol.split("\\.")[0] : "";
+            if (!rightTableName.equalsIgnoreCase(leftTable) && !rightTableName.equalsIgnoreCase(rightTable)) {
+                throw new IllegalArgumentException("JOIN condition must reference the joining tables: " + condition);
+            }
+            if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
+                throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column-to-column comparisons: " + condition);
+            }
         }
 
-        String leftTableName = leftCol.contains(".") ? leftCol.split("\\.")[0] : "";
-        String rightTableName = rightCol.contains(".") ? rightCol.split("\\.")[0] : "";
-
-        if (leftTableName.isEmpty() || rightTableName.isEmpty()) {
-            throw new IllegalArgumentException("JOIN condition columns must be qualified with table names: " + condition);
+        // Allow all comparison operators for column-to-literal comparisons
+        if (condition.operator == QueryParser.Operator.EQUALS ||
+                condition.operator == QueryParser.Operator.NOT_EQUALS ||
+                condition.operator == QueryParser.Operator.LESS_THAN ||
+                condition.operator == QueryParser.Operator.GREATER_THAN ||
+                condition.operator == QueryParser.Operator.LESS_THAN_OR_EQUAL ||
+                condition.operator == QueryParser.Operator.GREATER_THAN_OR_EQUAL) {
+            LOGGER.log(Level.FINE, "Validated JOIN condition: {0} between tables {1} and {2}",
+                    new Object[]{condition, leftTable, rightTable});
+            return;
         }
 
-        if (!((leftTableName.equalsIgnoreCase(leftTable) && rightTableName.equalsIgnoreCase(rightTable)) ||
-                (leftTableName.equalsIgnoreCase(rightTable) && rightTableName.equalsIgnoreCase(leftTable)))) {
-            throw new IllegalArgumentException("JOIN condition must reference the joining tables: " + condition);
-        }
-
-        LOGGER.log(Level.FINE, "Validated JOIN condition: {0} between tables {1} and {2}",
-                new Object[]{condition, leftTable, rightTable});
+        throw new IllegalArgumentException("Unsupported operator in JOIN condition: " + condition);
     }
 }
