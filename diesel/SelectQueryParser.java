@@ -315,24 +315,17 @@ class SelectQueryParser {
             remaining = groupBySplit[0].trim();
             LOGGER.log(Level.FINE, "After GROUP BY split: remaining={0}, groupByPart={1}",
                     new Object[]{remaining, groupBySplit.length > 1 ? groupBySplit[1].trim() : ""});
-            if (groupBySplit.length > 1 && !groupBySplit[1].trim().isEmpty()) {
+            if (groupBySplit.length > 1) {
                 String groupByPart = groupBySplit[1].trim();
-                LOGGER.log(Level.FINE, "GroupBy part: {0}", groupByPart);
                 String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
                         ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
                         : new String[]{groupByPart, ""};
                 groupByPart = havingSplit[0].trim();
-                LOGGER.log(Level.FINE, "After HAVING split: groupByPart={0}, havingStr={1}",
-                        new Object[]{groupByPart, havingSplit.length > 1 ? havingSplit[1].trim() : ""});
                 if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
                     havingStr = havingSplit[1].trim();
-                    LOGGER.log(Level.FINE, "HAVING clause: {0}", havingStr);
-                } else {
-                    LOGGER.log(Level.FINE, "No HAVING clause detected");
                 }
-                LOGGER.log(Level.FINE, "Parsing GROUP BY clause: {0}", groupByPart);
                 groupBy = groupByParser.parseGroupByClause(groupByPart, mainTable.getName());
-                LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
+                LOGGER.log(Level.FINE, "Parsed GROUP BY: {0}", groupBy);
             }
         }
 
@@ -341,6 +334,7 @@ class SelectQueryParser {
             remaining = orderBySplit[0].trim();
             if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
                 orderBy = orderByParser.parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes);
+                LOGGER.log(Level.FINE, "Parsed ORDER BY: {0}", orderBy);
             }
         }
 
@@ -356,6 +350,7 @@ class SelectQueryParser {
                 if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
                     offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
                 }
+                LOGGER.log(Level.FINE, "Parsed LIMIT: {0}, OFFSET: {1}", new Object[]{limit, offset});
             }
         }
 
@@ -364,102 +359,57 @@ class SelectQueryParser {
             remaining = offsetSplit[0].trim();
             if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
                 offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
+                LOGGER.log(Level.FINE, "Parsed OFFSET: {0}", offset);
             }
         }
 
         List<Condition> conditions = new ArrayList<>();
-        if (conditionStr != null && !conditionStr.isEmpty()) {
+        if (conditionStr != null && !conditionStr.trim().isEmpty()) {
             conditions = conditionParser.parseConditions(conditionStr, mainTable.getName(), database, original, false, combinedColumnTypes);
+            LOGGER.log(Level.FINE, "Parsed WHERE conditions: {0}", conditions);
         }
 
         List<Condition> havingConditions = new ArrayList<>();
-        if (havingStr != null && !havingStr.isEmpty()) {
-            LOGGER.log(Level.FINE, "Before parsing HAVING: havingStr={0}", havingStr);
-            if (groupBy.isEmpty()) {
-                throw new IllegalArgumentException("HAVING clause requires a GROUP BY clause");
-            }
+        if (havingStr != null && !havingStr.trim().isEmpty()) {
             Integer[] limitAndOffset = new Integer[]{limit, offset};
             havingConditions = havingParser.parseHavingClause(havingStr, mainTable.getName(), database, original,
                     aggregates, groupBy, combinedColumnTypes, orderBy, limitAndOffset);
             limit = limitAndOffset[0];
             offset = limitAndOffset[1];
-            LOGGER.log(Level.FINE, "Parsed HAVING clause: {0}", havingConditions);
+            LOGGER.log(Level.FINE, "Parsed HAVING conditions: {0}", havingConditions);
         }
 
-        validateSelectColumns(columns, aggregates, groupBy, combinedColumnTypes, mainTable.getName());
+        List<String> normalizedColumns = columns.stream()
+                .map(col -> {
+                    String[] colParts = col.split("\\s+AS\\s+", 2);
+                    String colName = colParts[0].trim();
+                    String alias = colParts.length > 1 ? colParts[1].trim() : null;
+                    String normalizedCol = NormalizationUtils.normalizeColumnName(colName, mainTable.getName());
+                    return alias != null ? normalizedCol + " AS " + alias : normalizedCol;
+                })
+                .collect(Collectors.toList());
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, aggregates={1}, mainTable={2}, joins={3}, conditions={4}, groupBy={5}, havingConditions={6}, limit={7}, offset={8}, orderBy={9}",
-                new Object[]{columns, aggregates, mainTable.getName(), joins, conditions, groupBy, havingConditions, limit, offset, orderBy});
-
-        return new SelectQuery(columns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy, groupBy, havingConditions);
-    }
-
-    private void validateSelectColumns(List<String> columns, List<AggregateFunction> aggregates, List<String> groupBy, Map<String, Class<?>> combinedColumnTypes, String mainTableName) {
-        for (String column : columns) {
-            String normalizedColumn = normalizeColumnName(column, mainTableName);
-            String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-            boolean found = false;
-            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                LOGGER.log(Level.SEVERE, "Unknown column in SELECT: {0}, available columns: {1}",
-                        new Object[]{column, combinedColumnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column: " + column);
+        for (String col : normalizedColumns) {
+            String colName = col.contains(" AS ") ? col.split("\\s+AS\\s+")[0].trim() : col;
+            if (!combinedColumnTypes.containsKey(colName.contains(".") ? colName.split("\\.")[1] : colName)) {
+                throw new IllegalArgumentException("Unknown column: " + colName);
             }
         }
 
         for (AggregateFunction agg : aggregates) {
             if (agg.column != null) {
-                String normalizedColumn = normalizeColumnName(agg.column, mainTableName);
-                String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-                boolean found = false;
-                for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                    if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    LOGGER.log(Level.SEVERE, "Unknown column in {0}: {1}, available columns: {2}",
-                            new Object[]{agg.toString(), agg.column, combinedColumnTypes.keySet()});
-                    throw new IllegalArgumentException("Unknown column in " + agg.toString() + ": " + agg.column);
+                String normalizedAggCol = NormalizationUtils.normalizeColumnName(agg.column, mainTable.getName());
+                String unqualifiedCol = normalizedAggCol.contains(".") ? normalizedAggCol.split("\\.")[1] : normalizedAggCol;
+                if (!combinedColumnTypes.containsKey(unqualifiedCol)) {
+                    throw new IllegalArgumentException("Unknown column in aggregate function: " + agg.column);
                 }
             }
         }
 
-        for (String column : groupBy) {
-            String normalizedColumn = normalizeColumnName(column, mainTableName);
-            String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-            boolean found = false;
-            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                LOGGER.log(Level.SEVERE, "Unknown column in GROUP BY: {0}, available columns: {1}",
-                        new Object[]{column, combinedColumnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column in GROUP BY: " + column);
-            }
-        }
+        LOGGER.log(Level.FINE, "Final parsed SELECT query: table={0}, columns={1}, aggregates={2}, joins={3}, conditions={4}, groupBy={5}, having={6}, orderBy={7}, limit={8}, offset={9}",
+                new Object[]{mainTable.getName(), normalizedColumns, aggregates, joins, conditions, groupBy, havingConditions, orderBy, limit, offset});
 
-        if (!groupBy.isEmpty()) {
-            for (String column : columns) {
-                String normalizedColumn = normalizeColumnName(column, mainTableName);
-                if (!groupBy.contains(normalizedColumn)) {
-                    boolean isAggregated = aggregates.stream().anyMatch(agg -> agg.column != null && agg.column.equals(normalizedColumn));
-                    if (!isAggregated) {
-                        LOGGER.log(Level.SEVERE, "Column {0} must appear in GROUP BY clause or be used in an aggregate function", column);
-                        throw new IllegalArgumentException("Column " + column + " must appear in GROUP BY clause or be used in an aggregate function");
-                    }
-                }
-            }
-        }
+        return new SelectQuery(normalizedColumns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy, groupBy, havingConditions);
     }
 
     private List<String> splitSelectItems(String selectPart) {
@@ -475,23 +425,27 @@ class SelectQueryParser {
                 currentItem.append(c);
                 continue;
             }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ',' && parenDepth == 0) {
-                    String item = currentItem.toString().trim();
-                    if (!item.isEmpty()) {
-                        items.add(item);
-                    }
-                    currentItem = new StringBuilder();
-                    continue;
+            if (inQuotes) {
+                currentItem.append(c);
+                continue;
+            }
+            if (c == '(') {
+                parenDepth++;
+                currentItem.append(c);
+                continue;
+            }
+            if (c == ')') {
+                parenDepth--;
+                currentItem.append(c);
+                continue;
+            }
+            if (c == ',' && parenDepth == 0) {
+                String item = currentItem.toString().trim();
+                if (!item.isEmpty()) {
+                    items.add(item);
                 }
+                currentItem = new StringBuilder();
+                continue;
             }
             currentItem.append(c);
         }
@@ -501,6 +455,7 @@ class SelectQueryParser {
             items.add(lastItem);
         }
 
+        LOGGER.log(Level.FINE, "Split select items: {0}", items);
         return items;
     }
 
@@ -543,37 +498,37 @@ class SelectQueryParser {
     }
 
     private void validateJoinCondition(Condition condition, String leftTable, String rightTable) {
-        LOGGER.log(Level.FINEST, "Validating condition: {0} for tables {1}, {2}", new Object[]{condition, leftTable, rightTable});
         if (condition.isGrouped()) {
             for (Condition subCond : condition.subConditions) {
                 validateJoinCondition(subCond, leftTable, rightTable);
             }
             return;
         }
-        if (condition.column != null) {
-            String tableName = condition.column.contains(".") ? condition.column.split("\\.")[0] : null;
-            if (tableName != null && !tableName.equalsIgnoreCase(leftTable) && !tableName.equalsIgnoreCase(rightTable)) {
-                throw new IllegalArgumentException("Invalid table in ON condition: " + tableName +
-                        ", expected " + leftTable + " or " + rightTable);
-            }
-        }
-        if (condition.rightColumn != null) {
-            String tableName = condition.rightColumn.contains(".") ? condition.rightColumn.split("\\.")[0] : null;
-            if (tableName != null && !tableName.equalsIgnoreCase(leftTable) && !tableName.equalsIgnoreCase(rightTable)) {
-                throw new IllegalArgumentException("Invalid table in ON condition (right column): " + tableName +
-                        ", expected " + leftTable + " or " + rightTable);
-            }
-        }
-    }
 
-    private String normalizeColumnName(String column, String tableName) {
-        if (column == null || column.isEmpty()) {
-            return column;
+        if (!condition.isColumnComparison()) {
+            throw new IllegalArgumentException("JOIN ON clause must compare columns: " + condition);
         }
-        String normalized = column.trim();
-        if (tableName != null && !normalized.contains(".")) {
-            normalized = tableName + "." + normalized;
+
+        String leftCol = condition.column;
+        String rightCol = condition.rightColumn;
+
+        if (leftCol == null || rightCol == null) {
+            throw new IllegalArgumentException("Invalid JOIN condition: missing column(s): " + condition);
         }
-        return normalized;
+
+        String leftTableName = leftCol.contains(".") ? leftCol.split("\\.")[0] : null;
+        String rightTableName = rightCol.contains(".") ? rightCol.split("\\.")[0] : null;
+
+        if (leftTableName == null || rightTableName == null) {
+            throw new IllegalArgumentException("JOIN condition columns must be qualified with table names: " + condition);
+        }
+
+        if (!((leftTableName.equalsIgnoreCase(leftTable) && rightTableName.equalsIgnoreCase(rightTable)) ||
+                (leftTableName.equalsIgnoreCase(rightTable) && rightTableName.equalsIgnoreCase(leftTable)))) {
+            throw new IllegalArgumentException("JOIN condition must reference the joining tables: " + condition);
+        }
+
+        LOGGER.log(Level.FINE, "Validated JOIN condition: {0} between tables {1} and {2}",
+                new Object[]{condition, leftTable, rightTable});
     }
 }

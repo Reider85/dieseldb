@@ -19,23 +19,12 @@ class GroupByParser {
                 throw new IllegalArgumentException("Empty column in GROUP BY clause");
             }
 
-            String normalizedColumn = normalizeColumnName(trimmedColumn, tableName);
+            String normalizedColumn = NormalizationUtils.normalizeColumnName(trimmedColumn, tableName);
             groupByColumns.add(normalizedColumn);
             LOGGER.log(Level.FINE, "Parsed GROUP BY column: {0}", normalizedColumn);
         }
 
         LOGGER.log(Level.FINE, "Parsed GROUP BY columns: {0}", groupByColumns);
         return groupByColumns;
-    }
-
-    private String normalizeColumnName(String column, String tableName) {
-        if (column == null || column.isEmpty()) {
-            return column;
-        }
-        String normalized = column.trim();
-        if (tableName != null && !normalized.contains(".")) {
-            normalized = tableName + "." + normalized;
-        }
-        return normalized;
     }
 }

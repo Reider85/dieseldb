@@ -54,7 +54,6 @@ class ConditionParser {
             return new ArrayList<>();
         }
 
-        // For ON clauses, try parsing as a single condition first (likely a column comparison)
         if (isOnClause) {
             try {
                 Condition singleCondition = parseSingleCondition(cleanConditionStr, null, combinedColumnTypes, originalQuery, isOnClause, tableName);
@@ -62,7 +61,6 @@ class ConditionParser {
                 return Collections.singletonList(singleCondition);
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.FINE, "ON clause not a simple condition, proceeding with full parsing: {0}", cleanConditionStr);
-                // Proceed with full parsing if not a simple column comparison
             }
         }
 
@@ -115,7 +113,6 @@ class ConditionParser {
                             if (subConditionStr.isEmpty()) {
                                 throw new IllegalArgumentException("Empty grouped condition in clause: " + cleanConditionStr);
                             }
-                            // Remove outer parentheses for grouped condition
                             if (subConditionStr.startsWith("(") && subConditionStr.endsWith(")")) {
                                 subConditionStr = subConditionStr.substring(1, subConditionStr.length() - 1).trim();
                             }
@@ -126,14 +123,12 @@ class ConditionParser {
                                     new Object[]{nestingLevel + 1, subConditionStr, isNot});
                             String conjunction = determineConjunctionAfter(cleanConditionStr, i);
                             List<Condition> subConditions;
-                            // Try parsing as a single condition first
                             try {
                                 Condition singleCondition = parseSingleCondition(subConditionStr, conjunction, combinedColumnTypes, originalQuery, isOnClause, tableName);
                                 subConditions = Collections.singletonList(singleCondition);
                                 conditions.add(new Condition(subConditions, conjunction, isNot));
                                 LOGGER.log(Level.FINE, "Added grouped condition with 1 subcondition, conjunction: {0}", conjunction);
                             } catch (IllegalArgumentException e) {
-                                // If not a single condition, parse recursively
                                 subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
                                 if (subConditions.isEmpty()) {
                                     throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);
@@ -267,7 +262,7 @@ class ConditionParser {
                 throw new IllegalArgumentException("Aggregate function " + aggFunction + " requires a column argument in HAVING clause");
             }
             if (aggColumn != null && !aggColumn.equals("*")) {
-                String normalizedAggColumn = normalizeColumnName(aggColumn, null);
+                String normalizedAggColumn = NormalizationUtils.normalizeColumnName(aggColumn, null);
                 String unqualifiedAggColumn = normalizedAggColumn.contains(".") ? normalizedAggColumn.split("\\.")[1].trim() : normalizedAggColumn;
                 boolean found = false;
                 for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
@@ -298,9 +293,7 @@ class ConditionParser {
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
         LOGGER.log(Level.FINE, "Condition without NOT: {0}", conditionWithoutNot);
 
-        // Normalize condition for regex matching
         String normalizedCondition = conditionWithoutNot.trim();
-        // Validate aggregate function format
         if (normalizedCondition.toUpperCase().contains("COUNT") && !normalizedCondition.matches("(?i).*COUNT\\s*\\(.*\\).*")) {
             LOGGER.log(Level.SEVERE, "Corrupted COUNT function in condition: {0}", normalizedCondition);
             throw new IllegalArgumentException("Corrupted COUNT function in condition: " + normalizedCondition);
@@ -324,7 +317,6 @@ class ConditionParser {
                     new Object[]{aggMatcher.group(1), aggMatcher.group(2), conditionColumn, aggEndIndex});
         }
 
-        // Handle IN conditions
         if (normalizedCondition.toUpperCase().contains(" IN ")) {
             String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
             LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
@@ -337,7 +329,7 @@ class ConditionParser {
                 throw new IllegalArgumentException("Invalid IN clause: " + originalCondition);
             }
 
-            String parsedColumn = normalizeColumnName(inMatcher.group(1).trim(), isOnClause ? null : tableName);
+            String parsedColumn = NormalizationUtils.normalizeColumnName(inMatcher.group(1).trim(), isOnClause ? null : tableName);
             String valuesPart = inMatcher.group(2) != null ? inMatcher.group(2).trim() : inMatcher.group(3).trim();
 
             if (valuesPart.isEmpty()) {
@@ -370,7 +362,6 @@ class ConditionParser {
         LOGGER.log(Level.FINE, "Remaining condition after aggregate: {0}", remainingCondition);
 
         if (isAggregate) {
-            // Ensure remainingCondition is not empty
             if (remainingCondition.isEmpty()) {
                 LOGGER.log(Level.SEVERE, "No operator found after aggregate function: condition={0}, originalCondition={1}",
                         new Object[]{normalizedCondition, condition});
@@ -381,7 +372,6 @@ class ConditionParser {
             QueryParser.Operator operator = null;
             String upperRemaining = remainingCondition.toUpperCase().trim();
 
-            // Try to match operators with proper boundary checks
             Pattern operatorPattern = Pattern.compile("^(>=|<=|>|<|=|!=|<>)\\s*(.*)$");
             Matcher operatorMatcher = operatorPattern.matcher(remainingCondition);
             if (operatorMatcher.find()) {
@@ -408,7 +398,7 @@ class ConditionParser {
                         operator = QueryParser.Operator.LESS_THAN_OR_EQUAL;
                         break;
                 }
-                partsByOperator = new String[]{ "", rightOperand };
+                partsByOperator = new String[]{"", rightOperand};
             }
 
             if (partsByOperator == null || partsByOperator.length != 2 || partsByOperator[1].trim().isEmpty()) {
@@ -432,7 +422,6 @@ class ConditionParser {
             return new Condition(conditionColumn, value, operator, conjunction, isNot);
         }
 
-        // Handle non-aggregate conditions
         String[] partsByOperator = null;
         QueryParser.Operator operator = null;
         String upperRemaining = remainingCondition.toUpperCase();
@@ -470,7 +459,7 @@ class ConditionParser {
         }
 
         if (operator == QueryParser.Operator.IS_NULL || operator == QueryParser.Operator.IS_NOT_NULL) {
-            String column = normalizeColumnName(partsByOperator[0].trim(), isOnClause ? null : tableName);
+            String column = NormalizationUtils.normalizeColumnName(partsByOperator[0].trim(), isOnClause ? null : tableName);
             Class<?> columnType = getColumnType(column, columnTypes);
             if (columnType == null) {
                 LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
@@ -489,11 +478,10 @@ class ConditionParser {
         String leftOperand = partsByOperator[0].trim();
         String rightOperand = partsByOperator[1].trim();
 
-        String column = normalizeColumnName(leftOperand, isOnClause ? null : tableName);
+        String column = NormalizationUtils.normalizeColumnName(leftOperand, isOnClause ? null : tableName);
         String rightColumn = null;
         Object value = null;
 
-        // Проверяем, является ли column агрегатной функцией
         if (aggMatcher.reset(column).matches()) {
             LOGGER.log(Level.FINE, "Column is an aggregate function: {0}", column);
             Class<?> valueType = column.toUpperCase().startsWith("COUNT") ? Long.class : Double.class;
@@ -514,9 +502,8 @@ class ConditionParser {
             throw new IllegalArgumentException("Unknown column: " + column);
         }
 
-        // Check if rightOperand is a column name, especially for ON clauses
         if (rightOperand.matches("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
-            rightColumn = normalizeColumnName(rightOperand, isOnClause ? null : tableName);
+            rightColumn = NormalizationUtils.normalizeColumnName(rightOperand, isOnClause ? null : tableName);
             Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
             if (rightColumnType != null) {
                 if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
@@ -533,12 +520,11 @@ class ConditionParser {
                 throw new IllegalArgumentException("LIKE pattern must be a string literal: " + rightOperand);
             }
             String pattern = rightOperand.substring(1, rightOperand.length() - 1);
-            value = QueryParser.convertLikePatternToRegex(pattern);
+            value = NormalizationUtils.convertLikePatternToRegex(pattern);
         } else {
             value = QueryParser.parseConditionValue(column, rightOperand, columnType);
         }
 
-        // Validate that value is not an Operator
         if (value instanceof QueryParser.Operator) {
             LOGGER.log(Level.SEVERE, "Invalid condition: value is an Operator: {0} in condition: {1}",
                     new Object[]{value, conditionWithoutNot});
@@ -599,17 +585,6 @@ class ConditionParser {
             }
         }
         return null;
-    }
-
-    private String normalizeColumnName(String column, String tableName) {
-        if (column == null || column.isEmpty()) {
-            return column;
-        }
-        String normalized = column.trim();
-        if (tableName != null && !normalized.contains(".")) {
-            normalized = tableName + "." + normalized;
-        }
-        return normalized;
     }
 
     private String determineConjunctionAfter(String conditionStr, int index) {

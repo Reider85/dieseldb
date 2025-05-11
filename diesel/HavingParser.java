@@ -59,7 +59,6 @@ class HavingParser {
 
         LOGGER.log(Level.FINE, "Cleaning HAVING clause: {0}", cleanedHavingStr);
 
-        // Split the clause while preserving aggregate functions
         for (int i = 0; i < cleanedHavingStr.length(); i++) {
             char c = cleanedHavingStr.charAt(i);
             if (c == '\'') {
@@ -77,7 +76,6 @@ class HavingParser {
                     currentClause.append(c);
                     continue;
                 }
-                // Check for keywords only at parenDepth 0 and outside quotes
                 if (parenDepth == 0) {
                     String remaining = cleanedHavingStr.substring(i).toUpperCase();
                     if (remaining.startsWith(" ORDER BY ")) {
@@ -111,18 +109,15 @@ class HavingParser {
             currentClause.append(c);
         }
 
-        // Add the last clause if it exists
         if (currentClause.length() > 0) {
             clauses.add(currentClause.toString().trim());
         }
 
-        // The first non-empty clause should be the HAVING condition
         String finalHavingClause = clauses.stream()
                 .filter(clause -> !clause.isEmpty())
                 .findFirst()
                 .orElse("");
 
-        // Validate that aggregate functions are preserved
         Pattern aggPattern = Pattern.compile("(?i)(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
         Matcher aggMatcher = aggPattern.matcher(finalHavingClause);
         boolean hasAggregate = aggMatcher.find();
@@ -171,7 +166,7 @@ class HavingParser {
                 throw new IllegalArgumentException("Aggregate function " + aggFunction + " requires a column argument in HAVING clause");
             }
             if (aggColumn != null && !aggColumn.equals("*")) {
-                String normalizedAggColumn = normalizeColumnName(aggColumn, null);
+                String normalizedAggColumn = NormalizationUtils.normalizeColumnName(aggColumn, null);
                 String unqualifiedAggColumn = normalizedAggColumn.contains(".") ? normalizedAggColumn.split("\\.")[1].trim() : normalizedAggColumn;
                 boolean found = false;
                 for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
@@ -213,6 +208,7 @@ class HavingParser {
             throw new IllegalArgumentException("HAVING clause only supports =, <, > operators: " + condition);
         }
     }
+
     private Integer parseLimitClause(String limitClause) {
         String normalized = limitClause.toUpperCase().replace("LIMIT", "").trim();
         if (normalized.isEmpty()) {
@@ -249,16 +245,5 @@ class HavingParser {
             LOGGER.log(Level.SEVERE, "Invalid OFFSET value: {0}", normalized);
             throw new IllegalArgumentException("Invalid OFFSET value: " + normalized);
         }
-    }
-
-    private String normalizeColumnName(String column, String tableName) {
-        if (column == null || column.isEmpty()) {
-            return column;
-        }
-        String normalized = column.trim();
-        if (tableName != null && !normalized.contains(".")) {
-            normalized = tableName + "." + normalized;
-        }
-        return normalized;
     }
 }

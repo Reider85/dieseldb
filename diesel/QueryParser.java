@@ -63,7 +63,7 @@ public class QueryParser {
 
     public Query<?> parse(String query, Database database) {
         try {
-            String normalized = normalizeQuery(query);
+            String normalized = NormalizationUtils.normalizeQuery(query);
             LOGGER.log(Level.FINE, "Original query: {0}", query);
             LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
             if (normalized.startsWith("SELECT")) {
@@ -91,81 +91,6 @@ public class QueryParser {
             LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
             throw e;
         }
-    }
-
-    private String normalizeQuery(String query) {
-        StringBuilder normalized = new StringBuilder();
-        boolean inQuotes = false;
-        boolean inFunction = false;
-        int parenDepth = 0;
-        StringBuilder currentToken = new StringBuilder();
-        boolean isAggregateFunction = false;
-
-        for (int i = 0; i < query.length(); i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentToken.append(c);
-                continue;
-            }
-            if (inQuotes) {
-                currentToken.append(c);
-                continue;
-            }
-            if (c == '(') {
-                parenDepth++;
-                String tokenSoFar = currentToken.toString().trim().toUpperCase();
-                if (parenDepth == 1 && (tokenSoFar.equals("COUNT") || tokenSoFar.equals("MIN") ||
-                        tokenSoFar.equals("MAX") || tokenSoFar.equals("AVG") || tokenSoFar.equals("SUM"))) {
-                    inFunction = true;
-                    isAggregateFunction = true;
-                }
-                currentToken.append(c);
-                continue;
-            }
-            if (c == ')') {
-                parenDepth--;
-                currentToken.append(c);
-                if (parenDepth == 0 && inFunction) {
-                    inFunction = false;
-                    isAggregateFunction = false;
-                    String functionToken = currentToken.toString().trim();
-                    LOGGER.log(Level.FINE, "Preserving aggregate function: {0}", functionToken);
-                    normalized.append(functionToken); // Preserve entire function, e.g., COUNT(*)
-                    currentToken = new StringBuilder();
-                    continue;
-                }
-                continue;
-            }
-            if (Character.isWhitespace(c) || c == ',' || c == ';') {
-                if (currentToken.length() > 0) {
-                    String token = currentToken.toString().trim();
-                    if (inFunction) {
-                        // Сохраняем токен как есть для агрегатных функций
-                        normalized.append(token);
-                    } else if (!token.isEmpty()) {
-                        normalized.append(token.toUpperCase());
-                    }
-                    currentToken = new StringBuilder();
-                }
-                normalized.append(c);
-                continue;
-            }
-            currentToken.append(c);
-        }
-
-        if (currentToken.length() > 0) {
-            String token = currentToken.toString().trim();
-            if (inFunction) {
-                normalized.append(token);
-            } else if (!token.isEmpty()) {
-                normalized.append(token.toUpperCase());
-            }
-        }
-
-        String result = normalized.toString().trim();
-        LOGGER.log(Level.FINE, "Normalized query result: {0}", result);
-        return result;
     }
 
     public static Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {
