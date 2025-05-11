@@ -9,9 +9,9 @@ import java.util.logging.Logger;
 class UpdateQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(UpdateQuery.class.getName());
     private final Map<String, Object> updates;
-    private final List<QueryParser.Condition> conditions;
+    private final List<Condition> conditions;
 
-    public UpdateQuery(Map<String, Object> updates, List<QueryParser.Condition> conditions) {
+    public UpdateQuery(Map<String, Object> updates, List<Condition> conditions) {
         this.updates = updates;
         this.conditions = conditions;
     }
@@ -70,11 +70,11 @@ class UpdateQuery implements Query<Void> {
         }
     }
 
-    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
+    private boolean evaluateConditions(Map<String, Object> row, List<Condition> conditions, Map<String, Class<?>> columnTypes) {
         boolean result = true;
         String lastConjunction = null;
 
-        for (QueryParser.Condition condition : conditions) {
+        for (Condition condition : conditions) {
             boolean conditionResult = evaluateCondition(row, condition, columnTypes);
 
             if (lastConjunction == null) {
@@ -91,7 +91,7 @@ class UpdateQuery implements Query<Void> {
         return result;
     }
 
-    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
+    private boolean evaluateCondition(Map<String, Object> row, Condition condition, Map<String, Class<?>> columnTypes) {
         if (condition.isGrouped()) {
             boolean subResult = evaluateConditions(row, condition.subConditions, columnTypes);
             boolean result = condition.not ? !subResult : subResult;
