@@ -57,6 +57,8 @@ class HavingParser {
         StringBuilder currentClause = new StringBuilder();
         List<String> clauses = new ArrayList<>();
 
+        LOGGER.log(Level.FINE, "Cleaning HAVING clause: {0}", cleanedHavingStr);
+
         // Split the clause while preserving aggregate functions
         for (int i = 0; i < cleanedHavingStr.length(); i++) {
             char c = cleanedHavingStr.charAt(i);
@@ -77,13 +79,14 @@ class HavingParser {
                 }
                 // Check for keywords only at parenDepth 0 and outside quotes
                 if (parenDepth == 0) {
-                    if (i + 9 <= cleanedHavingStr.length() && cleanedHavingStr.substring(i).toUpperCase().startsWith(" ORDER BY ")) {
+                    String remaining = cleanedHavingStr.substring(i).toUpperCase();
+                    if (remaining.startsWith(" ORDER BY ")) {
                         clauses.add(currentClause.toString().trim());
                         orderBy.addAll(orderByParser.parseOrderByClause(cleanedHavingStr.substring(i + 9).trim(), combinedColumnTypes));
                         LOGGER.log(Level.FINE, "Parsed ORDER BY from HAVING: {0}", orderBy);
                         currentClause = new StringBuilder();
                         break;
-                    } else if (i + 7 <= cleanedHavingStr.length() && cleanedHavingStr.substring(i).toUpperCase().startsWith(" LIMIT ")) {
+                    } else if (remaining.startsWith(" LIMIT ")) {
                         clauses.add(currentClause.toString().trim());
                         String limitClause = cleanedHavingStr.substring(i + 7).trim();
                         String[] limitOffsetSplit = limitClause.toUpperCase().contains(" OFFSET ")
@@ -96,7 +99,7 @@ class HavingParser {
                         LOGGER.log(Level.FINE, "Parsed LIMIT from HAVING: {0}, OFFSET: {1}", new Object[]{limitAndOffset[0], limitAndOffset[1]});
                         currentClause = new StringBuilder();
                         break;
-                    } else if (i + 8 <= cleanedHavingStr.length() && cleanedHavingStr.substring(i).toUpperCase().startsWith(" OFFSET ")) {
+                    } else if (remaining.startsWith(" OFFSET ")) {
                         clauses.add(currentClause.toString().trim());
                         limitAndOffset[1] = parseOffsetClause("OFFSET " + cleanedHavingStr.substring(i + 8).trim());
                         LOGGER.log(Level.FINE, "Parsed OFFSET from HAVING: {0}", limitAndOffset[1]);
@@ -118,9 +121,19 @@ class HavingParser {
                 .filter(clause -> !clause.isEmpty())
                 .findFirst()
                 .orElse("");
+
+        // Validate that aggregate functions are preserved
+        Pattern aggPattern = Pattern.compile("(?i)(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
+        Matcher aggMatcher = aggPattern.matcher(finalHavingClause);
+        boolean hasAggregate = aggMatcher.find();
+        if (hasAggregate && !finalHavingClause.contains("(")) {
+            LOGGER.log(Level.SEVERE, "Aggregate function corrupted in HAVING clause: {0}", finalHavingClause);
+            throw new IllegalArgumentException("Corrupted aggregate function in HAVING clause: " + finalHavingClause);
+        }
+
         LOGGER.log(Level.FINE, "Final HAVING clause after cleanup: {0}", finalHavingClause);
 
-        if (!finalHavingClause.equals(originalHavingStr)) {
+        if (!finalHavingClause.equals(originalHavingStr) && !finalHavingClause.equals(originalHavingStr.trim())) {
             LOGGER.log(Level.WARNING, "HAVING clause modified: original={0}, modified={1}",
                     new Object[]{originalHavingStr, finalHavingClause});
         }
@@ -128,8 +141,7 @@ class HavingParser {
         return finalHavingClause;
     }
 
-    private void validateHavingCondition(Condition condition, List<AggregateFunction> aggregates, List<String> groupBy,
-                                         Map<String, Class<?>> combinedColumnTypes) {
+    private void validateHavingCondition(Condition condition, List<AggregateFunction> aggregates, List<String> groupBy, Map<String, Class<?>> combinedColumnTypes) {
         if (condition.isGrouped()) {
             for (Condition subCond : condition.subConditions) {
                 validateHavingCondition(subCond, aggregates, groupBy, combinedColumnTypes);
@@ -151,27 +163,6 @@ class HavingParser {
 
         boolean isAggregate = aggMatcher.matches();
         boolean isGroupByColumn = groupBy.contains(column);
-
-        if (!isAggregate && !isGroupByColumn) {
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-            isGroupByColumn = groupBy.stream().anyMatch(gb -> {
-                String unqualifiedGroupBy = gb.contains(".") ? gb.split("\\.")[1].trim() : gb;
-                return unqualifiedGroupBy.equalsIgnoreCase(unqualifiedColumn);
-            });
-
-            if (!isGroupByColumn) {
-                boolean isAliasedAggregate = aggregates.stream().anyMatch(agg ->
-                        agg.alias != null && agg.alias.equalsIgnoreCase(unqualifiedColumn));
-                if (!isAliasedAggregate) {
-                    isAliasedAggregate = aggregates.stream().anyMatch(agg ->
-                            agg.toString().equalsIgnoreCase(column));
-                    if (!isAliasedAggregate) {
-                        LOGGER.log(Level.SEVERE, "HAVING clause must reference an aggregate function or a GROUP BY column: {0}", column);
-                        throw new IllegalArgumentException("HAVING clause must reference an aggregate function or a GROUP BY column: " + column);
-                    }
-                }
-            }
-        }
 
         if (isAggregate) {
             String aggFunction = aggMatcher.group(1).toUpperCase();
@@ -195,6 +186,25 @@ class HavingParser {
                     throw new IllegalArgumentException("Unknown column in aggregate function in HAVING: " + aggColumn);
                 }
             }
+        } else if (!isGroupByColumn) {
+            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+            isGroupByColumn = groupBy.stream().anyMatch(gb -> {
+                String unqualifiedGroupBy = gb.contains(".") ? gb.split("\\.")[1].trim() : gb;
+                return unqualifiedGroupBy.equalsIgnoreCase(unqualifiedColumn);
+            });
+
+            if (!isGroupByColumn) {
+                boolean isAliasedAggregate = aggregates.stream().anyMatch(agg ->
+                        agg.alias != null && agg.alias.equalsIgnoreCase(unqualifiedColumn));
+                if (!isAliasedAggregate) {
+                    isAliasedAggregate = aggregates.stream().anyMatch(agg ->
+                            agg.toString().equalsIgnoreCase(column));
+                    if (!isAliasedAggregate) {
+                        LOGGER.log(Level.SEVERE, "HAVING clause must reference an aggregate function or a GROUP BY column: {0}", column);
+                        throw new IllegalArgumentException("HAVING clause must reference an aggregate function or a GROUP BY column: " + column);
+                    }
+                }
+            }
         }
 
         if (!(condition.operator == QueryParser.Operator.EQUALS ||
@@ -203,7 +213,6 @@ class HavingParser {
             throw new IllegalArgumentException("HAVING clause only supports =, <, > operators: " + condition);
         }
     }
-
     private Integer parseLimitClause(String limitClause) {
         String normalized = limitClause.toUpperCase().replace("LIMIT", "").trim();
         if (normalized.isEmpty()) {

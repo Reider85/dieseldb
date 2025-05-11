@@ -99,7 +99,7 @@ public class QueryParser {
         boolean inFunction = false;
         int parenDepth = 0;
         StringBuilder currentToken = new StringBuilder();
-        boolean isCountStar = false;
+        boolean isAggregateFunction = false;
 
         for (int i = 0; i < query.length(); i++) {
             char c = query.charAt(i);
@@ -114,9 +114,11 @@ public class QueryParser {
             }
             if (c == '(') {
                 parenDepth++;
-                if (parenDepth == 1 && currentToken.toString().trim().matches("(?i)COUNT")) {
+                String tokenSoFar = currentToken.toString().trim().toUpperCase();
+                if (parenDepth == 1 && (tokenSoFar.equals("COUNT") || tokenSoFar.equals("MIN") ||
+                        tokenSoFar.equals("MAX") || tokenSoFar.equals("AVG") || tokenSoFar.equals("SUM"))) {
                     inFunction = true;
-                    isCountStar = true; // Assume COUNT might have (*)
+                    isAggregateFunction = true;
                 }
                 currentToken.append(c);
                 continue;
@@ -126,14 +128,11 @@ public class QueryParser {
                 currentToken.append(c);
                 if (parenDepth == 0 && inFunction) {
                     inFunction = false;
-                    if (isCountStar) {
-                        // Preserve COUNT(*) as is
-                        normalized.append(currentToken);
-                    } else {
-                        normalized.append(currentToken);
-                    }
+                    isAggregateFunction = false;
+                    String functionToken = currentToken.toString().trim();
+                    LOGGER.log(Level.FINE, "Preserving aggregate function: {0}", functionToken);
+                    normalized.append(functionToken); // Preserve entire function, e.g., COUNT(*)
                     currentToken = new StringBuilder();
-                    isCountStar = false;
                     continue;
                 }
                 continue;
@@ -141,18 +140,15 @@ public class QueryParser {
             if (Character.isWhitespace(c) || c == ',' || c == ';') {
                 if (currentToken.length() > 0) {
                     String token = currentToken.toString().trim();
-                    if (!inFunction && !token.isEmpty() && !isCountStar) {
-                        normalized.append(token.toUpperCase());
-                    } else {
+                    if (inFunction) {
+                        // Сохраняем токен как есть для агрегатных функций
                         normalized.append(token);
+                    } else if (!token.isEmpty()) {
+                        normalized.append(token.toUpperCase());
                     }
                     currentToken = new StringBuilder();
                 }
                 normalized.append(c);
-                continue;
-            }
-            if (isCountStar && c == '*' && parenDepth == 1 && inFunction) {
-                currentToken.append(c);
                 continue;
             }
             currentToken.append(c);
@@ -160,14 +156,16 @@ public class QueryParser {
 
         if (currentToken.length() > 0) {
             String token = currentToken.toString().trim();
-            if (!inFunction && !token.isEmpty() && !isCountStar) {
-                normalized.append(token.toUpperCase());
-            } else {
+            if (inFunction) {
                 normalized.append(token);
+            } else if (!token.isEmpty()) {
+                normalized.append(token.toUpperCase());
             }
         }
 
-        return normalized.toString().trim();
+        String result = normalized.toString().trim();
+        LOGGER.log(Level.FINE, "Normalized query result: {0}", result);
+        return result;
     }
 
     public static Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {

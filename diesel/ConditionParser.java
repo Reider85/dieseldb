@@ -59,6 +59,8 @@ class ConditionParser {
         boolean inQuotes = false;
         int parenDepth = 0;
         int nestingLevel = 0;
+        boolean inAggregateFunction = false;
+        StringBuilder currentToken = new StringBuilder();
 
         for (int i = 0; i < cleanConditionStr.length(); i++) {
             char c = cleanConditionStr.charAt(i);
@@ -69,15 +71,29 @@ class ConditionParser {
             }
             if (!inQuotes) {
                 if (c == '(') {
-                    parenDepth++;
-                    nestingLevel++;
-                    if (parenDepth == 1) {
+                    String tokenSoFar = currentToken.toString().trim().toUpperCase();
+                    if (tokenSoFar.matches("COUNT|MIN|MAX|AVG|SUM")) {
+                        inAggregateFunction = true;
+                        currentCondition.append(tokenSoFar).append(c);
+                        currentToken = new StringBuilder();
+                        parenDepth++;
                         continue;
                     }
+                    parenDepth++;
+                    nestingLevel++;
+                    currentCondition.append(c);
+                    currentToken = new StringBuilder();
+                    continue;
                 } else if (c == ')') {
                     parenDepth--;
                     nestingLevel--;
-                    if (parenDepth == 0) {
+                    currentCondition.append(c);
+                    if (parenDepth == 0 && inAggregateFunction) {
+                        inAggregateFunction = false;
+                        currentToken = new StringBuilder();
+                        continue;
+                    }
+                    if (parenDepth == 0 && nestingLevel == 0) {
                         String subConditionStr = currentCondition.toString().trim();
                         if (!subConditionStr.isEmpty()) {
                             boolean isNot = subConditionStr.toUpperCase().startsWith("NOT ");
@@ -97,13 +113,14 @@ class ConditionParser {
                             conditions.add(new Condition(subConditions, conjunction, isNot));
                             LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}",
                                     new Object[]{subConditions.size(), conjunction});
+                            currentCondition = new StringBuilder();
+                            continue;
                         } else {
                             throw new IllegalArgumentException("Empty grouped condition in clause: " + cleanConditionStr);
                         }
-                        currentCondition = new StringBuilder();
-                        continue;
                     }
-                } else if (parenDepth == 0) {
+                    continue;
+                } else if (parenDepth == 0 && !inAggregateFunction) {
                     if (i + 3 <= cleanConditionStr.length() && cleanConditionStr.substring(i, i + 3).equalsIgnoreCase("AND") &&
                             (i == 0 || Character.isWhitespace(cleanConditionStr.charAt(i - 1))) &&
                             (i + 3 == cleanConditionStr.length() || Character.isWhitespace(cleanConditionStr.charAt(i + 3)))) {
@@ -130,6 +147,11 @@ class ConditionParser {
                 }
             }
             currentCondition.append(c);
+            if (!inQuotes && !Character.isWhitespace(c)) {
+                currentToken.append(c);
+            } else {
+                currentToken = new StringBuilder();
+            }
         }
 
         if (currentCondition.length() > 0 && parenDepth == 0) {
@@ -249,6 +271,12 @@ class ConditionParser {
 
         // Normalize condition for regex matching
         String normalizedCondition = conditionWithoutNot.trim();
+        // Validate aggregate function format
+        if (normalizedCondition.toUpperCase().contains("COUNT") && !normalizedCondition.matches("(?i).*COUNT\\s*\\(.*\\).*")) {
+            LOGGER.log(Level.SEVERE, "Corrupted COUNT function in condition: {0}", normalizedCondition);
+            throw new IllegalArgumentException("Corrupted COUNT function in condition: " + normalizedCondition);
+        }
+
         Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
         Matcher aggMatcher = aggPattern.matcher(normalizedCondition);
         String conditionColumn = null;
@@ -256,13 +284,15 @@ class ConditionParser {
         boolean isAggregate = false;
         LOGGER.log(Level.FINE, "Checking aggregate condition: {0}", normalizedCondition);
         if (aggMatcher.find()) {
-            conditionColumn = aggMatcher.group(0).trim(); // Full match, e.g., "COUNT(*)"
+            conditionColumn = aggMatcher.group(0).trim();
             aggEndIndex = aggMatcher.end();
             isAggregate = true;
+            if (!conditionColumn.contains("(") || !conditionColumn.contains(")")) {
+                LOGGER.log(Level.SEVERE, "Invalid aggregate function format: {0}", conditionColumn);
+                throw new IllegalArgumentException("Invalid aggregate function format: " + conditionColumn);
+            }
             LOGGER.log(Level.FINE, "Aggregate matched: function={0}, argument={1}, fullMatch={2}, endIndex={3}",
                     new Object[]{aggMatcher.group(1), aggMatcher.group(2), conditionColumn, aggEndIndex});
-        } else {
-            LOGGER.log(Level.FINE, "No valid aggregate function found in: {0}", normalizedCondition);
         }
 
         // Handle IN conditions
@@ -433,6 +463,20 @@ class ConditionParser {
         String column = normalizeColumnName(leftOperand, isOnClause ? null : tableName);
         String rightColumn = null;
         Object value = null;
+
+        // Проверяем, является ли column агрегатной функцией
+        if (aggMatcher.reset(column).matches()) {
+            LOGGER.log(Level.FINE, "Column is an aggregate function: {0}", column);
+            Class<?> valueType = column.toUpperCase().startsWith("COUNT") ? Long.class : Double.class;
+            try {
+                value = QueryParser.parseConditionValue(column, rightOperand, valueType);
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.SEVERE, "Failed to parse value for aggregate condition: value={0}, condition={1}, error={2}",
+                        new Object[]{rightOperand, column, e.getMessage()});
+                throw new IllegalArgumentException("Invalid value for aggregate condition: " + rightOperand, e);
+            }
+            return new Condition(column, value, operator, conjunction, isNot);
+        }
 
         Class<?> columnType = getColumnType(column, columnTypes);
         if (columnType == null) {
