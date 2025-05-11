@@ -63,7 +63,8 @@ public class QueryParser {
 
     public Query<?> parse(String query, Database database) {
         try {
-            String normalized = query.trim().toUpperCase();
+            String normalized = normalizeQuery(query);
+            LOGGER.log(Level.FINE, "Original query: {0}", query);
             LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
             if (normalized.startsWith("SELECT")) {
                 return selectQueryParser.parseSelectQuery(normalized, query, database);
@@ -92,6 +93,70 @@ public class QueryParser {
         }
     }
 
+    private String normalizeQuery(String query) {
+        StringBuilder normalized = new StringBuilder();
+        boolean inQuotes = false;
+        boolean inFunction = false;
+        int parenDepth = 0;
+        StringBuilder currentToken = new StringBuilder();
+
+        for (int i = 0; i < query.length(); i++) {
+            char c = query.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentToken.append(c);
+                continue;
+            }
+            if (inQuotes) {
+                currentToken.append(c);
+                continue;
+            }
+            if (c == '(') {
+                parenDepth++;
+                if (parenDepth == 1 && currentToken.toString().trim().matches("(?i)(COUNT|MIN|MAX|AVG|SUM)")) {
+                    inFunction = true;
+                }
+                currentToken.append(c);
+                continue;
+            }
+            if (c == ')') {
+                parenDepth--;
+                currentToken.append(c);
+                if (parenDepth == 0 && inFunction) {
+                    inFunction = false;
+                    normalized.append(currentToken);
+                    currentToken = new StringBuilder();
+                    continue;
+                }
+                continue;
+            }
+            if (Character.isWhitespace(c) || c == ',' || c == ';') {
+                if (currentToken.length() > 0) {
+                    String token = currentToken.toString().trim();
+                    if (!inFunction && !token.isEmpty()) {
+                        normalized.append(token.toUpperCase());
+                    } else {
+                        normalized.append(token);
+                    }
+                    currentToken = new StringBuilder();
+                }
+                normalized.append(c);
+                continue;
+            }
+            currentToken.append(c);
+        }
+
+        if (currentToken.length() > 0) {
+            String token = currentToken.toString().trim();
+            if (!inFunction && !token.isEmpty()) {
+                normalized.append(token.toUpperCase());
+            } else {
+                normalized.append(token);
+            }
+        }
+
+        return normalized.toString().trim();
+    }
     public static Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {
         try {
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {

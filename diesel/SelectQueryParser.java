@@ -14,11 +14,12 @@ class SelectQueryParser {
     private final GroupByParser groupByParser = new GroupByParser();
 
     Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
-        LOGGER.log(Level.FINE, "Parsing SELECT query: normalized={0}, original={1}", new Object[]{normalized, original});
+        LOGGER.log(Level.FINE, "Parsing SELECT query: normalized={0}, original={1}", new Object[]{normalized, original});LOGGER.log(Level.FINE, "Parsing SELECT query: normalized={0}, original={1}", new Object[]{normalized, original});
         String[] parts = normalized.split("FROM");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid SELECT query format");
         }
+        LOGGER.log(Level.FINE, "Split parts: selectPart={0}, tableAndJoins={1}", new Object[]{parts[0], parts[1]});
 
         String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, original.indexOf("FROM")).trim();
         List<String> selectItems = splitSelectItems(selectPartOriginal);
@@ -308,7 +309,9 @@ class SelectQueryParser {
         }
 
         if (remaining.toUpperCase().contains(" GROUP BY ")) {
-            String[] groupBySplit = remaining.split("(?i)\\s+GROUP BY\\s+", 2);
+            // Extract GROUP BY part from original query to preserve syntax
+            String originalRemaining = original.substring(original.toUpperCase().indexOf("FROM") + 4).trim();
+            String[] groupBySplit = originalRemaining.split("(?i)\\s+GROUP BY\\s+", 2);
             remaining = groupBySplit[0].trim();
             LOGGER.log(Level.FINE, "After GROUP BY split: remaining={0}, groupByPart={1}",
                     new Object[]{remaining, groupBySplit.length > 1 ? groupBySplit[1].trim() : ""});
@@ -422,6 +425,7 @@ class SelectQueryParser {
 
         List<Condition> havingConditions = new ArrayList<>();
         if (havingStr != null && !havingStr.isEmpty()) {
+            LOGGER.log(Level.FINE, "Before parsing HAVING: havingStr={0}", havingStr);
             if (groupBy.isEmpty()) {
                 throw new IllegalArgumentException("HAVING clause requires a GROUP BY clause");
             }

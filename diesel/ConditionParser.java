@@ -326,14 +326,14 @@ class ConditionParser {
                 partsByOperator = remainingCondition.split("\\s*<>\\s*", 2);
                 operator = QueryParser.Operator.NOT_EQUALS;
             } else {
-                LOGGER.log(Level.SEVERE, "Invalid or missing operator in aggregate condition: {0}, remaining: {1}",
-                        new Object[]{conditionWithoutNot, remainingCondition});
+                LOGGER.log(Level.SEVERE, "Invalid or missing operator in aggregate condition: condition={0}, remaining={1}, originalHaving={2}",
+                        new Object[]{conditionWithoutNot, remainingCondition, condition});
                 throw new IllegalArgumentException("Invalid or missing operator in aggregate condition: " + conditionWithoutNot);
             }
 
             if (partsByOperator.length != 2 || partsByOperator[1].trim().isEmpty()) {
-                LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: {0}, parts: {1}",
-                        new Object[]{conditionWithoutNot, Arrays.toString(partsByOperator)});
+                LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: condition={0}, parts={1}, originalHaving={2}",
+                        new Object[]{conditionWithoutNot, Arrays.toString(partsByOperator), condition});
                 throw new IllegalArgumentException("Invalid aggregate condition format: " + conditionWithoutNot);
             }
 
@@ -344,7 +344,6 @@ class ConditionParser {
                     new Object[]{conditionColumn, operator, value, isNot, conjunction});
             return new Condition(conditionColumn, value, operator, conjunction, isNot);
         }
-
         // Handle non-aggregate conditions
         String[] partsByOperator = null;
         QueryParser.Operator operator = null;
