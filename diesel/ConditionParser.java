@@ -151,6 +151,11 @@ class ConditionParser {
 
     List<Condition> parseHavingConditions(String havingStr, String tableName, Database database, String originalQuery, List<AggregateFunction> aggregates, List<String> groupBy, Map<String, Class<?>> combinedColumnTypes) {
         LOGGER.log(Level.FINE, "Received HAVING clause: {0}", havingStr);
+        if (havingStr == null || havingStr.trim().isEmpty()) {
+            LOGGER.log(Level.WARNING, "Empty or null HAVING clause received");
+            return new ArrayList<>();
+        }
+        LOGGER.log(Level.FINE, "Passing HAVING clause to parseConditions: {0}", havingStr);
         List<Condition> havingConditions = parseConditions(havingStr, tableName, database, originalQuery, false, combinedColumnTypes);
 
         for (Condition condition : havingConditions) {
@@ -247,16 +252,14 @@ class ConditionParser {
         String conditionColumn = null;
         int aggEndIndex = -1;
         boolean isAggregate = false;
-
+        LOGGER.log(Level.FINE, "Checking aggregate condition: {0}", conditionWithoutNot);
         if (aggMatcher.find()) {
             conditionColumn = conditionWithoutNot.substring(0, aggMatcher.end()).trim();
             aggEndIndex = aggMatcher.end();
             isAggregate = true;
         } else if (conditionWithoutNot.matches("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\*.*")) {
+            LOGGER.log(Level.WARNING, "Invalid aggregate syntax detected: {0}", conditionWithoutNot);
             throw new IllegalArgumentException("Invalid aggregate function syntax: expected parentheses, e.g., COUNT(*), got: " + conditionWithoutNot);
-        } else {
-            String[] parts = conditionWithoutNot.split("\\s+", 2);
-            conditionColumn = normalizeColumnName(parts[0].trim(), isOnClause ? null : tableName);
         }
 
         // Handle IN conditions

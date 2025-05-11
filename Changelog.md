@@ -124,3 +124,4 @@
 1.2.4 JOIN fix after refactoring
 1.2.5 GROUP BY logging
 1.2.6 HAVING fixes
+1.2.7 HAVING fixes retry 2
