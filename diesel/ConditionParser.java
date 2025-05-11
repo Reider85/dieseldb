@@ -17,7 +17,12 @@ class ConditionParser {
         LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}, isOnClause: {2}, condition: {3}",
                 new Object[]{tableName, combinedColumnTypes, isOnClause, conditionStr});
 
-        String cleanConditionStr = conditionStr;
+        String cleanConditionStr = conditionStr.trim();
+        if (cleanConditionStr.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // Remove clauses like LIMIT, OFFSET, ORDER BY, GROUP BY
         String[] limitSplit = cleanConditionStr.toUpperCase().contains(" LIMIT ")
                 ? cleanConditionStr.split("(?i)\\s+LIMIT\\s+", 2)
                 : new String[]{cleanConditionStr, ""};
@@ -30,7 +35,7 @@ class ConditionParser {
                 ? cleanConditionStr.split("(?i)\\s+OFFSET\\s+", 2)
                 : new String[]{cleanConditionStr, ""};
         cleanConditionStr = offsetSplit[0].trim();
-        if (offsetSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
+        if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
             LOGGER.log(Level.FINE, "Detected OFFSET clause in condition string, stopping at: {0}", cleanConditionStr);
         }
 
@@ -54,14 +59,13 @@ class ConditionParser {
             return new ArrayList<>();
         }
 
-        if (isOnClause) {
-            try {
-                Condition singleCondition = parseSingleCondition(cleanConditionStr, null, combinedColumnTypes, originalQuery, isOnClause, tableName);
-                LOGGER.log(Level.FINE, "Parsed ON clause as single condition: {0}", singleCondition);
-                return Collections.singletonList(singleCondition);
-            } catch (IllegalArgumentException e) {
-                LOGGER.log(Level.FINE, "ON clause not a simple condition, proceeding with full parsing: {0}", cleanConditionStr);
-            }
+        // Try parsing as a single condition first to avoid recursion for simple cases
+        try {
+            Condition singleCondition = parseSingleCondition(cleanConditionStr, null, combinedColumnTypes, originalQuery, isOnClause, tableName);
+            LOGGER.log(Level.FINE, "Parsed as single condition: {0}", singleCondition);
+            return Collections.singletonList(singleCondition);
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.FINE, "Not a single condition, proceeding with full parsing: {0}", cleanConditionStr);
         }
 
         List<Condition> conditions = new ArrayList<>();
@@ -122,14 +126,13 @@ class ConditionParser {
                             LOGGER.log(Level.FINE, "Parsing nested condition at level {0}: {1}, isNot: {2}",
                                     new Object[]{nestingLevel + 1, subConditionStr, isNot});
                             String conjunction = determineConjunctionAfter(cleanConditionStr, i);
-                            List<Condition> subConditions;
+                            // Try parsing as single condition first to avoid deep recursion
                             try {
                                 Condition singleCondition = parseSingleCondition(subConditionStr, conjunction, combinedColumnTypes, originalQuery, isOnClause, tableName);
-                                subConditions = Collections.singletonList(singleCondition);
-                                conditions.add(new Condition(subConditions, conjunction, isNot));
-                                LOGGER.log(Level.FINE, "Added grouped condition with 1 subcondition, conjunction: {0}", conjunction);
+                                conditions.add(new Condition(Collections.singletonList(singleCondition), conjunction, isNot));
+                                LOGGER.log(Level.FINE, "Added grouped condition with single subcondition, conjunction: {0}", conjunction);
                             } catch (IllegalArgumentException e) {
-                                subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
+                                List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
                                 if (subConditions.isEmpty()) {
                                     throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);
                                 }
@@ -249,7 +252,7 @@ class ConditionParser {
                             agg.toString().equalsIgnoreCase(column));
                     if (!isAliasedAggregate) {
                         LOGGER.log(Level.SEVERE, "HAVING clause must reference an aggregate function or a GROUP BY column: {0}", column);
-                        throw new IllegalArgumentException("HAVING clause must reference an aggregate function or a GROUP BY column: " + column);
+                        throw new IllegalArgumentException("HAVING clause must reference an aggregate function or a GROUP BY column: " + condition);
                     }
                 }
             }
@@ -294,6 +297,10 @@ class ConditionParser {
         LOGGER.log(Level.FINE, "Condition without NOT: {0}", conditionWithoutNot);
 
         String normalizedCondition = conditionWithoutNot.trim();
+        if (normalizedCondition.isEmpty()) {
+            throw new IllegalArgumentException("Empty condition after normalization");
+        }
+
         if (normalizedCondition.toUpperCase().contains("COUNT") && !normalizedCondition.matches("(?i).*COUNT\\s*\\(.*\\).*")) {
             LOGGER.log(Level.SEVERE, "Corrupted COUNT function in condition: {0}", normalizedCondition);
             throw new IllegalArgumentException("Corrupted COUNT function in condition: " + normalizedCondition);
@@ -321,7 +328,7 @@ class ConditionParser {
             String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
             LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
 
-            Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+)\\s+IN\\s*(?:\\(([^)]+)\\)|([^)]+))");
+            Pattern inPattern = Pattern.compile("(?i)((?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.)?)?[a-zA-Z_][a-zA-Z0-9_]*)\\s+IN\\s*(?:\\(([^)]+)\\)|([^)]+))");
             Matcher inMatcher = inPattern.matcher(originalCondition);
             if (!inMatcher.find()) {
                 LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}, original query: {1}",
@@ -427,31 +434,37 @@ class ConditionParser {
         String upperRemaining = remainingCondition.toUpperCase();
 
         if (upperRemaining.contains(" IS NOT NULL")) {
-            partsByOperator = remainingCondition.split("\\s*IS NOT NULL\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*IS NOT NULL\\s*", 2);
             operator = QueryParser.Operator.IS_NOT_NULL;
         } else if (upperRemaining.contains(" IS NULL")) {
-            partsByOperator = remainingCondition.split("\\s*IS NULL\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*IS NULL\\s*", 2);
             operator = QueryParser.Operator.IS_NULL;
         } else if (upperRemaining.contains(" NOT LIKE ")) {
-            partsByOperator = remainingCondition.split("\\s*NOT LIKE\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*NOT LIKE\\s*", 2);
             operator = QueryParser.Operator.NOT_LIKE;
         } else if (upperRemaining.contains(" LIKE ")) {
-            partsByOperator = remainingCondition.split("\\s*LIKE\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*LIKE\\s*", 2);
             operator = QueryParser.Operator.LIKE;
         } else if (upperRemaining.contains(" != ")) {
-            partsByOperator = remainingCondition.split("\\s*!=\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*!=\\s*", 2);
             operator = QueryParser.Operator.NOT_EQUALS;
         } else if (upperRemaining.contains(" <> ")) {
-            partsByOperator = remainingCondition.split("\\s*<>\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*<>\\s*", 2);
             operator = QueryParser.Operator.NOT_EQUALS;
         } else if (upperRemaining.contains(" = ")) {
-            partsByOperator = remainingCondition.split("\\s*=\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*=\\s*", 2);
             operator = QueryParser.Operator.EQUALS;
+        } else if (upperRemaining.contains(" <= ")) {
+            partsByOperator = remainingCondition.split("(?i)\\s*<=\\s*", 2);
+            operator = QueryParser.Operator.LESS_THAN_OR_EQUAL;
+        } else if (upperRemaining.contains(" >= ")) {
+            partsByOperator = remainingCondition.split("(?i)\\s*>=\\s*", 2);
+            operator = QueryParser.Operator.GREATER_THAN_OR_EQUAL;
         } else if (upperRemaining.contains(" < ")) {
-            partsByOperator = remainingCondition.split("\\s*<\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*<\\s*", 2);
             operator = QueryParser.Operator.LESS_THAN;
         } else if (upperRemaining.contains(" > ")) {
-            partsByOperator = remainingCondition.split("\\s*>\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*>\\s*", 2);
             operator = QueryParser.Operator.GREATER_THAN;
         } else {
             LOGGER.log(Level.SEVERE, "Invalid condition operator in non-aggregate condition: {0}", remainingCondition);
@@ -522,7 +535,13 @@ class ConditionParser {
             String pattern = rightOperand.substring(1, rightOperand.length() - 1);
             value = NormalizationUtils.convertLikePatternToRegex(pattern);
         } else {
-            value = QueryParser.parseConditionValue(column, rightOperand, columnType);
+            try {
+                value = QueryParser.parseConditionValue(column, rightOperand, columnType);
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.SEVERE, "Failed to parse condition value: column={0}, value={1}, type={2}, error={3}",
+                        new Object[]{column, rightOperand, columnType, e.getMessage()});
+                throw new IllegalArgumentException("Failed to parse condition value: " + rightOperand, e);
+            }
         }
 
         if (value instanceof QueryParser.Operator) {
@@ -578,9 +597,12 @@ class ConditionParser {
     }
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> columnTypes) {
+        if (column == null || columnTypes == null) {
+            return null;
+        }
         String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
         for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-            if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
                 return entry.getValue();
             }
         }
@@ -588,6 +610,9 @@ class ConditionParser {
     }
 
     private String determineConjunctionAfter(String conditionStr, int index) {
+        if (index + 1 >= conditionStr.length()) {
+            return null;
+        }
         String remaining = conditionStr.substring(index + 1).trim();
         if (remaining.toUpperCase().startsWith("AND ")) {
             return "AND";

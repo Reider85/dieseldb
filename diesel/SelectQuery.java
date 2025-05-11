@@ -109,6 +109,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
                         Map<String, Object> probeRow = currentJoin.get(probeTableName);
+                        if (probeRow == null) {
+                            LOGGER.log(Level.FINE, "Skipping hash join iteration: probeRow is null for probeTableName={0}", probeTableName);
+                            continue;
+                        }
                         Object probeKey = probeRow.get(probeColumn.split("\\.")[1]);
                         if (probeKey != null) {
                             List<Map<String, Object>> matches = hashTable.get(probeKey);

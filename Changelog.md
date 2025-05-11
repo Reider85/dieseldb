@@ -134,3 +134,4 @@
 1.3.1.3 ConditionParser in simple queries fix
 1.3.1.4 ConditionParser in join queries fix
 1.3.1.5 refactor NormalizeUtils
+1.3.1.6 JOIN fix

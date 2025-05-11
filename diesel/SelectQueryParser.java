@@ -505,8 +505,26 @@ class SelectQueryParser {
             return;
         }
 
+        // For non-comparison operators (LIKE, IS NULL, IS NOT NULL, IN), check that the column is from one of the joining tables
+        if (condition.operator == QueryParser.Operator.LIKE ||
+                condition.operator == QueryParser.Operator.NOT_LIKE ||
+                condition.operator == QueryParser.Operator.IS_NULL ||
+                condition.operator == QueryParser.Operator.IS_NOT_NULL ||
+                condition.operator == QueryParser.Operator.IN) {
+            String leftCol = condition.column;
+            if (leftCol == null) {
+                throw new IllegalArgumentException("Invalid JOIN condition: missing column: " + condition);
+            }
+            String leftTableName = leftCol.contains(".") ? leftCol.split("\\.")[0] : "";
+            if (!leftTableName.equalsIgnoreCase(leftTable) && !leftTableName.equalsIgnoreCase(rightTable)) {
+                throw new IllegalArgumentException("JOIN condition must reference the joining tables: " + condition);
+            }
+            return;
+        }
+
+        // For comparison operators, ensure it's a column-to-column comparison between the joining tables
         if (!condition.isColumnComparison()) {
-            throw new IllegalArgumentException("JOIN ON clause must compare columns: " + condition);
+            throw new IllegalArgumentException("JOIN ON clause must compare columns or use LIKE/IS NULL/IN: " + condition);
         }
 
         String leftCol = condition.column;
@@ -516,10 +534,10 @@ class SelectQueryParser {
             throw new IllegalArgumentException("Invalid JOIN condition: missing column(s): " + condition);
         }
 
-        String leftTableName = leftCol.contains(".") ? leftCol.split("\\.")[0] : null;
-        String rightTableName = rightCol.contains(".") ? rightCol.split("\\.")[0] : null;
+        String leftTableName = leftCol.contains(".") ? leftCol.split("\\.")[0] : "";
+        String rightTableName = rightCol.contains(".") ? rightCol.split("\\.")[0] : "";
 
-        if (leftTableName == null || rightTableName == null) {
+        if (leftTableName.isEmpty() || rightTableName.isEmpty()) {
             throw new IllegalArgumentException("JOIN condition columns must be qualified with table names: " + condition);
         }
 
