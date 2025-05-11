@@ -255,11 +255,11 @@ class ConditionParser {
             conditionColumn = normalizeColumnName(parts[0].trim(), isOnClause ? null : tableName);
         }
 
+        // Handle IN conditions
         if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
             String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
             LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
 
-            // Modified regex to optionally handle missing parentheses
             Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+)\\s+IN\\s*(?:\\(([^)]+)\\)|([^)]+))");
             Matcher inMatcher = inPattern.matcher(originalCondition);
             if (!inMatcher.find()) {
@@ -343,7 +343,7 @@ class ConditionParser {
             }
             LOGGER.log(Level.FINE, "Parsed {0} condition: column={1}, conjunction={2}",
                     new Object[]{operator, column, conjunction});
-            return new Condition(column, operator, null, conjunction, isNot);
+            return new Condition(column, operator, conjunction, isNot);
         }
 
         if (partsByOperator.length != 2) {
@@ -365,24 +365,22 @@ class ConditionParser {
         } else {
             Class<?> columnType = getColumnType(column, columnTypes);
             if (columnType == null) {
-                if (rightOperand.matches("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
-                    rightColumn = normalizeColumnName(rightOperand, isOnClause ? null : tableName);
-                    Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
-                    if (rightColumnType == null) {
-                        LOGGER.log(Level.SEVERE, "Unknown right column: {0}, available columns: {1}",
-                                new Object[]{rightColumn, columnTypes.keySet()});
-                        throw new IllegalArgumentException("Unknown right column: " + rightColumn);
-                    }
+                LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
+                        new Object[]{column, columnTypes.keySet()});
+                throw new IllegalArgumentException("Unknown column: " + column);
+            }
+
+            // Check if rightOperand is a column name, especially for ON clauses
+            if (rightOperand.matches("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
+                rightColumn = normalizeColumnName(rightOperand, isOnClause ? null : tableName);
+                Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
+                if (rightColumnType != null) {
                     if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
                         throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column comparisons: " + conditionWithoutNot);
                     }
                     LOGGER.log(Level.FINE, "Parsed column comparison condition: left={0}, right={1}, operator={2}, conjunction={3}",
                             new Object[]{column, rightColumn, operator, conjunction});
                     return new Condition(column, rightColumn, operator, conjunction, isNot);
-                } else {
-                    LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
-                            new Object[]{column, columnTypes.keySet()});
-                    throw new IllegalArgumentException("Unknown column: " + column);
                 }
             }
 
@@ -397,8 +395,15 @@ class ConditionParser {
             }
         }
 
-        LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, conjunction={3}, not={4}",
-                new Object[]{column, operator, value, conjunction, isNot});
+        // Validate that value is not an Operator
+        if (value instanceof QueryParser.Operator) {
+            LOGGER.log(Level.SEVERE, "Invalid condition: value is an Operator: {0} in condition: {1}",
+                    new Object[]{value, conditionWithoutNot});
+            throw new IllegalArgumentException("Invalid condition: value cannot be an Operator: " + conditionWithoutNot);
+        }
+
+        LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, rightColumn={3}, not={4}, conjunction={5}",
+                new Object[]{column, operator, value, rightColumn, isNot, conjunction});
         return new Condition(column, value, operator, conjunction, isNot);
     }
 

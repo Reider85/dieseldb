@@ -720,6 +720,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private boolean evaluateCondition(Map<String, Object> row, Condition condition, Map<String, Class<?>> combinedColumnTypes) {
+        LOGGER.log(Level.FINE, "Evaluating condition: column={0}, operator={1}, value={2}, rightColumn={3}, not={4}",
+                new Object[]{condition.column, condition.operator, condition.value, condition.rightColumn, condition.not});
+
         if (condition.isGrouped()) {
             boolean subResult = evaluateConditions(row, condition.subConditions, combinedColumnTypes);
             return condition.not ? !subResult : subResult;
@@ -729,20 +732,28 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             Object value = row.get(condition.column);
             boolean isNull = value == null;
             boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
+            LOGGER.log(Level.FINE, "Evaluated {0} condition: column={1}, value={2}, result={3}",
+                    new Object[]{condition.operator, condition.column, value, result});
             return condition.not ? !result : result;
         }
 
         if (condition.isInOperator()) {
             Object value = row.get(condition.column);
             if (value == null) {
+                LOGGER.log(Level.FINE, "IN condition: column {0} is null, returning {1}",
+                        new Object[]{condition.column, condition.not});
                 return condition.not;
             }
             boolean inResult = condition.inValues.stream().anyMatch(v -> valuesEqual(v, value));
+            LOGGER.log(Level.FINE, "Evaluated IN condition: column={0}, value={1}, inValues={2}, result={3}",
+                    new Object[]{condition.column, value, condition.inValues, inResult});
             return condition.not ? !inResult : inResult;
         }
 
         Object leftValue = row.get(condition.column);
         if (leftValue == null) {
+            LOGGER.log(Level.FINE, "Condition: column {0} is null, returning {1}",
+                    new Object[]{condition.column, condition.not});
             return condition.not;
         }
 
@@ -750,24 +761,39 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (condition.isColumnComparison()) {
             rightValue = row.get(condition.rightColumn);
             if (rightValue == null) {
+                LOGGER.log(Level.FINE, "Column comparison: right column {0} is null, returning {1}",
+                        new Object[]{condition.rightColumn, condition.not});
                 return condition.not;
             }
         } else {
             rightValue = condition.value;
         }
 
-        int comparison;
+        // Safeguard against invalid rightValue
+        if (rightValue instanceof QueryParser.Operator) {
+            LOGGER.log(Level.SEVERE, "Invalid condition: rightValue is an Operator: {0} for column {1}",
+                    new Object[]{rightValue, condition.column});
+            throw new IllegalArgumentException("Invalid condition: rightValue cannot be an Operator for column: " + condition.column);
+        }
+
         if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
             if (!(leftValue instanceof String) || !(rightValue instanceof String)) {
+                LOGGER.log(Level.WARNING, "LIKE/NOT LIKE condition: invalid types, left={0}, right={1}",
+                        new Object[]{leftValue.getClass(), rightValue.getClass()});
                 return condition.not;
             }
             String pattern = QueryParser.convertLikePatternToRegex((String) rightValue);
             boolean matches = Pattern.matches(pattern, (String) leftValue);
             boolean result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+            LOGGER.log(Level.FINE, "Evaluated {0} condition: column={1}, value={2}, pattern={3}, result={4}",
+                    new Object[]{condition.operator, condition.column, leftValue, pattern, result});
             return condition.not ? !result : result;
         }
 
-        comparison = compareValues(leftValue, rightValue);
+        LOGGER.log(Level.FINE, "Comparing values: left={0} ({1}), right={2} ({3}), operator={4}",
+                new Object[]{leftValue, leftValue.getClass(), rightValue, rightValue == null ? "null" : rightValue.getClass(), condition.operator});
+
+        int comparison = compareValues(leftValue, rightValue);
         boolean result;
         switch (condition.operator) {
             case EQUALS:
@@ -786,12 +812,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 throw new IllegalStateException("Unsupported operator: " + condition.operator);
         }
 
+        LOGGER.log(Level.FINE, "Evaluated condition: column={0}, operator={1}, left={2}, right={3}, comparison={4}, result={5}",
+                new Object[]{condition.column, condition.operator, leftValue, rightValue, comparison, result});
         return condition.not ? !result : result;
     }
 
     private int compareValues(Object left, Object right) {
         if (left == null || right == null) {
             return left == right ? 0 : (left == null ? -1 : 1);
+        }
+
+        if (left instanceof QueryParser.Operator || right instanceof QueryParser.Operator) {
+            LOGGER.log(Level.SEVERE, "Invalid comparison: left={0}, right={1}", new Object[]{left, right});
+            throw new IllegalArgumentException("Cannot compare with Operator type: " + (left instanceof QueryParser.Operator ? left : right));
         }
 
         if (left instanceof Number && right instanceof Number) {
@@ -814,6 +847,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         } else if (left instanceof Character && right instanceof Character) {
             return ((Character) left).compareTo((Character) right);
         } else {
+            LOGGER.log(Level.SEVERE, "Incompatible types for comparison: left={0}, right={1}",
+                    new Object[]{left.getClass(), right.getClass()});
             throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
         }
     }
