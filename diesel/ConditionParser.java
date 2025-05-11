@@ -150,6 +150,7 @@ class ConditionParser {
     }
 
     List<Condition> parseHavingConditions(String havingStr, String tableName, Database database, String originalQuery, List<AggregateFunction> aggregates, List<String> groupBy, Map<String, Class<?>> combinedColumnTypes) {
+        LOGGER.log(Level.FINE, "Received HAVING clause: {0}", havingStr);
         List<Condition> havingConditions = parseConditions(havingStr, tableName, database, originalQuery, false, combinedColumnTypes);
 
         for (Condition condition : havingConditions) {
@@ -239,10 +240,11 @@ class ConditionParser {
                 new Object[]{condition, isOnClause, conjunction});
         boolean isNot = condition.toUpperCase().startsWith("NOT ");
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
+        LOGGER.log(Level.FINE, "Condition without NOT: {0}", conditionWithoutNot);
 
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)");
         Matcher aggMatcher = aggPattern.matcher(conditionWithoutNot);
-        String conditionColumn;
+        String conditionColumn = null;
         int aggEndIndex = -1;
         boolean isAggregate = false;
 
@@ -250,6 +252,8 @@ class ConditionParser {
             conditionColumn = conditionWithoutNot.substring(0, aggMatcher.end()).trim();
             aggEndIndex = aggMatcher.end();
             isAggregate = true;
+        } else if (conditionWithoutNot.matches("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\*.*")) {
+            throw new IllegalArgumentException("Malformed aggregate function in condition: " + conditionWithoutNot);
         } else {
             String[] parts = conditionWithoutNot.split("\\s+", 2);
             conditionColumn = normalizeColumnName(parts[0].trim(), isOnClause ? null : tableName);
@@ -297,11 +301,48 @@ class ConditionParser {
             return new Condition(parsedColumn, inValues, conjunction, isNot);
         }
 
-        String[] partsByOperator = null;
-        QueryParser.Operator operator = null;
         String remainingCondition = aggEndIndex >= 0 ? conditionWithoutNot.substring(aggEndIndex).trim() : conditionWithoutNot;
 
+        if (isAggregate) {
+            String[] partsByOperator = null;
+            QueryParser.Operator operator = null;
+            String upperRemaining = remainingCondition.toUpperCase();
+
+            if (upperRemaining.contains(" = ")) {
+                partsByOperator = remainingCondition.split("\\s*=\\s*", 2);
+                operator = QueryParser.Operator.EQUALS;
+            } else if (upperRemaining.contains(" < ")) {
+                partsByOperator = remainingCondition.split("\\s*<\\s*", 2);
+                operator = QueryParser.Operator.LESS_THAN;
+            } else if (upperRemaining.contains(" > ")) {
+                partsByOperator = remainingCondition.split("\\s*>\\s*", 2);
+                operator = QueryParser.Operator.GREATER_THAN;
+            } else if (upperRemaining.contains(" != ")) {
+                partsByOperator = remainingCondition.split("\\s*!=\\s*", 2);
+                operator = QueryParser.Operator.NOT_EQUALS;
+            } else if (upperRemaining.contains(" <> ")) {
+                partsByOperator = remainingCondition.split("\\s*<>\\s*", 2);
+                operator = QueryParser.Operator.NOT_EQUALS;
+            } else {
+                throw new IllegalArgumentException("Invalid condition operator for aggregate function in: " + conditionWithoutNot);
+            }
+
+            if (partsByOperator.length != 2) {
+                throw new IllegalArgumentException("Invalid aggregate condition format: " + conditionWithoutNot);
+            }
+
+            String rightOperand = partsByOperator[1].trim();
+            Object value = QueryParser.parseConditionValue(conditionColumn, rightOperand, Long.class);
+            LOGGER.log(Level.FINE, "Parsed aggregate condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
+                    new Object[]{conditionColumn, operator, value, isNot, conjunction});
+            return new Condition(conditionColumn, value, operator, conjunction, isNot);
+        }
+
+        // Handle non-aggregate conditions
+        String[] partsByOperator = null;
+        QueryParser.Operator operator = null;
         String upperRemaining = remainingCondition.toUpperCase();
+
         if (upperRemaining.contains(" IS NOT NULL")) {
             partsByOperator = remainingCondition.split("\\s*IS NOT NULL\\s*", 2);
             operator = QueryParser.Operator.IS_NOT_NULL;
@@ -357,42 +398,35 @@ class ConditionParser {
         String rightColumn = null;
         Object value = null;
 
-        if (isAggregate) {
-            if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
-                throw new IllegalArgumentException("LIKE and NOT LIKE are not supported with aggregate functions: " + conditionWithoutNot);
+        Class<?> columnType = getColumnType(column, columnTypes);
+        if (columnType == null) {
+            LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
+                    new Object[]{column, columnTypes.keySet()});
+            throw new IllegalArgumentException("Unknown column: " + column);
+        }
+
+        // Check if rightOperand is a column name, especially for ON clauses
+        if (rightOperand.matches("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
+            rightColumn = normalizeColumnName(rightOperand, isOnClause ? null : tableName);
+            Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
+            if (rightColumnType != null) {
+                if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
+                    throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column comparisons: " + conditionWithoutNot);
+                }
+                LOGGER.log(Level.FINE, "Parsed column comparison condition: left={0}, right={1}, operator={2}, conjunction={3}",
+                        new Object[]{column, rightColumn, operator, conjunction});
+                return new Condition(column, rightColumn, operator, conjunction, isNot);
             }
-            value = QueryParser.parseConditionValue(column, rightOperand, Double.class);
+        }
+
+        if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
+            if (!rightOperand.startsWith("'") || !rightOperand.endsWith("'")) {
+                throw new IllegalArgumentException("LIKE pattern must be a string literal: " + rightOperand);
+            }
+            String pattern = rightOperand.substring(1, rightOperand.length() - 1);
+            value = QueryParser.convertLikePatternToRegex(pattern);
         } else {
-            Class<?> columnType = getColumnType(column, columnTypes);
-            if (columnType == null) {
-                LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
-                        new Object[]{column, columnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column: " + column);
-            }
-
-            // Check if rightOperand is a column name, especially for ON clauses
-            if (rightOperand.matches("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
-                rightColumn = normalizeColumnName(rightOperand, isOnClause ? null : tableName);
-                Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
-                if (rightColumnType != null) {
-                    if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
-                        throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column comparisons: " + conditionWithoutNot);
-                    }
-                    LOGGER.log(Level.FINE, "Parsed column comparison condition: left={0}, right={1}, operator={2}, conjunction={3}",
-                            new Object[]{column, rightColumn, operator, conjunction});
-                    return new Condition(column, rightColumn, operator, conjunction, isNot);
-                }
-            }
-
-            if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
-                if (!rightOperand.startsWith("'") || !rightOperand.endsWith("'")) {
-                    throw new IllegalArgumentException("LIKE pattern must be a string literal: " + rightOperand);
-                }
-                String pattern = rightOperand.substring(1, rightOperand.length() - 1);
-                value = QueryParser.convertLikePatternToRegex(pattern);
-            } else {
-                value = QueryParser.parseConditionValue(column, rightOperand, columnType);
-            }
+            value = QueryParser.parseConditionValue(column, rightOperand, columnType);
         }
 
         // Validate that value is not an Operator

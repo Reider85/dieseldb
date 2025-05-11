@@ -303,7 +303,6 @@ class SelectQueryParser {
                     havingStr = havingSplit[1].trim();
                 }
                 groupBy = groupByParser.parseGroupByClause(groupByPart, mainTable.getName());
-                LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
             }
         }
 
@@ -312,12 +311,14 @@ class SelectQueryParser {
             remaining = groupBySplit[0].trim();
             if (groupBySplit.length > 1 && !groupBySplit[1].trim().isEmpty()) {
                 String groupByPart = groupBySplit[1].trim();
+                LOGGER.log(Level.FINE, "GroupBy part: {0}", groupByPart);
                 String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
-                        ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
+                        ? groupByPart.split("(?i)\\s*HAVING\\s+", 2)
                         : new String[]{groupByPart, ""};
                 groupByPart = havingSplit[0].trim();
                 if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
                     havingStr = havingSplit[1].trim();
+                    LOGGER.log(Level.FINE, "HAVING clause: {0}", havingStr);
                 }
                 groupBy = groupByParser.parseGroupByClause(groupByPart, mainTable.getName());
                 LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
