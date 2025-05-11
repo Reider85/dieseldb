@@ -54,6 +54,18 @@ class ConditionParser {
             return new ArrayList<>();
         }
 
+        // For ON clauses, try parsing as a single condition first (likely a column comparison)
+        if (isOnClause) {
+            try {
+                Condition singleCondition = parseSingleCondition(cleanConditionStr, null, combinedColumnTypes, originalQuery, isOnClause, tableName);
+                LOGGER.log(Level.FINE, "Parsed ON clause as single condition: {0}", singleCondition);
+                return Collections.singletonList(singleCondition);
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.FINE, "ON clause not a simple condition, proceeding with full parsing: {0}", cleanConditionStr);
+                // Proceed with full parsing if not a simple column comparison
+            }
+        }
+
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
@@ -114,14 +126,14 @@ class ConditionParser {
                                     new Object[]{nestingLevel + 1, subConditionStr, isNot});
                             String conjunction = determineConjunctionAfter(cleanConditionStr, i);
                             List<Condition> subConditions;
-                            if (!subConditionStr.contains(" AND ") && !subConditionStr.contains(" OR ") && !subConditionStr.contains("(")) {
-                                // Parse as a single condition without recursion
-                                Condition singleCondition = parseSingleCondition(subConditionStr, null, combinedColumnTypes, originalQuery, isOnClause, tableName);
+                            // Try parsing as a single condition first
+                            try {
+                                Condition singleCondition = parseSingleCondition(subConditionStr, conjunction, combinedColumnTypes, originalQuery, isOnClause, tableName);
                                 subConditions = Collections.singletonList(singleCondition);
                                 conditions.add(new Condition(subConditions, conjunction, isNot));
                                 LOGGER.log(Level.FINE, "Added grouped condition with 1 subcondition, conjunction: {0}", conjunction);
-                            } else {
-                                // Recursively parse nested conditions
+                            } catch (IllegalArgumentException e) {
+                                // If not a single condition, parse recursively
                                 subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
                                 if (subConditions.isEmpty()) {
                                     throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);

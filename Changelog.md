@@ -132,3 +132,4 @@
 1.3.1.1 HAVING fixes retry 6
 1.3.1.2 HAVING fixes retry 7
 1.3.1.3 ConditionParser in simple queries fix
+1.3.1.4 ConditionParser in join queries fix
