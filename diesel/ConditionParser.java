@@ -72,7 +72,7 @@ class ConditionParser {
             if (!inQuotes) {
                 if (c == '(') {
                     String tokenSoFar = currentToken.toString().trim().toUpperCase();
-                    if (tokenSoFar.matches("COUNT|MIN|MAX|AVG|SUM")) {
+                    if (tokenSoFar != null && !tokenSoFar.isEmpty() && tokenSoFar.matches("COUNT|MIN|MAX|AVG|SUM")) {
                         inAggregateFunction = true;
                         currentCondition.append(tokenSoFar).append(c);
                         currentToken = new StringBuilder();
@@ -103,16 +103,33 @@ class ConditionParser {
                             if (subConditionStr.isEmpty()) {
                                 throw new IllegalArgumentException("Empty grouped condition in clause: " + cleanConditionStr);
                             }
+                            // Remove outer parentheses for grouped condition
+                            if (subConditionStr.startsWith("(") && subConditionStr.endsWith(")")) {
+                                subConditionStr = subConditionStr.substring(1, subConditionStr.length() - 1).trim();
+                            }
+                            if (subConditionStr.isEmpty()) {
+                                throw new IllegalArgumentException("Empty grouped condition after removing parentheses: " + cleanConditionStr);
+                            }
                             LOGGER.log(Level.FINE, "Parsing nested condition at level {0}: {1}, isNot: {2}",
                                     new Object[]{nestingLevel + 1, subConditionStr, isNot});
-                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
-                            if (subConditions.isEmpty()) {
-                                throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);
-                            }
                             String conjunction = determineConjunctionAfter(cleanConditionStr, i);
-                            conditions.add(new Condition(subConditions, conjunction, isNot));
-                            LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}",
-                                    new Object[]{subConditions.size(), conjunction});
+                            List<Condition> subConditions;
+                            if (!subConditionStr.contains(" AND ") && !subConditionStr.contains(" OR ") && !subConditionStr.contains("(")) {
+                                // Parse as a single condition without recursion
+                                Condition singleCondition = parseSingleCondition(subConditionStr, null, combinedColumnTypes, originalQuery, isOnClause, tableName);
+                                subConditions = Collections.singletonList(singleCondition);
+                                conditions.add(new Condition(subConditions, conjunction, isNot));
+                                LOGGER.log(Level.FINE, "Added grouped condition with 1 subcondition, conjunction: {0}", conjunction);
+                            } else {
+                                // Recursively parse nested conditions
+                                subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
+                                if (subConditions.isEmpty()) {
+                                    throw new IllegalArgumentException("No valid conditions found in grouped clause: " + subConditionStr);
+                                }
+                                conditions.add(new Condition(subConditions, conjunction, isNot));
+                                LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}",
+                                        new Object[]{subConditions.size(), conjunction});
+                            }
                             currentCondition = new StringBuilder();
                             continue;
                         } else {
