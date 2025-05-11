@@ -313,7 +313,7 @@ class SelectQueryParser {
                 String groupByPart = groupBySplit[1].trim();
                 LOGGER.log(Level.FINE, "GroupBy part: {0}", groupByPart);
                 String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
-                        ? groupByPart.split("(?i)\\s*HAVING\\s+", 2)
+                        ? groupByPart.split("(?i)\\s*HAVING\\s*", 2)
                         : new String[]{groupByPart, ""};
                 groupByPart = havingSplit[0].trim();
                 if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {

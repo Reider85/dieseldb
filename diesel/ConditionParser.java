@@ -252,8 +252,8 @@ class ConditionParser {
             conditionColumn = conditionWithoutNot.substring(0, aggMatcher.end()).trim();
             aggEndIndex = aggMatcher.end();
             isAggregate = true;
-        } else if (conditionWithoutNot.matches("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\*.*")) {
-            throw new IllegalArgumentException("Malformed aggregate function in condition: " + conditionWithoutNot);
+        } else if (conditionWithoutNot.matches("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\*.*")) {
+            throw new IllegalArgumentException("Invalid aggregate function syntax: expected parentheses, e.g., COUNT(*), got: " + conditionWithoutNot);
         } else {
             String[] parts = conditionWithoutNot.split("\\s+", 2);
             conditionColumn = normalizeColumnName(parts[0].trim(), isOnClause ? null : tableName);
@@ -332,7 +332,8 @@ class ConditionParser {
             }
 
             String rightOperand = partsByOperator[1].trim();
-            Object value = QueryParser.parseConditionValue(conditionColumn, rightOperand, Long.class);
+            Class<?> valueType = conditionColumn.toUpperCase().startsWith("COUNT") ? Long.class : Double.class;
+            Object value = QueryParser.parseConditionValue(conditionColumn, rightOperand, valueType);
             LOGGER.log(Level.FINE, "Parsed aggregate condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
                     new Object[]{conditionColumn, operator, value, isNot, conjunction});
             return new Condition(conditionColumn, value, operator, conjunction, isNot);
