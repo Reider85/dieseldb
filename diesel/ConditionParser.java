@@ -257,15 +257,19 @@ class ConditionParser {
 
         if (conditionWithoutNot.toUpperCase().contains(" IN ")) {
             String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
-            Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+)\\s+IN\\s*\\(([^)]+)\\)");
+            LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
+
+            // Modified regex to optionally handle missing parentheses
+            Pattern inPattern = Pattern.compile("(?i)((?:\\w+\\.)?\\w+)\\s+IN\\s*(?:\\(([^)]+)\\)|([^)]+))");
             Matcher inMatcher = inPattern.matcher(originalCondition);
             if (!inMatcher.find()) {
-                LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}", originalCondition);
+                LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}, original query: {1}",
+                        new Object[]{originalCondition, originalQuery});
                 throw new IllegalArgumentException("Invalid IN clause: " + originalCondition);
             }
 
             String parsedColumn = normalizeColumnName(inMatcher.group(1).trim(), isOnClause ? null : tableName);
-            String valuesPart = inMatcher.group(2).trim();
+            String valuesPart = inMatcher.group(2) != null ? inMatcher.group(2).trim() : inMatcher.group(3).trim();
 
             if (valuesPart.isEmpty()) {
                 throw new IllegalArgumentException("IN clause cannot be empty");

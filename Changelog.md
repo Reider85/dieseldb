@@ -120,3 +120,4 @@
 1.2.0 HAVING fixes
 1.2.1 refactoring inner class
 1.2.2 refactoring QueryParser
+1.2.3 IN fix after refactoring
