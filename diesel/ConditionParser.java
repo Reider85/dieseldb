@@ -8,14 +8,24 @@ import java.util.regex.Pattern;
 
 class ConditionParser {
     private static final Logger LOGGER = Logger.getLogger(ConditionParser.class.getName());
+    private static final int MAX_RECURSION_DEPTH = 100; // Prevent infinite recursion
 
     List<Condition> parseConditions(String conditionStr, String tableName, Database database, String originalQuery, boolean isOnClause, Map<String, Class<?>> combinedColumnTypes) {
+        return parseConditions(conditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes, 0);
+    }
+
+    private List<Condition> parseConditions(String conditionStr, String tableName, Database database, String originalQuery, boolean isOnClause, Map<String, Class<?>> combinedColumnTypes, int depth) {
+        if (depth > MAX_RECURSION_DEPTH) {
+            LOGGER.log(Level.SEVERE, "Maximum recursion depth exceeded while parsing condition: {0}", conditionStr);
+            throw new IllegalArgumentException("Maximum recursion depth exceeded in condition parsing");
+        }
+
         Table table = database.getTable(tableName);
         if (table == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
-        LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}, isOnClause: {2}, condition: {3}",
-                new Object[]{tableName, combinedColumnTypes, isOnClause, conditionStr});
+        LOGGER.log(Level.FINE, "Parsing conditions for table {0}, column types: {1}, isOnClause: {2}, condition: {3}, depth: {4}",
+                new Object[]{tableName, combinedColumnTypes, isOnClause, conditionStr, depth});
 
         String cleanConditionStr = conditionStr.trim();
         if (cleanConditionStr.isEmpty()) {
@@ -60,10 +70,10 @@ class ConditionParser {
         }
 
         // Parse the condition string into a list of conditions
-        return parseComplexConditions(cleanConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
+        return parseComplexConditions(cleanConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes, depth + 1);
     }
 
-    private List<Condition> parseComplexConditions(String conditionStr, String tableName, Database database, String originalQuery, boolean isOnClause, Map<String, Class<?>> combinedColumnTypes) {
+    private List<Condition> parseComplexConditions(String conditionStr, String tableName, Database database, String originalQuery, boolean isOnClause, Map<String, Class<?>> combinedColumnTypes, int depth) {
         List<Condition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
@@ -85,7 +95,6 @@ class ConditionParser {
             }
             if (c == '(') {
                 parenDepth++;
-                // Check if this is part of an IN clause
                 String current = currentCondition.toString().trim().toUpperCase();
                 if (parenDepth == 1 && current.endsWith(" IN")) {
                     inInClause = true;
@@ -102,7 +111,6 @@ class ConditionParser {
                 }
                 if (parenDepth == 0 && inInClause) {
                     inInClause = false;
-                    // Handle the entire IN condition
                     String subConditionStr = currentCondition.toString().trim();
                     if (!subConditionStr.isEmpty()) {
                         boolean isNot = subConditionStr.toUpperCase().startsWith("NOT ");
@@ -126,10 +134,17 @@ class ConditionParser {
                             subConditionStr = subConditionStr.substring(1, subConditionStr.length() - 1).trim();
                         }
                         if (!subConditionStr.isEmpty()) {
-                            List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes);
-                            if (!subConditions.isEmpty()) {
-                                conditions.add(new Condition(subConditions, lastConjunction, isNot));
-                                LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}", new Object[]{subConditions.size(), lastConjunction});
+                            // Check if the condition is an aggregate function
+                            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
+                            Matcher aggMatcher = aggPattern.matcher(subConditionStr);
+                            if (aggMatcher.matches()) {
+                                conditions.add(parseSingleCondition(subConditionStr, lastConjunction, combinedColumnTypes, originalQuery, isOnClause, tableName));
+                            } else {
+                                List<Condition> subConditions = parseConditions(subConditionStr, tableName, database, originalQuery, isOnClause, combinedColumnTypes, depth + 1);
+                                if (!subConditions.isEmpty()) {
+                                    conditions.add(new Condition(subConditions, lastConjunction, isNot));
+                                    LOGGER.log(Level.FINE, "Added grouped condition with {0} subconditions, conjunction: {1}", new Object[]{subConditions.size(), lastConjunction});
+                                }
                             }
                         }
                         currentCondition = new StringBuilder();
@@ -195,7 +210,7 @@ class ConditionParser {
             return new ArrayList<>();
         }
         LOGGER.log(Level.FINE, "Passing HAVING clause to parseConditions: {0}", havingStr);
-        List<Condition> havingConditions = parseConditions(havingStr, tableName, database, originalQuery, false, combinedColumnTypes);
+        List<Condition> havingConditions = parseConditions(havingStr, tableName, database, originalQuery, false, combinedColumnTypes, 0);
 
         for (Condition condition : havingConditions) {
             validateHavingCondition(condition, aggregates, groupBy, combinedColumnTypes);

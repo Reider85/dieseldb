@@ -137,3 +137,4 @@
 1.3.1.6 JOIN fix
 1.3.1.7 JOIN fix
 1.3.1.8 Splitter
+1.3.1.9 HAVING fixes retry 8
