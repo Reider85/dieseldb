@@ -144,3 +144,4 @@
 1.3.2.3 SelectQueryParser refactoring
 1.3.2.4 SelectQueryParser refactoring
 1.3.2.5 SelectQueryParser refactoring
+1.3.2.6 JOIN fix

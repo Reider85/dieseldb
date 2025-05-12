@@ -141,11 +141,14 @@ class SelectQueryParser {
         if (mainTable == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
-        combinedColumnTypes.putAll(mainTable.getColumnTypes().entrySet().stream()
+        Map<String, Class<?>> mainTableColumns = mainTable.getColumnTypes();
+        LOGGER.log(Level.FINE, "Main table {0} columns: {1}", new Object[]{tableName, mainTableColumns});
+        combinedColumnTypes.putAll(mainTableColumns.entrySet().stream()
                 .collect(Collectors.toMap(
-                        e -> mainTable.getName() + "." + e.getKey(),
+                        e -> (mainTable.getName() + "." + e.getKey()).toUpperCase().trim(),
                         Map.Entry::getValue
                 )));
+        LOGGER.log(Level.FINE, "Initial combinedColumnTypes for {0}: {1}", new Object[]{tableName, combinedColumnTypes});
 
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
@@ -153,18 +156,24 @@ class SelectQueryParser {
             JoinInfo joinInfo = parseJoin(joinTypeStr, joinPart, tableName, database, combinedColumnTypes);
             joins.add(joinInfo);
             Table joinTable = database.getTable(joinInfo.tableName);
-            // Добавляем столбцы с префиксом имени присоединяемой таблицы
-            combinedColumnTypes.putAll(joinTable.getColumnTypes().entrySet().stream()
+            Map<String, Class<?>> joinTableColumns = joinTable.getColumnTypes();
+            LOGGER.log(Level.FINE, "Join table {0} columns: {1}", new Object[]{joinInfo.tableName, joinTableColumns});
+            combinedColumnTypes.putAll(joinTableColumns.entrySet().stream()
                     .collect(Collectors.toMap(
-                            e -> joinTable.getName() + "." + e.getKey(),
-                            Map.Entry::getValue
+                            e -> (joinTable.getName() + "." + e.getKey()).toUpperCase().trim(),
+                            Map.Entry::getValue,
+                            (existing, replacement) -> {
+                                LOGGER.log(Level.WARNING, "Duplicate column key detected: {0}", existing);
+                                return existing;
+                            }
                     )));
             LOGGER.log(Level.FINE, "Updated combinedColumnTypes after adding {0}: {1}",
-                    new Object[]{joinTable.getName(), combinedColumnTypes.keySet()});
+                    new Object[]{joinTable.getName(), combinedColumnTypes});
             tableName = joinInfo.tableName;
         }
 
         String remaining = joinParts.get(joinParts.size() - 1);
+        LOGGER.log(Level.FINE, "Final combinedColumnTypes: {0}", combinedColumnTypes);
         return new ParsedTableAndJoins(mainTable, joins, combinedColumnTypes, remaining);
     }
 
@@ -181,7 +190,6 @@ class SelectQueryParser {
                 throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
             }
         } else {
-            // Split on 'ON' and stop before WHERE, LIMIT, etc.
             Pattern onPattern = Pattern.compile("(?i)ON\\s+((?:(?!\\s+(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|HAVING|JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN)).)*)");
             Matcher onMatcher = onPattern.matcher(joinPart);
             if (!onMatcher.find()) {
@@ -192,6 +200,7 @@ class SelectQueryParser {
             if (joinTableName.isEmpty()) {
                 throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing table name");
             }
+            LOGGER.log(Level.FINE, "Before parsing ON conditions: combinedColumnTypes={0}", combinedColumnTypes.keySet());
             onConditions = conditionParser.parseConditions(onCondition, leftTable, database, joinPart, true, combinedColumnTypes);
             for (Condition cond : onConditions) {
                 validateJoinCondition(cond, leftTable, joinTableName);
@@ -203,8 +212,6 @@ class SelectQueryParser {
         if (joinTable == null) {
             throw new IllegalArgumentException("Join table not found: " + joinTableName);
         }
-        combinedColumnTypes.putAll(joinTable.getColumnTypes());
-        LOGGER.log(Level.FINE, "Parsed {0}: table={1}", new Object[]{joinTypeStr, joinTableName});
 
         return new JoinInfo(leftTable, joinTableName, null, null, joinType, onConditions);
     }

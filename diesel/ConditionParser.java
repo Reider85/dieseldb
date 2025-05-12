@@ -552,6 +552,9 @@ class ConditionParser {
         String rightColumn = null;
         Object value = null;
 
+        LOGGER.log(Level.FINE, "Processing condition: leftOperand={0}, rightOperand={1}, operator={2}, isOnClause={3}, tableName={4}",
+                new Object[]{leftOperand, rightOperand, operator, isOnClause, tableName});
+
         if (operator == QueryParser.Operator.IS_NULL || operator == QueryParser.Operator.IS_NOT_NULL) {
             Class<?> columnType = getColumnType(column, columnTypes);
             if (columnType == null) {
@@ -587,9 +590,11 @@ class ConditionParser {
 
         if (rightOperand.matches("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
             rightColumn = NormalizationUtils.normalizeColumnName(rightOperand, isOnClause ? null : tableName);
-            LOGGER.log(Level.FINE, "Checking right column: {0}, normalized: {1}", new Object[]{rightOperand, rightColumn});
+            LOGGER.log(Level.FINE, "Normalized rightColumn: {0}, original rightOperand: {1}, isOnClause: {2}, tableName: {3}",
+                    new Object[]{rightColumn, rightOperand, isOnClause, tableName});
             Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
-            LOGGER.log(Level.FINE, "Right column type for {0}: {1}", new Object[]{rightColumn, rightColumnType});
+            LOGGER.log(Level.FINE, "Right column type for {0}: {1}, available columnTypes: {2}",
+                    new Object[]{rightColumn, rightColumnType, columnTypes});
             if (rightColumnType != null) {
                 if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
                     throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column comparisons: " + normalizedCondition);
@@ -597,6 +602,9 @@ class ConditionParser {
                 LOGGER.log(Level.FINE, "Parsed column comparison condition: left={0}, right={1}, operator={2}, conjunction={3}",
                         new Object[]{column, rightColumn, operator, conjunction});
                 return new Condition(column, rightColumn, operator, conjunction, isNot);
+            } else {
+                LOGGER.log(Level.WARNING, "Right operand {0} looks like a column but not found in columnTypes: {1}",
+                        new Object[]{rightColumn, columnTypes.keySet()});
             }
         }
 
@@ -614,12 +622,6 @@ class ConditionParser {
                         new Object[]{column, rightOperand, columnType, e.getMessage()});
                 throw new IllegalArgumentException("Failed to parse condition value: " + rightOperand, e);
             }
-        }
-
-        if (value instanceof QueryParser.Operator) {
-            LOGGER.log(Level.SEVERE, "Invalid condition: value is an Operator: {0} in condition: {1}",
-                    new Object[]{value, normalizedCondition});
-            throw new IllegalArgumentException("Invalid condition: value cannot be an Operator: " + normalizedCondition);
         }
 
         LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, rightColumn={3}, not={4}, conjunction={5}",
@@ -644,22 +646,16 @@ class ConditionParser {
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> columnTypes) {
         if (column == null || columnTypes == null) {
+            LOGGER.log(Level.WARNING, "Invalid input for getColumnType: column={0}, columnTypes={1}",
+                    new Object[]{column, columnTypes});
             return null;
         }
-        // Сначала проверяем полное имя столбца (например, USER_DETAILS.USER_ID)
-        if (columnTypes.containsKey(column)) {
-            return columnTypes.get(column);
-        }
-        // В качестве запасного варианта проверяем неквалифицированное имя (например, USER_ID)
-        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-        for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
-                return entry.getValue();
-            }
-        }
-        return null;
+        String normalizedColumn = column.trim().toUpperCase();
+        Class<?> columnType = columnTypes.get(normalizedColumn);
+        LOGGER.log(Level.FINE, "getColumnType: column={0}, normalized={1}, type={2}, available columns={3}",
+                new Object[]{column, normalizedColumn, columnType, columnTypes.keySet()});
+        return columnType;
     }
-
     private String determineConjunctionAfter(String conditionStr, int index) {
         if (index + 1 >= conditionStr.length()) {
             return null;
