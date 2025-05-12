@@ -23,7 +23,7 @@ class SelectQueryParser {
         LOGGER.log(Level.FINE, "Split parts: selectPart={0}, tableAndJoins={1}", new Object[]{parts[0], parts[1]});
 
         String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, original.indexOf("FROM")).trim();
-        List<String> selectItems = splitSelectItems(selectPartOriginal);
+        List<String> selectItems = Splitter.splitSelectItems(selectPartOriginal);
 
         List<String> columns = new ArrayList<>();
         List<AggregateFunction> aggregates = new ArrayList<>();
@@ -410,53 +410,6 @@ class SelectQueryParser {
                 new Object[]{mainTable.getName(), normalizedColumns, aggregates, joins, conditions, groupBy, havingConditions, orderBy, limit, offset});
 
         return new SelectQuery(normalizedColumns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy, groupBy, havingConditions);
-    }
-
-    private List<String> splitSelectItems(String selectPart) {
-        List<String> items = new ArrayList<>();
-        StringBuilder currentItem = new StringBuilder();
-        boolean inQuotes = false;
-        int parenDepth = 0;
-
-        for (int i = 0; i < selectPart.length(); i++) {
-            char c = selectPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentItem.append(c);
-                continue;
-            }
-            if (inQuotes) {
-                currentItem.append(c);
-                continue;
-            }
-            if (c == '(') {
-                parenDepth++;
-                currentItem.append(c);
-                continue;
-            }
-            if (c == ')') {
-                parenDepth--;
-                currentItem.append(c);
-                continue;
-            }
-            if (c == ',' && parenDepth == 0) {
-                String item = currentItem.toString().trim();
-                if (!item.isEmpty()) {
-                    items.add(item);
-                }
-                currentItem = new StringBuilder();
-                continue;
-            }
-            currentItem.append(c);
-        }
-
-        String lastItem = currentItem.toString().trim();
-        if (!lastItem.isEmpty()) {
-            items.add(lastItem);
-        }
-
-        LOGGER.log(Level.FINE, "Split select items: {0}", items);
-        return items;
     }
 
     private Integer parseLimitClause(String limitClause) {

@@ -333,7 +333,7 @@ class ConditionParser {
                 throw new IllegalArgumentException("IN clause cannot be empty");
             }
 
-            List<String> valueStrings = splitInValues(valuesPart);
+            List<String> valueStrings = Splitter.splitInValues(valuesPart);
             LOGGER.log(Level.FINE, "Split IN values: {0}", Arrays.toString(valueStrings.toArray()));
 
             List<Object> inValues = new ArrayList<>();
@@ -556,37 +556,6 @@ class ConditionParser {
         }
         // Extract the exact substring from the original query
         return normalizedQuery.substring(startIdx, startIdx + normalizedCondition.length());
-    }
-
-    private List<String> splitInValues(String valuesPart) {
-        List<String> values = new ArrayList<>();
-        StringBuilder currentValue = new StringBuilder();
-        boolean inQuotes = false;
-
-        for (int i = 0; i < valuesPart.length(); i++) {
-            char c = valuesPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentValue.append(c);
-                continue;
-            }
-            if (!inQuotes && c == ',') {
-                String value = currentValue.toString().trim();
-                if (!value.isEmpty()) {
-                    values.add(value);
-                }
-                currentValue = new StringBuilder();
-                continue;
-            }
-            currentValue.append(c);
-        }
-
-        String lastValue = currentValue.toString().trim();
-        if (!lastValue.isEmpty()) {
-            values.add(lastValue);
-        }
-
-        return values;
     }
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> columnTypes) {

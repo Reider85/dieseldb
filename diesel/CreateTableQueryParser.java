@@ -20,7 +20,7 @@ class CreateTableQueryParser {
         String tableName = original.substring(0, firstParen).replace("CREATE TABLE", "").trim();
         String columnsPart = original.substring(firstParen + 1, lastParen).trim();
 
-        List<String> columnDefs = splitColumnDefinitions(columnsPart);
+        List<String> columnDefs = Splitter.splitColumnDefinitions(columnsPart);
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         Map<String, Sequence> sequences = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
@@ -120,41 +120,5 @@ class CreateTableQueryParser {
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
     }
 
-    private List<String> splitColumnDefinitions(String columnsPart) {
-        List<String> columnDefs = new ArrayList<>();
-        StringBuilder currentDef = new StringBuilder();
-        int parenDepth = 0;
-        boolean inQuotes = false;
 
-        for (int i = 0; i < columnsPart.length(); i++) {
-            char c = columnsPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentDef.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (c == ',' && parenDepth == 0) {
-                    String def = currentDef.toString().trim();
-                    if (!def.isEmpty()) {
-                        columnDefs.add(def);
-                    }
-                    currentDef = new StringBuilder();
-                    continue;
-                }
-            }
-            currentDef.append(c);
-        }
-
-        String lastDef = currentDef.toString().trim();
-        if (!lastDef.isEmpty()) {
-            columnDefs.add(lastDef);
-        }
-
-        return columnDefs;
-    }
 }
