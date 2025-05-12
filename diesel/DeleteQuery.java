@@ -9,9 +9,9 @@ import java.util.stream.Collectors;
 
 class DeleteQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(DeleteQuery.class.getName());
-    private final List<Condition> conditions;
+    private final List<QueryParser.Condition> conditions;
 
-    public DeleteQuery(List<Condition> conditions) {
+    public DeleteQuery(List<QueryParser.Condition> conditions) {
         this.conditions = conditions;
     }
 
@@ -25,7 +25,7 @@ class DeleteQuery implements Query<Void> {
 
         try {
             if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
-                Condition condition = conditions.get(0);
+                QueryParser.Condition condition = conditions.get(0);
                 Index index = table.getIndex(condition.column);
                 if (index instanceof HashIndex || index instanceof UniqueIndex) {
                     Object conditionValue = convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
@@ -38,7 +38,7 @@ class DeleteQuery implements Query<Void> {
                     LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
                 }
             } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
-                Condition condition = conditions.get(0);
+                QueryParser.Condition condition = conditions.get(0);
                 Index index = table.getIndex(condition.column);
                 if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
                     for (Object value : condition.inValues) {
@@ -119,11 +119,11 @@ class DeleteQuery implements Query<Void> {
         }
     }
 
-    private boolean evaluateConditions(Map<String, Object> row, List<Condition> conditions, Map<String, Class<?>> columnTypes) {
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
         boolean result = true;
         String lastConjunction = null;
 
-        for (Condition condition : conditions) {
+        for (QueryParser.Condition condition : conditions) {
             boolean conditionResult = evaluateCondition(row, condition, columnTypes);
 
             if (lastConjunction == null) {
@@ -140,7 +140,7 @@ class DeleteQuery implements Query<Void> {
         return result;
     }
 
-    private boolean evaluateCondition(Map<String, Object> row, Condition condition, Map<String, Class<?>> columnTypes) {
+    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
         if (condition.isGrouped()) {
             boolean subResult = evaluateConditions(row, condition.subConditions, columnTypes);
             boolean result = condition.not ? !subResult : subResult;

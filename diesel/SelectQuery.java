@@ -7,26 +7,24 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
     private final List<String> columns;
-    private final List<AggregateFunction> aggregates;
-    private final List<Condition> conditions;
-    private final List<JoinInfo> joins;
+    private final List<QueryParser.AggregateFunction> aggregates;
+    private final List<QueryParser.Condition> conditions;
+    private final List<QueryParser.JoinInfo> joins;
     private final String mainTableName;
     private final Integer limit;
     private final Integer offset;
-    private final List<OrderByInfo> orderBy;
+    private final List<QueryParser.OrderByInfo> orderBy;
     private final List<String> groupBy;
-    private final List<Condition> having;
 
-    public SelectQuery(List<String> columns, List<AggregateFunction> aggregates, List<Condition> conditions,
-                       List<JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
-                       List<OrderByInfo> orderBy, List<String> groupBy, List<Condition> having) {
+    public SelectQuery(List<String> columns, List<QueryParser.AggregateFunction> aggregates, List<QueryParser.Condition> conditions,
+                       List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
+                       List<QueryParser.OrderByInfo> orderBy, List<String> groupBy) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
         this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
         this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
@@ -36,7 +34,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         this.offset = offset;
         this.orderBy = orderBy != null ? new ArrayList<>(orderBy) : new ArrayList<>();
         this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
-        this.having = having != null ? new ArrayList<>(having) : new ArrayList<>();
     }
 
     @Override
@@ -48,7 +45,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         tables.put(mainTableName, table);
 
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>(table.getColumnTypes());
-        for (JoinInfo join : joins) {
+        for (QueryParser.JoinInfo join : joins) {
             Table joinTable = database.getTable(join.tableName);
             if (joinTable == null) {
                 throw new IllegalArgumentException("Join table not found: " + join.tableName);
@@ -68,7 +65,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 joinedRows.add(new HashMap<>() {{ put(mainTableName, mainRow); }});
             }
 
-            for (JoinInfo join : joins) {
+            for (QueryParser.JoinInfo join : joins) {
                 Table joinTable = tables.get(join.tableName);
                 List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
 
@@ -81,7 +78,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
                     String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
 
-                    Condition equalityCondition = join.onConditions.stream()
+                    QueryParser.Condition equalityCondition = join.onConditions.stream()
                             .filter(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison())
                             .findFirst()
                             .orElse(null);
@@ -109,10 +106,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
                         Map<String, Object> probeRow = currentJoin.get(probeTableName);
-                        if (probeRow == null) {
-                            LOGGER.log(Level.FINE, "Skipping hash join iteration: probeRow is null for probeTableName={0}", probeTableName);
-                            continue;
-                        }
                         Object probeKey = probeRow.get(probeColumn.split("\\.")[1]);
                         if (probeKey != null) {
                             List<Map<String, Object>> matches = hashTable.get(probeKey);
@@ -205,7 +198,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
 
                     // Compute aggregates for the group
-                    for (AggregateFunction agg : aggregates) {
+                    for (QueryParser.AggregateFunction agg : aggregates) {
                         String resultKey = agg.alias != null ? agg.alias : agg.toString();
                         if (agg.functionName.equals("COUNT")) {
                             // Compute COUNT for the group, always returning a Long for consistency
@@ -285,6 +278,41 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     resultRow.put(resultKey, null);
                                 }
                             }
+                        } else if (agg.functionName.equals("SUM")) {
+                            if (agg.column == null) {
+                                throw new IllegalArgumentException("SUM requires a column argument");
+                            }
+                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            List<Object> values = group.stream()
+                                    .map(row -> row.get(columnKey))
+                                    .filter(Objects::nonNull)
+                                    .collect(Collectors.toList());
+                            if (values.isEmpty()) {
+                                resultRow.put(resultKey, null);
+                            } else {
+                                BigDecimal sum = BigDecimal.ZERO;
+                                for (Object value : values) {
+                                    if (value instanceof Number) {
+                                        sum = sum.add(new BigDecimal(value.toString()));
+                                    }
+                                }
+                                Class<?> columnType = combinedColumnTypes.get(columnKey);
+                                if (columnType == Float.class) {
+                                    resultRow.put(resultKey, sum.floatValue());
+                                } else if (columnType == Double.class) {
+                                    resultRow.put(resultKey, sum.doubleValue());
+                                } else if (columnType == Integer.class) {
+                                    resultRow.put(resultKey, sum.intValue());
+                                } else if (columnType == Long.class) {
+                                    resultRow.put(resultKey, sum.longValue());
+                                } else if (columnType == Short.class) {
+                                    resultRow.put(resultKey, sum.shortValue());
+                                } else if (columnType == Byte.class) {
+                                    resultRow.put(resultKey, sum.byteValue());
+                                } else {
+                                    resultRow.put(resultKey, sum);
+                                }
+                            }
                         } else {
                             throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                         }
@@ -299,17 +327,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         }
                     }
 
-                    // Apply HAVING conditions
-                    if (!having.isEmpty()) {
-                        if (!evaluateHavingConditions(resultRow, having, combinedColumnTypes)) {
-                            continue;
-                        }
-                    }
-
                     finalRows.add(resultRow);
                 }
-                LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, HAVING with {1} conditions, produced {2} groups",
-                        new Object[]{groupBy.size(), having.size(), finalRows.size()});
+                LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
+                        new Object[]{groupBy.size(), finalRows.size()});
             } else {
                 finalRows = filteredRows;
             }
@@ -336,7 +357,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (!aggregates.isEmpty() && groupBy.isEmpty()) {
                 // Compute aggregates for the entire result set (no GROUP BY)
                 Map<String, Object> resultRow = new HashMap<>();
-                for (AggregateFunction agg : aggregates) {
+                for (QueryParser.AggregateFunction agg : aggregates) {
                     String resultKey = agg.alias != null ? agg.alias : agg.toString();
                     if (agg.functionName.equals("COUNT")) {
                         long count;
@@ -415,6 +436,41 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 resultRow.put(resultKey, null);
                             }
                         }
+                    } else if (agg.functionName.equals("SUM")) {
+                        if (agg.column == null) {
+                            throw new IllegalArgumentException("SUM requires a column argument");
+                        }
+                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        List<Object> values = selectedRows.stream()
+                                .map(row -> row.get(columnKey))
+                                .filter(Objects::nonNull)
+                                .collect(Collectors.toList());
+                        if (values.isEmpty()) {
+                            resultRow.put(resultKey, null);
+                        } else {
+                            BigDecimal sum = BigDecimal.ZERO;
+                            for (Object value : values) {
+                                if (value instanceof Number) {
+                                    sum = sum.add(new BigDecimal(value.toString()));
+                                }
+                            }
+                            Class<?> columnType = combinedColumnTypes.get(columnKey);
+                            if (columnType == Float.class) {
+                                resultRow.put(resultKey, sum.floatValue());
+                            } else if (columnType == Double.class) {
+                                resultRow.put(resultKey, sum.doubleValue());
+                            } else if (columnType == Integer.class) {
+                                resultRow.put(resultKey, sum.intValue());
+                            } else if (columnType == Long.class) {
+                                resultRow.put(resultKey, sum.longValue());
+                            } else if (columnType == Short.class) {
+                                resultRow.put(resultKey, sum.shortValue());
+                            } else if (columnType == Byte.class) {
+                                resultRow.put(resultKey, sum.byteValue());
+                            } else {
+                                resultRow.put(resultKey, sum);
+                            }
+                        }
                     } else {
                         throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                     }
@@ -427,8 +483,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
 
-            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, having {5}, limit={6}, offset={7}, orderBy={8}",
-                    new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, having, limit, offset, orderBy});
+            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, limit={5}, offset={6}, orderBy={7}",
+                    new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, limit, offset, orderBy});
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -437,91 +493,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
-    private boolean evaluateHavingConditions(Map<String, Object> row, List<Condition> having, Map<String, Class<?>> combinedColumnTypes) {
-        boolean result = true;
-        String lastConjunction = null;
-
-        for (Condition condition : having) {
-            boolean conditionResult = evaluateHavingCondition(row, condition, combinedColumnTypes);
-            if (lastConjunction == null) {
-                result = conditionResult;
-            } else if (lastConjunction.equals("AND")) {
-                result = result && conditionResult;
-            } else if (lastConjunction.equals("OR")) {
-                result = result || conditionResult;
-            }
-            lastConjunction = condition.conjunction;
-        }
-
-        return result;
-    }
-
-    private boolean evaluateHavingCondition(Map<String, Object> row, Condition condition, Map<String, Class<?>> combinedColumnTypes) {
-        if (condition.isGrouped()) {
-            boolean subResult = evaluateHavingConditions(row, condition.subConditions, combinedColumnTypes);
-            return condition.not ? !subResult : subResult;
-        }
-
-        // Pattern to match aggregate functions like COUNT(*), MIN(column), etc.
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)$");
-        Matcher aggMatcher = aggPattern.matcher(condition.column);
-
-        Object leftValue;
-        if (aggMatcher.matches()) {
-            // Handle aggregate function
-            String aggFunction = aggMatcher.group(1).toUpperCase();
-            String aggColumn = aggMatcher.group(2);
-            String aggKey = condition.column; // e.g., "COUNT(*)"
-            // Check if the aggregate has an alias or use the function string
-            for (AggregateFunction agg : aggregates) {
-                String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                if (aggKey.equalsIgnoreCase(agg.toString()) || (agg.alias != null && agg.alias.equalsIgnoreCase(condition.column))) {
-                    leftValue = row.get(resultKey);
-                    break;
-                }
-            }
-            leftValue = row.get(condition.column);
-            if (leftValue == null) {
-                LOGGER.log(Level.WARNING, "No value found for aggregate function in HAVING: {0}", condition.column);
-                return condition.not;
-            }
-        } else {
-            // Handle GROUP BY column
-            String unqualifiedColumn = condition.column.contains(".") ? condition.column.split("\\.")[1] : condition.column;
-            leftValue = row.get(unqualifiedColumn);
-            if (leftValue == null) {
-                LOGGER.log(Level.WARNING, "No value found for GROUP BY column in HAVING: {0}", condition.column);
-                return condition.not;
-            }
-        }
-
-        Object rightValue = condition.value;
-        if (rightValue == null) {
-            LOGGER.log(Level.WARNING, "No value specified for HAVING condition: {0}", condition);
-            return condition.not;
-        }
-
-        int comparison = compareValues(leftValue, rightValue);
-        boolean result;
-        switch (condition.operator) {
-            case EQUALS:
-                result = comparison == 0;
-                break;
-            case LESS_THAN:
-                result = comparison < 0;
-                break;
-            case GREATER_THAN:
-                result = comparison > 0;
-                break;
-            default:
-                throw new IllegalStateException("Unsupported operator in HAVING: " + condition.operator);
-        }
-
-        return condition.not ? !result : result;
-    }
-
-    private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<OrderByInfo> orderBy) {
-        for (OrderByInfo order : orderBy) {
+    private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
+        for (QueryParser.OrderByInfo order : orderBy) {
             String column = order.column.contains(".") ? order.column : mainTableName + "." + order.column;
             String columnAlias = column.contains(".") ? column.split("\\.")[1] : column;
             Object value1 = row1.get(columnAlias);
@@ -545,7 +518,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return 0;
     }
 
-    private boolean canUseHashJoin(JoinInfo join, Map<String, Class<?>> combinedColumnTypes) {
+    private boolean canUseHashJoin(QueryParser.JoinInfo join, Map<String, Class<?>> combinedColumnTypes) {
         if (join.joinType != QueryParser.JoinType.INNER &&
                 join.joinType != QueryParser.JoinType.LEFT_INNER &&
                 join.joinType != QueryParser.JoinType.RIGHT_INNER) {
@@ -555,12 +528,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 .anyMatch(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison());
     }
 
-    private List<Map<String, Object>> getIndexedRows(Table table, List<Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
+    private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
         if (conditions == null || conditions.isEmpty()) {
             return null;
         }
 
-        for (Condition condition : conditions) {
+        for (QueryParser.Condition condition : conditions) {
             if (condition.isGrouped() || condition.isColumnComparison()) {
                 continue;
             }
@@ -634,11 +607,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return flattened;
     }
 
-    private boolean evaluateConditions(Map<String, Object> row, List<Condition> conditions, Map<String, Class<?>> combinedColumnTypes) {
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes) {
         boolean result = true;
         String lastConjunction = null;
 
-        for (Condition condition : conditions) {
+        for (QueryParser.Condition condition : conditions) {
             boolean conditionResult = evaluateCondition(row, condition, combinedColumnTypes);
             if (lastConjunction == null) {
                 result = conditionResult;
@@ -653,10 +626,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return result;
     }
 
-    private boolean evaluateCondition(Map<String, Object> row, Condition condition, Map<String, Class<?>> combinedColumnTypes) {
-        LOGGER.log(Level.FINE, "Evaluating condition: column={0}, operator={1}, value={2}, rightColumn={3}, not={4}",
-                new Object[]{condition.column, condition.operator, condition.value, condition.rightColumn, condition.not});
-
+    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> combinedColumnTypes) {
         if (condition.isGrouped()) {
             boolean subResult = evaluateConditions(row, condition.subConditions, combinedColumnTypes);
             return condition.not ? !subResult : subResult;
@@ -666,28 +636,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             Object value = row.get(condition.column);
             boolean isNull = value == null;
             boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
-            LOGGER.log(Level.FINE, "Evaluated {0} condition: column={1}, value={2}, result={3}",
-                    new Object[]{condition.operator, condition.column, value, result});
             return condition.not ? !result : result;
         }
 
         if (condition.isInOperator()) {
             Object value = row.get(condition.column);
             if (value == null) {
-                LOGGER.log(Level.FINE, "IN condition: column {0} is null, returning {1}",
-                        new Object[]{condition.column, condition.not});
                 return condition.not;
             }
             boolean inResult = condition.inValues.stream().anyMatch(v -> valuesEqual(v, value));
-            LOGGER.log(Level.FINE, "Evaluated IN condition: column={0}, value={1}, inValues={2}, result={3}",
-                    new Object[]{condition.column, value, condition.inValues, inResult});
             return condition.not ? !inResult : inResult;
         }
 
         Object leftValue = row.get(condition.column);
         if (leftValue == null) {
-            LOGGER.log(Level.FINE, "Condition: column {0} is null, returning {1}",
-                    new Object[]{condition.column, condition.not});
             return condition.not;
         }
 
@@ -695,39 +657,24 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (condition.isColumnComparison()) {
             rightValue = row.get(condition.rightColumn);
             if (rightValue == null) {
-                LOGGER.log(Level.FINE, "Column comparison: right column {0} is null, returning {1}",
-                        new Object[]{condition.rightColumn, condition.not});
                 return condition.not;
             }
         } else {
             rightValue = condition.value;
         }
 
-        // Safeguard against invalid rightValue
-        if (rightValue instanceof QueryParser.Operator) {
-            LOGGER.log(Level.SEVERE, "Invalid condition: rightValue is an Operator: {0} for column {1}",
-                    new Object[]{rightValue, condition.column});
-            throw new IllegalArgumentException("Invalid condition: rightValue cannot be an Operator for column: " + condition.column);
-        }
-
+        int comparison;
         if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
             if (!(leftValue instanceof String) || !(rightValue instanceof String)) {
-                LOGGER.log(Level.WARNING, "LIKE/NOT LIKE condition: invalid types, left={0}, right={1}",
-                        new Object[]{leftValue.getClass(), rightValue.getClass()});
                 return condition.not;
             }
             String pattern = QueryParser.convertLikePatternToRegex((String) rightValue);
             boolean matches = Pattern.matches(pattern, (String) leftValue);
             boolean result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
-            LOGGER.log(Level.FINE, "Evaluated {0} condition: column={1}, value={2}, pattern={3}, result={4}",
-                    new Object[]{condition.operator, condition.column, leftValue, pattern, result});
             return condition.not ? !result : result;
         }
 
-        LOGGER.log(Level.FINE, "Comparing values: left={0} ({1}), right={2} ({3}), operator={4}",
-                new Object[]{leftValue, leftValue.getClass(), rightValue, rightValue == null ? "null" : rightValue.getClass(), condition.operator});
-
-        int comparison = compareValues(leftValue, rightValue);
+        comparison = compareValues(leftValue, rightValue);
         boolean result;
         switch (condition.operator) {
             case EQUALS:
@@ -746,19 +693,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 throw new IllegalStateException("Unsupported operator: " + condition.operator);
         }
 
-        LOGGER.log(Level.FINE, "Evaluated condition: column={0}, operator={1}, left={2}, right={3}, comparison={4}, result={5}",
-                new Object[]{condition.column, condition.operator, leftValue, rightValue, comparison, result});
         return condition.not ? !result : result;
     }
 
     private int compareValues(Object left, Object right) {
         if (left == null || right == null) {
             return left == right ? 0 : (left == null ? -1 : 1);
-        }
-
-        if (left instanceof QueryParser.Operator || right instanceof QueryParser.Operator) {
-            LOGGER.log(Level.SEVERE, "Invalid comparison: left={0}, right={1}", new Object[]{left, right});
-            throw new IllegalArgumentException("Cannot compare with Operator type: " + (left instanceof QueryParser.Operator ? left : right));
         }
 
         if (left instanceof Number && right instanceof Number) {
@@ -781,8 +721,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         } else if (left instanceof Character && right instanceof Character) {
             return ((Character) left).compareTo((Character) right);
         } else {
-            LOGGER.log(Level.SEVERE, "Incompatible types for comparison: left={0}, right={1}",
-                    new Object[]{left.getClass(), right.getClass()});
             throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
         }
     }
@@ -811,15 +749,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return Collections.unmodifiableList(columns);
     }
 
-    public List<AggregateFunction> getAggregates() {
+    public List<QueryParser.AggregateFunction> getAggregates() {
         return Collections.unmodifiableList(aggregates);
     }
 
-    public List<Condition> getConditions() {
+    public List<QueryParser.Condition> getConditions() {
         return Collections.unmodifiableList(conditions);
     }
 
-    public List<JoinInfo> getJoins() {
+    public List<QueryParser.JoinInfo> getJoins() {
         return Collections.unmodifiableList(joins);
     }
 
@@ -835,16 +773,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return offset;
     }
 
-    public List<OrderByInfo> getOrderBy() {
+    public List<QueryParser.OrderByInfo> getOrderBy() {
         return Collections.unmodifiableList(orderBy);
     }
 
     public List<String> getGroupBy() {
         return Collections.unmodifiableList(groupBy);
-    }
-
-    public List<Condition> getHaving() {
-        return Collections.unmodifiableList(having);
     }
 
     @Override
@@ -854,20 +788,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // Append columns and aggregates
         List<String> selectItems = new ArrayList<>();
         selectItems.addAll(columns);
-        selectItems.addAll(aggregates.stream().map(AggregateFunction::toString).toList());
+        selectItems.addAll(aggregates.stream().map(QueryParser.AggregateFunction::toString).toList());
         sb.append(String.join(", ", selectItems));
 
         // Append FROM clause
         sb.append(" FROM ").append(mainTableName);
 
         // Append JOIN clauses
-        for (JoinInfo join : joins) {
+        for (QueryParser.JoinInfo join : joins) {
             sb.append(" ").append(join.joinType.toString().replace("_", " ")).append(" ");
             sb.append(join.tableName);
             if (!join.onConditions.isEmpty()) {
                 sb.append(" ON ");
                 sb.append(join.onConditions.stream()
-                        .map(Condition::toString)
+                        .map(QueryParser.Condition::toString)
                         .collect(Collectors.joining(" ")));
             }
         }
@@ -876,7 +810,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (!conditions.isEmpty()) {
             sb.append(" WHERE ");
             sb.append(conditions.stream()
-                    .map(Condition::toString)
+                    .map(QueryParser.Condition::toString)
                     .collect(Collectors.joining(" ")));
         }
 
@@ -886,19 +820,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             sb.append(String.join(", ", groupBy));
         }
 
-        // Append HAVING clause
-        if (!having.isEmpty()) {
-            sb.append(" HAVING ");
-            sb.append(having.stream()
-                    .map(Condition::toString)
-                    .collect(Collectors.joining(" ")));
-        }
-
         // Append ORDER BY clause
         if (!orderBy.isEmpty()) {
             sb.append(" ORDER BY ");
             sb.append(orderBy.stream()
-                    .map(OrderByInfo::toString)
+                    .map(QueryParser.OrderByInfo::toString)
                     .collect(Collectors.joining(", ")));
         }
 

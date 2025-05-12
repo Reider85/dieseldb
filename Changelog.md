@@ -113,35 +113,3 @@
 1.1.3 AVG in GROUP BY
 1.1.4 COUNT in GROUP BY
 1.1.5 SUM in GROUP BY
-1.1.6 HAVING
-1.1.7 GROUP BY tests
-1.1.8 HAVING <,>,=
-1.1.9 HAVING COUNT(*)
-1.2.0 HAVING fixes
-1.2.1 refactoring inner class
-1.2.2 refactoring QueryParser
-1.2.3 IN fix after refactoring
-1.2.4 JOIN fix after refactoring
-1.2.5 GROUP BY logging
-1.2.6 HAVING fixes
-1.2.7 HAVING fixes retry 2
-1.2.8 HAVING fixes retry 3
-1.2.9 HAVING fixes retry 4
-1.3.0 HAVING fixes retry 5
-1.3.1 HAVING parser
-1.3.1.1 HAVING fixes retry 6
-1.3.1.2 HAVING fixes retry 7
-1.3.1.3 ConditionParser in simple queries fix
-1.3.1.4 ConditionParser in join queries fix
-1.3.1.5 refactor NormalizeUtils
-1.3.1.6 JOIN fix
-1.3.1.7 JOIN fix
-1.3.1.8 Splitter
-1.3.1.9 HAVING fixes retry 8
-1.3.2 HAVING fixes retry 9
-1.3.2.1 ConditionParser refactoring
-1.3.2.2 ConditionParser refactoring
-1.3.2.3 SelectQueryParser refactoring
-1.3.2.4 SelectQueryParser refactoring
-1.3.2.5 SelectQueryParser refactoring
-1.3.2.6 JOIN fix
