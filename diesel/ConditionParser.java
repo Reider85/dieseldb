@@ -382,11 +382,17 @@ class ConditionParser {
 
             String[] partsByOperator = null;
             QueryParser.Operator operator = null;
-            Pattern operatorPattern = Pattern.compile("^(>=|<=|>|<|=|!=|<>)\\s*(.*)$");
-            Matcher operatorMatcher = operatorPattern.matcher(remainingCondition);
+            // Normalize remainingCondition to remove extra whitespace
+            String normalizedRemaining = remainingCondition.trim().replaceAll("\\s+", " ");
+            LOGGER.log(Level.FINE, "Normalized remaining condition for operator parsing: {0}", normalizedRemaining);
+
+            // Simplified regex to match operators more reliably
+            Pattern operatorPattern = Pattern.compile("^(\\>=|\\<=|\\>|\\<|\\=|\\!\\=\\<\\>)\\s*(.*)$");
+            Matcher operatorMatcher = operatorPattern.matcher(normalizedRemaining);
             if (operatorMatcher.find()) {
                 String op = operatorMatcher.group(1);
                 String rightOperand = operatorMatcher.group(2).trim();
+                LOGGER.log(Level.FINE, "Matched operator: {0}, rightOperand: {1}", new Object[]{op, rightOperand});
                 switch (op) {
                     case "=":
                         operator = QueryParser.Operator.EQUALS;
@@ -413,7 +419,7 @@ class ConditionParser {
 
             if (partsByOperator == null || partsByOperator.length != 2 || partsByOperator[1].trim().isEmpty()) {
                 LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: condition={0}, remaining={1}, originalCondition={2}",
-                        new Object[]{normalizedCondition, remainingCondition, condition});
+                        new Object[]{normalizedCondition, normalizedRemaining, condition});
                 throw new IllegalArgumentException("Invalid aggregate condition format: " + normalizedCondition);
             }
 
@@ -464,10 +470,10 @@ class ConditionParser {
             partsByOperator = remainingCondition.split("(?i)\\s*>=\\s*", 2);
             operator = QueryParser.Operator.GREATER_THAN_OR_EQUAL;
         } else if (upperRemaining.contains(" < ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*<\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*<\s*", 2);
             operator = QueryParser.Operator.LESS_THAN;
         } else if (upperRemaining.contains(" > ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*>\\s*", 2);
+            partsByOperator = remainingCondition.split("(?i)\\s*>\s*", 2);
             operator = QueryParser.Operator.GREATER_THAN;
         } else {
             LOGGER.log(Level.SEVERE, "Invalid condition operator in non-aggregate condition: {0}", remainingCondition);
