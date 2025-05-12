@@ -18,7 +18,8 @@ class QueryParser {
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
     enum Operator {
-        EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, IN, LIKE, NOT_LIKE, IS_NULL, IS_NOT_NULL
+        EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN_OR_EQUALS,
+        IN, LIKE, NOT_LIKE, IS_NULL, IS_NOT_NULL
     }
 
     enum JoinType {
@@ -550,6 +551,8 @@ class QueryParser {
         Integer offset = null;
         List<OrderByInfo> orderBy = new ArrayList<>();
         List<String> groupBy = new ArrayList<>();
+        // Новая переменная для хранения условий HAVING
+        List<HavingCondition> havingConditions = new ArrayList<>();
 
         Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
@@ -762,10 +765,19 @@ class QueryParser {
             conditionStr = groupBySplit[0].trim();
             if (groupBySplit.length > 1 && !groupBySplit[1].trim().isEmpty()) {
                 String groupByPart = groupBySplit[1].trim();
-                groupBy = Arrays.stream(groupByPart.split(","))
+                String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
+                        ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
+                        : new String[]{groupByPart, ""};
+                groupBy = Arrays.stream(havingSplit[0].split(","))
                         .map(col -> normalizeColumnName(col.trim(), mainTable.getName()))
                         .collect(Collectors.toList());
                 LOGGER.log(Level.FINE, "Parsed GROUP BY clause: {0}", groupBy);
+                // Новая обработка HAVING
+                if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
+                    String havingClause = havingSplit[1].trim();
+                    havingConditions = parseHavingConditions(havingClause, mainTable.getName(), database, original, aggregates, combinedColumnTypes);
+                    LOGGER.log(Level.FINE, "Parsed HAVING clause: {0}", havingConditions);
+                }
             }
         }
 
@@ -871,10 +883,11 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, aggregates={1}, mainTable={2}, joins={3}, conditions={4}, groupBy={5}, limit={6}, offset={7}, orderBy={8}",
-                new Object[]{columns, aggregates, mainTable.getName(), joins, conditions, groupBy, limit, offset, orderBy});
+        LOGGER.log(Level.INFO, "Parsed SELECT query: columns={0}, aggregates={1}, mainTable={2}, joins={3}, conditions={4}, groupBy={5}, having={6}, limit={7}, offset={8}, orderBy={9}",
+                new Object[]{columns, aggregates, mainTable.getName(), joins, conditions, groupBy, havingConditions, limit, offset, orderBy});
 
-        return new SelectQuery(columns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy, groupBy);
+        // Передаем havingConditions в конструктор SelectQuery
+        return new SelectQuery(columns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy, groupBy, havingConditions);
     }
 
     private List<String> splitSelectItems(String selectPart) {
@@ -1639,5 +1652,238 @@ class QueryParser {
             }
         }
         return null;
+    }
+
+    private List<HavingCondition> parseHavingConditions(String havingClause, String tableName, Database database,
+                                                        String originalQuery, List<AggregateFunction> aggregates,
+                                                        Map<String, Class<?>> combinedColumnTypes) {
+        LOGGER.log(Level.FINE, "Parsing HAVING clause: {0}", havingClause);
+        List<HavingCondition> conditions = new ArrayList<>();
+        StringBuilder currentCondition = new StringBuilder();
+        boolean inQuotes = false;
+        int parenDepth = 0;
+
+        for (int i = 0; i < havingClause.length(); i++) {
+            char c = havingClause.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentCondition.append(c);
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    if (parenDepth == 1) continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    if (parenDepth == 0) {
+                        String subConditionStr = currentCondition.toString().trim();
+                        if (!subConditionStr.isEmpty()) {
+                            boolean isNot = subConditionStr.toUpperCase().startsWith("NOT ");
+                            if (isNot) {
+                                subConditionStr = subConditionStr.substring(4).trim();
+                            }
+                            List<HavingCondition> subConditions = parseHavingConditions(
+                                    subConditionStr, tableName, database, originalQuery, aggregates, combinedColumnTypes);
+                            String conjunction = determineConjunctionAfter(havingClause, i);
+                            conditions.add(new HavingCondition(subConditions, conjunction, isNot));
+                            LOGGER.log(Level.FINE, "Added grouped HAVING condition: {0}", subConditions);
+                        }
+                        currentCondition = new StringBuilder();
+                        continue;
+                    }
+                } else if (parenDepth == 0) {
+                    if (i + 3 <= havingClause.length() && havingClause.substring(i, i + 3).equalsIgnoreCase("AND") &&
+                            (i == 0 || Character.isWhitespace(havingClause.charAt(i - 1))) &&
+                            (i + 3 == havingClause.length() || Character.isWhitespace(havingClause.charAt(i + 3)))) {
+                        String current = currentCondition.toString().trim();
+                        if (!current.isEmpty()) {
+                            conditions.add(parseSingleHavingCondition(current, "AND", tableName, aggregates, combinedColumnTypes));
+                            LOGGER.log(Level.FINE, "Added HAVING condition with AND: {0}", current);
+                        }
+                        currentCondition = new StringBuilder();
+                        i += 2;
+                        continue;
+                    } else if (i + 2 <= havingClause.length() && havingClause.substring(i, i + 2).equalsIgnoreCase("OR") &&
+                            (i == 0 || Character.isWhitespace(havingClause.charAt(i - 1))) &&
+                            (i + 2 == havingClause.length() || Character.isWhitespace(havingClause.charAt(i + 2)))) {
+                        String current = currentCondition.toString().trim();
+                        if (!current.isEmpty()) {
+                            conditions.add(parseSingleHavingCondition(current, "OR", tableName, aggregates, combinedColumnTypes));
+                            LOGGER.log(Level.FINE, "Added HAVING condition with OR: {0}", current);
+                        }
+                        currentCondition = new StringBuilder();
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+            currentCondition.append(c);
+        }
+
+        String current = currentCondition.toString().trim();
+        if (!current.isEmpty()) {
+            conditions.add(parseSingleHavingCondition(current, null, tableName, aggregates, combinedColumnTypes));
+            LOGGER.log(Level.FINE, "Added final HAVING condition: {0}", current);
+        }
+
+        if (parenDepth != 0) {
+            throw new IllegalArgumentException("Mismatched parentheses in HAVING clause: " + havingClause);
+        }
+
+        LOGGER.log(Level.FINE, "Parsed HAVING conditions: {0}", conditions);
+        return conditions;
+    }
+    private HavingCondition parseSingleHavingCondition(String condition, String conjunction, String tableName,
+                                                       List<AggregateFunction> aggregates,
+                                                       Map<String, Class<?>> combinedColumnTypes) {
+        LOGGER.log(Level.FINE, "Parsing single HAVING condition: {0}, conjunction: {1}",
+                new Object[]{condition, conjunction});
+        boolean isNot = condition.toUpperCase().startsWith("NOT ");
+        String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
+
+        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)");
+        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)");
+        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)");
+        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)");
+        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)");
+
+        AggregateFunction aggregate = null;
+        String aggStr = conditionWithoutNot.split("\\s*(>=|<=|>|<|=|!=)\\s*")[0].trim();
+        Matcher countMatcher = countPattern.matcher(aggStr);
+        Matcher minMatcher = minPattern.matcher(aggStr);
+        Matcher maxMatcher = maxPattern.matcher(aggStr);
+        Matcher avgMatcher = avgPattern.matcher(aggStr);
+        Matcher sumMatcher = sumPattern.matcher(aggStr);
+
+        if (countMatcher.find()) {
+            String column = countMatcher.group(1).equals("*") ? null : countMatcher.group(1);
+            aggregate = aggregates.stream()
+                    .filter(a -> a.functionName.equals("COUNT") &&
+                            (a.column == null && column == null || a.column != null && a.column.equals(column)))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Aggregate function not found in SELECT: " + aggStr));
+        } else if (minMatcher.find()) {
+            String column = minMatcher.group(1);
+            aggregate = aggregates.stream()
+                    .filter(a -> a.functionName.equals("MIN") && a.column != null && a.column.equals(column))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Aggregate function not found in SELECT: " + aggStr));
+        } else if (maxMatcher.find()) {
+            String column = maxMatcher.group(1);
+            aggregate = aggregates.stream()
+                    .filter(a -> a.functionName.equals("MAX") && a.column != null && a.column.equals(column))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Aggregate function not found in SELECT: " + aggStr));
+        } else if (avgMatcher.find()) {
+            String column = avgMatcher.group(1);
+            aggregate = aggregates.stream()
+                    .filter(a -> a.functionName.equals("AVG") && a.column != null && a.column.equals(column))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Aggregate function not found in SELECT: " + aggStr));
+        } else if (sumMatcher.find()) {
+            String column = sumMatcher.group(1);
+            aggregate = aggregates.stream()
+                    .filter(a -> a.functionName.equals("SUM") && a.column != null && a.column.equals(column))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Aggregate function not found in SELECT: " + aggStr));
+        } else {
+            String alias = aggStr;
+            aggregate = aggregates.stream()
+                    .filter(a -> a.alias != null && a.alias.equalsIgnoreCase(alias))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Aggregate function or alias not found in SELECT: " + aggStr));
+        }
+
+        String[] parts = conditionWithoutNot.split("\\s*(>=|<=|>|<|=|!=)\\s*", 2);
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid HAVING condition: " + condition);
+        }
+
+        Operator operator;
+        String opStr = conditionWithoutNot.replaceFirst(parts[0], "").replaceFirst(parts[1], "").trim();
+        switch (opStr) {
+            case "=":
+                operator = Operator.EQUALS;
+                break;
+            case "!=":
+                operator = Operator.NOT_EQUALS;
+                break;
+            case "<":
+                operator = Operator.LESS_THAN;
+                break;
+            case ">":
+                operator = Operator.GREATER_THAN;
+                break;
+            case "<=":
+                operator = Operator.LESS_THAN_OR_EQUALS;
+                break;
+            case ">=":
+                operator = Operator.GREATER_THAN_OR_EQUALS;
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported operator in HAVING: " + opStr);
+        }
+
+        String valueStr = parts[1].trim();
+        Class<?> valueType = aggregate.functionName.equals("COUNT") ? Long.class :
+                (aggregate.column != null ? combinedColumnTypes.get(normalizeColumnName(aggregate.column, tableName)) : BigDecimal.class);
+        Object value = parseConditionValue(aggregate.toString(), valueStr, valueType);
+
+        LOGGER.log(Level.FINE, "Parsed HAVING condition: aggregate={0}, operator={1}, value={2}, not={3}, conjunction={4}",
+                new Object[]{aggregate, operator, value, isNot, conjunction});
+        return new HavingCondition(aggregate, operator, value, conjunction, isNot);
+    }
+    static class HavingCondition {
+        AggregateFunction aggregate;
+        Operator operator;
+        Object value;
+        String conjunction;
+        boolean not;
+        List<HavingCondition> subConditions;
+
+        HavingCondition(AggregateFunction aggregate, Operator operator, Object value, String conjunction, boolean not) {
+            this.aggregate = aggregate;
+            this.operator = operator;
+            this.value = value;
+            this.conjunction = conjunction;
+            this.not = not;
+            this.subConditions = null;
+        }
+
+        HavingCondition(List<HavingCondition> subConditions, String conjunction, boolean not) {
+            this.aggregate = null;
+            this.operator = null;
+            this.value = null;
+            this.conjunction = conjunction;
+            this.not = not;
+            this.subConditions = subConditions;
+        }
+
+        boolean isGrouped() {
+            return subConditions != null;
+        }
+
+        @Override
+        public String toString() {
+            if (isGrouped()) {
+                String subCondStr = subConditions.stream()
+                        .map(HavingCondition::toString)
+                        .collect(Collectors.joining(" "));
+                return (not ? "NOT " : "") + "(" + subCondStr + ")" + (conjunction != null ? " " + conjunction : "");
+            }
+            String operatorStr = switch (operator) {
+                case EQUALS -> "=";
+                case NOT_EQUALS -> "!=";
+                case LESS_THAN -> "<";
+                case GREATER_THAN -> ">";
+                case LESS_THAN_OR_EQUALS -> "<=";
+                case GREATER_THAN_OR_EQUALS -> ">=";
+                default -> operator.toString();
+            };
+            return (not ? "NOT " : "") + aggregate.toString() + " " + operatorStr + " " +
+                    (value instanceof String ? "'" + value + "'" : value) +
+                    (conjunction != null ? " " + conjunction : "");
+        }
     }
 }

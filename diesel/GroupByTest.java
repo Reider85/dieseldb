@@ -48,6 +48,24 @@ public class GroupByTest {
             // BigDecimal with GROUP BY String
             selectMinMaxAvgBigDecimalGroupByString();
             selectSumCountBigDecimalGroupByString();
+            // Integer with GROUP BY Date and HAVING
+            selectMinMaxAvgIntegerGroupByDateHaving();
+            selectSumCountIntegerGroupByDateHaving();
+            // Long with GROUP BY Date and HAVING
+            selectMinMaxAvgLongGroupByDateHaving();
+            selectSumCountLongGroupByDateHaving();
+            // Short with GROUP BY Date and HAVING
+            selectMinMaxAvgShortGroupByDateHaving();
+            selectSumCountShortGroupByDateHaving();
+            // Float with GROUP BY Date and HAVING
+            selectMinMaxAvgFloatGroupByDateHaving();
+            selectSumCountFloatGroupByDateHaving();
+            // Double with GROUP BY Date and HAVING
+            selectMinMaxAvgDoubleGroupByDateHaving();
+            selectSumCountDoubleGroupByDateHaving();
+            // BigDecimal with GROUP BY Date and HAVING
+            selectMinMaxAvgBigDecimalGroupByDateHaving();
+            selectSumCountBigDecimalGroupByDateHaving();
             // Integer with INNER JOIN and GROUP BY String, Date
             selectMinMaxAvgIntegerJoinGroupByStringDate();
             selectSumCountIntegerJoinGroupByStringDate();
