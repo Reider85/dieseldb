@@ -142,3 +142,4 @@
 1.3.2.1 ConditionParser refactoring
 1.3.2.2 ConditionParser refactoring
 1.3.2.3 SelectQueryParser refactoring
+1.3.2.4 SelectQueryParser refactoring

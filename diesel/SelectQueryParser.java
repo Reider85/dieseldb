@@ -26,7 +26,7 @@ class SelectQueryParser {
 
         ParsedTableAndJoins parsedTableAndJoins = parseTableAndJoins(tableAndJoins, database);
         ParsedClauses parsedClauses = parseRemainingClauses(parsedTableAndJoins.remaining, original,
-                parsedTableAndJoins.mainTable, parsedTableAndJoins.combinedColumnTypes, database); // Added database parameter
+                parsedTableAndJoins.mainTable, parsedTableAndJoins.combinedColumnTypes, database);
 
         validateColumnsAndAggregates(parsedItems.columns, parsedItems.aggregates,
                 parsedTableAndJoins.combinedColumnTypes, parsedTableAndJoins.mainTable);
@@ -148,7 +148,7 @@ class SelectQueryParser {
             String joinPart = joinParts.get(i + 1).trim();
             JoinInfo joinInfo = parseJoin(joinTypeStr, joinPart, tableName, database, combinedColumnTypes);
             joins.add(joinInfo);
-            tableName = joinInfo.tableName; // Changed from joinInfo.rightTable to joinInfo.tableName
+            tableName = joinInfo.tableName;
         }
 
         String remaining = joinParts.get(joinParts.size() - 1);
@@ -168,12 +168,17 @@ class SelectQueryParser {
                 throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
             }
         } else {
-            String[] onSplit = joinPart.split("(?i)ON\\s+", 2);
-            if (onSplit.length != 2) {
-                throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing ON clause");
+            // Split on 'ON' and stop before WHERE, LIMIT, etc.
+            Pattern onPattern = Pattern.compile("(?i)ON\\s+((?:(?!\\s+(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|HAVING|JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN)).)*)");
+            Matcher onMatcher = onPattern.matcher(joinPart);
+            if (!onMatcher.find()) {
+                throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing or malformed ON clause");
             }
-            joinTableName = onSplit[0].split(" ")[0].trim();
-            String onCondition = onSplit[1].trim();
+            String onCondition = onMatcher.group(1).trim();
+            joinTableName = joinPart.substring(0, onMatcher.start()).trim().split(" ")[0].trim();
+            if (joinTableName.isEmpty()) {
+                throw new IllegalArgumentException("Invalid " + joinTypeStr + " format: missing table name");
+            }
             onConditions = conditionParser.parseConditions(onCondition, leftTable, database, joinPart, true, combinedColumnTypes);
             for (Condition cond : onConditions) {
                 validateJoinCondition(cond, leftTable, joinTableName);
@@ -474,68 +479,5 @@ class SelectQueryParser {
         }
 
         throw new IllegalArgumentException("Unsupported operator in JOIN condition: " + condition);
-    }
-
-    private static class ParsedSelectItems {
-        final List<String> columns;
-        final List<AggregateFunction> aggregates;
-
-        ParsedSelectItems(List<String> columns, List<AggregateFunction> aggregates) {
-            this.columns = columns;
-            this.aggregates = aggregates;
-        }
-    }
-
-    private static class ParsedTableAndJoins {
-        final Table mainTable;
-        final List<JoinInfo> joins;
-        final Map<String, Class<?>> combinedColumnTypes;
-        final String remaining;
-
-        ParsedTableAndJoins(Table mainTable, List<JoinInfo> joins,
-                            Map<String, Class<?>> combinedColumnTypes, String remaining) {
-            this.mainTable = mainTable;
-            this.joins = joins;
-            this.combinedColumnTypes = combinedColumnTypes;
-            this.remaining = remaining;
-        }
-    }
-
-    private static class ParsedClauses {
-        final List<Condition> conditions;
-        final List<Condition> havingConditions;
-        final List<OrderByInfo> orderBy;
-        final List<String> groupBy;
-        final Integer limit;
-        final Integer offset;
-
-        ParsedClauses(List<Condition> conditions, List<Condition> havingConditions,
-                      List<OrderByInfo> orderBy, List<String> groupBy, Integer limit, Integer offset) {
-            this.conditions = conditions;
-            this.havingConditions = havingConditions;
-            this.orderBy = orderBy;
-            this.groupBy = groupBy;
-            this.limit = limit;
-            this.offset = offset;
-        }
-    }
-
-    private static class ParsedConditionClauses {
-        final String conditionStr;
-        final Integer limit;
-        final Integer offset;
-        final List<OrderByInfo> orderBy;
-        final List<String> groupBy;
-        final String havingStr;
-
-        ParsedConditionClauses(String conditionStr, Integer limit, Integer offset,
-                               List<OrderByInfo> orderBy, List<String> groupBy, String havingStr) {
-            this.conditionStr = conditionStr;
-            this.limit = limit;
-            this.offset = offset;
-            this.orderBy = orderBy;
-            this.groupBy = groupBy;
-            this.havingStr = havingStr;
-        }
     }
 }
