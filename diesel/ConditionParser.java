@@ -587,7 +587,9 @@ class ConditionParser {
 
         if (rightOperand.matches("[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
             rightColumn = NormalizationUtils.normalizeColumnName(rightOperand, isOnClause ? null : tableName);
+            LOGGER.log(Level.FINE, "Checking right column: {0}, normalized: {1}", new Object[]{rightOperand, rightColumn});
             Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
+            LOGGER.log(Level.FINE, "Right column type for {0}: {1}", new Object[]{rightColumn, rightColumnType});
             if (rightColumnType != null) {
                 if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
                     throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column comparisons: " + normalizedCondition);
@@ -644,6 +646,11 @@ class ConditionParser {
         if (column == null || columnTypes == null) {
             return null;
         }
+        // Сначала проверяем полное имя столбца (например, USER_DETAILS.USER_ID)
+        if (columnTypes.containsKey(column)) {
+            return columnTypes.get(column);
+        }
+        // В качестве запасного варианта проверяем неквалифицированное имя (например, USER_ID)
         String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
         for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
             if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {

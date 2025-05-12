@@ -141,13 +141,26 @@ class SelectQueryParser {
         if (mainTable == null) {
             throw new IllegalArgumentException("Table not found: " + tableName);
         }
-        combinedColumnTypes.putAll(mainTable.getColumnTypes());
+        combinedColumnTypes.putAll(mainTable.getColumnTypes().entrySet().stream()
+                .collect(Collectors.toMap(
+                        e -> mainTable.getName() + "." + e.getKey(),
+                        Map.Entry::getValue
+                )));
 
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
             String joinPart = joinParts.get(i + 1).trim();
             JoinInfo joinInfo = parseJoin(joinTypeStr, joinPart, tableName, database, combinedColumnTypes);
             joins.add(joinInfo);
+            Table joinTable = database.getTable(joinInfo.tableName);
+            // Добавляем столбцы с префиксом имени присоединяемой таблицы
+            combinedColumnTypes.putAll(joinTable.getColumnTypes().entrySet().stream()
+                    .collect(Collectors.toMap(
+                            e -> joinTable.getName() + "." + e.getKey(),
+                            Map.Entry::getValue
+                    )));
+            LOGGER.log(Level.FINE, "Updated combinedColumnTypes after adding {0}: {1}",
+                    new Object[]{joinTable.getName(), combinedColumnTypes.keySet()});
             tableName = joinInfo.tableName;
         }
 
