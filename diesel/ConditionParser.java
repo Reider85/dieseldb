@@ -221,72 +221,96 @@ class ConditionParser {
 
     private void validateHavingCondition(Condition condition, List<AggregateFunction> aggregates, List<String> groupBy, Map<String, Class<?>> combinedColumnTypes) {
         if (condition.isGrouped()) {
-            for (Condition subCond : condition.subConditions) {
-                validateHavingCondition(subCond, aggregates, groupBy, combinedColumnTypes);
-            }
+            validateGroupedCondition(condition, aggregates, groupBy, combinedColumnTypes);
             return;
         }
 
+        validateConditionType(condition);
+        String column = validateColumnPresence(condition);
+        validateColumnReference(column, condition, aggregates, groupBy, combinedColumnTypes);
+        validateHavingOperator(condition);
+    }
+
+    private void validateGroupedCondition(Condition condition, List<AggregateFunction> aggregates, List<String> groupBy, Map<String, Class<?>> combinedColumnTypes) {
+        for (Condition subCond : condition.subConditions) {
+            validateHavingCondition(subCond, aggregates, groupBy, combinedColumnTypes);
+        }
+    }
+
+    private void validateConditionType(Condition condition) {
         if (condition.isInOperator() || condition.isColumnComparison() || condition.isNullOperator()) {
             throw new IllegalArgumentException("HAVING clause does not support IN, column comparisons, IS NULL, or IS NOT NULL: " + condition);
         }
+    }
 
+    private String validateColumnPresence(Condition condition) {
         String column = condition.column;
         if (column == null) {
             throw new IllegalArgumentException("Invalid HAVING condition: no column specified");
         }
+        return column;
+    }
 
+    private void validateColumnReference(String column, Condition condition, List<AggregateFunction> aggregates, List<String> groupBy, Map<String, Class<?>> combinedColumnTypes) {
         Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
         Matcher aggMatcher = aggPattern.matcher(column);
 
         boolean isAggregate = aggMatcher.matches();
         boolean isGroupByColumn = groupBy.contains(column);
 
-        if (!isAggregate && !isGroupByColumn) {
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-            isGroupByColumn = groupBy.stream().anyMatch(gb -> {
-                String unqualifiedGroupBy = gb.contains(".") ? gb.split("\\.")[1].trim() : gb;
-                return unqualifiedGroupBy.equalsIgnoreCase(unqualifiedColumn);
-            });
-
-            if (!isGroupByColumn) {
-                boolean isAliasedAggregate = aggregates.stream().anyMatch(agg ->
-                        agg.alias != null && agg.alias.equalsIgnoreCase(unqualifiedColumn));
-                if (!isAliasedAggregate) {
-                    isAliasedAggregate = aggregates.stream().anyMatch(agg ->
-                            agg.toString().equalsIgnoreCase(column));
-                    if (!isAliasedAggregate) {
-                        LOGGER.log(Level.SEVERE, "HAVING clause must reference an aggregate function or a GROUP BY column: {0}", column);
-                        throw new IllegalArgumentException("HAVING clause must reference an aggregate function or a GROUP BY column: " + condition);
-                    }
-                }
-            }
-        }
-
         if (isAggregate) {
-            String aggFunction = aggMatcher.group(1).toUpperCase();
-            String aggColumn = aggMatcher.group(2);
-            if (!aggFunction.equals("COUNT") && aggColumn == null) {
-                throw new IllegalArgumentException("Aggregate function " + aggFunction + " requires a column argument in HAVING clause");
-            }
-            if (aggColumn != null && !aggColumn.equals("*")) {
-                String normalizedAggColumn = NormalizationUtils.normalizeColumnName(aggColumn, null);
-                String unqualifiedAggColumn = normalizedAggColumn.contains(".") ? normalizedAggColumn.split("\\.")[1].trim() : normalizedAggColumn;
-                boolean found = false;
-                for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                    if (entry.getKey().equalsIgnoreCase(unqualifiedAggColumn)) {
-                        found = true;
-                        break;
-                    }
+            validateAggregateFunction(column, aggMatcher, combinedColumnTypes);
+        } else if (!isGroupByColumn) {
+            validateNonAggregateColumn(column, condition, aggregates, groupBy);
+        }
+    }
+
+    private void validateAggregateFunction(String column, Matcher aggMatcher, Map<String, Class<?>> combinedColumnTypes) {
+        String aggFunction = aggMatcher.group(1).toUpperCase();
+        String aggColumn = aggMatcher.group(2);
+        if (!aggFunction.equals("COUNT") && aggColumn == null) {
+            throw new IllegalArgumentException("Aggregate function " + aggFunction + " requires a column argument in HAVING clause");
+        }
+        if (aggColumn != null && !aggColumn.equals("*")) {
+            String normalizedAggColumn = NormalizationUtils.normalizeColumnName(aggColumn, null);
+            String unqualifiedAggColumn = normalizedAggColumn.contains(".") ? normalizedAggColumn.split("\\.")[1].trim() : normalizedAggColumn;
+            boolean found = false;
+            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                if (entry.getKey().equalsIgnoreCase(unqualifiedAggColumn)) {
+                    found = true;
+                    break;
                 }
-                if (!found) {
-                    LOGGER.log(Level.SEVERE, "Unknown column in aggregate function in HAVING: {0}, available columns: {1}",
-                            new Object[]{aggColumn, combinedColumnTypes.keySet()});
-                    throw new IllegalArgumentException("Unknown column in aggregate function in HAVING: " + aggColumn);
+            }
+            if (!found) {
+                LOGGER.log(Level.SEVERE, "Unknown column in aggregate function in HAVING: {0}, available columns: {1}",
+                        new Object[]{aggColumn, combinedColumnTypes.keySet()});
+                throw new IllegalArgumentException("Unknown column in aggregate function in HAVING: " + aggColumn);
+            }
+        }
+    }
+
+    private void validateNonAggregateColumn(String column, Condition condition, List<AggregateFunction> aggregates, List<String> groupBy) {
+        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+        boolean isGroupByColumn = groupBy.stream().anyMatch(gb -> {
+            String unqualifiedGroupBy = gb.contains(".") ? gb.split("\\.")[1].trim() : gb;
+            return unqualifiedGroupBy.equalsIgnoreCase(unqualifiedColumn);
+        });
+
+        if (!isGroupByColumn) {
+            boolean isAliasedAggregate = aggregates.stream().anyMatch(agg ->
+                    agg.alias != null && agg.alias.equalsIgnoreCase(unqualifiedColumn));
+            if (!isAliasedAggregate) {
+                isAliasedAggregate = aggregates.stream().anyMatch(agg ->
+                        agg.toString().equalsIgnoreCase(column));
+                if (!isAliasedAggregate) {
+                    LOGGER.log(Level.SEVERE, "HAVING clause must reference an aggregate function or a GROUP BY column: {0}", column);
+                    throw new IllegalArgumentException("HAVING clause must reference an aggregate function or a GROUP BY column: " + condition);
                 }
             }
         }
+    }
 
+    private void validateHavingOperator(Condition condition) {
         if (!(condition.operator == QueryParser.Operator.EQUALS ||
                 condition.operator == QueryParser.Operator.LESS_THAN ||
                 condition.operator == QueryParser.Operator.GREATER_THAN)) {
