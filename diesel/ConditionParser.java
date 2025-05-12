@@ -297,6 +297,35 @@ class ConditionParser {
     private Condition parseSingleCondition(String condition, String conjunction, Map<String, Class<?>> columnTypes, String originalQuery, boolean isOnClause, String tableName) {
         LOGGER.log(Level.FINE, "Parsing single condition: {0}, isOnClause: {1}, conjunction: {2}",
                 new Object[]{condition, isOnClause, conjunction});
+
+        // Extract NOT and validate condition
+        ConditionParseContext context = extractNotAndValidate(condition);
+        String normalizedCondition = context.normalizedCondition;
+        boolean isNot = context.isNot;
+
+        // Check for aggregate functions
+        AggregateParseResult aggResult = parseAggregateCondition(normalizedCondition);
+        if (aggResult.isAggregate) {
+            return parseAggregateCondition(aggResult, normalizedCondition, conjunction, columnTypes, isNot);
+        }
+
+        // Check for IN clause
+        if (normalizedCondition.toUpperCase().contains(" IN ")) {
+            return parseInCondition(normalizedCondition, conjunction, columnTypes, originalQuery, isOnClause, tableName, isNot);
+        }
+
+        // Parse operator and split condition
+        OperatorParseResult opResult = parseOperatorAndSplit(normalizedCondition);
+        if (opResult == null) {
+            LOGGER.log(Level.SEVERE, "Invalid condition operator in non-aggregate condition: {0}", normalizedCondition);
+            throw new IllegalArgumentException("Invalid condition operator in: " + normalizedCondition);
+        }
+
+        // Create the final Condition object
+        return createCondition(opResult, normalizedCondition, conjunction, columnTypes, isOnClause, tableName, isNot);
+    }
+
+    private ConditionParseContext extractNotAndValidate(String condition) {
         boolean isNot = condition.toUpperCase().startsWith("NOT ");
         String conditionWithoutNot = isNot ? condition.substring(4).trim() : condition;
         LOGGER.log(Level.FINE, "Condition without NOT: {0}", conditionWithoutNot);
@@ -311,11 +340,16 @@ class ConditionParser {
             throw new IllegalArgumentException("Corrupted COUNT function in condition: " + normalizedCondition);
         }
 
+        return new ConditionParseContext(normalizedCondition, isNot);
+    }
+
+    private AggregateParseResult parseAggregateCondition(String normalizedCondition) {
         Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
         Matcher aggMatcher = aggPattern.matcher(normalizedCondition);
         String conditionColumn = null;
         int aggEndIndex = -1;
         boolean isAggregate = false;
+
         LOGGER.log(Level.FINE, "Checking aggregate condition: {0}", normalizedCondition);
         if (aggMatcher.find()) {
             conditionColumn = aggMatcher.group(0).trim();
@@ -329,159 +363,172 @@ class ConditionParser {
                     new Object[]{aggMatcher.group(1), aggMatcher.group(2), conditionColumn, aggEndIndex});
         }
 
-        if (normalizedCondition.toUpperCase().contains(" IN ")) {
-            String originalCondition = extractOriginalCondition(originalQuery, conditionWithoutNot);
-            LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
+        return new AggregateParseResult(isAggregate, conditionColumn, aggEndIndex);
+    }
 
-            Pattern inPattern = Pattern.compile("(?i)((?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.)?)?[a-zA-Z_][a-zA-Z0-9_]*)\\s+IN\\s*\\(([^)]+)\\)");
-            Matcher inMatcher = inPattern.matcher(originalCondition);
-            if (!inMatcher.find()) {
-                LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}, original query: {1}",
-                        new Object[]{originalCondition, originalQuery});
-                throw new IllegalArgumentException("Invalid IN clause: " + originalCondition);
-            }
-
-            String parsedColumn = NormalizationUtils.normalizeColumnName(inMatcher.group(1).trim(), isOnClause ? null : tableName);
-            String valuesPart = inMatcher.group(2).trim();
-
-            if (valuesPart.isEmpty()) {
-                throw new IllegalArgumentException("IN clause cannot be empty");
-            }
-
-            List<String> valueStrings = Splitter.splitInValues(valuesPart);
-            LOGGER.log(Level.FINE, "Split IN values: {0}", Arrays.toString(valueStrings.toArray()));
-
-            List<Object> inValues = new ArrayList<>();
-            Class<?> columnType = getColumnType(parsedColumn, columnTypes);
-            if (columnType == null) {
-                LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
-                        new Object[]{parsedColumn, columnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column: " + parsedColumn);
-            }
-
-            for (String val : valueStrings) {
-                String trimmedVal = val.trim();
-                if (trimmedVal.isEmpty()) continue;
-                inValues.add(QueryParser.parseConditionValue(parsedColumn, trimmedVal, columnType));
-            }
-
-            LOGGER.log(Level.FINE, "Parsed {0} condition: column={1}, values={2}, not={3}, conjunction={4}",
-                    new Object[]{isNot ? "NOT IN" : "IN", parsedColumn, inValues, isNot, conjunction});
-            return new Condition(parsedColumn, inValues, conjunction, isNot);
-        }
-
-        String remainingCondition = aggEndIndex >= 0 ? normalizedCondition.substring(aggEndIndex).trim() : normalizedCondition;
+    private Condition parseAggregateCondition(AggregateParseResult aggResult, String normalizedCondition, String conjunction, Map<String, Class<?>> columnTypes, boolean isNot) {
+        String remainingCondition = aggResult.aggEndIndex >= 0 ? normalizedCondition.substring(aggResult.aggEndIndex).trim() : normalizedCondition;
         LOGGER.log(Level.FINE, "Remaining condition after aggregate: {0}", remainingCondition);
 
-        if (isAggregate) {
-            if (remainingCondition.isEmpty()) {
-                LOGGER.log(Level.SEVERE, "No operator found after aggregate function: condition={0}, originalCondition={1}",
-                        new Object[]{normalizedCondition, condition});
-                throw new IllegalArgumentException("No operator found after aggregate function: " + normalizedCondition);
-            }
-
-            String[] partsByOperator = null;
-            QueryParser.Operator operator = null;
-            // Normalize remainingCondition to remove extra whitespace
-            String normalizedRemaining = remainingCondition.trim().replaceAll("\\s+", " ");
-            LOGGER.log(Level.FINE, "Normalized remaining condition for operator parsing: {0}", normalizedRemaining);
-
-            // Simplified regex to match operators more reliably
-            Pattern operatorPattern = Pattern.compile("^(\\>=|\\<=|\\>|\\<|\\=|\\!\\=\\<\\>)\\s*(.*)$");
-            Matcher operatorMatcher = operatorPattern.matcher(normalizedRemaining);
-            if (operatorMatcher.find()) {
-                String op = operatorMatcher.group(1);
-                String rightOperand = operatorMatcher.group(2).trim();
-                LOGGER.log(Level.FINE, "Matched operator: {0}, rightOperand: {1}", new Object[]{op, rightOperand});
-                switch (op) {
-                    case "=":
-                        operator = QueryParser.Operator.EQUALS;
-                        break;
-                    case "<":
-                        operator = QueryParser.Operator.LESS_THAN;
-                        break;
-                    case ">":
-                        operator = QueryParser.Operator.GREATER_THAN;
-                        break;
-                    case "!=":
-                    case "<>":
-                        operator = QueryParser.Operator.NOT_EQUALS;
-                        break;
-                    case ">=":
-                        operator = QueryParser.Operator.GREATER_THAN_OR_EQUAL;
-                        break;
-                    case "<=":
-                        operator = QueryParser.Operator.LESS_THAN_OR_EQUAL;
-                        break;
-                }
-                partsByOperator = new String[]{"", rightOperand};
-            }
-
-            if (partsByOperator == null || partsByOperator.length != 2 || partsByOperator[1].trim().isEmpty()) {
-                LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: condition={0}, remaining={1}, originalCondition={2}",
-                        new Object[]{normalizedCondition, normalizedRemaining, condition});
-                throw new IllegalArgumentException("Invalid aggregate condition format: " + normalizedCondition);
-            }
-
-            String rightOperand = partsByOperator[1].trim();
-            Class<?> valueType = conditionColumn.toUpperCase().startsWith("COUNT") ? Long.class : Double.class;
-            Object value;
-            try {
-                value = QueryParser.parseConditionValue(conditionColumn, rightOperand, valueType);
-            } catch (IllegalArgumentException e) {
-                LOGGER.log(Level.SEVERE, "Failed to parse value in aggregate condition: value={0}, condition={1}, error={2}",
-                        new Object[]{rightOperand, normalizedCondition, e.getMessage()});
-                throw new IllegalArgumentException("Invalid value in aggregate condition: " + rightOperand, e);
-            }
-            LOGGER.log(Level.FINE, "Parsed aggregate condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
-                    new Object[]{conditionColumn, operator, value, isNot, conjunction});
-            return new Condition(conditionColumn, value, operator, conjunction, isNot);
+        if (remainingCondition.isEmpty()) {
+            LOGGER.log(Level.SEVERE, "No operator found after aggregate function: condition={0}", normalizedCondition);
+            throw new IllegalArgumentException("No operator found after aggregate function: " + normalizedCondition);
         }
 
+        String normalizedRemaining = remainingCondition.trim().replaceAll("\\s+", " ");
+        LOGGER.log(Level.FINE, "Normalized remaining condition for operator parsing: {0}", normalizedRemaining);
+
+        Pattern operatorPattern = Pattern.compile("^(\\>=|\\<=|\\>|\\<|\\=|\\!\\=\\<\\>)\\s*(.*)$");
+        Matcher operatorMatcher = operatorPattern.matcher(normalizedRemaining);
+        QueryParser.Operator operator = null;
+        String rightOperand = null;
+
+        if (operatorMatcher.find()) {
+            String op = operatorMatcher.group(1);
+            rightOperand = operatorMatcher.group(2).trim();
+            LOGGER.log(Level.FINE, "Matched operator: {0}, rightOperand: {1}", new Object[]{op, rightOperand});
+            switch (op) {
+                case "=":
+                    operator = QueryParser.Operator.EQUALS;
+                    break;
+                case "<":
+                    operator = QueryParser.Operator.LESS_THAN;
+                    break;
+                case ">":
+                    operator = QueryParser.Operator.GREATER_THAN;
+                    break;
+                case "!=":
+                case "<>":
+                    operator = QueryParser.Operator.NOT_EQUALS;
+                    break;
+                case ">=":
+                    operator = QueryParser.Operator.GREATER_THAN_OR_EQUAL;
+                    break;
+                case "<=":
+                    operator = QueryParser.Operator.LESS_THAN_OR_EQUAL;
+                    break;
+            }
+        }
+
+        if (operator == null || rightOperand == null || rightOperand.trim().isEmpty()) {
+            LOGGER.log(Level.SEVERE, "Invalid aggregate condition format: condition={0}, remaining={1}",
+                    new Object[]{normalizedCondition, normalizedRemaining});
+            throw new IllegalArgumentException("Invalid aggregate condition format: " + normalizedCondition);
+        }
+
+        Class<?> valueType = aggResult.conditionColumn.toUpperCase().startsWith("COUNT") ? Long.class : Double.class;
+        Object value;
+        try {
+            value = QueryParser.parseConditionValue(aggResult.conditionColumn, rightOperand, valueType);
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.SEVERE, "Failed to parse value in aggregate condition: value={0}, condition={1}, error={2}",
+                    new Object[]{rightOperand, normalizedCondition, e.getMessage()});
+            throw new IllegalArgumentException("Invalid value in aggregate condition: " + rightOperand, e);
+        }
+
+        LOGGER.log(Level.FINE, "Parsed aggregate condition: column={0}, operator={1}, value={2}, not={3}, conjunction={4}",
+                new Object[]{aggResult.conditionColumn, operator, value, isNot, conjunction});
+        return new Condition(aggResult.conditionColumn, value, operator, conjunction, isNot);
+    }
+
+    private Condition parseInCondition(String normalizedCondition, String conjunction, Map<String, Class<?>> columnTypes, String originalQuery, boolean isOnClause, String tableName, boolean isNot) {
+        String originalCondition = extractOriginalCondition(originalQuery, normalizedCondition);
+        LOGGER.log(Level.FINE, "Extracted original IN condition: {0}", originalCondition);
+
+        Pattern inPattern = Pattern.compile("(?i)((?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.)?)?[a-zA-Z_][a-zA-Z0-9_]*)\\s+IN\\s*\\(([^)]+)\\)");
+        Matcher inMatcher = inPattern.matcher(originalCondition);
+        if (!inMatcher.find()) {
+            LOGGER.log(Level.SEVERE, "Invalid IN condition format: {0}, original query: {1}",
+                    new Object[]{originalCondition, originalQuery});
+            throw new IllegalArgumentException("Invalid IN clause: " + originalCondition);
+        }
+
+        String parsedColumn = NormalizationUtils.normalizeColumnName(inMatcher.group(1).trim(), isOnClause ? null : tableName);
+        String valuesPart = inMatcher.group(2).trim();
+
+        if (valuesPart.isEmpty()) {
+            throw new IllegalArgumentException("IN clause cannot be empty");
+        }
+
+        List<String> valueStrings = Splitter.splitInValues(valuesPart);
+        LOGGER.log(Level.FINE, "Split IN values: {0}", Arrays.toString(valueStrings.toArray()));
+
+        List<Object> inValues = new ArrayList<>();
+        Class<?> columnType = getColumnType(parsedColumn, columnTypes);
+        if (columnType == null) {
+            LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
+                    new Object[]{parsedColumn, columnTypes.keySet()});
+            throw new IllegalArgumentException("Unknown column: " + parsedColumn);
+        }
+
+        for (String val : valueStrings) {
+            String trimmedVal = val.trim();
+            if (trimmedVal.isEmpty()) continue;
+            inValues.add(QueryParser.parseConditionValue(parsedColumn, trimmedVal, columnType));
+        }
+
+        LOGGER.log(Level.FINE, "Parsed {0} condition: column={1}, values={2}, not={3}, conjunction={4}",
+                new Object[]{isNot ? "NOT IN" : "IN", parsedColumn, inValues, isNot, conjunction});
+        return new Condition(parsedColumn, inValues, conjunction, isNot);
+    }
+
+    private OperatorParseResult parseOperatorAndSplit(String normalizedCondition) {
+        String upperRemaining = normalizedCondition.toUpperCase();
         String[] partsByOperator = null;
         QueryParser.Operator operator = null;
-        String upperRemaining = remainingCondition.toUpperCase();
 
         if (upperRemaining.contains(" IS NOT NULL")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*IS NOT NULL\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*IS NOT NULL\\s*", 2);
             operator = QueryParser.Operator.IS_NOT_NULL;
         } else if (upperRemaining.contains(" IS NULL")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*IS NULL\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*IS NULL\\s*", 2);
             operator = QueryParser.Operator.IS_NULL;
         } else if (upperRemaining.contains(" NOT LIKE ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*NOT LIKE\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*NOT LIKE\\s*", 2);
             operator = QueryParser.Operator.NOT_LIKE;
         } else if (upperRemaining.contains(" LIKE ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*LIKE\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*LIKE\\s*", 2);
             operator = QueryParser.Operator.LIKE;
         } else if (upperRemaining.contains(" != ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*!=\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*!=\\s*", 2);
             operator = QueryParser.Operator.NOT_EQUALS;
         } else if (upperRemaining.contains(" <> ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*<>\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*<>\\s*", 2);
             operator = QueryParser.Operator.NOT_EQUALS;
         } else if (upperRemaining.contains(" = ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*=\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*=\\s*", 2);
             operator = QueryParser.Operator.EQUALS;
         } else if (upperRemaining.contains(" <= ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*<=\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*<=\\s*", 2);
             operator = QueryParser.Operator.LESS_THAN_OR_EQUAL;
         } else if (upperRemaining.contains(" >= ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*>=\\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*>=\\s*", 2);
             operator = QueryParser.Operator.GREATER_THAN_OR_EQUAL;
         } else if (upperRemaining.contains(" < ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*<\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*<\s*", 2);
             operator = QueryParser.Operator.LESS_THAN;
         } else if (upperRemaining.contains(" > ")) {
-            partsByOperator = remainingCondition.split("(?i)\\s*>\s*", 2);
+            partsByOperator = normalizedCondition.split("(?i)\\s*>\s*", 2);
             operator = QueryParser.Operator.GREATER_THAN;
-        } else {
-            LOGGER.log(Level.SEVERE, "Invalid condition operator in non-aggregate condition: {0}", remainingCondition);
-            throw new IllegalArgumentException("Invalid condition operator in: " + conditionWithoutNot);
         }
 
+        if (partsByOperator == null || partsByOperator.length != 2) {
+            return null;
+        }
+
+        return new OperatorParseResult(partsByOperator, operator);
+    }
+
+    private Condition createCondition(OperatorParseResult opResult, String normalizedCondition, String conjunction, Map<String, Class<?>> columnTypes, boolean isOnClause, String tableName, boolean isNot) {
+        String leftOperand = opResult.partsByOperator[0].trim();
+        String rightOperand = opResult.partsByOperator[1].trim();
+        QueryParser.Operator operator = opResult.operator;
+
+        String column = NormalizationUtils.normalizeColumnName(leftOperand, isOnClause ? null : tableName);
+        String rightColumn = null;
+        Object value = null;
+
         if (operator == QueryParser.Operator.IS_NULL || operator == QueryParser.Operator.IS_NOT_NULL) {
-            String column = NormalizationUtils.normalizeColumnName(partsByOperator[0].trim(), isOnClause ? null : tableName);
             Class<?> columnType = getColumnType(column, columnTypes);
             if (columnType == null) {
                 LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
@@ -493,18 +540,8 @@ class ConditionParser {
             return new Condition(column, operator, conjunction, isNot);
         }
 
-        if (partsByOperator.length != 2) {
-            throw new IllegalArgumentException("Invalid condition format: " + conditionWithoutNot);
-        }
-
-        String leftOperand = partsByOperator[0].trim();
-        String rightOperand = partsByOperator[1].trim();
-
-        String column = NormalizationUtils.normalizeColumnName(leftOperand, isOnClause ? null : tableName);
-        String rightColumn = null;
-        Object value = null;
-
-        if (aggMatcher.reset(column).matches()) {
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)?\\s*\\)");
+        if (aggPattern.matcher(column).matches()) {
             LOGGER.log(Level.FINE, "Column is an aggregate function: {0}", column);
             Class<?> valueType = column.toUpperCase().startsWith("COUNT") ? Long.class : Double.class;
             try {
@@ -529,7 +566,7 @@ class ConditionParser {
             Class<?> rightColumnType = getColumnType(rightColumn, columnTypes);
             if (rightColumnType != null) {
                 if (operator == QueryParser.Operator.LIKE || operator == QueryParser.Operator.NOT_LIKE) {
-                    throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column comparisons: " + conditionWithoutNot);
+                    throw new IllegalArgumentException("LIKE and NOT LIKE are not supported for column comparisons: " + normalizedCondition);
                 }
                 LOGGER.log(Level.FINE, "Parsed column comparison condition: left={0}, right={1}, operator={2}, conjunction={3}",
                         new Object[]{column, rightColumn, operator, conjunction});
@@ -555,8 +592,8 @@ class ConditionParser {
 
         if (value instanceof QueryParser.Operator) {
             LOGGER.log(Level.SEVERE, "Invalid condition: value is an Operator: {0} in condition: {1}",
-                    new Object[]{value, conditionWithoutNot});
-            throw new IllegalArgumentException("Invalid condition: value cannot be an Operator: " + conditionWithoutNot);
+                    new Object[]{value, normalizedCondition});
+            throw new IllegalArgumentException("Invalid condition: value cannot be an Operator: " + normalizedCondition);
         }
 
         LOGGER.log(Level.FINE, "Parsed condition: column={0}, operator={1}, value={2}, rightColumn={3}, not={4}, conjunction={5}",

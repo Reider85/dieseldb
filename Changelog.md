@@ -139,3 +139,4 @@
 1.3.1.8 Splitter
 1.3.1.9 HAVING fixes retry 8
 1.3.2 HAVING fixes retry 9
+1.3.2.1 ConditionParser refactoring
