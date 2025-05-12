@@ -285,41 +285,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     resultRow.put(resultKey, null);
                                 }
                             }
-                        } else if (agg.functionName.equals("SUM")) {
-                            if (agg.column == null) {
-                                throw new IllegalArgumentException("SUM requires a column argument");
-                            }
-                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
-                            List<Object> values = group.stream()
-                                    .map(row -> row.get(columnKey))
-                                    .filter(Objects::nonNull)
-                                    .collect(Collectors.toList());
-                            if (values.isEmpty()) {
-                                resultRow.put(resultKey, null);
-                            } else {
-                                BigDecimal sum = BigDecimal.ZERO;
-                                for (Object value : values) {
-                                    if (value instanceof Number) {
-                                        sum = sum.add(new BigDecimal(value.toString()));
-                                    }
-                                }
-                                Class<?> columnType = combinedColumnTypes.get(columnKey);
-                                if (columnType == Float.class) {
-                                    resultRow.put(resultKey, sum.floatValue());
-                                } else if (columnType == Double.class) {
-                                    resultRow.put(resultKey, sum.doubleValue());
-                                } else if (columnType == Integer.class) {
-                                    resultRow.put(resultKey, sum.intValue());
-                                } else if (columnType == Long.class) {
-                                    resultRow.put(resultKey, sum.longValue());
-                                } else if (columnType == Short.class) {
-                                    resultRow.put(resultKey, sum.shortValue());
-                                } else if (columnType == Byte.class) {
-                                    resultRow.put(resultKey, sum.byteValue());
-                                } else {
-                                    resultRow.put(resultKey, sum);
-                                }
-                            }
                         } else {
                             throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
                         }
@@ -448,41 +413,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 }
                             } else {
                                 resultRow.put(resultKey, null);
-                            }
-                        }
-                    } else if (agg.functionName.equals("SUM")) {
-                        if (agg.column == null) {
-                            throw new IllegalArgumentException("SUM requires a column argument");
-                        }
-                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
-                        List<Object> values = selectedRows.stream()
-                                .map(row -> row.get(columnKey))
-                                .filter(Objects::nonNull)
-                                .collect(Collectors.toList());
-                        if (values.isEmpty()) {
-                            resultRow.put(resultKey, null);
-                        } else {
-                            BigDecimal sum = BigDecimal.ZERO;
-                            for (Object value : values) {
-                                if (value instanceof Number) {
-                                    sum = sum.add(new BigDecimal(value.toString()));
-                                }
-                            }
-                            Class<?> columnType = combinedColumnTypes.get(columnKey);
-                            if (columnType == Float.class) {
-                                resultRow.put(resultKey, sum.floatValue());
-                            } else if (columnType == Double.class) {
-                                resultRow.put(resultKey, sum.doubleValue());
-                            } else if (columnType == Integer.class) {
-                                resultRow.put(resultKey, sum.intValue());
-                            } else if (columnType == Long.class) {
-                                resultRow.put(resultKey, sum.longValue());
-                            } else if (columnType == Short.class) {
-                                resultRow.put(resultKey, sum.shortValue());
-                            } else if (columnType == Byte.class) {
-                                resultRow.put(resultKey, sum.byteValue());
-                            } else {
-                                resultRow.put(resultKey, sum);
                             }
                         }
                     } else {
