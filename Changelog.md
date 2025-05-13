@@ -116,3 +116,4 @@
 1.1.6 HAVING
 1.1.7 aliases
 1.1.8 IN fix
+1.1.9 aliases fix

@@ -788,16 +788,26 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (String column : columns) {
             String normalizedColumn = normalizeColumnName(column, mainTableName);
             String columnAlias = normalizeColumnKey(column, mainTableName);
+            // Проверяем, есть ли пользовательский алиас для столбца
+            String[] parts = column.trim().split("\\s+AS\\s+|\\s+", 2);
+            if (parts.length > 1) {
+                columnAlias = parts[1].trim();
+                if (columnAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+                    LOGGER.log(Level.FINE, "Using column alias: {0} -> {1}", new Object[]{normalizedColumn, columnAlias});
+                } else {
+                    columnAlias = normalizeColumnKey(column, mainTableName); // Откат к стандартному имени
+                }
+            }
             if (row.containsKey(normalizedColumn)) {
                 filtered.put(columnAlias, row.get(normalizedColumn));
             } else {
-                // Try to find the column by its unqualified name across all tables
+                // Пытаемся найти столбец по его неквалифицированному имени
                 String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column.trim();
                 for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
                     String tableName = aliasEntry.getValue();
                     String possibleKey = tableName + "." + unqualifiedColumn;
                     if (row.containsKey(possibleKey)) {
-                        filtered.put(unqualifiedColumn, row.get(possibleKey));
+                        filtered.put(columnAlias, row.get(possibleKey));
                         break;
                     }
                 }

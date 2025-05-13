@@ -548,12 +548,14 @@ class QueryParser {
 
         List<String> columns = new ArrayList<>();
         List<AggregateFunction> aggregates = new ArrayList<>();
+        Map<String, String> columnAliases = new HashMap<>(); // column -> alias
 
         Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?|([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -562,6 +564,8 @@ class QueryParser {
             Matcher maxMatcher = maxPattern.matcher(trimmedItem);
             Matcher avgMatcher = avgPattern.matcher(trimmedItem);
             Matcher sumMatcher = sumPattern.matcher(trimmedItem);
+            Matcher columnMatcher = columnPattern.matcher(trimmedItem);
+
             if (countMatcher.matches()) {
                 String countArg = countMatcher.group(1);
                 String alias = countMatcher.group(2);
@@ -593,8 +597,25 @@ class QueryParser {
                 aggregates.add(new AggregateFunction("SUM", column, alias));
                 LOGGER.log(Level.FINE, "Parsed aggregate function: SUM({0}){1}",
                         new Object[]{column, alias != null ? " AS " + alias : ""});
+            } else if (columnMatcher.matches()) {
+                String column;
+                String alias = null;
+                if (columnMatcher.group(1) != null) {
+                    column = columnMatcher.group(1);
+                    alias = columnMatcher.group(2);
+                } else {
+                    column = columnMatcher.group(3);
+                    alias = columnMatcher.group(4);
+                }
+                columns.add(column);
+                if (alias != null) {
+                    columnAliases.put(column, alias);
+                    LOGGER.log(Level.FINE, "Parsed column with alias: {0} AS {1}", new Object[]{column, alias});
+                } else {
+                    LOGGER.log(Level.FINE, "Parsed column: {0}", new Object[]{column});
+                }
             } else {
-                columns.add(trimmedItem);
+                throw new IllegalArgumentException("Invalid SELECT item: " + trimmedItem);
             }
         }
 
@@ -982,6 +1003,7 @@ class QueryParser {
         StringBuilder currentItem = new StringBuilder();
         boolean inQuotes = false;
         int parenDepth = 0;
+        boolean afterAs = false;
 
         for (int i = 0; i < selectPart.length(); i++) {
             char c = selectPart.charAt(i);
@@ -1005,7 +1027,34 @@ class QueryParser {
                         items.add(item);
                     }
                     currentItem = new StringBuilder();
+                    afterAs = false;
                     continue;
+                } else if (parenDepth == 0 && !afterAs) {
+                    // Проверяем, является ли текущая позиция началом AS или пробелом перед алиасом
+                    if (i + 3 <= selectPart.length() && selectPart.substring(i, i + 3).equalsIgnoreCase(" AS ") &&
+                            Character.isWhitespace(selectPart.charAt(i - 1))) {
+                        currentItem.append(c); // Добавляем 'A'
+                        currentItem.append(selectPart.charAt(i + 1)); // Добавляем 'S'
+                        currentItem.append(selectPart.charAt(i + 2)); // Добавляем ' '
+                        i += 2; // Пропускаем "AS "
+                        afterAs = true;
+                        continue;
+                    } else if (Character.isWhitespace(c) && !currentItem.toString().trim().isEmpty()) {
+                        // Проверяем, является ли следующий токен потенциальным алиасом (идентификатором)
+                        String remaining = selectPart.substring(i + 1).trim();
+                        int nextSpace = remaining.indexOf(' ');
+                        int nextComma = remaining.indexOf(',');
+                        int endIndex = nextSpace == -1 ? (nextComma == -1 ? remaining.length() : nextComma) : Math.min(nextSpace, nextComma == -1 ? remaining.length() : nextComma);
+                        String potentialAlias = remaining.substring(0, endIndex).trim();
+                        if (potentialAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+                            // Это потенциальный алиас
+                            currentItem.append(c);
+                            currentItem.append(potentialAlias);
+                            i += potentialAlias.length();
+                            afterAs = true;
+                            continue;
+                        }
+                    }
                 }
             }
             currentItem.append(c);
