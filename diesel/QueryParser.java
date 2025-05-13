@@ -1537,11 +1537,11 @@ class QueryParser {
             throw new IllegalArgumentException("Empty condition after NOT: " + conditionStr);
         }
 
-        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IN\\s*\\((.*)\\)$");
+        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IN\\s+(?:\\((.*)\\)|(.*))$");
         Matcher inMatcher = inPattern.matcher(cleanCondition);
         if (inMatcher.matches()) {
             String column = normalizeColumnName(inMatcher.group(1).trim(), tableName, tableAliases);
-            String valuesStr = inMatcher.group(2).trim();
+            String valuesStr = inMatcher.group(2) != null ? inMatcher.group(2).trim() : inMatcher.group(3).trim();
             List<Object> values = parseInValues(column, valuesStr, combinedColumnTypes, originalQuery);
             LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}, not={2}, conjunction={3}",
                     new Object[]{column, values, isNot, conjunction});
