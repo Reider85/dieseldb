@@ -22,10 +22,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.OrderByInfo> orderBy;
     private final List<String> groupBy;
     private final List<QueryParser.HavingCondition> havingConditions;
+    private final Map<String, String> tableAliases; // Stores alias -> tableName mappings
 
     public SelectQuery(List<String> columns, List<QueryParser.AggregateFunction> aggregates, List<QueryParser.Condition> conditions,
                        List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
-                       List<QueryParser.OrderByInfo> orderBy, List<String> groupBy, List<QueryParser.HavingCondition> havingConditions) {
+                       List<QueryParser.OrderByInfo> orderBy, List<String> groupBy, List<QueryParser.HavingCondition> havingConditions,
+                       Map<String, String> tableAliases) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
         this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
         this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
@@ -36,6 +38,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         this.orderBy = orderBy != null ? new ArrayList<>(orderBy) : new ArrayList<>();
         this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
         this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
+        this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
+        // Ensure main table is in aliases
+        this.tableAliases.putIfAbsent(mainTableName, mainTableName);
     }
 
     @Override
@@ -46,14 +51,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Map<String, Table> tables = new HashMap<>();
         tables.put(mainTableName, table);
 
-        Map<String, Class<?>> combinedColumnTypes = new HashMap<>(table.getColumnTypes());
+        Map<String, Class<?>> combinedColumnTypes = new HashMap<>();
+        // Initialize column types with main table
+        table.getColumnTypes().forEach((col, type) -> combinedColumnTypes.put(mainTableName + "." + col, type));
+
         for (QueryParser.JoinInfo join : joins) {
             Table joinTable = database.getTable(join.tableName);
             if (joinTable == null) {
                 throw new IllegalArgumentException("Join table not found: " + join.tableName);
             }
             tables.put(join.tableName, joinTable);
-            combinedColumnTypes.putAll(joinTable.getColumnTypes());
+            // Update column types with table prefix
+            joinTable.getColumnTypes().forEach((col, type) -> combinedColumnTypes.put(join.tableName + "." + col, type));
+            // Add alias to tableAliases if present
+            if (join.alias != null) {
+                tableAliases.put(join.alias, join.tableName);
+            }
         }
 
         try {
@@ -97,7 +110,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
                     for (int i = 0; i < buildRows.size(); i++) {
                         Map<String, Object> row = buildRows.get(i);
-                        Object key = row.get(buildColumn.split("\\.")[1]);
+                        Object key = row.get(normalizeColumnKey(buildColumn, buildTableName));
                         if (key != null) {
                             hashTable.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
                             ReentrantReadWriteLock lock = buildTable.getRowLock(i);
@@ -108,7 +121,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
                         Map<String, Object> probeRow = currentJoin.get(probeTableName);
-                        Object probeKey = probeRow.get(probeColumn.split("\\.")[1]);
+                        Object probeKey = probeRow.get(normalizeColumnKey(probeColumn, probeTableName));
                         if (probeKey != null) {
                             List<Map<String, Object>> matches = hashTable.get(probeKey);
                             if (matches != null) {
@@ -143,8 +156,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 newJoinedRows.add(newRow);
                             } else if (join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null) {
                                 Map<String, Object> leftRow = currentJoin.get(join.originalTable);
-                                Object leftValue = leftRow.get(join.leftColumn);
-                                Object rightValue = rightRow.get(join.rightColumn);
+                                Object leftValue = leftRow.get(normalizeColumnKey(join.leftColumn, join.originalTable));
+                                Object rightValue = rightRow.get(normalizeColumnKey(join.rightColumn, join.tableName));
                                 if (!valuesEqual(leftValue, rightValue)) {
                                     continue;
                                 }
@@ -181,7 +194,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (!groupBy.isEmpty()) {
                 Map<List<Object>, List<Map<String, Object>>> groupedRows = filteredRows.stream()
                         .collect(Collectors.groupingBy(row -> groupBy.stream()
-                                .map(col -> row.get(col))
+                                .map(col -> row.get(normalizeColumnName(col, mainTableName)))
                                 .collect(Collectors.toList())));
 
                 finalRows = new ArrayList<>();
@@ -191,7 +204,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                     for (int i = 0; i < groupBy.size(); i++) {
                         String column = groupBy.get(i);
-                        String columnAlias = column.contains(".") ? column.split("\\.")[1] : column;
+                        String columnAlias = normalizeColumnKey(column, mainTableName);
                         resultRow.put(columnAlias, groupKey.get(i));
                     }
 
@@ -202,7 +215,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             if (agg.column == null) {
                                 count = group.size();
                             } else {
-                                String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                                String columnKey = normalizeColumnName(agg.column, mainTableName);
                                 count = group.stream()
                                         .filter(row -> row.get(columnKey) != null)
                                         .count();
@@ -212,7 +225,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             if (agg.column == null) {
                                 throw new IllegalArgumentException("MIN requires a column argument");
                             }
-                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            String columnKey = normalizeColumnName(agg.column, mainTableName);
                             Object minValue = group.stream()
                                     .map(row -> row.get(columnKey))
                                     .filter(Objects::nonNull)
@@ -223,7 +236,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             if (agg.column == null) {
                                 throw new IllegalArgumentException("MAX requires a column argument");
                             }
-                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            String columnKey = normalizeColumnName(agg.column, mainTableName);
                             Object maxValue = group.stream()
                                     .map(row -> row.get(columnKey))
                                     .filter(Objects::nonNull)
@@ -234,7 +247,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             if (agg.column == null) {
                                 throw new IllegalArgumentException("AVG requires a column argument");
                             }
-                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            String columnKey = normalizeColumnName(agg.column, mainTableName);
                             List<Object> values = group.stream()
                                     .map(row -> row.get(columnKey))
                                     .filter(Objects::nonNull)
@@ -276,7 +289,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             if (agg.column == null) {
                                 throw new IllegalArgumentException("SUM requires a column argument");
                             }
-                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            String columnKey = normalizeColumnName(agg.column, mainTableName);
                             List<Object> values = group.stream()
                                     .map(row -> row.get(columnKey))
                                     .filter(Objects::nonNull)
@@ -313,14 +326,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
 
                     for (String column : columns) {
-                        if (groupBy.contains(column) && !resultRow.containsKey(column)) {
-                            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1] : column;
-                            Object value = group.get(0).get(column);
+                        if (!resultRow.containsKey(normalizeColumnKey(column, mainTableName))) {
+                            String normalizedColumn = normalizeColumnName(column, mainTableName);
+                            String unqualifiedColumn = normalizeColumnKey(normalizedColumn, mainTableName);
+                            Object value = group.get(0).get(normalizedColumn);
                             resultRow.put(unqualifiedColumn, value);
                         }
                     }
 
-                    // Проверка условий HAVING
                     if (!havingConditions.isEmpty()) {
                         if (!evaluateHavingConditions(resultRow, havingConditions)) {
                             continue;
@@ -348,7 +361,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     rowsSkipped--;
                     continue;
                 }
-                selectedRows.add(finalRows.get(i)); // Исправлена синтаксическая ошибка
+                selectedRows.add(finalRows.get(i));
             }
 
             if (!aggregates.isEmpty() && groupBy.isEmpty()) {
@@ -360,7 +373,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (agg.column == null) {
                             count = selectedRows.size();
                         } else {
-                            String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                            String columnKey = normalizeColumnName(agg.column, mainTableName);
                             count = selectedRows.stream()
                                     .filter(row -> row.get(columnKey) != null)
                                     .count();
@@ -370,7 +383,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (agg.column == null) {
                             throw new IllegalArgumentException("MIN requires a column argument");
                         }
-                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        String columnKey = normalizeColumnName(agg.column, mainTableName);
                         Object minValue = selectedRows.stream()
                                 .map(row -> row.get(columnKey))
                                 .filter(Objects::nonNull)
@@ -381,7 +394,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (agg.column == null) {
                             throw new IllegalArgumentException("MAX requires a column argument");
                         }
-                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        String columnKey = normalizeColumnName(agg.column, mainTableName);
                         Object maxValue = selectedRows.stream()
                                 .map(row -> row.get(columnKey))
                                 .filter(Objects::nonNull)
@@ -392,7 +405,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (agg.column == null) {
                             throw new IllegalArgumentException("AVG requires a column argument");
                         }
-                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        String columnKey = normalizeColumnName(agg.column, mainTableName);
                         List<Object> values = selectedRows.stream()
                                 .map(row -> row.get(columnKey))
                                 .filter(Objects::nonNull)
@@ -434,7 +447,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (agg.column == null) {
                             throw new IllegalArgumentException("SUM requires a column argument");
                         }
-                        String columnKey = agg.column.contains(".") ? agg.column : mainTableName + "." + agg.column;
+                        String columnKey = normalizeColumnName(agg.column, mainTableName);
                         List<Object> values = selectedRows.stream()
                                 .map(row -> row.get(columnKey))
                                 .filter(Objects::nonNull)
@@ -530,10 +543,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
         for (QueryParser.OrderByInfo order : orderBy) {
-            String column = order.column.contains(".") ? order.column : mainTableName + "." + order.column;
-            String columnAlias = column.contains(".") ? column.split("\\.")[1] : column;
-            Object value1 = row1.get(columnAlias);
-            Object value2 = row2.get(columnAlias);
+            String column = normalizeColumnName(order.column, mainTableName);
+            Object value1 = row1.get(column);
+            Object value2 = row2.get(column);
 
             if (value1 == null && value2 == null) {
                 continue;
@@ -573,9 +585,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 continue;
             }
 
-            String columnName = condition.column.contains(".") ? condition.column.split("\\.")[1] : condition.column;
-            Index index = table.getIndex(columnName);
-            if (index == null && table.hasClusteredIndex() && columnName.equals(table.getClusteredIndexColumn())) {
+            String columnName = normalizeColumnName(condition.column, tableName);
+            String unqualifiedColumn = normalizeColumnKey(columnName, tableName);
+            Index index = table.getIndex(unqualifiedColumn);
+            if (index == null && table.hasClusteredIndex() && unqualifiedColumn.equals(table.getClusteredIndexColumn())) {
                 index = table.getClusteredIndex();
             }
 
@@ -584,20 +597,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
                     rowIndices.addAll(index.search(condition.value));
                     LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
-                            new Object[]{tableName, columnName, rowIndices.size()});
+                            new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
                 } else if (condition.isInOperator() && condition.inValues != null) {
                     for (Object inValue : condition.inValues) {
                         rowIndices.addAll(index.search(inValue));
                     }
                     LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
-                            new Object[]{tableName, columnName, rowIndices.size()});
+                            new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
                 } else if (index instanceof BTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN || condition.operator == QueryParser.Operator.GREATER_THAN)) {
                     BTreeIndex bTreeIndex = (BTreeIndex) index;
                     Object low = condition.operator == QueryParser.Operator.GREATER_THAN ? condition.value : null;
                     Object high = condition.operator == QueryParser.Operator.LESS_THAN ? condition.value : null;
                     rowIndices.addAll(bTreeIndex.rangeSearch(low, high));
                     LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for range condition {2}, found {3} rows",
-                            new Object[]{tableName, columnName, condition.operator, rowIndices.size()});
+                            new Object[]{tableName, unqualifiedColumn, condition.operator, rowIndices.size()});
                 }
 
                 if (!rowIndices.isEmpty()) {
@@ -668,14 +681,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         if (condition.isNullOperator()) {
-            Object value = row.get(condition.column);
+            String column = normalizeColumnName(condition.column, mainTableName);
+            Object value = row.get(column);
             boolean isNull = value == null;
             boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
             return condition.not ? !result : result;
         }
 
         if (condition.isInOperator()) {
-            Object value = row.get(condition.column);
+            String column = normalizeColumnName(condition.column, mainTableName);
+            Object value = row.get(column);
             if (value == null) {
                 return condition.not;
             }
@@ -683,14 +698,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return condition.not ? !inResult : inResult;
         }
 
-        Object leftValue = row.get(condition.column);
+        String leftColumn = normalizeColumnName(condition.column, mainTableName);
+        Object leftValue = row.get(leftColumn);
         if (leftValue == null) {
             return condition.not;
         }
 
         Object rightValue;
         if (condition.isColumnComparison()) {
-            rightValue = row.get(condition.rightColumn);
+            String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
+            rightValue = row.get(rightColumn);
             if (rightValue == null) {
                 return condition.not;
             }
@@ -723,6 +740,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 break;
             case GREATER_THAN:
                 result = comparison > 0;
+                break;
+            case LESS_THAN_OR_EQUALS:
+                result = comparison <= 0;
+                break;
+            case GREATER_THAN_OR_EQUALS:
+                result = comparison >= 0;
                 break;
             default:
                 throw new IllegalStateException("Unsupported operator: " + condition.operator);
@@ -763,21 +786,45 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
         Map<String, Object> filtered = new HashMap<>();
         for (String column : columns) {
-            String unqualifiedColumn = column.contains(".") ? column : mainTableName + "." + column;
-            if (row.containsKey(unqualifiedColumn)) {
-                String columnAlias = column.contains(".") ? column.split("\\.")[1] : column;
-                filtered.put(columnAlias, row.get(unqualifiedColumn));
+            String normalizedColumn = normalizeColumnName(column, mainTableName);
+            String columnAlias = normalizeColumnKey(column, mainTableName);
+            if (row.containsKey(normalizedColumn)) {
+                filtered.put(columnAlias, row.get(normalizedColumn));
             } else {
-                String colName = column.contains(".") ? column.split("\\.")[1] : column;
-                for (Map.Entry<String, Object> entry : row.entrySet()) {
-                    if (entry.getKey().endsWith("." + colName)) {
-                        filtered.put(colName, entry.getValue());
+                // Try to find the column by its unqualified name across all tables
+                String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column.trim();
+                for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
+                    String tableName = aliasEntry.getValue();
+                    String possibleKey = tableName + "." + unqualifiedColumn;
+                    if (row.containsKey(possibleKey)) {
+                        filtered.put(unqualifiedColumn, row.get(possibleKey));
                         break;
                     }
                 }
             }
         }
         return filtered;
+    }
+
+    private String normalizeColumnName(String column, String defaultTable) {
+        if (column.contains(".")) {
+            String[] parts = column.split("\\.", 2);
+            String prefix = parts[0].trim();
+            String colName = parts[1].trim();
+            // Check if prefix is an alias or table name
+            String resolvedTable = tableAliases.getOrDefault(prefix, prefix);
+            // If resolvedTable is not in tableAliases values, use defaultTable
+            if (!tableAliases.containsValue(resolvedTable)) {
+                resolvedTable = defaultTable;
+            }
+            return resolvedTable + "." + colName;
+        }
+        return defaultTable + "." + column.trim();
+    }
+
+    private String normalizeColumnKey(String column, String defaultTable) {
+        String normalized = normalizeColumnName(column, defaultTable);
+        return normalized.contains(".") ? normalized.split("\\.")[1].trim() : normalized.trim();
     }
 
     public List<String> getColumns() {
@@ -820,6 +867,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return Collections.unmodifiableList(havingConditions);
     }
 
+    public Map<String, String> getTableAliases() {
+        return Collections.unmodifiableMap(tableAliases);
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("SELECT ");
@@ -832,11 +883,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         // Append FROM clause
         sb.append(" FROM ").append(mainTableName);
+        String mainTableAlias = tableAliases.entrySet().stream()
+                .filter(e -> e.getValue().equals(mainTableName) && !e.getKey().equals(mainTableName))
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(null);
+        if (mainTableAlias != null) {
+            sb.append(" ").append(mainTableAlias);
+        }
 
         // Append JOIN clauses
         for (QueryParser.JoinInfo join : joins) {
             sb.append(" ").append(join.joinType.toString().replace("_", " ")).append(" ");
             sb.append(join.tableName);
+            if (join.alias != null) {
+                sb.append(" ").append(join.alias);
+            }
             if (!join.onConditions.isEmpty()) {
                 sb.append(" ON ");
                 sb.append(join.onConditions.stream()

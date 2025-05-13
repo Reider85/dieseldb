@@ -114,3 +114,4 @@
 1.1.4 COUNT in GROUP BY
 1.1.5 SUM in GROUP BY
 1.1.6 HAVING
+1.1.7 aliases
