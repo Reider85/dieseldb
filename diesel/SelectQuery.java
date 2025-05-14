@@ -543,9 +543,38 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
         for (QueryParser.OrderByInfo order : orderBy) {
-            String column = normalizeColumnName(order.column, mainTableName);
-            Object value1 = row1.get(column);
-            Object value2 = row2.get(column);
+            String column = order.column;
+            String normalizedColumn = null; // Инициализируем null для ясности
+            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+
+            // Проверяем, является ли столбец алиасом из SELECT
+            for (String selectColumn : columns) {
+                String[] parts = selectColumn.trim().split("\\s+AS\\s+|\\s+", 2);
+                String columnAlias = parts.length > 1 ? parts[1].trim() : normalizeColumnKey(selectColumn, mainTableName);
+                if (unqualifiedColumn.equalsIgnoreCase(columnAlias)) {
+                    normalizedColumn = columnAlias; // Используем алиас напрямую
+                    break;
+                }
+            }
+
+            // Если не алиас, проверяем, является ли столбец квалифицированным именем с алиасом таблицы
+            if (normalizedColumn == null) {
+                for (String alias : tableAliases.keySet()) {
+                    if (column.equalsIgnoreCase(alias + "." + unqualifiedColumn)) {
+                        String tableName = tableAliases.get(alias);
+                        normalizedColumn = tableName + "." + unqualifiedColumn; // Разрешаем в реальное имя столбца
+                        break;
+                    }
+                }
+            }
+
+            // Если всё ещё не разрешено, нормализуем как имя столбца
+            if (normalizedColumn == null) {
+                normalizedColumn = normalizeColumnName(column, mainTableName);
+            }
+
+            Object value1 = row1.get(normalizedColumn);
+            Object value2 = row2.get(normalizedColumn);
 
             if (value1 == null && value2 == null) {
                 continue;
@@ -788,14 +817,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (String column : columns) {
             String normalizedColumn = normalizeColumnName(column, mainTableName);
             String columnAlias = normalizeColumnKey(column, mainTableName);
-            // Проверяем, есть ли пользовательский алиас для столбца
             String[] parts = column.trim().split("\\s+AS\\s+|\\s+", 2);
             if (parts.length > 1) {
                 columnAlias = parts[1].trim();
                 if (columnAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
                     LOGGER.log(Level.FINE, "Using column alias: {0} -> {1}", new Object[]{normalizedColumn, columnAlias});
                 } else {
-                    columnAlias = normalizeColumnKey(column, mainTableName); // Откат к стандартному имени
+                    columnAlias = normalizeColumnKey(column, mainTableName);
                 }
             }
             if (row.containsKey(normalizedColumn)) {

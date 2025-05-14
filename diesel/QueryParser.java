@@ -550,12 +550,13 @@ class QueryParser {
         List<AggregateFunction> aggregates = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>(); // column -> alias
 
-        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?|([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)$");
+        // Updated regular expressions for aggregate functions
+        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -598,15 +599,8 @@ class QueryParser {
                 LOGGER.log(Level.FINE, "Parsed aggregate function: SUM({0}){1}",
                         new Object[]{column, alias != null ? " AS " + alias : ""});
             } else if (columnMatcher.matches()) {
-                String column;
-                String alias = null;
-                if (columnMatcher.group(1) != null) {
-                    column = columnMatcher.group(1);
-                    alias = columnMatcher.group(2);
-                } else {
-                    column = columnMatcher.group(3);
-                    alias = columnMatcher.group(4);
-                }
+                String column = columnMatcher.group(1);
+                String alias = columnMatcher.group(2);
                 columns.add(column);
                 if (alias != null) {
                     columnAliases.put(column, alias);
@@ -622,14 +616,14 @@ class QueryParser {
         String tableAndJoins = parts[1].trim();
         List<JoinInfo> joins = new ArrayList<>();
         String tableName;
-        String tableAlias = null; // Alias for main table
+        String tableAlias = null;
         String conditionStr = null;
         Integer limit = null;
         Integer offset = null;
         List<OrderByInfo> orderBy = new ArrayList<>();
         List<String> groupBy = new ArrayList<>();
         List<HavingCondition> havingConditions = new ArrayList<>();
-        Map<String, String> tableAliases = new HashMap<>(); // alias -> tableName
+        Map<String, String> tableAliases = new HashMap<>();
 
         Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
@@ -642,7 +636,6 @@ class QueryParser {
         }
         joinParts.add(tableAndJoins.substring(lastEnd).trim());
 
-        // Parse main table and its alias
         String mainTablePart = joinParts.get(0).trim();
         String[] mainTableTokens = mainTablePart.split("\\s+");
         tableName = mainTableTokens[0].trim();
@@ -664,7 +657,7 @@ class QueryParser {
         }
 
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
-        tableAliases.put(tableName, tableName); // Add table name as its own alias for consistency
+        tableAliases.put(tableName, tableName);
 
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
@@ -705,7 +698,6 @@ class QueryParser {
             String joinTableAlias = null;
             List<Condition> onConditions = new ArrayList<>();
 
-            // Parse join table and its alias
             String[] joinTableTokens = joinPart.split("\\s+(?=(ON|JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE|LIMIT|OFFSET|ORDER BY|$))", 2);
             String joinTablePart = joinTableTokens[0].trim();
             String[] joinTableParts = joinTablePart.split("\\s+");
@@ -742,7 +734,7 @@ class QueryParser {
                     } else if (remaining.toUpperCase().startsWith("OFFSET ")) {
                         offset = parseOffsetClause(remaining);
                     } else if (remaining.toUpperCase().startsWith("ORDER BY ")) {
-                        orderBy = parseOrderByClause(remaining.substring(9).trim(), combinedColumnTypes);
+                        orderBy = parseOrderByClause(remaining.substring(9).trim(), tableName, combinedColumnTypes, columnAliases, tableAliases);
                     }
                     if (remaining.toUpperCase().contains(" ON ")) {
                         throw new IllegalArgumentException("CROSS JOIN does not support ON clause: " + joinPart);
@@ -791,7 +783,7 @@ class QueryParser {
                             String[] whereOrderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
                             conditionStr = whereOrderBySplit[0].trim();
                             if (whereOrderBySplit.length > 1) {
-                                orderBy = parseOrderByClause(whereOrderBySplit[1].trim(), combinedColumnTypes);
+                                orderBy = parseOrderByClause(whereOrderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
                             }
                         } else {
                             conditionStr = remaining;
@@ -813,7 +805,7 @@ class QueryParser {
                     String[] onOrderBySplit = onCondition.split("(?i)\\s+ORDER BY\\s+", 2);
                     onCondition = "";
                     if (onOrderBySplit.length > 1) {
-                        orderBy = parseOrderByClause(onOrderBySplit[1].trim(), combinedColumnTypes);
+                        orderBy = parseOrderByClause(onOrderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
                     }
                 }
 
@@ -866,7 +858,7 @@ class QueryParser {
                     : new String[]{conditionStr, ""};
             conditionStr = orderBySplit[0].trim();
             if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
-                orderBy = parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes);
+                orderBy = parseOrderByClause(orderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
             }
 
             String[] groupBySplit = conditionStr.toUpperCase().contains(" GROUP BY ")
@@ -894,7 +886,7 @@ class QueryParser {
             String[] orderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
             remaining = orderBySplit[0].trim();
             if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
-                orderBy = parseOrderByClause(orderBySplit[1].trim(), combinedColumnTypes);
+                orderBy = parseOrderByClause(orderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
             }
         }
 
@@ -1068,7 +1060,7 @@ class QueryParser {
         return items;
     }
 
-    private List<OrderByInfo> parseOrderByClause(String orderByClause, Map<String, Class<?>> combinedColumnTypes) {
+    private List<OrderByInfo> parseOrderByClause(String orderByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes, Map<String, String> columnAliases, Map<String, String> tableAliases) {
         List<OrderByInfo> orderBy = new ArrayList<>();
         String[] orderByParts = splitOrderByClause(orderByClause);
         for (String part : orderByParts) {
@@ -1087,17 +1079,39 @@ class QueryParser {
                 }
             }
 
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
             boolean found = false;
-            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
-                    found = true;
-                    break;
+            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+
+            // Check if the column or its unqualified part is an alias in columnAliases
+            if (columnAliases.containsValue(unqualifiedColumn)) {
+                found = true;
+            } else {
+                // Check if the column matches a key in columnAliases (actual column name)
+                for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
+                    String aliasedColumn = aliasEntry.getKey();
+                    String alias = aliasEntry.getValue();
+                    if (aliasedColumn.equalsIgnoreCase(column) || alias.equalsIgnoreCase(unqualifiedColumn)) {
+                        found = true;
+                        break;
+                    }
                 }
             }
+
+            // If not an alias, check if it's a physical column
             if (!found) {
-                LOGGER.log(Level.SEVERE, "Unknown column in ORDER BY: {0}, available columns: {1}",
-                        new Object[]{column, combinedColumnTypes.keySet()});
+                String normalizedColumn = column.contains(".") ? normalizeColumnName(column, defaultTableName, tableAliases) : defaultTableName + "." + column;
+                for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                    String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
+                    if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn) || entry.getKey().equalsIgnoreCase(normalizedColumn)) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!found) {
+                LOGGER.log(Level.SEVERE, "Unknown column or alias in ORDER BY: {0}, available columns: {1}, aliases: {2}",
+                        new Object[]{column, combinedColumnTypes.keySet(), columnAliases.values()});
                 throw new IllegalArgumentException("Unknown column in ORDER BY: " + column);
             }
 
