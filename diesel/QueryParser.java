@@ -1637,17 +1637,21 @@ class QueryParser {
         Matcher inMatcher = inPattern.matcher(cleanCondition);
         if (inMatcher.matches()) {
             String column = inMatcher.group(1).trim();
+            String resolvedColumn;
             // Check if column is an alias
-            String normalizedColumn = columnAliases.containsValue(column)
-                    ? normalizeColumnName(columnAliases.entrySet().stream()
-                    .filter(e -> e.getValue().equalsIgnoreCase(column))
-                    .findFirst().get().getKey(), tableName, tableAliases)
-                    : normalizeColumnName(column, tableName, tableAliases);
+            if (columnAliases.containsValue(column)) {
+                String actualColumn = columnAliases.entrySet().stream()
+                        .filter(e -> e.getValue().equalsIgnoreCase(column))
+                        .findFirst().get().getKey();
+                resolvedColumn = normalizeColumnName(actualColumn, tableName, tableAliases);
+            } else {
+                resolvedColumn = normalizeColumnName(column, tableName, tableAliases);
+            }
             String valuesStr = inMatcher.group(2) != null ? inMatcher.group(2).trim() : inMatcher.group(3).trim();
-            List<Object> values = parseInValues(normalizedColumn, valuesStr, combinedColumnTypes, originalQuery, columnAliases);
+            List<Object> values = parseInValues(resolvedColumn, valuesStr, combinedColumnTypes, originalQuery, columnAliases);
             LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}, not={2}, conjunction={3}",
-                    new Object[]{normalizedColumn, values, isNot, conjunction});
-            return new Condition(normalizedColumn, values, conjunction, isNot);
+                    new Object[]{resolvedColumn, values, isNot, conjunction});
+            return new Condition(resolvedColumn, values, conjunction, isNot);
         }
 
         // Handle NULL conditions
@@ -1939,21 +1943,37 @@ class QueryParser {
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> combinedColumnTypes, String defaultTable, Map<String, String> tableAliases, Map<String, String> columnAliases) {
         // Check if the column is an alias
+        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
         for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
-            if (aliasEntry.getValue().equalsIgnoreCase(column)) {
+            if (aliasEntry.getValue().equalsIgnoreCase(unqualifiedColumn)) {
                 String actualColumn = normalizeColumnName(aliasEntry.getKey(), defaultTable, tableAliases);
-                String unqualifiedColumn = actualColumn.contains(".") ? actualColumn.split("\\.")[1].trim() : actualColumn;
+                String actualUnqualified = actualColumn.contains(".") ? actualColumn.split("\\.")[1].trim() : actualColumn;
                 for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                    if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
+                    if (entry.getKey().equalsIgnoreCase(actualUnqualified)) {
                         return entry.getValue();
                     }
                 }
             }
         }
 
+        // Check if the column itself is an alias
+        if (columnAliases.containsValue(unqualifiedColumn)) {
+            String finalUnqualifiedColumn = unqualifiedColumn;
+            String actualColumn = columnAliases.entrySet().stream()
+                    .filter(e -> e.getValue().equalsIgnoreCase(finalUnqualifiedColumn))
+                    .findFirst().get().getKey();
+            String normalized = normalizeColumnName(actualColumn, defaultTable, tableAliases);
+            String normalizedUnqualified = normalized.contains(".") ? normalized.split("\\.")[1].trim() : normalized;
+            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                if (entry.getKey().equalsIgnoreCase(normalizedUnqualified)) {
+                    return entry.getValue();
+                }
+            }
+        }
+
         // Fallback to physical column check
         String normalized = normalizeColumnName(column, defaultTable, tableAliases);
-        String unqualifiedColumn = normalized.contains(".") ? normalized.split("\\.")[1].trim() : normalized;
+        unqualifiedColumn = normalized.contains(".") ? normalized.split("\\.")[1].trim() : normalized;
         for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
             if (entry.getKey().equalsIgnoreCase(unqualifiedColumn)) {
                 return entry.getValue();
