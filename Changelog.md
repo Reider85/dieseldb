@@ -118,3 +118,4 @@
 1.1.8 IN fix
 1.1.9 aliases fix
 1.2.0 aliases fix
+1.2.1 aliases fix

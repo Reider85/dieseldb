@@ -201,7 +201,7 @@ public class AliasesTest {
     private void selectWithOrderByString() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectWithOrderByString");
-            String query = "SELECT u.NAME userName, u.USER_CODE code FROM USERS u";
+            String query = "SELECT NAME userName, USER_CODE code FROM USERS u ORDER BY userName";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectWithOrderByString: OK");
         } catch (Exception e) {
@@ -213,7 +213,7 @@ public class AliasesTest {
     private void selectWithGroupByString() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectWithGroupByString");
-            String query = "SELECT u.NAME userName, COUNT(*) userCount FROM USERS u GROUP BY u.userName ORDER BY u.userName";
+            String query = "SELECT NAME userName, COUNT(*) userCount FROM USERS u GROUP BY userName ORDER BY userName";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectWithGroupByString: OK");
         } catch (Exception e) {
@@ -227,7 +227,7 @@ public class AliasesTest {
             LOGGER.log(Level.INFO, "Starting test: selectMinMaxAvgWithJoinAndGroupBy");
             String query = "SELECT u.NAME userName, t.TRANS_DATE transDate, MIN(u.AGE) minAge, MAX(u.AGE) maxAge, AVG(u.AGE) avgAge " +
                     "FROM USERS u INNER JOIN TRANSACTIONS t ON u.ID = t.USER_ID " +
-                    "GROUP BY u.userName, t.transDate ORDER BY t.transDate DESC";
+                    "GROUP BY userName, transDate ORDER BY transDate DESC";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectMinMaxAvgWithJoinAndGroupBy: OK");
         } catch (Exception e) {
@@ -255,7 +255,7 @@ public class AliasesTest {
     private void selectWithInCondition() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectWithInCondition");
-            String query = "SELECT u.NAME userName, u.USER_CODE code FROM USERS u WHERE u.userName IN ('User500', 'User501', 'User502')";
+            String query = "SELECT NAME userName, USER_CODE code FROM USERS u WHERE userName IN ('User500', 'User501', 'User502')";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectWithInCondition: OK");
         } catch (Exception e) {
@@ -267,7 +267,7 @@ public class AliasesTest {
     private void selectWithLikeCondition() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectWithLikeCondition");
-            String query = "SELECT u.NAME userName, u.USER_CODE code FROM USERS u WHERE u.userName LIKE 'User50%'";
+            String query = "SELECT NAME userName, USER_CODE code FROM USERS u WHERE userName LIKE 'User50%'";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectWithLikeCondition: OK");
         } catch (Exception e) {
@@ -279,7 +279,7 @@ public class AliasesTest {
     private void selectWithOrderByStringAs() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectWithOrderByStringAs");
-            String query = "SELECT u.NAME AS userName, u.USER_CODE AS code FROM USERS u ORDER BY u.userName";
+            String query = "SELECT NAME AS userName, USER_CODE AS code FROM USERS u ORDER BY userName";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectWithOrderByStringAs: OK");
         } catch (Exception e) {
@@ -291,7 +291,7 @@ public class AliasesTest {
     private void selectWithGroupByStringAs() {
         try {
             LOGGER.log(Level.INFO, "Starting test: selectWithGroupByStringAs");
-            String query = "SELECT u.NAME AS userName, COUNT(*) AS userCount FROM USERS u GROUP BY u.userName ORDER BY u.userName";
+            String query = "SELECT NAME AS userName, COUNT(*) AS userCount FROM USERS u GROUP BY userName ORDER BY userName";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectWithGroupByStringAs: OK");
         } catch (Exception e) {
@@ -305,7 +305,7 @@ public class AliasesTest {
             LOGGER.log(Level.INFO, "Starting test: selectMinMaxAvgWithJoinAndGroupByAs");
             String query = "SELECT u.NAME AS userName, t.TRANS_DATE AS transDate, MIN(u.AGE) AS minAge, MAX(u.AGE) AS maxAge, AVG(u.AGE) AS avgAge " +
                     "FROM USERS u INNER JOIN TRANSACTIONS t ON u.ID = t.USER_ID " +
-                    "GROUP BY u.userName, t.transDate ORDER BY t.transDate DESC";
+                    "GROUP BY userName, transDate ORDER BY transDate DESC";
             executeSelectQuery(query);
             LOGGER.log(Level.INFO, "Test selectMinMaxAvgWithJoinAndGroupByAs: OK");
         } catch (Exception e) {
