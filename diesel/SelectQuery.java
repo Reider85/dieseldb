@@ -24,10 +24,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.HavingCondition> havingConditions;
     private final Map<String, String> tableAliases; // Stores alias -> tableName mappings
 
+    private final List<QueryParser.SubQuery> subQueries;
+
     public SelectQuery(List<String> columns, List<QueryParser.AggregateFunction> aggregates, List<QueryParser.Condition> conditions,
                        List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
                        List<QueryParser.OrderByInfo> orderBy, List<String> groupBy, List<QueryParser.HavingCondition> havingConditions,
-                       Map<String, String> tableAliases) {
+                       Map<String, String> tableAliases, List<QueryParser.SubQuery> subQueries) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
         this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
         this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
@@ -39,6 +41,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
         this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
         this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
+        this.subQueries = subQueries != null ? new ArrayList<>(subQueries) : new ArrayList<>();
         // Ensure main table is in aliases
         this.tableAliases.putIfAbsent(mainTableName, mainTableName);
     }
