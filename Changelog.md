@@ -121,3 +121,4 @@
 1.2.1 aliases fix
 1.2.2 aliases fix
 1.2.3 subqueries fix
+1.2.4 subqueries fix

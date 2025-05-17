@@ -965,8 +965,9 @@ class QueryParser {
                 offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
             }
 
+            // Improved ORDER BY splitting
             String[] orderBySplit = conditionStr.toUpperCase().contains(" ORDER BY ")
-                    ? conditionStr.split("(?i)\\s+ORDER BY\\s+", 2)
+                    ? conditionStr.split("(?i)(?<=\\bNULL\\b|\\bNOT NULL\\b|\\bIN\\b\\s*\\([^)]*\\)|[^=><!])\\s+ORDER BY\\s+", 2)
                     : new String[]{conditionStr, ""};
             conditionStr = orderBySplit[0].trim();
             if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
@@ -1573,7 +1574,7 @@ class QueryParser {
         String conjunction = null;
         boolean not = false;
 
-        for (int i = 0; i<conditionStr.length(); i++) {
+        for (int i = 0; i < conditionStr.length(); i++) {
             char c = conditionStr.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
@@ -1625,6 +1626,17 @@ class QueryParser {
                         currentCondition.append(c);
                         i += nextToken.length();
                         continue;
+                    } else if (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY") ||
+                            nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET")) {
+                        // Terminate condition parsing
+                        String condStr = currentCondition.toString().trim();
+                        if (!condStr.isEmpty()) {
+                            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                            conditions.add(condition);
+                            LOGGER.log(Level.FINE, "Parsed condition: {0}", condition);
+                        }
+                        break;
                     }
                 }
             }
@@ -1703,7 +1715,7 @@ class QueryParser {
             return new Condition(column, inValues, conjunction, inNot);
         }
 
-        Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL$");
+        Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(condStr);
         if (isNullMatcher.matches()) {
             String column = isNullMatcher.group(1).trim();
