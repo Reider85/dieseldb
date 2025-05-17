@@ -606,13 +606,61 @@ class QueryParser {
         return columnDefs;
     }
 
+    private int findMainFromClause(String query) {
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        String upperQuery = query.toUpperCase();
+
+        for (int i = 0; i < query.length() - 4; i++) {
+            char c = query.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                } else if (parenDepth == 0 && upperQuery.startsWith("FROM ", i)) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private int findLastClauseIndex(String query, String clause) {
+        String upperQuery = query.toUpperCase();
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        int lastIndex = -1;
+
+        for (int i = 0; i < query.length(); i++) {
+            char c = query.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+            } else if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                } else if (parenDepth == 0 && upperQuery.startsWith(" " + clause + " ", i)) {
+                    lastIndex = i + 1; // Point to the start of the clause
+                }
+            }
+        }
+        return lastIndex;
+    }
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
-        String[] parts = normalized.split("FROM");
-        if (parts.length != 2) {
-            throw new IllegalArgumentException("Invalid SELECT query format");
+        int fromIndex = findMainFromClause(original);
+        if (fromIndex == -1) {
+            throw new IllegalArgumentException("Invalid SELECT query format: missing FROM clause");
         }
 
-        String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, original.indexOf("FROM")).trim();
+        String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, fromIndex).trim();
+        String tableAndJoinsOriginal = original.substring(fromIndex + 4).trim();
+
         List<String> selectItems = splitSelectItems(selectPartOriginal);
 
         List<String> columns = new ArrayList<>();
@@ -725,7 +773,7 @@ class QueryParser {
             }
         }
 
-        String tableAndJoins = parts[1].trim();
+        String tableAndJoins = tableAndJoinsOriginal.toUpperCase().trim();
         List<JoinInfo> joins = new ArrayList<>();
         String tableName;
         String tableAlias = null;
@@ -974,29 +1022,32 @@ class QueryParser {
         }
 
         if (conditionStr != null && !conditionStr.isEmpty()) {
-            String[] limitSplit = conditionStr.toUpperCase().contains(" LIMIT ")
-                    ? conditionStr.split("(?i)\\s+LIMIT\\s+", 2)
-                    : new String[]{conditionStr, ""};
-            conditionStr = limitSplit[0].trim();
-            if (limitSplit.length > 1 && !limitSplit[1].trim().isEmpty()) {
-                String limitClause = limitSplit[1].trim();
-                String[] limitOffsetSplit = limitClause.toUpperCase().contains(" OFFSET ")
-                        ? limitClause.split("(?i)\\s+OFFSET\\s+", 2)
-                        : new String[]{limitClause, ""};
-                limit = parseLimitClause("LIMIT " + limitOffsetSplit[0].trim());
-                if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
-                    offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
+            // Parse LIMIT and OFFSET clauses carefully to avoid subquery interference
+            String limitClause = null;
+            String offsetClause = null;
+            if (conditionStr.toUpperCase().contains(" LIMIT ")) {
+                int lastLimitIndex = findLastClauseIndex(conditionStr, "LIMIT");
+                if (lastLimitIndex != -1) {
+                    String beforeLimit = conditionStr.substring(0, lastLimitIndex).trim();
+                    String afterLimit = conditionStr.substring(lastLimitIndex + 5).trim();
+                    String[] limitOffsetSplit = afterLimit.toUpperCase().contains(" OFFSET ")
+                            ? afterLimit.split("(?i)\\s+OFFSET\\s+", 2)
+                            : new String[]{afterLimit, ""};
+                    limitClause = limitOffsetSplit[0].trim();
+                    if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
+                        offsetClause = limitOffsetSplit[1].trim();
+                    }
+                    conditionStr = beforeLimit;
                 }
             }
-
-            String[] offsetSplit = conditionStr.toUpperCase().contains(" OFFSET ")
-                    ? conditionStr.split("(?i)\\s+OFFSET\\s+", 2)
-                    : new String[]{conditionStr, ""};
-            conditionStr = offsetSplit[0].trim();
-            if (offsetSplit.length > 1 && !offsetSplit[1].trim().isEmpty()) {
-                offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
+            if (limitClause != null && !limitClause.isEmpty()) {
+                limit = parseLimitClause("LIMIT " + limitClause);
+            }
+            if (offsetClause != null && !offsetClause.isEmpty()) {
+                offset = parseOffsetClause("OFFSET " + offsetClause);
             }
 
+            // Parse ORDER BY clause
             String[] orderBySplit = conditionStr.toUpperCase().contains(" ORDER BY ")
                     ? conditionStr.split("(?i)(?<=\\bNULL\\b|\\bNOT NULL\\b|\\bIN\\b\\s*\\([^)]*\\)|[^=><!])\\s+ORDER BY\\s+", 2)
                     : new String[]{conditionStr, ""};
@@ -1005,6 +1056,7 @@ class QueryParser {
                 orderBy = parseOrderByClause(orderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
             }
 
+            // Parse GROUP BY clause
             String[] groupBySplit = conditionStr.toUpperCase().contains(" GROUP BY ")
                     ? conditionStr.split("(?i)\\s+GROUP BY\\s+", 2)
                     : new String[]{conditionStr, ""};
