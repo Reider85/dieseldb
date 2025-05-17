@@ -1782,7 +1782,13 @@ class QueryParser {
             String column = inMatcher.group(1).trim();
             boolean inNot = inMatcher.group(2) != null;
             String valuesStr = inMatcher.group(3).trim();
-            String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
+            // Resolve alias
+            String actualColumn = columnAliases.entrySet().stream()
+                    .filter(entry -> entry.getValue().equalsIgnoreCase(column.split("\\.")[column.contains(".") ? 1 : 0]))
+                    .map(Map.Entry::getKey)
+                    .findFirst()
+                    .orElse(column);
+            String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
             String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
 
             Class<?> columnType = null;
@@ -1801,17 +1807,17 @@ class QueryParser {
 
             if (valuesStr.toUpperCase().startsWith("SELECT ")) {
                 Query<?> subQuery = parse(valuesStr, database);
-                return new Condition(column, new SubQuery(subQuery, null), conjunction, inNot);
+                return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
             }
 
             String[] valueParts = valuesStr.split(",(?=([^']*'[^']*')*[^']*$)");
             List<Object> inValues = new ArrayList<>();
             for (String val : valueParts) {
                 val = val.trim();
-                Object value = parseConditionValue(column, val, columnType);
+                Object value = parseConditionValue(actualColumn, val, columnType);
                 inValues.add(value);
             }
-            return new Condition(column, inValues, conjunction, inNot);
+            return new Condition(actualColumn, inValues, conjunction, inNot);
         }
 
         Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
@@ -1819,7 +1825,13 @@ class QueryParser {
         if (isNullMatcher.matches()) {
             String column = isNullMatcher.group(1).trim();
             boolean isNotNull = isNullMatcher.group(2) != null;
-            String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
+            // Resolve alias
+            String actualColumn = columnAliases.entrySet().stream()
+                    .filter(entry -> entry.getValue().equalsIgnoreCase(column.split("\\.")[column.contains(".") ? 1 : 0]))
+                    .map(Map.Entry::getKey)
+                    .findFirst()
+                    .orElse(column);
+            String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
             String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
 
             boolean found = false;
@@ -1835,10 +1847,11 @@ class QueryParser {
                         new Object[]{column, combinedColumnTypes.keySet()});
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
-            return new Condition(column, isNotNull ? Operator.IS_NOT_NULL : Operator.IS_NULL, conjunction, not);
+            return new Condition(actualColumn, isNotNull ? Operator.IS_NOT_NULL : Operator.IS_NULL, conjunction, not);
         }
 
-        String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};String selectedOperator = null;
+        String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
+        String selectedOperator = null;
         int operatorIndex = -1;
         int operatorEndIndex = -1;
         for (String op : operators) {
@@ -1875,11 +1888,24 @@ class QueryParser {
                     ? rightPart.substring(subQueryEnd + 4).trim() : null;
             subQuery = new SubQuery(subQueryParsed, alias);
         } else {
-            value = parseConditionValue(leftPart, rightPart, getColumnType(leftPart, combinedColumnTypes, defaultTableName, tableAliases));
+            // Resolve alias for leftPart
+            column = columnAliases.entrySet().stream()
+                    .filter(entry -> entry.getValue().equalsIgnoreCase(leftPart.split("\\.")[leftPart.contains(".") ? 1 : 0]))
+                    .map(Map.Entry::getKey)
+                    .findFirst()
+                    .orElse(leftPart);
+            value = parseConditionValue(column, rightPart, getColumnType(column, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
         }
 
         column = leftPart;
-        String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
+        // Resolve alias
+        String finalColumn = column;
+        String actualColumn = columnAliases.entrySet().stream()
+                .filter(entry -> entry.getValue().equalsIgnoreCase(finalColumn.split("\\.")[finalColumn.contains(".") ? 1 : 0]))
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(column);
+        String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
         String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
 
         Class<?> columnType = null;
@@ -1914,7 +1940,7 @@ class QueryParser {
             }
         }
 
-        Operator operator;
+        Operator operator; // Declare the Operator variable
         switch (selectedOperator.toUpperCase()) {
             case "=":
                 operator = Operator.EQUALS;
@@ -1945,16 +1971,16 @@ class QueryParser {
                 throw new IllegalArgumentException("Unsupported operator: " + selectedOperator);
         }
 
-        if (isJoinCondition && !rightColumnIsFromDifferentTable(column, rightColumn, tableAliases)) {
+        if (isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn, tableAliases)) {
             throw new IllegalArgumentException("Join condition must compare columns from different tables: " + condStr);
         }
 
         if (rightColumn != null) {
-            return new Condition(column, rightColumn, operator, conjunction, not);
+            return new Condition(actualColumn, rightColumn, operator, conjunction, not);
         } else if (subQuery != null) {
-            return new Condition(column, subQuery, operator, conjunction, not);
+            return new Condition(actualColumn, subQuery, operator, conjunction, not);
         } else {
-            return new Condition(column, value, operator, conjunction, not);
+            return new Condition(actualColumn, value, operator, conjunction, not);
         }
     }
 
@@ -1967,14 +1993,19 @@ class QueryParser {
         if (leftPrefix == null || rightPrefix == null) {
             return true;
         }
-        String leftTable = tableAliases.getOrDefault(leftPrefix, leftPrefix);
-        String rightTable = tableAliases.getOrDefault(rightPrefix, rightPrefix);
-        return !leftTable.equalsIgnoreCase(rightTable);
+        // Compare aliases directly instead of resolved table names
+        return !leftPrefix.equalsIgnoreCase(rightPrefix);
     }
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> combinedColumnTypes, String defaultTableName,
-                                   Map<String, String> tableAliases) {
-        String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
+                                   Map<String, String> tableAliases, Map<String, String> columnAliases) {
+        // Resolve alias
+        String actualColumn = columnAliases.entrySet().stream()
+                .filter(entry -> entry.getValue().equalsIgnoreCase(column.split("\\.")[column.contains(".") ? 1 : 0]))
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(column);
+        String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
         String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
         for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
             String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
@@ -2150,7 +2181,7 @@ class QueryParser {
         }
 
         Class<?> valueType = aggregate.functionName.equals("COUNT") ? Long.class :
-                (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes, defaultTableName, tableAliases) : Double.class);
+                (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes, defaultTableName, tableAliases, columnAliases) : Double.class);
         Object value = parseConditionValue(aggregate.toString(), rightPart, valueType);
 
         Operator operator;
