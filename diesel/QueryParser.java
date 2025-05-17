@@ -674,7 +674,7 @@ class QueryParser {
         Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\s*$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -753,11 +753,22 @@ class QueryParser {
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
             } else if (subQueryMatcher.matches()) {
-                String subQueryStr = trimmedItem.substring(1, trimmedItem.lastIndexOf(")")).trim();
+                int subQueryEnd = findMatchingParenthesis(trimmedItem, 0);
+                if (subQueryEnd == -1) {
+                    throw new IllegalArgumentException("Invalid subquery syntax in SELECT: " + trimmedItem);
+                }
+                String subQueryStr = trimmedItem.substring(1, subQueryEnd).trim();
                 String alias = subQueryMatcher.group(1);
                 Query<?> subQuery = parse(subQueryStr, database);
-                subQueries.add(new SubQuery(subQuery, alias));
-                LOGGER.log(Level.FINE, "Parsed subquery in SELECT: {0}{1}", new Object[]{subQueryStr, alias != null ? " AS " + alias : ""});
+                SubQuery newSubQuery = new SubQuery(subQuery, alias);
+                subQueries.add(newSubQuery);
+                if (alias != null) {
+                    String subQueryKey = "SUBQUERY_" + subQueries.size();
+                    columnAliases.put(subQueryKey, alias);
+                    LOGGER.log(Level.FINE, "Added subquery alias to columnAliases: {0} -> {1}", new Object[]{subQueryKey, alias});
+                }
+                LOGGER.log(Level.FINE, "Parsed subquery in SELECT: {0}{1}, subQueries size: {2}, subQuery: {3}",
+                        new Object[]{subQueryStr, alias != null ? " AS " + alias : "", subQueries.size(), newSubQuery});
             } else if (columnMatcher.matches()) {
                 String column = columnMatcher.group(1);
                 String alias = columnMatcher.group(2);
@@ -953,7 +964,7 @@ class QueryParser {
                                 String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
                                         ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
                                         : new String[]{groupByPart, ""};
-                                groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(), tableAliases, columnAliases);
+                                groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(),combinedColumnTypes, tableAliases, columnAliases, subQueries);
                                 LOGGER.log(Level.FINE, "Parsed GROUP BY: {0}", groupBy);
                                 if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
                                     String havingClause = havingSplit[1].trim();
@@ -973,7 +984,7 @@ class QueryParser {
                         String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
                                 ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
                                 : new String[]{groupByPart, ""};
-                        groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(), tableAliases, columnAliases);
+                        groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(),combinedColumnTypes, tableAliases, columnAliases, subQueries);
                         LOGGER.log(Level.FINE, "Parsed GROUP BY: {0}", groupBy);
                         if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
                             String havingClause = havingSplit[1].trim();
@@ -1066,7 +1077,7 @@ class QueryParser {
                 String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
                         ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
                         : new String[]{groupByPart, ""};
-                groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(), tableAliases, columnAliases);
+                groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(),combinedColumnTypes, tableAliases, columnAliases, subQueries);
                 LOGGER.log(Level.FINE, "Parsed GROUP BY: {0}", groupBy);
                 if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
                     String havingClause = havingSplit[1].trim();
@@ -1190,77 +1201,126 @@ class QueryParser {
 
         return new SelectQuery(columns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy, groupBy, havingConditions, tableAliases, subQueries);
     }
-
-    private List<String> parseGroupByClause(String groupByPart, String defaultTableName, Map<String, String> tableAliases, Map<String, String> columnAliases) {
+    private List<String> parseGroupByClause(String groupByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
+                                            Map<String, String> tableAliases, Map<String, String> columnAliases, List<SubQuery> selectSubQueries) {
         List<String> groupBy = new ArrayList<>();
-        StringBuilder currentColumn = new StringBuilder();
+        String[] groupByParts = splitGroupByClause(groupByClause);
+        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)$");
+
+        for (String part : groupByParts) {
+            String trimmedPart = part.trim();
+            if (trimmedPart.isEmpty()) {
+                throw new IllegalArgumentException("Invalid GROUP BY clause: empty expression");
+            }
+
+            String expression = trimmedPart;
+            boolean found = false;
+
+            // First check if it's a direct column reference
+            if (columnPattern.matcher(expression).matches()) {
+                String normalizedColumn = normalizeColumnName(expression, defaultTableName, tableAliases);
+                String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
+
+                // Check against column aliases
+                for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
+                    if (aliasEntry.getValue().equalsIgnoreCase(unqualifiedColumn)) {
+                        groupBy.add(aliasEntry.getKey());
+                        found = true;
+                        break;
+                    }
+                }
+
+                // If not found as alias, check against actual columns
+                if (!found) {
+                    for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                        String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
+                        if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
+                            groupBy.add(normalizedColumn);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If not found yet, check if it's a subquery or subquery alias
+            if (!found) {
+                // Check against subquery aliases
+                for (SubQuery subQuery : selectSubQueries) {
+                    if (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(expression)) {
+                        groupBy.add(subQuery.alias);
+                        found = true;
+                        break;
+                    }
+                }
+
+                // Check if it's a subquery that matches one in the SELECT
+                if (!found && subQueryPattern.matcher(expression).matches()) {
+                    String normalizedExpression = normalizeQueryString(expression);
+                    for (SubQuery subQuery : selectSubQueries) {
+                        String subQueryStr = normalizeQueryString("(" + subQuery.query.toString() + ")");
+                        if (normalizedExpression.equalsIgnoreCase(subQueryStr) ||
+                                areSubQueriesEquivalent(expression, subQuery.query.toString())) {
+                            String resolvedExpression = subQuery.alias != null ? subQuery.alias : expression;
+                            groupBy.add(resolvedExpression);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!found) {
+                LOGGER.log(Level.SEVERE, "Unknown column, alias, or subquery in GROUP BY: {0}, available columns: {1}, aliases: {2}, subqueries: {3}",
+                        new Object[]{expression, combinedColumnTypes.keySet(), columnAliases.values(), selectSubQueries});
+                throw new IllegalArgumentException("Unknown column in GROUP BY: " + expression);
+            }
+        }
+        return groupBy;
+    }
+
+    private String[] splitGroupByClause(String groupByClause) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder currentPart = new StringBuilder();
         boolean inQuotes = false;
         int parenDepth = 0;
 
-        for (int i = 0; i < groupByPart.length(); i++) {
-            char c = groupByPart.charAt(i);
+        for (int i = 0; i < groupByClause.length(); i++) {
+            char c = groupByClause.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                currentColumn.append(c);
+                currentPart.append(c);
                 continue;
             }
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
-                    currentColumn.append(c);
+                    currentPart.append(c);
                     continue;
                 } else if (c == ')') {
                     parenDepth--;
-                    currentColumn.append(c);
+                    currentPart.append(c);
                     continue;
                 } else if (c == ',' && parenDepth == 0) {
-                    String column = currentColumn.toString().trim();
-                    if (!column.isEmpty()) {
-                        // Check if the column is an alias and resolve it
-                        String resolvedColumn = columnAliases.entrySet().stream()
-                                .filter(entry -> entry.getValue().equalsIgnoreCase(column))
-                                .map(Map.Entry::getKey)
-                                .findFirst()
-                                .orElse(column);
-                        groupBy.add(normalizeColumnName(resolvedColumn, defaultTableName, tableAliases));
+                    String part = currentPart.toString().trim();
+                    if (!part.isEmpty()) {
+                        parts.add(part);
                     }
-                    currentColumn = new StringBuilder();
+                    currentPart = new StringBuilder();
                     continue;
-                } else if (c == ' ' && parenDepth == 0) {
-                    String nextToken = getNextToken(groupByPart, i + 1);
-                    if (nextToken.equalsIgnoreCase("ORDER") || nextToken.equalsIgnoreCase("LIMIT") ||
-                            nextToken.equalsIgnoreCase("OFFSET") || nextToken.equalsIgnoreCase("HAVING")) {
-                        String column = currentColumn.toString().trim();
-                        if (!column.isEmpty()) {
-                            // Resolve alias for the last column
-                            String resolvedColumn = columnAliases.entrySet().stream()
-                                    .filter(entry -> entry.getValue().equalsIgnoreCase(column))
-                                    .map(Map.Entry::getKey)
-                                    .findFirst()
-                                    .orElse(column);
-                            groupBy.add(normalizeColumnName(resolvedColumn, defaultTableName, tableAliases));
-                        }
-                        break;
-                    }
                 }
             }
-            currentColumn.append(c);
+            currentPart.append(c);
         }
 
-        String lastColumn = currentColumn.toString().trim();
-        if (!lastColumn.isEmpty()) {
-            // Resolve alias for the final column
-            String resolvedColumn = columnAliases.entrySet().stream()
-                    .filter(entry -> entry.getValue().equalsIgnoreCase(lastColumn))
-                    .map(Map.Entry::getKey)
-                    .findFirst()
-                    .orElse(lastColumn);
-            groupBy.add(normalizeColumnName(resolvedColumn, defaultTableName, tableAliases));
+        String lastPart = currentPart.toString().trim();
+        if (!lastPart.isEmpty()) {
+            parts.add(lastPart);
         }
 
-        return groupBy;
+        return parts.toArray(new String[0]);
     }
-
     private List<String> splitSelectItems(String selectPart) {
         List<String> items = new ArrayList<>();
         StringBuilder currentItem = new StringBuilder();
@@ -1359,26 +1419,40 @@ class QueryParser {
             boolean found = false;
             String unqualifiedExpression = expression.contains(".") ? expression.split("\\.")[1].trim() : expression;
 
-            // Check if expression matches a subquery alias
-            for (SubQuery subQuery : selectSubQueries) {
-                if (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(unqualifiedExpression)) {
+            // Check if expression is an alias from SELECT
+            for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
+                if (aliasEntry.getValue().equalsIgnoreCase(unqualifiedExpression)) {
+                    orderBy.add(new OrderByInfo(aliasEntry.getKey(), ascending));
                     found = true;
-                    expression = subQuery.alias;
-                    LOGGER.log(Level.FINE, "Matched ORDER BY by subquery alias: {0}", subQuery.alias);
+                    LOGGER.log(Level.FINE, "Matched ORDER BY by alias: {0} -> {1}, ascending={2}", new Object[]{unqualifiedExpression, aliasEntry.getKey(), ascending});
                     break;
+                }
+            }
+
+            // Check if expression matches a subquery alias
+            if (!found) {
+                for (SubQuery subQuery : selectSubQueries) {
+                    if (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(unqualifiedExpression)) {
+                        orderBy.add(new OrderByInfo(subQuery.alias, ascending));
+                        found = true;
+                        LOGGER.log(Level.FINE, "Matched ORDER BY by subquery alias: {0}, ascending={1}", new Object[]{subQuery.alias, ascending});
+                        break;
+                    }
                 }
             }
 
             // Check if expression is a subquery and matches any SELECT subquery
             if (!found && subQueryPattern.matcher(expression).matches()) {
                 String normalizedExpression = normalizeQueryString(expression);
+                LOGGER.log(Level.FINEST, "Normalized ORDER BY subquery: {0}", normalizedExpression);
                 for (SubQuery subQuery : selectSubQueries) {
                     String subQueryStr = normalizeQueryString("(" + subQuery.query.toString() + ")");
                     LOGGER.log(Level.FINEST, "Comparing ORDER BY subquery: '{0}' vs SELECT subquery: '{1}'", new Object[]{normalizedExpression, subQueryStr});
-                    if (normalizedExpression.equals(subQueryStr) || areSubQueriesEquivalent(expression, subQuery.query.toString())) {
+                    if (normalizedExpression.equalsIgnoreCase(subQueryStr) || areSubQueriesEquivalent(expression, subQuery.query.toString())) {
+                        String resolvedExpression = subQuery.alias != null ? subQuery.alias : expression;
+                        orderBy.add(new OrderByInfo(resolvedExpression, ascending));
                         found = true;
-                        expression = subQuery.alias != null ? subQuery.alias : expression;
-                        LOGGER.log(Level.FINE, "Matched ORDER BY by subquery content or structure: {0}", expression);
+                        LOGGER.log(Level.FINE, "Matched ORDER BY by subquery content: {0}, resolved as: {1}, ascending={2}", new Object[]{expression, resolvedExpression, ascending});
                         break;
                     }
                 }
@@ -1387,11 +1461,13 @@ class QueryParser {
             // Check if expression is a column
             if (!found && columnPattern.matcher(expression).matches()) {
                 String normalizedColumn = expression.contains(".") ? normalizeColumnName(expression, defaultTableName, tableAliases) : defaultTableName + "." + expression;
+                String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
                 for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
                     String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-                    if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedExpression) || entry.getKey().equalsIgnoreCase(normalizedColumn)) {
+                    if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn) || entry.getKey().equalsIgnoreCase(normalizedColumn)) {
+                        orderBy.add(new OrderByInfo(normalizedColumn, ascending));
                         found = true;
-                        LOGGER.log(Level.FINE, "Matched ORDER BY by column: {0}", normalizedColumn);
+                        LOGGER.log(Level.FINE, "Matched ORDER BY by column: {0}, ascending={1}", new Object[]{normalizedColumn, ascending});
                         break;
                     }
                 }
@@ -1402,9 +1478,6 @@ class QueryParser {
                         new Object[]{expression, combinedColumnTypes.keySet(), columnAliases.values(), selectSubQueries});
                 throw new IllegalArgumentException("Invalid column name or subquery in ORDER BY: " + expression);
             }
-
-            orderBy.add(new OrderByInfo(expression, ascending));
-            LOGGER.log(Level.FINE, "Parsed ORDER BY: expression={0}, ascending={1}", new Object[]{expression, ascending});
         }
         return orderBy;
     }
@@ -2319,22 +2392,20 @@ class QueryParser {
     }
 
     private boolean areSubQueriesEquivalent(String subQuery1, String subQuery2) {
-        // Нормализуем оба субзапроса
         String norm1 = normalizeQueryString(subQuery1).replaceAll("\\s+", " ").trim();
         String norm2 = normalizeQueryString(subQuery2).replaceAll("\\s+", " ").trim();
 
-        // Дополнительная нормализация
-        norm1 = norm1.replace("LIMIT1", "LIMIT 1").replace(" = ", "=");
-        norm2 = norm2.replace("LIMIT1", "LIMIT 1").replace(" = ", "=");
+        norm1 = norm1.replace("LIMIT1", "LIMIT 1").replace(" = ", "=").replace("( ", "(").replace(" )", ")");
+        norm2 = norm2.replace("LIMIT1", "LIMIT 1").replace(" = ", "=").replace("( ", "(").replace(" )", ")");
 
-        // Проверяем точное совпадение
-        if (norm1.equals(norm2)) {
+        LOGGER.log(Level.FINEST, "Comparing normalized subqueries: norm1='{0}', norm2='{1}'", new Object[]{norm1, norm2});
+
+        if (norm1.equalsIgnoreCase(norm2)) {
+            LOGGER.log(Level.FINE, "Subqueries match by normalized string: {0}", norm1);
             return true;
         }
 
-        // Разбираем субзапросы
         try {
-            // Более гибкое регулярное выражение для разбора субзапросов
             Pattern selectPattern = Pattern.compile(
                     "(?i)^\\(\\s*SELECT\\s+([^\\s]+)\\s+FROM\\s+([^\\s]+)(?:\\s+WHERE\\s+(.+?))?(?:\\s+LIMIT\\s+(\\d+))?\\s*\\)$"
             );
@@ -2346,7 +2417,6 @@ class QueryParser {
                 return false;
             }
 
-            // Извлекаем компоненты
             String select1 = matcher1.group(1).trim();
             String select2 = matcher2.group(1).trim();
             String from1 = matcher1.group(2).trim();
@@ -2356,14 +2426,16 @@ class QueryParser {
             String limit1 = matcher1.group(4) != null ? matcher1.group(4).trim() : "";
             String limit2 = matcher2.group(4) != null ? matcher2.group(4).trim() : "";
 
-            // Сравниваем компоненты
+            where1 = where1.replace("ID=U.ID", "ID = U.ID").replace("U.ID=ID", "ID = U.ID");
+            where2 = where2.replace("ID=U.ID", "ID = U.ID").replace("U.ID=ID", "ID = U.ID");
+
             boolean selectMatch = select1.equalsIgnoreCase(select2);
             boolean fromMatch = from1.equalsIgnoreCase(from2);
             boolean whereMatch = where1.equalsIgnoreCase(where2);
             boolean limitMatch = limit1.equalsIgnoreCase(limit2);
 
-            LOGGER.log(Level.FINEST, "Subquery comparison: select={0}, from={1}, where={2}, limit={3}",
-                    new Object[]{selectMatch, fromMatch, whereMatch, limitMatch});
+            LOGGER.log(Level.FINEST, "Subquery comparison: select={0}, from={1}, where={2}, limit={3}, where1='{4}', where2='{5}'",
+                    new Object[]{selectMatch, fromMatch, whereMatch, limitMatch, where1, where2});
 
             return selectMatch && fromMatch && whereMatch && limitMatch;
         } catch (Exception e) {
@@ -2371,20 +2443,35 @@ class QueryParser {
             return false;
         }
     }
+
+    private String normalizeCondition(String condition) {
+        if (condition == null || condition.isEmpty()) {
+            return "";
+        }
+        return condition.replaceAll("\\s+", " ")
+                .replaceAll("(?i)\\bID\\s*=\\s*U\\.ID\\b", "ID=U.ID")
+                .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID");
+    }
     private String normalizeQueryString(String query) {
         return query.trim()
-                .replaceAll("\\s+", " ") // Нормализация пробелов
-                .replaceAll("\\s*([=><!(),])\\s*", " $1 ") // Стандартизация пробелов вокруг операторов
-                .replaceAll("(?i)\\bEQUALS\\b", "=") // Замена EQUALS на =
+                .replaceAll("\\s+", " ")
+                .replaceAll("\\s*([=><!(),])\\s*", "$1")
+                .replaceAll("(?i)\\bEQUALS\\b", "=")
                 .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
                 .replaceAll("(?i)\\bLIKE\\b", "LIKE")
                 .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE")
-                .replaceAll("\\s*;", "") // Удаление точки с запятой
-                .replaceAll("(?i)\\bLIMIT\\s+(\\d+)\\b", "LIMIT $1") // Стандартизация LIMIT
-                .replaceAll("(?i)\\bWHERE\\b", "WHERE")
-                .replaceAll("(?i)\\bFROM\\b", "FROM")
-                .replaceAll("(?i)\\bSELECT\\b", "SELECT")
+                .replaceAll("\\s*;", "")
+                .replaceAll("(?i)\\bLIMIT\\s*(\\d+)\\b", " LIMIT $1 ")
+                .replaceAll("(?i)\\bWHERE\\b", " WHERE ")
+                .replaceAll("(?i)\\bFROM\\b", " FROM ")
+                .replaceAll("(?i)\\bSELECT\\b", " SELECT ")
+                .replaceAll("(?i)\\bAS\\b", " AS ")
+                .replaceAll("\\(\\s+", "(")
+                .replaceAll("\\s+\\)", ")")
+                .replaceAll("(?i)\\bID\\s*=\\s*U\\.ID\\b", "ID=U.ID")
+                .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID")
                 .toUpperCase()
-                .replaceAll("\\bU\\b", "U"); // Консистентность регистра алиасов
+                .replaceAll("\\s*=", "=")
+                .replaceAll("=\\s*", "=");
     }
 }
