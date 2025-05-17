@@ -1342,30 +1342,43 @@ class QueryParser {
                 throw new IllegalArgumentException("Invalid ORDER BY clause: empty expression");
             }
 
-            String[] tokens = trimmedPart.split("\\s+", 2);
-            String expression = tokens[0].trim();
+            String expression;
             boolean ascending = true;
-            if (tokens.length > 1) {
-                String direction = tokens[1].toUpperCase();
-                if (direction.equals("DESC")) {
-                    ascending = false;
-                } else if (!direction.equals("ASC")) {
-                    throw new IllegalArgumentException("Invalid ORDER BY direction: " + direction);
-                }
+
+            // Check sorting direction (ASC/DESC)
+            Pattern directionPattern = Pattern.compile("(?i)\\s+(ASC|DESC)$");
+            Matcher directionMatcher = directionPattern.matcher(trimmedPart);
+            if (directionMatcher.find()) {
+                expression = trimmedPart.substring(0, directionMatcher.start()).trim();
+                String direction = directionMatcher.group(1).toUpperCase();
+                ascending = direction.equals("ASC");
+            } else {
+                expression = trimmedPart;
             }
 
             boolean found = false;
             String unqualifiedExpression = expression.contains(".") ? expression.split("\\.")[1].trim() : expression;
 
-            // Check if expression is a column alias
-            if (columnAliases.containsValue(unqualifiedExpression)) {
-                found = true;
-            } else {
-                for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
-                    String aliasedColumn = aliasEntry.getKey();
-                    String alias = aliasEntry.getValue();
-                    if (aliasedColumn.equalsIgnoreCase(expression) || alias.equalsIgnoreCase(unqualifiedExpression)) {
+            // Check if expression matches a subquery alias
+            for (SubQuery subQuery : selectSubQueries) {
+                if (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(unqualifiedExpression)) {
+                    found = true;
+                    expression = subQuery.alias;
+                    LOGGER.log(Level.FINE, "Matched ORDER BY by subquery alias: {0}", subQuery.alias);
+                    break;
+                }
+            }
+
+            // Check if expression is a subquery and matches any SELECT subquery
+            if (!found && subQueryPattern.matcher(expression).matches()) {
+                String normalizedExpression = normalizeQueryString(expression);
+                for (SubQuery subQuery : selectSubQueries) {
+                    String subQueryStr = normalizeQueryString("(" + subQuery.query.toString() + ")");
+                    LOGGER.log(Level.FINEST, "Comparing ORDER BY subquery: '{0}' vs SELECT subquery: '{1}'", new Object[]{normalizedExpression, subQueryStr});
+                    if (normalizedExpression.equals(subQueryStr) || areSubQueriesEquivalent(expression, subQuery.query.toString())) {
                         found = true;
+                        expression = subQuery.alias != null ? subQuery.alias : expression;
+                        LOGGER.log(Level.FINE, "Matched ORDER BY by subquery content or structure: {0}", expression);
                         break;
                     }
                 }
@@ -1378,19 +1391,7 @@ class QueryParser {
                     String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
                     if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedExpression) || entry.getKey().equalsIgnoreCase(normalizedColumn)) {
                         found = true;
-                        break;
-                    }
-                }
-            }
-
-            // Check if expression is a subquery
-            if (!found && subQueryPattern.matcher(expression).matches()) {
-                // Check if the subquery matches any subquery in the SELECT clause (by string or alias)
-                for (SubQuery subQuery : selectSubQueries) {
-                    String subQueryStr = "(" + subQuery.query.toString() + ")";
-                    if (expression.equalsIgnoreCase(subQueryStr) || (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(unqualifiedExpression))) {
-                        found = true;
-                        expression = subQuery.alias != null ? subQuery.alias : expression; // Use alias if available
+                        LOGGER.log(Level.FINE, "Matched ORDER BY by column: {0}", normalizedColumn);
                         break;
                     }
                 }
@@ -1412,6 +1413,7 @@ class QueryParser {
         List<String> parts = new ArrayList<>();
         StringBuilder currentPart = new StringBuilder();
         boolean inQuotes = false;
+        int parenDepth = 0;
 
         for (int i = 0; i < orderByClause.length(); i++) {
             char c = orderByClause.charAt(i);
@@ -1420,13 +1422,23 @@ class QueryParser {
                 currentPart.append(c);
                 continue;
             }
-            if (!inQuotes && c == ',') {
-                String part = currentPart.toString().trim();
-                if (!part.isEmpty()) {
-                    parts.add(part);
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    currentPart.append(c);
+                    continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    currentPart.append(c);
+                    continue;
+                } else if (c == ',' && parenDepth == 0) {
+                    String part = currentPart.toString().trim();
+                    if (!part.isEmpty()) {
+                        parts.add(part);
+                    }
+                    currentPart = new StringBuilder();
+                    continue;
                 }
-                currentPart = new StringBuilder();
-                continue;
             }
             currentPart.append(c);
         }
@@ -1438,7 +1450,6 @@ class QueryParser {
 
         return parts.toArray(new String[0]);
     }
-
     private Integer parseLimitClause(String limitClause) {
         String normalized = limitClause.toUpperCase().replace("LIMIT", "").trim();
         if (normalized.isEmpty()) {
@@ -2305,5 +2316,75 @@ class QueryParser {
             }
         }
         return -1;
+    }
+
+    private boolean areSubQueriesEquivalent(String subQuery1, String subQuery2) {
+        // Нормализуем оба субзапроса
+        String norm1 = normalizeQueryString(subQuery1).replaceAll("\\s+", " ").trim();
+        String norm2 = normalizeQueryString(subQuery2).replaceAll("\\s+", " ").trim();
+
+        // Дополнительная нормализация
+        norm1 = norm1.replace("LIMIT1", "LIMIT 1").replace(" = ", "=");
+        norm2 = norm2.replace("LIMIT1", "LIMIT 1").replace(" = ", "=");
+
+        // Проверяем точное совпадение
+        if (norm1.equals(norm2)) {
+            return true;
+        }
+
+        // Разбираем субзапросы
+        try {
+            // Более гибкое регулярное выражение для разбора субзапросов
+            Pattern selectPattern = Pattern.compile(
+                    "(?i)^\\(\\s*SELECT\\s+([^\\s]+)\\s+FROM\\s+([^\\s]+)(?:\\s+WHERE\\s+(.+?))?(?:\\s+LIMIT\\s+(\\d+))?\\s*\\)$"
+            );
+            Matcher matcher1 = selectPattern.matcher(norm1);
+            Matcher matcher2 = selectPattern.matcher(norm2);
+
+            if (!matcher1.matches() || !matcher2.matches()) {
+                LOGGER.log(Level.FINE, "Subquery pattern mismatch: {0} vs {1}", new Object[]{norm1, norm2});
+                return false;
+            }
+
+            // Извлекаем компоненты
+            String select1 = matcher1.group(1).trim();
+            String select2 = matcher2.group(1).trim();
+            String from1 = matcher1.group(2).trim();
+            String from2 = matcher2.group(2).trim();
+            String where1 = matcher1.group(3) != null ? normalizeQueryString(matcher1.group(3).trim()).replaceAll("\\s+", " ") : "";
+            String where2 = matcher2.group(3) != null ? normalizeQueryString(matcher2.group(3).trim()).replaceAll("\\s+", " ") : "";
+            String limit1 = matcher1.group(4) != null ? matcher1.group(4).trim() : "";
+            String limit2 = matcher2.group(4) != null ? matcher2.group(4).trim() : "";
+
+            // Сравниваем компоненты
+            boolean selectMatch = select1.equalsIgnoreCase(select2);
+            boolean fromMatch = from1.equalsIgnoreCase(from2);
+            boolean whereMatch = where1.equalsIgnoreCase(where2);
+            boolean limitMatch = limit1.equalsIgnoreCase(limit2);
+
+            LOGGER.log(Level.FINEST, "Subquery comparison: select={0}, from={1}, where={2}, limit={3}",
+                    new Object[]{selectMatch, fromMatch, whereMatch, limitMatch});
+
+            return selectMatch && fromMatch && whereMatch && limitMatch;
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Failed to compare subquery structures: {0}", e.getMessage());
+            return false;
+        }
+    }
+    private String normalizeQueryString(String query) {
+        return query.trim()
+                .replaceAll("\\s+", " ") // Нормализация пробелов
+                .replaceAll("\\s*([=><!(),])\\s*", " $1 ") // Стандартизация пробелов вокруг операторов
+                .replaceAll("(?i)\\bEQUALS\\b", "=") // Замена EQUALS на =
+                .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
+                .replaceAll("(?i)\\bLIKE\\b", "LIKE")
+                .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE")
+                .replaceAll("\\s*;", "") // Удаление точки с запятой
+                .replaceAll("(?i)\\bLIMIT\\s+(\\d+)\\b", "LIMIT $1") // Стандартизация LIMIT
+                .replaceAll("(?i)\\bWHERE\\b", "WHERE")
+                .replaceAll("(?i)\\bFROM\\b", "FROM")
+                .replaceAll("(?i)\\bSELECT\\b", "SELECT")
+                .toUpperCase()
+                .replaceAll("\\bU\\b", "U"); // Консистентность регистра алиасов
     }
 }

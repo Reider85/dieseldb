@@ -128,3 +128,4 @@
 1.2.8 subqueries test
 1.2.9 fix limit in subqueries
 1.3.0 fix order by in subqueries
+1.3.1 fix order by in subqueries
