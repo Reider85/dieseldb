@@ -894,7 +894,7 @@ class QueryParser {
                     } else if (remaining.toUpperCase().startsWith("OFFSET ")) {
                         offset = parseOffsetClause(remaining);
                     } else if (remaining.toUpperCase().startsWith("ORDER BY ")) {
-                        orderBy = parseOrderByClause(remaining.substring(9).trim(), tableName, combinedColumnTypes, columnAliases, tableAliases);
+                        orderBy = parseOrderByClause(remaining.substring(9).trim(), tableName, combinedColumnTypes, columnAliases, tableAliases, subQueries);
                     }
                     if (remaining.toUpperCase().contains(" ON ")) {
                         throw new IllegalArgumentException("CROSS JOIN does not support ON: " + joinPart);
@@ -943,7 +943,7 @@ class QueryParser {
                             String[] whereOrderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
                             conditionStr = whereOrderBySplit[0].trim();
                             if (whereOrderBySplit.length > 1) {
-                                orderBy = parseOrderByClause(whereOrderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
+                                orderBy = parseOrderByClause(whereOrderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases, subQueries);
                             }
                         } else if (remaining.toUpperCase().contains(" GROUP BY ")) {
                             String[] whereGroupBySplit = remaining.split("(?i)(?<=\\bNULL\\b|\\bNOT NULL\\b|\\bIN\\b\\s*\\([^)]*\\)|[^=><!])\\s+GROUP BY\\s+", 2);
@@ -997,7 +997,7 @@ class QueryParser {
                     String[] onOrderBySplit = onCondition.split("(?i)\\s+ORDER BY\\s+", 2);
                     onCondition = "";
                     if (onOrderBySplit.length > 1) {
-                        orderBy = parseOrderByClause(onOrderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
+                        orderBy = parseOrderByClause(onOrderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases, subQueries);
                     }
                 }
 
@@ -1053,7 +1053,7 @@ class QueryParser {
                     : new String[]{conditionStr, ""};
             conditionStr = orderBySplit[0].trim();
             if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
-                orderBy = parseOrderByClause(orderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
+                orderBy = parseOrderByClause(orderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases, subQueries);
             }
 
             // Parse GROUP BY clause
@@ -1080,7 +1080,7 @@ class QueryParser {
             String[] orderBySplit = remaining.split("(?i)\\s+ORDER BY\\s+", 2);
             remaining = orderBySplit[0].trim();
             if (orderBySplit.length > 1 && !orderBySplit[1].trim().isEmpty()) {
-                orderBy = parseOrderByClause(orderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
+                orderBy = parseOrderByClause(orderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases, subQueries);
             }
         }
 
@@ -1293,6 +1293,7 @@ class QueryParser {
                     afterAs = false;
                     continue;
                 } else if (parenDepth == 0 && !afterAs) {
+                    // Handle AS clause or potential alias
                     if (i + 3 <= selectPart.length() && selectPart.substring(i, i + 3).equalsIgnoreCase(" AS ") &&
                             Character.isWhitespace(selectPart.charAt(i - 1))) {
                         currentItem.append(c);
@@ -1305,7 +1306,8 @@ class QueryParser {
                         String remaining = selectPart.substring(i + 1).trim();
                         int nextSpace = remaining.indexOf(' ');
                         int nextComma = remaining.indexOf(',');
-                        int endIndex = nextSpace == -1 ? (nextComma == -1 ? remaining.length() : nextComma) : Math.min(nextSpace, nextComma == -1 ? remaining.length() : nextComma);
+                        int endIndex = nextSpace == -1 ? (nextComma == -1 ? remaining.length() : nextComma) :
+                                Math.min(nextSpace, nextComma == -1 ? remaining.length() : nextComma);
                         String potentialAlias = remaining.substring(0, endIndex).trim();
                         if (potentialAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
                             currentItem.append(c);
@@ -1328,15 +1330,20 @@ class QueryParser {
         return items;
     }
 
-    private List<OrderByInfo> parseOrderByClause(String orderByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes, Map<String, String> columnAliases, Map<String, String> tableAliases) {
+    private List<OrderByInfo> parseOrderByClause(String orderByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes, Map<String, String> columnAliases, Map<String, String> tableAliases, List<SubQuery> selectSubQueries) {
         List<OrderByInfo> orderBy = new ArrayList<>();
         String[] orderByParts = splitOrderByClause(orderByClause);
+        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)$");
+
         for (String part : orderByParts) {
-            String[] tokens = part.trim().split("\\s+", 2);
-            if (tokens.length == 0) {
+            String trimmedPart = part.trim();
+            if (trimmedPart.isEmpty()) {
                 throw new IllegalArgumentException("Invalid ORDER BY clause: empty expression");
             }
-            String column = tokens[0].trim();
+
+            String[] tokens = trimmedPart.split("\\s+", 2);
+            String expression = tokens[0].trim();
             boolean ascending = true;
             if (tokens.length > 1) {
                 String direction = tokens[1].toUpperCase();
@@ -1348,40 +1355,55 @@ class QueryParser {
             }
 
             boolean found = false;
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+            String unqualifiedExpression = expression.contains(".") ? expression.split("\\.")[1].trim() : expression;
 
-            if (columnAliases.containsValue(unqualifiedColumn)) {
+            // Check if expression is a column alias
+            if (columnAliases.containsValue(unqualifiedExpression)) {
                 found = true;
             } else {
                 for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
                     String aliasedColumn = aliasEntry.getKey();
                     String alias = aliasEntry.getValue();
-                    if (aliasedColumn.equalsIgnoreCase(column) || alias.equalsIgnoreCase(unqualifiedColumn)) {
+                    if (aliasedColumn.equalsIgnoreCase(expression) || alias.equalsIgnoreCase(unqualifiedExpression)) {
                         found = true;
                         break;
                     }
                 }
             }
 
-            if (!found) {
-                String normalizedColumn = column.contains(".") ? normalizeColumnName(column, defaultTableName, tableAliases) : defaultTableName + "." + column;
+            // Check if expression is a column
+            if (!found && columnPattern.matcher(expression).matches()) {
+                String normalizedColumn = expression.contains(".") ? normalizeColumnName(expression, defaultTableName, tableAliases) : defaultTableName + "." + expression;
                 for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
                     String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-                    if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn) || entry.getKey().equalsIgnoreCase(normalizedColumn)) {
+                    if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedExpression) || entry.getKey().equalsIgnoreCase(normalizedColumn)) {
                         found = true;
                         break;
                     }
                 }
             }
 
-            if (!found) {
-                LOGGER.log(Level.SEVERE, "Unknown column or alias in ORDER BY: {0}, available columns: {1}, aliases: {2}",
-                        new Object[]{column, combinedColumnTypes.keySet(), columnAliases.values()});
-                throw new IllegalArgumentException("Unknown column in ORDER BY: " + column);
+            // Check if expression is a subquery
+            if (!found && subQueryPattern.matcher(expression).matches()) {
+                // Check if the subquery matches any subquery in the SELECT clause (by string or alias)
+                for (SubQuery subQuery : selectSubQueries) {
+                    String subQueryStr = "(" + subQuery.query.toString() + ")";
+                    if (expression.equalsIgnoreCase(subQueryStr) || (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(unqualifiedExpression))) {
+                        found = true;
+                        expression = subQuery.alias != null ? subQuery.alias : expression; // Use alias if available
+                        break;
+                    }
+                }
             }
 
-            orderBy.add(new OrderByInfo(column, ascending));
-            LOGGER.log(Level.FINE, "Parsed ORDER BY: column={0}, ascending={1}", new Object[]{column, ascending});
+            if (!found) {
+                LOGGER.log(Level.SEVERE, "Unknown column, alias, or subquery in ORDER BY: {0}, available columns: {1}, aliases: {2}, subqueries: {3}",
+                        new Object[]{expression, combinedColumnTypes.keySet(), columnAliases.values(), selectSubQueries});
+                throw new IllegalArgumentException("Invalid column name or subquery in ORDER BY: " + expression);
+            }
+
+            orderBy.add(new OrderByInfo(expression, ascending));
+            LOGGER.log(Level.FINE, "Parsed ORDER BY: expression={0}, ascending={1}", new Object[]{expression, ascending});
         }
         return orderBy;
     }
