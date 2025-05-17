@@ -122,4 +122,5 @@
 1.2.2 aliases fix
 1.2.3 subqueries fix
 1.2.4 subqueries fix
-1.2.5 subquerues fix
+1.2.5 subqueries fix
+1.2.6 subqueries fix
