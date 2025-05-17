@@ -897,8 +897,40 @@ class QueryParser {
                             if (whereOrderBySplit.length > 1) {
                                 orderBy = parseOrderByClause(whereOrderBySplit[1].trim(), mainTable.getName(), combinedColumnTypes, columnAliases, tableAliases);
                             }
+                        } else if (remaining.toUpperCase().contains(" GROUP BY ")) {
+                            String[] whereGroupBySplit = remaining.split("(?i)(?<=\\bNULL\\b|\\bNOT NULL\\b|\\bIN\\b\\s*\\([^)]*\\)|[^=><!])\\s+GROUP BY\\s+", 2);
+                            conditionStr = whereGroupBySplit[0].trim();
+                            if (whereGroupBySplit.length > 1) {
+                                String groupByPart = whereGroupBySplit[1].trim();
+                                String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
+                                        ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
+                                        : new String[]{groupByPart, ""};
+                                groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(), tableAliases);
+                                LOGGER.log(Level.FINE, "Parsed GROUP BY: {0}", groupBy);
+                                if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
+                                    String havingClause = havingSplit[1].trim();
+                                    havingConditions = parseHavingConditions(havingClause, mainTable.getName(), database, original, aggregates, combinedColumnTypes, tableAliases, columnAliases);
+                                    LOGGER.log(Level.FINE, "Parsed HAVING: {0}", havingConditions);
+                                }
+                            }
                         } else {
                             conditionStr = remaining;
+                        }
+                    }
+                } else if (onCondition.toUpperCase().contains(" GROUP BY ")) {
+                    String[] onGroupBySplit = onCondition.split("(?i)(?<=\\bNULL\\b|\\bNOT NULL\\b|\\bIN\\b\\s*\\([^)]*\\)|[^=><!])\\s+GROUP BY\\s+", 2);
+                    onCondition = onGroupBySplit[0].trim();
+                    if (onGroupBySplit.length > 1) {
+                        String groupByPart = onGroupBySplit[1].trim();
+                        String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
+                                ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
+                                : new String[]{groupByPart, ""};
+                        groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(), tableAliases);
+                        LOGGER.log(Level.FINE, "Parsed GROUP BY: {0}", groupBy);
+                        if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
+                            String havingClause = havingSplit[1].trim();
+                            havingConditions = parseHavingConditions(havingClause, mainTable.getName(), database, original, aggregates, combinedColumnTypes, tableAliases, columnAliases);
+                            LOGGER.log(Level.FINE, "Parsed HAVING: {0}", havingConditions);
                         }
                     }
                 } else if (onCondition.toUpperCase().startsWith("LIMIT ")) {
@@ -965,7 +997,6 @@ class QueryParser {
                 offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
             }
 
-            // Improved ORDER BY splitting
             String[] orderBySplit = conditionStr.toUpperCase().contains(" ORDER BY ")
                     ? conditionStr.split("(?i)(?<=\\bNULL\\b|\\bNOT NULL\\b|\\bIN\\b\\s*\\([^)]*\\)|[^=><!])\\s+ORDER BY\\s+", 2)
                     : new String[]{conditionStr, ""};
@@ -983,9 +1014,7 @@ class QueryParser {
                 String[] havingSplit = groupByPart.toUpperCase().contains(" HAVING ")
                         ? groupByPart.split("(?i)\\s+HAVING\\s+", 2)
                         : new String[]{groupByPart, ""};
-                groupBy = Arrays.stream(havingSplit[0].split(","))
-                        .map(col -> normalizeColumnName(col.trim(), mainTable.getName(), tableAliases))
-                        .collect(Collectors.toList());
+                groupBy = parseGroupByClause(havingSplit[0], mainTable.getName(), tableAliases);
                 LOGGER.log(Level.FINE, "Parsed GROUP BY: {0}", groupBy);
                 if (havingSplit.length > 1 && !havingSplit[1].trim().isEmpty()) {
                     String havingClause = havingSplit[1].trim();
@@ -1108,6 +1137,57 @@ class QueryParser {
                 new Object[]{columns, aggregates, subQueries, mainTable.getName(), tableAlias, joins, conditions, groupBy, havingConditions, limit, offset, orderBy, tableAliases});
 
         return new SelectQuery(columns, aggregates, conditions, joins, mainTable.getName(), limit, offset, orderBy, groupBy, havingConditions, tableAliases, subQueries);
+    }
+
+    private List<String> parseGroupByClause(String groupByPart, String defaultTableName, Map<String, String> tableAliases) {
+        List<String> groupBy = new ArrayList<>();
+        StringBuilder currentColumn = new StringBuilder();
+        boolean inQuotes = false;
+        int parenDepth = 0;
+
+        for (int i = 0; i < groupByPart.length(); i++) {
+            char c = groupByPart.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentColumn.append(c);
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    currentColumn.append(c);
+                    continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    currentColumn.append(c);
+                    continue;
+                } else if (c == ',' && parenDepth == 0) {
+                    String column = currentColumn.toString().trim();
+                    if (!column.isEmpty()) {
+                        groupBy.add(normalizeColumnName(column, defaultTableName, tableAliases));
+                    }
+                    currentColumn = new StringBuilder();
+                    continue;
+                } else if (c == ' ' && parenDepth == 0) {
+                    String nextToken = getNextToken(groupByPart, i + 1);
+                    if (nextToken.equalsIgnoreCase("ORDER") || nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET") || nextToken.equalsIgnoreCase("HAVING")) {
+                        String column = currentColumn.toString().trim();
+                        if (!column.isEmpty()) {
+                            groupBy.add(normalizeColumnName(column, defaultTableName, tableAliases));
+                        }
+                        break;
+                    }
+                }
+            }
+            currentColumn.append(c);
+        }
+
+        String lastColumn = currentColumn.toString().trim();
+        if (!lastColumn.isEmpty()) {
+            groupBy.add(normalizeColumnName(lastColumn, defaultTableName, tableAliases));
+        }
+
+        return groupBy;
     }
 
     private List<String> splitSelectItems(String selectPart) {
