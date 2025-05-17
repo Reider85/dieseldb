@@ -125,3 +125,4 @@
 1.2.5 subqueries fix
 1.2.6 subqueries fix
 1.2.7 subqueries fix
+1.2.8 subqueries test
