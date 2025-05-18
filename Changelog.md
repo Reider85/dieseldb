@@ -131,3 +131,4 @@
 1.3.1 fix order by in subqueries
 1.3.2 fix order by in subqueries
 1.3.3 fix group by in subqueries
+1.3.4 fix group by in subqueries
