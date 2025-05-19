@@ -630,6 +630,51 @@ class QueryParser {
         return -1;
     }
 
+    private int findLastClauseIndexOutsideSubquery(String query, String clause) {
+        String upperQuery = query.toUpperCase();
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        int lastIndex = -1;
+
+        for (int i = 0; i < query.length() - clause.length() - 1; i++) {
+            char c = query.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+            } else if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                } else if (parenDepth == 0 && upperQuery.startsWith(" " + clause + " ", i)) {
+                    lastIndex = i + 1; // Point to the start of the clause
+                }
+            }
+        }
+
+        // Verify that lastIndex is outside any subquery
+        if (lastIndex != -1) {
+            int subQueryParenDepth = 0;
+            for (int i = 0; i < lastIndex; i++) {
+                char c = query.charAt(i);
+                if (c == '\'') {
+                    inQuotes = !inQuotes;
+                } else if (!inQuotes) {
+                    if (c == '(') {
+                        subQueryParenDepth++;
+                    } else if (c == ')') {
+                        subQueryParenDepth--;
+                    }
+                }
+            }
+            if (subQueryParenDepth == 0) {
+                LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastIndex, query});
+                return lastIndex;
+            }
+        }
+
+        LOGGER.log(Level.FINEST, "No valid {0} clause found outside subqueries in query: {1}", new Object[]{clause, query});
+        return -1;
+    }
     private int findLastClauseIndex(String query, String clause) {
         String upperQuery = query.toUpperCase();
         int parenDepth = 0;
@@ -756,9 +801,14 @@ class QueryParser {
             } else if (subQueryMatcher.matches()) {
                 int subQueryEnd = findMatchingParenthesis(trimmedItem, 0);
                 if (subQueryEnd == -1) {
+                    LOGGER.log(Level.SEVERE, "Failed to find matching parenthesis for subquery: {0}", trimmedItem);
                     throw new IllegalArgumentException("Invalid subquery syntax in SELECT: " + trimmedItem);
                 }
                 String subQueryStr = trimmedItem.substring(1, subQueryEnd).trim();
+                if (subQueryStr.isEmpty()) {
+                    LOGGER.log(Level.SEVERE, "Empty subquery detected in SELECT: {0}", trimmedItem);
+                    throw new IllegalArgumentException("Empty subquery in SELECT: " + trimmedItem);
+                }
                 String alias = subQueryMatcher.group(1);
                 Query<?> subQuery = parse(subQueryStr, database);
                 SubQuery newSubQuery = new SubQuery(subQuery, alias);
@@ -936,6 +986,7 @@ class QueryParser {
                     onCondition = onWhereSplit[0].trim();
                     if (onWhereSplit.length > 1) {
                         String remaining = onWhereSplit[1].trim();
+                        LOGGER.log(Level.FINEST, "Remaining after WHERE split: {0}", remaining);
                         if (remaining.toUpperCase().startsWith("LIMIT ")) {
                             String[] whereLimitSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
                             conditionStr = whereLimitSplit[0].trim();
@@ -1013,6 +1064,7 @@ class QueryParser {
                     }
                 }
 
+                LOGGER.log(Level.FINEST, "Parsing ON condition: {0}", onCondition);
                 onConditions = parseConditions(onCondition, tableName, database, original, true, combinedColumnTypes, tableAliases, columnAliases);
 
                 for (Condition cond : onConditions) {
@@ -1038,7 +1090,7 @@ class QueryParser {
             String limitClause = null;
             String offsetClause = null;
             if (conditionStr.toUpperCase().contains(" LIMIT ")) {
-                int lastLimitIndex = findLastClauseIndex(conditionStr, "LIMIT");
+                int lastLimitIndex = findLastClauseIndexOutsideSubquery(conditionStr, "LIMIT");
                 if (lastLimitIndex != -1) {
                     String beforeLimit = conditionStr.substring(0, lastLimitIndex).trim();
                     String afterLimit = conditionStr.substring(lastLimitIndex + 5).trim();
@@ -1050,6 +1102,8 @@ class QueryParser {
                         offsetClause = limitOffsetSplit[1].trim();
                     }
                     conditionStr = beforeLimit;
+                    LOGGER.log(Level.FINEST, "Split conditionStr at LIMIT: beforeLimit={0}, limitClause={1}, offsetClause={2}",
+                            new Object[]{beforeLimit, limitClause, offsetClause});
                 }
             }
             if (limitClause != null && !limitClause.isEmpty()) {
@@ -1840,6 +1894,7 @@ class QueryParser {
         int parenDepth = 0;
         String conjunction = null;
         boolean not = false;
+        int subQueryStart = -1;
 
         for (int i = 0; i < conditionStr.length(); i++) {
             char c = conditionStr.charAt(i);
@@ -1851,11 +1906,17 @@ class QueryParser {
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
+                    if (parenDepth == 1 && i + 7 < conditionStr.length() && conditionStr.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                        subQueryStart = i;
+                    }
                     currentCondition.append(c);
                     continue;
                 } else if (c == ')') {
                     parenDepth--;
                     currentCondition.append(c);
+                    if (parenDepth == 0 && subQueryStart != -1) {
+                        subQueryStart = -1; // End of subquery
+                    }
                     if (parenDepth == 0 && currentCondition.length() > 0) {
                         String condStr = currentCondition.toString().trim();
                         if (condStr.startsWith("(") && condStr.endsWith(")")) {
@@ -1867,40 +1928,25 @@ class QueryParser {
                                 LOGGER.log(Level.FINE, "Parsed grouped condition: {0}, conjunction={1}, not={2}",
                                         new Object[]{subConditions, conjunction, not});
                             }
+                            currentCondition = new StringBuilder();
+                            conjunction = null;
+                            not = false;
                         }
-                        currentCondition = new StringBuilder();
-                        conjunction = null;
-                        not = false;
                     }
                     continue;
-                } else if (parenDepth == 0 && c == ' ') {
+                } else if (parenDepth == 0 && c == ' ' && subQueryStart == -1) {
                     String nextToken = getNextToken(conditionStr, i + 1);
                     if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
-                            // Enhanced check to ensure we're not splitting inside a subquery
-                            boolean inSubQuery = false;
-                            String tempCondStr = condStr.toUpperCase();
-                            int selectIndex = tempCondStr.indexOf("(SELECT ");
-                            if (selectIndex != -1) {
-                                // Use findMatchingParenthesis to check if the subquery is complete
-                                int subQueryEnd = findMatchingParenthesis(condStr, selectIndex);
-                                if (subQueryEnd == -1 || subQueryEnd >= condStr.length() - 1) {
-                                    inSubQuery = true; // Subquery is incomplete
-                                }
-                            }
-                            if (!inSubQuery) {
-                                Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
-                                conditions.add(condition);
-                                LOGGER.log(Level.FINE, "Parsed condition: {0}", condition);
-                                conjunction = nextToken.toUpperCase();
-                                not = false;
-                                currentCondition = new StringBuilder();
-                                i += nextToken.length();
-                            } else {
-                                currentCondition.append(c);
-                            }
+                            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
+                            conditions.add(condition);
+                            LOGGER.log(Level.FINE, "Parsed condition: {0}", condition);
+                            conjunction = nextToken.toUpperCase();
+                            not = false;
+                            currentCondition = new StringBuilder();
+                            i += nextToken.length();
                         } else {
                             conjunction = nextToken.toUpperCase();
                             not = false;
@@ -1913,16 +1959,23 @@ class QueryParser {
                         currentCondition.append(c);
                         i += nextToken.length();
                         continue;
-                    } else if (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY") ||
-                            nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET")) {
+                    } else if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
+                            (nextToken.equalsIgnoreCase("LIMIT") && subQueryStart == -1) ||
+                            (nextToken.equalsIgnoreCase("OFFSET") && subQueryStart == -1)) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
                             Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
                             conditions.add(condition);
-                            LOGGER.log(Level.FINE, "Parsed condition: {0}", condition);
+                            LOGGER.log(Level.FINE, "Parsed condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
                         }
                         break;
+                    } else {
+                        // Check if we're inside a subquery and continue building the condition
+                        if (subQueryStart != -1) {
+                            currentCondition.append(c);
+                            continue;
+                        }
                     }
                 }
             }
@@ -1932,7 +1985,7 @@ class QueryParser {
         String finalCondStr = currentCondition.toString().trim();
         if (!finalCondStr.isEmpty()) {
             Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
-                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
             conditions.add(condition);
             LOGGER.log(Level.FINE, "Parsed final condition: {0}", condition);
         }
@@ -1942,20 +1995,49 @@ class QueryParser {
 
     private String getNextToken(String conditionStr, int startIndex) {
         StringBuilder token = new StringBuilder();
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        boolean inSubQuery = false;
+
         for (int i = startIndex; i < conditionStr.length(); i++) {
             char c = conditionStr.charAt(i);
-            if (Character.isWhitespace(c) || c == '=' || c == '<' || c == '>' || c == '!') {
-                break;
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                token.append(c);
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    if (parenDepth == 1 && i + 7 < conditionStr.length() &&
+                            conditionStr.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                        inSubQuery = true;
+                    }
+                    token.append(c);
+                    continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    if (parenDepth == 0) {
+                        inSubQuery = false;
+                    }
+                    token.append(c);
+                    continue;
+                } else if (parenDepth == 0 && !inSubQuery && (Character.isWhitespace(c) ||
+                        c == '=' || c == '<' || c == '>' || c == '!')) {
+                    break;
+                }
             }
             token.append(c);
         }
-        return token.toString();
+        String result = token.toString().trim();
+        return result.isEmpty() ? "" : result;
     }
 
     private Condition parseSingleCondition(String condStr, String defaultTableName, Database database, String originalQuery,
                                            boolean isJoinCondition, Map<String, Class<?>> combinedColumnTypes,
                                            Map<String, String> tableAliases, Map<String, String> columnAliases,
-                                           String conjunction, boolean not) {
+                                           String conjunction, boolean not, String conditionStr) {
+        LOGGER.log(Level.FINEST, "Parsing single condition: {0}, full condition={1}", new Object[]{condStr, conditionStr});
         if (condStr.toUpperCase().startsWith("(") && condStr.toUpperCase().endsWith(")")) {
             String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
             List<Condition> subConditions = parseConditions(subCondStr, defaultTableName, database, originalQuery,
@@ -1969,7 +2051,6 @@ class QueryParser {
             String column = inMatcher.group(1).trim();
             boolean inNot = inMatcher.group(2) != null;
             String valuesStr = inMatcher.group(3).trim();
-            // Resolve alias
             String actualColumn = columnAliases.entrySet().stream()
                     .filter(entry -> entry.getValue().equalsIgnoreCase(column.split("\\.")[column.contains(".") ? 1 : 0]))
                     .map(Map.Entry::getKey)
@@ -2012,7 +2093,6 @@ class QueryParser {
         if (isNullMatcher.matches()) {
             String column = isNullMatcher.group(1).trim();
             boolean isNotNull = isNullMatcher.group(2) != null;
-            // Resolve alias
             String actualColumn = columnAliases.entrySet().stream()
                     .filter(entry -> entry.getValue().equalsIgnoreCase(column.split("\\.")[column.contains(".") ? 1 : 0]))
                     .map(Map.Entry::getKey)
@@ -2041,14 +2121,36 @@ class QueryParser {
         String selectedOperator = null;
         int operatorIndex = -1;
         int operatorEndIndex = -1;
-        for (String op : operators) {
-            Pattern opPattern = Pattern.compile("(?i)\\s*(" + (op.startsWith("\\b") ? op.substring(2, op.length() - 2) : Pattern.quote(op)) + ")\\s*");
-            Matcher opMatcher = opPattern.matcher(condStr);
-            if (opMatcher.find()) {
-                selectedOperator = opMatcher.group(1);
-                operatorIndex = opMatcher.start(1);
-                operatorEndIndex = opMatcher.end(1);
-                break;
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        for (int i = 0; i < condStr.length(); i++) {
+            char c = condStr.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                } else if (parenDepth == 0) {
+                    for (String op : operators) {
+                        String patternStr = op.startsWith("\\b") ? op.substring(2, op.length() - 2) : Pattern.quote(op);
+                        if (i + patternStr.length() <= condStr.length() &&
+                                condStr.substring(i, i + patternStr.length()).equalsIgnoreCase(patternStr) &&
+                                (i + patternStr.length() == condStr.length() ||
+                                        Character.isWhitespace(condStr.charAt(i + patternStr.length())))) {
+                            selectedOperator = condStr.substring(i, i + patternStr.length());
+                            operatorIndex = i;
+                            operatorEndIndex = i + patternStr.length();
+                            break;
+                        }
+                    }
+                    if (selectedOperator != null) {
+                        break;
+                    }
+                }
             }
         }
         if (operatorIndex == -1) {
@@ -2056,6 +2158,7 @@ class QueryParser {
         }
         String leftPart = condStr.substring(0, operatorIndex).trim();
         String rightPart = condStr.substring(operatorEndIndex).trim();
+        LOGGER.log(Level.FINEST, "Left part: {0}, Right part: {1}, Operator: {2}", new Object[]{leftPart, rightPart, selectedOperator});
         String column;
         String rightColumn = null;
         Object value = null;
@@ -2065,28 +2168,19 @@ class QueryParser {
         if (columnPattern.matcher(rightPart).matches()) {
             rightColumn = rightPart;
         } else if (rightPart.toUpperCase().startsWith("(SELECT ")) {
+            LOGGER.log(Level.FINEST, "Processing subquery in rightPart: {0}, full condition={1}, condStr={2}",
+                    new Object[]{rightPart, conditionStr, condStr});
             int subQueryEnd = findMatchingParenthesis(rightPart, 0);
-            if (subQueryEnd == -1) {
-                int conditionEnd = rightPart.length();
-                Pattern endPattern = Pattern.compile("(?i)\\s+(AND|OR|LIMIT|OFFSET|ORDER\\s+BY|GROUP\\s+BY|HAVING)\\s+");
-                Matcher endMatcher = endPattern.matcher(rightPart);
-                if (endMatcher.find()) {
-                    conditionEnd = endMatcher.start();
-                }
-                subQueryEnd = rightPart.lastIndexOf(')', conditionEnd);
-                if (subQueryEnd == -1 || subQueryEnd < rightPart.indexOf('(')) {
-                    LOGGER.log(Level.SEVERE, "Invalid subquery syntax in condition: {0}, rightPart={1}", new Object[]{condStr, rightPart});
-                    throw new IllegalArgumentException("Invalid subquery syntax in condition: " + rightPart);
-                }
+            if (subQueryEnd == -1 || subQueryEnd < rightPart.indexOf('(')) {
+                LOGGER.log(Level.SEVERE, "Invalid subquery syntax in condition: condStr={0}, rightPart={1}, full condition={2}",
+                        new Object[]{condStr, rightPart, conditionStr});
+                throw new IllegalArgumentException("Invalid subquery syntax in condition: " + rightPart);
             }
             String subQueryStr = rightPart.substring(1, subQueryEnd).trim();
-            if (subQueryStr.isEmpty()) {
-                throw new IllegalArgumentException("Empty subquery in condition: " + rightPart);
-            }
-            // Validate subquery structure
-            if (!subQueryStr.toUpperCase().contains(" FROM ")) {
-                LOGGER.log(Level.SEVERE, "Invalid subquery missing FROM clause: {0}", subQueryStr);
-                throw new IllegalArgumentException("Invalid subquery syntax: missing FROM clause in " + subQueryStr);
+            if (subQueryStr.isEmpty() || !subQueryStr.toUpperCase().startsWith("SELECT ")) {
+                LOGGER.log(Level.SEVERE, "Invalid or empty subquery in condition: condStr={0}, rightPart={1}, subQueryStr={2}, full condition={3}",
+                        new Object[]{condStr, rightPart, subQueryStr, conditionStr});
+                throw new IllegalArgumentException("Invalid subquery in condition: " + rightPart);
             }
             LOGGER.log(Level.FINE, "Parsing subquery: {0}", subQueryStr);
             Query<?> subQueryParsed = parse(subQueryStr, database);
@@ -2094,7 +2188,6 @@ class QueryParser {
             String alias = remaining.toUpperCase().startsWith("AS ") ? remaining.substring(3).trim() : null;
             subQuery = new SubQuery(subQueryParsed, alias);
         } else {
-            // Resolve alias for leftPart
             column = columnAliases.entrySet().stream()
                     .filter(entry -> entry.getValue().equalsIgnoreCase(leftPart.split("\\.")[leftPart.contains(".") ? 1 : 0]))
                     .map(Map.Entry::getKey)
@@ -2104,7 +2197,6 @@ class QueryParser {
         }
 
         column = leftPart;
-        // Resolve alias
         String finalColumn = column;
         String actualColumn = columnAliases.entrySet().stream()
                 .filter(entry -> entry.getValue().equalsIgnoreCase(finalColumn.split("\\.")[finalColumn.contains(".") ? 1 : 0]))
@@ -2146,7 +2238,7 @@ class QueryParser {
             }
         }
 
-        Operator operator; // Declare the Operator variable
+        Operator operator;
         switch (selectedOperator.toUpperCase()) {
             case "=":
                 operator = Operator.EQUALS;
@@ -2281,15 +2373,32 @@ class QueryParser {
                     if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
-                            HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database,
-                                    originalQuery, aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                            // Enhanced subquery detection
+                            String remainingStr = havingClause.substring(i).toUpperCase();
+                            if (condStr.toUpperCase().contains("(SELECT ") && remainingStr.contains("(SELECT ")) {
+                                int selectIndex = havingClause.toUpperCase().indexOf("(SELECT ", Math.max(0, i - currentCondition.length()));
+                                if (selectIndex >= 0 && selectIndex <= i) {
+                                    int subQueryEnd = findMatchingParenthesis(havingClause, selectIndex);
+                                    if (subQueryEnd != -1 && i <= subQueryEnd) {
+                                        currentCondition.append(c);
+                                        continue;
+                                    }
+                                }
+                            }
+                            HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
+                                    aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
                             conditions.add(condition);
                             LOGGER.log(Level.FINE, "Parsed HAVING condition: {0}", condition);
+                            conjunction = nextToken.toUpperCase();
+                            not = false;
+                            currentCondition = new StringBuilder();
+                            i += nextToken.length();
+                        } else {
+                            conjunction = nextToken.toUpperCase();
+                            not = false;
+                            currentCondition = new StringBuilder();
+                            i += nextToken.length();
                         }
-                        conjunction = nextToken.toUpperCase();
-                        not = false;
-                        currentCondition = new StringBuilder();
-                        i += nextToken.length();
                         continue;
                     } else if (nextToken.equalsIgnoreCase("NOT")) {
                         not = true;
@@ -2419,30 +2528,36 @@ class QueryParser {
     }
 
     private int findMatchingParenthesis(String str, int startIndex) {
-        if (str == null || startIndex >= str.length()) {
-            LOGGER.log(Level.SEVERE, "Invalid input for findMatchingParenthesis: str={0}, startIndex={1}", new Object[]{str, startIndex});
+        if (str == null || startIndex >= str.length() || str.charAt(startIndex) != '(') {
+            LOGGER.log(Level.SEVERE, "Invalid input for findMatchingParenthesis: str={0}, startIndex={1}",
+                    new Object[]{str != null ? str : "null", startIndex});
             return -1;
         }
-        int depth = 0;
-        boolean inQuotes = false;
-        LOGGER.log(Level.FINEST, "Finding matching parenthesis in: {0}, startIndex={1}", new Object[]{str, startIndex});
-        for (int i = startIndex; i < str.length(); i++) {
+        int depth = 1;
+        boolean inSingleQuotes = false;
+        boolean inDoubleQuotes = false;
+
+        for (int i = startIndex + 1; i < str.length(); i++) {
             char c = str.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-            } else if (!inQuotes) {
+            LOGGER.log(Level.FINEST, "Processing char at index {0}: {1}, depth={2}, singleQuotes={3}, doubleQuotes={4}, str={5}",
+                    new Object[]{i, c, depth, inSingleQuotes, inDoubleQuotes, str});
+            if (c == '\'' && !inDoubleQuotes) {
+                inSingleQuotes = !inSingleQuotes;
+            } else if (c == '"' && !inSingleQuotes) {
+                inDoubleQuotes = !inDoubleQuotes;
+            } else if (!inSingleQuotes && !inDoubleQuotes) {
                 if (c == '(') {
                     depth++;
                 } else if (c == ')') {
                     depth--;
                     if (depth == 0) {
-                        LOGGER.log(Level.FINEST, "Found matching parenthesis at index: {0}", i);
+                        LOGGER.log(Level.FINE, "Found matching parenthesis at index {0} for startIndex {1}", new Object[]{i, startIndex});
                         return i;
                     }
                 }
             }
         }
-        LOGGER.log(Level.WARNING, "No matching parenthesis found in: {0}, startIndex={1}", new Object[]{str, startIndex});
+        LOGGER.log(Level.SEVERE, "No matching parenthesis found for startIndex {0} in string: {1}", new Object[]{startIndex, str});
         return -1;
     }
 
