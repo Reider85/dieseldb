@@ -134,3 +134,4 @@
 1.3.4 fix group by in subqueries
 1.3.5 fix subqueries in on conditions
 1.3.6 fix subqueries
+1.3.7 fix subqueries in on conditions

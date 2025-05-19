@@ -1237,19 +1237,13 @@ class QueryParser {
         LOGGER.log(Level.INFO, "Parsed SELECT query: table={0}, alias={1}, columns={2}, aggregates={3}, joins={4}, conditions={5}, groupBy={6}, having={7}, orderBy={8}, limit={9}, offset={10}, columnAliases={11}, tableAliases={12}, subQueries={13}",
                 new Object[]{mainTable.getName(), tableAlias, columns, aggregates, joins, conditions, groupBy, havingConditions, orderBy, limit, offset, columnAliases, tableAliases, subQueries});
 
+        UUID queryId = UUID.randomUUID();
+        LOGGER.log(Level.INFO,
+                "Parsed SELECT query: table={0}, columns={1}, aggregates={2}, conditions={3}, joins={4}, limit={5}, offset={6}, orderBy={7}, groupBy={8}, having={9}, aliases={10}, subQueries={11}, queryId={12}",
+                new Object[]{mainTable.getName(), columns, aggregates, conditions, joins, limit, offset, orderBy, groupBy, havingConditions, columnAliases, subQueries, queryId});
         return new SelectQuery(
-                columns,               // List<String> columns
-                aggregates,           // List<QueryParser.AggregateFunction> aggregates
-                conditions,           // List<QueryParser.Condition> conditions
-                joins,                // List<QueryParser.JoinInfo> joins
-                mainTable.getName(),  // String mainTableName
-                limit,                // Integer limit
-                offset,               // Integer offset
-                orderBy,              // List<QueryParser.OrderByInfo> orderBy
-                groupBy,              // List<String> groupBy
-                havingConditions,     // List<QueryParser.HavingCondition> havingConditions
-                tableAliases,         // Map<String, String> tableAliases
-                subQueries            // List<QueryParser.SubQuery> subQueries
+                columns, aggregates, conditions, joins, mainTable.getName(),
+                limit, offset, orderBy, groupBy, havingConditions, columnAliases, subQueries, queryId
         );
     }
 
@@ -2038,15 +2032,18 @@ class QueryParser {
                                            Map<String, String> tableAliases, Map<String, String> columnAliases,
                                            String conjunction, boolean not, String conditionStr) {
         LOGGER.log(Level.FINEST, "Parsing single condition: {0}, full condition={1}", new Object[]{condStr, conditionStr});
-        if (condStr.toUpperCase().startsWith("(") && condStr.toUpperCase().endsWith(")")) {
-            String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
+
+        // Normalize condition string to ensure consistent spacing
+        String normalizedCondStr = normalizeCondition(condStr);
+        if (normalizedCondStr.toUpperCase().startsWith("(") && normalizedCondStr.toUpperCase().endsWith(")")) {
+            String subCondStr = normalizedCondStr.substring(1, normalizedCondStr.length() - 1).trim();
             List<Condition> subConditions = parseConditions(subCondStr, defaultTableName, database, originalQuery,
                     isJoinCondition, combinedColumnTypes, tableAliases, columnAliases);
             return new Condition(subConditions, conjunction, not);
         }
 
         Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
-        Matcher inMatcher = inPattern.matcher(condStr);
+        Matcher inMatcher = inPattern.matcher(normalizedCondStr);
         if (inMatcher.matches()) {
             String column = inMatcher.group(1).trim();
             boolean inNot = inMatcher.group(2) != null;
@@ -2089,7 +2086,7 @@ class QueryParser {
         }
 
         Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
-        Matcher isNullMatcher = isNullPattern.matcher(condStr);
+        Matcher isNullMatcher = isNullPattern.matcher(normalizedCondStr);
         if (isNullMatcher.matches()) {
             String column = isNullMatcher.group(1).trim();
             boolean isNotNull = isNullMatcher.group(2) != null;
@@ -2124,10 +2121,9 @@ class QueryParser {
         int parenDepth = 0;
         boolean inQuotes = false;
 
-// Log the input condStr for debugging
-        LOGGER.log(Level.FINEST, "Input condStr: '{0}', length: {1}", new Object[]{condStr, condStr.length()});
-        for (int i = 0; i < condStr.length(); i++) {
-            char c = condStr.charAt(i);
+        LOGGER.log(Level.FINEST, "Input condStr: '{0}', length: {1}", new Object[]{normalizedCondStr, normalizedCondStr.length()});
+        for (int i = 0; i < normalizedCondStr.length(); i++) {
+            char c = normalizedCondStr.charAt(i);
             LOGGER.log(Level.FINEST, "Processing char at index {0}: '{1}' (code: {2}), parenDepth: {3}, inQuotes: {4}",
                     new Object[]{i, c, (int) c, parenDepth, inQuotes});
             if (c == '\'') {
@@ -2142,10 +2138,10 @@ class QueryParser {
                 } else if (parenDepth == 0) {
                     for (String op : operators) {
                         String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
-                        Pattern opPattern = Pattern.compile("(?i)" + patternStr + "\\s");
-                        Matcher opMatcher = opPattern.matcher(condStr.substring(i));
+                        Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
+                        Matcher opMatcher = opPattern.matcher(normalizedCondStr.substring(i));
                         if (opMatcher.lookingAt()) {
-                            selectedOperator = opMatcher.group();
+                            selectedOperator = opMatcher.group().trim();
                             operatorIndex = i;
                             operatorEndIndex = i + selectedOperator.length();
                             LOGGER.log(Level.FINEST, "Found operator '{0}' at index {1}, end index {2}",
@@ -2161,11 +2157,11 @@ class QueryParser {
         }
         if (operatorIndex == -1) {
             LOGGER.log(Level.SEVERE, "No operator found in condStr: '{0}', chars: {1}",
-                    new Object[]{condStr, Arrays.toString(condStr.chars().mapToObj(c -> String.format("%c(%d)", (char)c, c)).toArray())});
-            throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + condStr + "'");
+                    new Object[]{normalizedCondStr, Arrays.toString(normalizedCondStr.chars().mapToObj(c -> String.format("%c(%d)", (char)c, c)).toArray())});
+            throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + normalizedCondStr + "'");
         }
-        String leftPart = condStr.substring(0, operatorIndex).trim();
-        String rightPart = condStr.substring(operatorEndIndex).trim();
+        String leftPart = normalizedCondStr.substring(0, operatorIndex).trim();
+        String rightPart = normalizedCondStr.substring(operatorEndIndex).trim();
         LOGGER.log(Level.FINEST, "Left part: {0}, Right part: {1}, Operator: {2}", new Object[]{leftPart, rightPart, selectedOperator});
         String column;
         String rightColumn = null;
@@ -2177,17 +2173,17 @@ class QueryParser {
             rightColumn = rightPart;
         } else if (rightPart.toUpperCase().startsWith("(SELECT ")) {
             LOGGER.log(Level.FINEST, "Processing subquery in rightPart: {0}, full condition={1}, condStr={2}",
-                    new Object[]{rightPart, conditionStr, condStr});
+                    new Object[]{rightPart, conditionStr, normalizedCondStr});
             int subQueryEnd = findMatchingParenthesis(rightPart, 0);
             if (subQueryEnd == -1 || subQueryEnd < rightPart.indexOf('(')) {
                 LOGGER.log(Level.SEVERE, "Invalid subquery syntax in condition: condStr={0}, rightPart={1}, full condition={2}",
-                        new Object[]{condStr, rightPart, conditionStr});
+                        new Object[]{normalizedCondStr, rightPart, conditionStr});
                 throw new IllegalArgumentException("Invalid subquery syntax in condition: " + rightPart);
             }
             String subQueryStr = rightPart.substring(1, subQueryEnd).trim();
             if (subQueryStr.isEmpty() || !subQueryStr.toUpperCase().startsWith("SELECT ")) {
                 LOGGER.log(Level.SEVERE, "Invalid or empty subquery in condition: condStr={0}, rightPart={1}, subQueryStr={2}, full condition={3}",
-                        new Object[]{condStr, rightPart, subQueryStr, conditionStr});
+                        new Object[]{normalizedCondStr, rightPart, subQueryStr, conditionStr});
                 throw new IllegalArgumentException("Invalid subquery in condition: " + rightPart);
             }
             LOGGER.log(Level.FINE, "Parsing subquery: {0}", subQueryStr);
@@ -2247,7 +2243,7 @@ class QueryParser {
         }
 
         Operator operator;
-        switch (selectedOperator.toUpperCase()) {
+        switch (selectedOperator.toUpperCase().trim()) {
             case "=":
                 operator = Operator.EQUALS;
                 break;
@@ -2278,7 +2274,7 @@ class QueryParser {
         }
 
         if (isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn, tableAliases)) {
-            throw new IllegalArgumentException("Join condition must compare columns from different tables: " + condStr);
+            throw new IllegalArgumentException("Join condition must compare columns from different tables: " + normalizedCondStr);
         }
 
         if (rightColumn != null) {
@@ -2633,16 +2629,21 @@ class QueryParser {
             return "";
         }
         return condition.replaceAll("\\s+", " ")
+                .replaceAll("(?i)\\bEQUALS\\b", "=")
+                .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
+                .replaceAll("(?i)\\bGREATER_THAN\\b", ">")
+                .replaceAll("(?i)\\bLIKE\\b", "LIKE")
+                .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE")
                 .replaceAll("(?i)\\bID\\s*=\\s*U\\.ID\\b", "ID=U.ID")
                 .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID");
     }
-
     private String normalizeQueryString(String query) {
         return query.trim()
                 .replaceAll("\\s+", " ")
                 .replaceAll("\\s*([=><!(),])\\s*", "$1")
                 .replaceAll("(?i)\\bEQUALS\\b", "=")
                 .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
+                .replaceAll("(?i)\\bGREATER_THAN\\b", ">") // Add this line
                 .replaceAll("(?i)\\bLIKE\\b", "LIKE")
                 .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE")
                 .replaceAll("\\s*;", "")
