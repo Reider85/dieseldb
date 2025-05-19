@@ -2123,8 +2123,13 @@ class QueryParser {
         int operatorEndIndex = -1;
         int parenDepth = 0;
         boolean inQuotes = false;
+
+// Log the input condStr for debugging
+        LOGGER.log(Level.FINEST, "Input condStr: '{0}', length: {1}", new Object[]{condStr, condStr.length()});
         for (int i = 0; i < condStr.length(); i++) {
             char c = condStr.charAt(i);
+            LOGGER.log(Level.FINEST, "Processing char at index {0}: '{1}' (code: {2}), parenDepth: {3}, inQuotes: {4}",
+                    new Object[]{i, c, (int) c, parenDepth, inQuotes});
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 continue;
@@ -2136,14 +2141,15 @@ class QueryParser {
                     parenDepth--;
                 } else if (parenDepth == 0) {
                     for (String op : operators) {
-                        String patternStr = op.startsWith("\\b") ? op.substring(2, op.length() - 2) : Pattern.quote(op);
-                        if (i + patternStr.length() <= condStr.length() &&
-                                condStr.substring(i, i + patternStr.length()).equalsIgnoreCase(patternStr) &&
-                                (i + patternStr.length() == condStr.length() ||
-                                        Character.isWhitespace(condStr.charAt(i + patternStr.length())))) {
-                            selectedOperator = condStr.substring(i, i + patternStr.length());
+                        String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
+                        Pattern opPattern = Pattern.compile("(?i)" + patternStr + "\\s");
+                        Matcher opMatcher = opPattern.matcher(condStr.substring(i));
+                        if (opMatcher.lookingAt()) {
+                            selectedOperator = opMatcher.group();
                             operatorIndex = i;
-                            operatorEndIndex = i + patternStr.length();
+                            operatorEndIndex = i + selectedOperator.length();
+                            LOGGER.log(Level.FINEST, "Found operator '{0}' at index {1}, end index {2}",
+                                    new Object[]{selectedOperator, operatorIndex, operatorEndIndex});
                             break;
                         }
                     }
@@ -2154,6 +2160,8 @@ class QueryParser {
             }
         }
         if (operatorIndex == -1) {
+            LOGGER.log(Level.SEVERE, "No operator found in condStr: '{0}', chars: {1}",
+                    new Object[]{condStr, Arrays.toString(condStr.chars().mapToObj(c -> String.format("%c(%d)", (char)c, c)).toArray())});
             throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + condStr + "'");
         }
         String leftPart = condStr.substring(0, operatorIndex).trim();
@@ -2335,6 +2343,7 @@ class QueryParser {
         int parenDepth = 0;
         String conjunction = null;
         boolean not = false;
+        int subQueryStart = -1; // Added declaration
 
         for (int i = 0; i < havingClause.length(); i++) {
             char c = havingClause.charAt(i);
@@ -2346,11 +2355,17 @@ class QueryParser {
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
+                    if (parenDepth == 1 && i + 7 < havingClause.length() && havingClause.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                        subQueryStart = i;
+                    }
                     currentCondition.append(c);
                     continue;
                 } else if (c == ')') {
                     parenDepth--;
                     currentCondition.append(c);
+                    if (parenDepth == 0 && subQueryStart != -1) {
+                        subQueryStart = -1; // End of subquery
+                    }
                     if (parenDepth == 0 && currentCondition.length() > 0) {
                         String condStr = currentCondition.toString().trim();
                         if (condStr.startsWith("(") && condStr.endsWith(")")) {
@@ -2368,23 +2383,11 @@ class QueryParser {
                         not = false;
                     }
                     continue;
-                } else if (parenDepth == 0 && c == ' ') {
+                } else if (parenDepth == 0 && c == ' ' && subQueryStart == -1) {
                     String nextToken = getNextToken(havingClause, i + 1);
                     if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
-                            // Enhanced subquery detection
-                            String remainingStr = havingClause.substring(i).toUpperCase();
-                            if (condStr.toUpperCase().contains("(SELECT ") && remainingStr.contains("(SELECT ")) {
-                                int selectIndex = havingClause.toUpperCase().indexOf("(SELECT ", Math.max(0, i - currentCondition.length()));
-                                if (selectIndex >= 0 && selectIndex <= i) {
-                                    int subQueryEnd = findMatchingParenthesis(havingClause, selectIndex);
-                                    if (subQueryEnd != -1 && i <= subQueryEnd) {
-                                        currentCondition.append(c);
-                                        continue;
-                                    }
-                                }
-                            }
                             HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
                                     aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
                             conditions.add(condition);
@@ -2405,6 +2408,17 @@ class QueryParser {
                         currentCondition.append(c);
                         i += nextToken.length();
                         continue;
+                    } else if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
+                            (nextToken.equalsIgnoreCase("LIMIT") && subQueryStart == -1) ||
+                            (nextToken.equalsIgnoreCase("OFFSET") && subQueryStart == -1)) {
+                        String condStr = currentCondition.toString().trim();
+                        if (!condStr.isEmpty()) {
+                            HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
+                                    aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                            conditions.add(condition);
+                            LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
+                        }
+                        break;
                     }
                 }
             }
