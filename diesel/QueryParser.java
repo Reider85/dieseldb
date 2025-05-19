@@ -17,6 +17,7 @@ class QueryParser {
     private static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
+    private static final String[] OPERATORS = {"!=", "<>", ">=", "<=", "=", "<", ">", "LIKE", "NOT LIKE"};
     enum Operator {
         EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN_OR_EQUALS,
         IN, LIKE, NOT_LIKE, IS_NULL, IS_NOT_NULL
@@ -334,6 +335,14 @@ class QueryParser {
         }
     }
 
+    private boolean isOperator(String str) {
+        for (String op : OPERATORS) {
+            if (str.toUpperCase().startsWith(op)) {
+                return true;
+            }
+        }
+        return false;
+    }
     public static String convertLikePatternToRegex(String pattern) {
         if (pattern == null || pattern.isEmpty()) {
             throw new IllegalArgumentException("LIKE pattern cannot be null or empty");
@@ -2149,17 +2158,18 @@ class QueryParser {
                     parenDepth++;
                 } else if (c == ')') {
                     parenDepth--;
-                } else if (parenDepth == 0) { // Only check operators at top level
+                } else if (parenDepth == 0) {
                     for (String op : operators) {
                         String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
                         Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
                         Matcher opMatcher = opPattern.matcher(normalizedCondStr.substring(i));
                         if (opMatcher.lookingAt()) {
+                            String ahead = normalizedCondStr.substring(i + opMatcher.group().length()).trim();
                             selectedOperator = opMatcher.group().trim();
                             operatorIndex = i;
                             operatorEndIndex = i + selectedOperator.length();
-                            LOGGER.log(Level.FINEST, "Found operator '{0}' at index {1}, end index {2}",
-                                    new Object[]{selectedOperator, operatorIndex, operatorEndIndex});
+                            LOGGER.log(Level.FINEST, "Found operator '{0}' at index {1}, end index {2}, ahead='{3}'",
+                                    new Object[]{selectedOperator, operatorIndex, operatorEndIndex, ahead});
                             break;
                         }
                     }
@@ -2169,11 +2179,13 @@ class QueryParser {
                 }
             }
         }
+
         if (operatorIndex == -1) {
             LOGGER.log(Level.SEVERE, "No operator found in condStr: '{0}', chars: {1}",
                     new Object[]{normalizedCondStr, Arrays.toString(normalizedCondStr.chars().mapToObj(c -> String.format("%c(%d)", (char)c, c)).toArray())});
             throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + normalizedCondStr + "'");
         }
+
         String leftPart = normalizedCondStr.substring(0, operatorIndex).trim();
         String rightPart = normalizedCondStr.substring(operatorEndIndex).trim();
         LOGGER.log(Level.FINEST, "Left part: {0}, Right part: {1}, Operator: {2}", new Object[]{leftPart, rightPart, selectedOperator});
@@ -2188,6 +2200,7 @@ class QueryParser {
         } else if (rightPart.toUpperCase().startsWith("(SELECT ")) {
             LOGGER.log(Level.FINEST, "Processing subquery in rightPart: {0}, full condition={1}, condStr={2}",
                     new Object[]{rightPart, conditionStr, normalizedCondStr});
+            // Find the complete subquery by matching parentheses
             int subQueryStartIndex = rightPart.indexOf('(');
             int subQueryEnd = findMatchingParenthesis(rightPart, subQueryStartIndex);
             if (subQueryEnd == -1 || subQueryEnd < subQueryStartIndex) {
@@ -2202,7 +2215,7 @@ class QueryParser {
                 throw new IllegalArgumentException("Invalid subquery in condition: " + rightPart);
             }
             LOGGER.log(Level.FINE, "Parsing subquery: {0}", subQueryStr);
-            Query<?> subQueryParsed = parse(subQueryStr, database); // Parse subquery without parentheses
+            Query<?> subQueryParsed = parse(subQueryStr, database);
             String remaining = rightPart.substring(subQueryEnd + 1).trim();
             String alias = remaining.toUpperCase().startsWith("AS ") ? remaining.substring(3).trim() : null;
             subQuery = new SubQuery(subQueryParsed, alias);
@@ -2556,7 +2569,7 @@ class QueryParser {
         if (str == null || startIndex >= str.length() || str.charAt(startIndex) != '(') {
             LOGGER.log(Level.SEVERE, "Invalid input for findMatchingParenthesis: str={0}, startIndex={1}",
                     new Object[]{str != null ? str : "null", startIndex});
-            return -1;
+            throw new IllegalArgumentException("Invalid input for findMatchingParenthesis: " + str);
         }
         int depth = 1;
         boolean inSingleQuotes = false;
@@ -2583,7 +2596,7 @@ class QueryParser {
             }
         }
         LOGGER.log(Level.SEVERE, "No matching parenthesis found for startIndex {0} in string: {1}", new Object[]{startIndex, str});
-        return -1;
+        throw new IllegalArgumentException("No matching parenthesis found in string: " + str);
     }
 
     private boolean areSubQueriesEquivalent(String subQuery1, String subQuery2) {
