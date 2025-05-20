@@ -137,3 +137,4 @@
 1.3.7 fix subqueries in on conditions
 1.3.8 fix subqueries in on conditions
 1.3.9 fix subqueries in on conditions
+1.4.0 fix join

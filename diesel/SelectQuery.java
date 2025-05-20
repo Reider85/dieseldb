@@ -119,14 +119,21 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         }
                     }
 
-                    for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
-                        Map<String, Object> probeRow = currentJoin.get(probeTableName);
+                    // Remove the redundant declaration and clear the existing newJoinedRows
+                    newJoinedRows.clear(); // Clear the list to reuse it
+                    List<Map<String, Object>> probeRows = getIndexedRows(probeTable, join.onConditions, probeTableName, combinedColumnTypes);
+                    if (probeRows == null) {
+                        probeRows = probeTable.getRows();
+                    }
+
+                    for (Map<String, Object> probeRow : probeRows) {
                         Object probeKey = probeRow.get(normalizeColumnKey(probeColumn, probeTableName));
                         if (probeKey != null) {
                             List<Map<String, Object>> matches = hashTable.get(probeKey);
                             if (matches != null) {
                                 for (Map<String, Object> buildRow : matches) {
-                                    Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
+                                    Map<String, Map<String, Object>> newRow = new HashMap<>();
+                                    newRow.put(probeTableName, probeRow);
                                     newRow.put(buildTableName, buildRow);
                                     Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
                                     if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
@@ -137,6 +144,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         }
                     }
 
+                    joinedRows = newJoinedRows;
                     LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
                             new Object[]{newJoinedRows.size(), join.tableName});
                 } else {
