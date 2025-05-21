@@ -1,10 +1,13 @@
 package diesel;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.logging.ConsoleHandler;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -12,12 +15,50 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 class QueryParser {
-    private static final Logger LOGGER = Logger.getLogger(QueryParser.class.getName());
+    private static final Logger LOGGER;
+
+    static {
+        // Инициализация логгера
+        LOGGER = Logger.getLogger(QueryParser.class.getName());
+        // Отключение родительских обработчиков для избежания дублирования логов
+        LOGGER.setUseParentHandlers(false);
+        // Добавление ConsoleHandler
+        ConsoleHandler handler = new ConsoleHandler();
+        handler.setLevel(Level.ALL); // Устанавливаем минимальный уровень для обработчика
+        LOGGER.addHandler(handler);
+
+        // Загрузка уровня логирования из config.properties
+        Properties props = new Properties();
+        try (InputStream input = QueryParser.class.getClassLoader().getResourceAsStream("config.properties")) {
+            if (input == null) {
+                LOGGER.warning("config.properties not found, using default logging level INFO");
+                LOGGER.setLevel(Level.INFO);
+            } else {
+                props.load(input);
+                String logLevelStr = props.getProperty("logging.level.diesel", "INFO").toUpperCase();
+                try {
+                    Level logLevel = Level.parse(logLevelStr);
+                    LOGGER.setLevel(logLevel);
+                    handler.setLevel(logLevel);
+                    LOGGER.info("Logging level set to " + logLevelStr + " from config.properties");
+                } catch (IllegalArgumentException e) {
+                    LOGGER.warning("Invalid logging level '" + logLevelStr + "' in config.properties, defaulting to INFO");
+                    LOGGER.setLevel(Level.INFO);
+                    handler.setLevel(Level.INFO);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.warning("Failed to load config.properties, defaulting to INFO: " + e.getMessage());
+            LOGGER.setLevel(Level.INFO);
+            handler.setLevel(Level.INFO);
+        }
+    }
     private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
     private String originalQuery;
     private static final String[] OPERATORS = {"!=", "<>", ">=", "<=", "=", "<", ">", "LIKE", "NOT LIKE"};
+
     enum Operator {
         EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN_OR_EQUALS,
         IN, LIKE, NOT_LIKE, IS_NULL, IS_NOT_NULL
@@ -343,6 +384,7 @@ class QueryParser {
         }
         return false;
     }
+
     public static String convertLikePatternToRegex(String pattern) {
         if (pattern == null || pattern.isEmpty()) {
             throw new IllegalArgumentException("LIKE pattern cannot be null or empty");
@@ -688,6 +730,7 @@ class QueryParser {
         LOGGER.log(Level.FINEST, "No valid {0} clause found outside subqueries in query: {1}", new Object[]{clause, query});
         return -1;
     }
+
     private int findLastClauseIndex(String query, String clause) {
         String upperQuery = query.toUpperCase();
         int parenDepth = 0;
@@ -1926,8 +1969,12 @@ class QueryParser {
                     parenDepth--;
                     currentCondition.append(c);
                     if (parenDepth == 0 && subQueryStart != -1) {
-                        LOGGER.log(Level.FINEST, "Detected subquery end at index {0}: {1}", new Object[]{i, currentCondition.toString()});
-                        subQueryStart = -1;
+                        // Проверяем, действительно ли это конец подзапроса
+                        int subQueryEnd = findMatchingParenthesis(conditionStr, subQueryStart);
+                        if (subQueryEnd == i) {
+                            LOGGER.log(Level.FINEST, "Detected subquery end at index {0}: {1}", new Object[]{i, currentCondition.toString()});
+                            subQueryStart = -1;
+                        }
                     }
                     if (parenDepth == 0 && currentCondition.length() > 0) {
                         String condStr = currentCondition.toString().trim();
@@ -1953,17 +2000,26 @@ class QueryParser {
                             new Object[]{i, nextToken, currentCondition.toString()});
                     if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
                         String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) { // Skip if only closing parentheses
-                            LOGGER.log(Level.FINEST, "Attempting to parse condition: {0}", condStr);
-                            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
-                            conditions.add(condition);
-                            LOGGER.log(Level.FINE, "Parsed condition: {0}", condition);
+                        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
+                            LOGGER.log(Level.FINEST, "Before parsing condition: condStr={0}, fullCondition={1}",
+                                    new Object[]{condStr, conditionStr});
+                            try {
+                                Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
+                                conditions.add(condition);
+                                LOGGER.log(Level.FINE, "Parsed condition successfully: {0}", condition);
+                            } catch (IllegalArgumentException e) {
+                                LOGGER.log(Level.SEVERE, "Failed to parse condition: condStr={0}, error={1}",
+                                        new Object[]{condStr, e.getMessage()});
+                                throw e;
+                            }
                         }
                         conjunction = nextToken.toUpperCase();
                         not = false;
                         currentCondition = new StringBuilder();
                         i += nextToken.length();
+                        LOGGER.log(Level.FINEST, "After processing {0}: currentCondition reset, conjunction={1}, i={2}",
+                                new Object[]{nextToken, conjunction, i});
                         continue;
                     } else if (nextToken.equalsIgnoreCase("NOT")) {
                         not = true;
@@ -1974,12 +2030,19 @@ class QueryParser {
                             (nextToken.equalsIgnoreCase("LIMIT") && subQueryStart == -1) ||
                             (nextToken.equalsIgnoreCase("OFFSET") && subQueryStart == -1)) {
                         String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) { // Skip if only closing parentheses
-                            LOGGER.log(Level.FINEST, "Parsing condition before LIMIT/OFFSET/ORDER BY: {0}", condStr);
-                            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
-                            conditions.add(condition);
-                            LOGGER.log(Level.FINE, "Parsed condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
+                        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
+                            LOGGER.log(Level.FINEST, "Before parsing condition before LIMIT/OFFSET/ORDER BY: condStr={0}, fullCondition={1}",
+                                    new Object[]{condStr, conditionStr});
+                            try {
+                                Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
+                                conditions.add(condition);
+                                LOGGER.log(Level.FINE, "Parsed condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
+                            } catch (IllegalArgumentException e) {
+                                LOGGER.log(Level.SEVERE, "Failed to parse condition before LIMIT/OFFSET/ORDER BY: condStr={0}, error={1}",
+                                        new Object[]{condStr, e.getMessage()});
+                                throw e;
+                            }
                         }
                         break;
                     }
@@ -1989,24 +2052,31 @@ class QueryParser {
         }
 
         String finalCondStr = currentCondition.toString().trim();
-        if (!finalCondStr.isEmpty() && !finalCondStr.matches("\\s*\\)+\\s*")) { // Skip if only closing parentheses
-            LOGGER.log(Level.FINEST, "Parsing final condition: {0}", finalCondStr);
-            // Check if the final condition is a complete subquery
-            if (finalCondStr.toUpperCase().startsWith("(SELECT")) {
-                int endIndex = findMatchingParenthesis(finalCondStr, 0);
-                if (endIndex == finalCondStr.length() - 1) {
+        if (!finalCondStr.isEmpty() && !finalCondStr.matches("\\s*\\)+\\s*")) {
+            LOGGER.log(Level.FINEST, "Before parsing final condition: condStr={0}, fullCondition={1}",
+                    new Object[]{finalCondStr, conditionStr});
+            try {
+                // Check if the final condition is a complete subquery
+                if (finalCondStr.toUpperCase().startsWith("(SELECT")) {
+                    int endIndex = findMatchingParenthesis(finalCondStr, 0);
+                    if (endIndex == finalCondStr.length() - 1) {
+                        Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
+                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Parsed final subquery condition: {0}", condition);
+                    } else {
+                        throw new IllegalArgumentException("Invalid final condition syntax: " + finalCondStr);
+                    }
+                } else {
                     Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
                     conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Parsed final subquery condition: {0}", condition);
-                } else {
-                    throw new IllegalArgumentException("Invalid final condition syntax: " + finalCondStr);
+                    LOGGER.log(Level.FINE, "Parsed final condition: {0}", condition);
                 }
-            } else {
-                Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
-                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
-                conditions.add(condition);
-                LOGGER.log(Level.FINE, "Parsed final condition: {0}", condition);
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.SEVERE, "Failed to parse final condition: condStr={0}, error={1}",
+                        new Object[]{finalCondStr, e.getMessage()});
+                throw e;
             }
         }
 
@@ -2027,6 +2097,7 @@ class QueryParser {
             throw new IllegalArgumentException("Subquery must contain SELECT and FROM clauses: " + subquery);
         }
     }
+
     private String getNextToken(String conditionStr, int startIndex) {
         StringBuilder token = new StringBuilder();
         int parenDepth = 0;
@@ -2073,6 +2144,7 @@ class QueryParser {
             return new Condition(subConditions, conjunction, not);
         }
 
+        // Обработка условия IN
         Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
         Matcher inMatcher = inPattern.matcher(normalizedCondStr);
         if (inMatcher.matches()) {
@@ -2101,20 +2173,20 @@ class QueryParser {
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
 
-            // Check if the IN clause contains a subquery
             if (valuesStr.trim().toUpperCase().startsWith("SELECT ")) {
-                int subQueryEnd = findMatchingParenthesis("(" + valuesStr + ")", 0);
-                if (subQueryEnd == -1) {
-                    throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + valuesStr);
-                }
                 String subQueryStr = valuesStr.trim();
-                validateSubquery(subQueryStr);
+                if (subQueryStr.toUpperCase().startsWith("(SELECT") && subQueryStr.endsWith(")")) {
+                    int subQueryEnd = findMatchingParenthesis(subQueryStr, 0);
+                    if (subQueryEnd != subQueryStr.length() - 1) {
+                        throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + subQueryStr);
+                    }
+                    subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
+                }
                 Query<?> subQuery = parse(subQueryStr, database);
                 LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
                 return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
             }
 
-            // Handle literal values in IN clause
             String[] valueParts = valuesStr.split(",(?=([^']*'[^']*')*[^']*$)");
             List<Object> inValues = new ArrayList<>();
             for (String val : valueParts) {
@@ -2125,6 +2197,7 @@ class QueryParser {
             return new Condition(actualColumn, inValues, conjunction, inNot);
         }
 
+        // Обработка условия IS NULL / IS NOT NULL
         Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(normalizedCondStr);
         if (isNullMatcher.matches()) {
@@ -2154,52 +2227,92 @@ class QueryParser {
             return new Condition(actualColumn, isNotNull ? Operator.IS_NOT_NULL : Operator.IS_NULL, conjunction, not);
         }
 
-        // Новый подход для разбора подзапросов в условиях сравнения
-        Pattern subQueryPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\s*$");
+        // Обработка подзапросов в условиях сравнения
+        Pattern subQueryPattern = Pattern.compile(
+                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*(\\(\\s*SELECT\\s+.*\\))\\s*$",
+                Pattern.DOTALL
+        );
         Matcher subQueryMatcher = subQueryPattern.matcher(normalizedCondStr);
-
         if (subQueryMatcher.matches()) {
             String column = subQueryMatcher.group(1).trim();
             String operatorStr = subQueryMatcher.group(2).trim();
-            String subQueryWithParens = normalizedCondStr.substring(normalizedCondStr.indexOf("(SELECT"));
-            String alias = subQueryMatcher.group(3);
+            String subQueryWithParens = subQueryMatcher.group(3).trim();
 
             int subQueryEnd = findMatchingParenthesis(subQueryWithParens, 0);
-            if (subQueryEnd == -1) {
+            if (subQueryEnd != subQueryWithParens.length() - 1) {
+                LOGGER.log(Level.SEVERE, "Invalid subquery syntax detected: {0}", subQueryWithParens);
                 throw new IllegalArgumentException("Invalid subquery syntax in condition: " + subQueryWithParens);
             }
 
             String subQueryStr = subQueryWithParens.substring(1, subQueryEnd).trim();
             Query<?> subQuery = parse(subQueryStr, database);
-            SubQuery newSubQuery = new SubQuery(subQuery, alias);
+            SubQuery newSubQuery = new SubQuery(subQuery, null);
 
             Operator operator;
             switch (operatorStr.toUpperCase()) {
-                case "=": operator = Operator.EQUALS; break;
+                case "=":
+                    operator = Operator.EQUALS;
+                    break;
                 case "!=":
-                case "<>": operator = Operator.NOT_EQUALS; break;
-                case "<": operator = Operator.LESS_THAN; break;
-                case ">": operator = Operator.GREATER_THAN; break;
-                case "<=": operator = Operator.LESS_THAN_OR_EQUALS; break;
-                case ">=": operator = Operator.GREATER_THAN_OR_EQUALS; break;
-                case "LIKE": operator = Operator.LIKE; break;
-                case "NOT LIKE": operator = Operator.NOT_LIKE; break;
-                default: throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
+                case "<>":
+                    operator = Operator.NOT_EQUALS;
+                    break;
+                case "<":
+                    operator = Operator.LESS_THAN;
+                    break;
+                case ">":
+                    operator = Operator.GREATER_THAN;
+                    break;
+                case "<=":
+                    operator = Operator.LESS_THAN_OR_EQUALS;
+                    break;
+                case ">=":
+                    operator = Operator.GREATER_THAN_OR_EQUALS;
+                    break;
+                case "LIKE":
+                    operator = Operator.LIKE;
+                    break;
+                case "NOT LIKE":
+                    operator = Operator.NOT_LIKE;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
             }
 
-            return new Condition(column, newSubQuery, operator, conjunction, not);
+            String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
+            String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
+
+            boolean found = false;
+            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
+                if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                throw new IllegalArgumentException("Unknown column: " + column);
+            }
+
+            LOGGER.log(Level.FINE, "Parsed subquery condition: column={0}, operator={1}, subQuery={2}",
+                    new Object[]{normalizedColumn, operator, subQueryStr});
+            return new Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
         }
 
-        // Оригинальная обработка для простых условий сравнения
+        // Обработка условий сравнения (столбец с литералом или столбцом)
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         String selectedOperator = null;
         int operatorIndex = -1;
         int operatorEndIndex = -1;
         int parenDepth = 0;
         boolean inQuotes = false;
+        int subQueryStart = -1;
+        StringBuilder currentSegment = new StringBuilder();
 
         for (int i = 0; i < normalizedCondStr.length(); i++) {
             char c = normalizedCondStr.charAt(i);
+            currentSegment.append(c);
+
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 continue;
@@ -2207,21 +2320,50 @@ class QueryParser {
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
+                    if (parenDepth == 1 && i + 7 < normalizedCondStr.length() && normalizedCondStr.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                        subQueryStart = i;
+                    }
+                    continue;
                 } else if (c == ')') {
                     parenDepth--;
-                } else if (parenDepth == 0) {
+                    if (parenDepth == 0 && subQueryStart != -1) {
+                        subQueryStart = -1;
+                    }
+                    continue;
+                } else if (parenDepth == 0 && subQueryStart == -1 && i < normalizedCondStr.length() - 1) {
+                    // Проверяем, является ли текущая позиция началом оператора
+// В начале метода parseSingleCondition (около строки 2164, перед циклом обработки символов)
+                    LOGGER.log(Level.FINEST, "Starting parseSingleCondition: condStr={0}, normalizedCondStr={1}, subQueryStart={2}",
+                            new Object[]{condStr, normalizedCondStr, subQueryStart});
+
+// В цикле обработки символов (около строки 2257, внутри цикла for по operators)
                     for (String op : operators) {
                         String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
                         Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
                         Matcher opMatcher = opPattern.matcher(normalizedCondStr.substring(i));
+                        LOGGER.log(Level.FINEST, "Checking operator at index {0}: op={1}, substring={2}, matcherLookingAt={3}",
+                                new Object[]{i, op, normalizedCondStr.substring(i), opMatcher.lookingAt()});
                         if (opMatcher.lookingAt()) {
-                            selectedOperator = opMatcher.group().trim();
-                            operatorIndex = i;
-                            operatorEndIndex = i + selectedOperator.length();
-                            break;
+                            // Убедимся, что после оператора есть подзапрос или значение
+                            String remaining = normalizedCondStr.substring(i + op.length()).trim();
+                            LOGGER.log(Level.FINEST, "Operator found: op={0}, remaining={1}, startsWithSubQuery={2}",
+                                    new Object[]{op, remaining, remaining.toUpperCase().startsWith("(SELECT")});
+                            if (remaining.toUpperCase().startsWith("(SELECT")) {
+                                // Если это подзапрос, продолжаем собирать его полностью
+                                subQueryStart = i + op.length();
+                                LOGGER.log(Level.FINEST, "Subquery detected, setting subQueryStart={0}, breaking operator loop", subQueryStart);
+                                break;
+                            } else if (!remaining.isEmpty()) {
+                                selectedOperator = opMatcher.group().trim();
+                                operatorIndex = i;
+                                operatorEndIndex = i + selectedOperator.length();
+                                LOGGER.log(Level.FINEST, "Operator selected: selectedOperator={0}, operatorIndex={1}, operatorEndIndex={2}",
+                                        new Object[]{selectedOperator, operatorIndex, operatorEndIndex});
+                                break;
+                            }
                         }
                     }
-                    if (selectedOperator != null) {
+                    if (selectedOperator != null && subQueryStart == -1) {
                         break;
                     }
                 }
@@ -2234,14 +2376,78 @@ class QueryParser {
 
         String leftPart = normalizedCondStr.substring(0, operatorIndex).trim();
         String rightPart = normalizedCondStr.substring(operatorEndIndex).trim();
+        LOGGER.log(Level.FINEST, "Split condition: leftPart={0}, operator={1}, rightPart={2}",
+                new Object[]{leftPart, selectedOperator, rightPart});
+
         String column;
         String rightColumn = null;
         Object value = null;
-        SubQuery subQuery = null;
 
         Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
         if (columnPattern.matcher(rightPart).matches()) {
             rightColumn = rightPart;
+        } else if (rightPart.toUpperCase().startsWith("(SELECT")) {
+            // Проверка на полный подзапрос
+            int subQueryEnd = findMatchingParenthesis(rightPart, 0);
+            if (subQueryEnd != rightPart.length() - 1) {
+                LOGGER.log(Level.SEVERE, "Incomplete subquery detected: {0}", rightPart);
+                throw new IllegalArgumentException("Invalid subquery syntax in condition: " + rightPart);
+            }
+            String subQueryStr = rightPart.substring(1, subQueryEnd).trim();
+            validateSubquery(rightPart); // Дополнительная проверка
+            Query<?> subQuery = parse(subQueryStr, database);
+            SubQuery newSubQuery = new SubQuery(subQuery, null);
+
+            Operator operator;
+            switch (selectedOperator.toUpperCase().trim()) {
+                case "=":
+                    operator = Operator.EQUALS;
+                    break;
+                case "!=":
+                case "<>":
+                    operator = Operator.NOT_EQUALS;
+                    break;
+                case "<":
+                    operator = Operator.LESS_THAN;
+                    break;
+                case ">":
+                    operator = Operator.GREATER_THAN;
+                    break;
+                case "<=":
+                    operator = Operator.LESS_THAN_OR_EQUALS;
+                    break;
+                case ">=":
+                    operator = Operator.GREATER_THAN_OR_EQUALS;
+                    break;
+                case "LIKE":
+                    operator = Operator.LIKE;
+                    break;
+                case "NOT LIKE":
+                    operator = Operator.NOT_LIKE;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported operator: " + selectedOperator);
+            }
+
+            column = leftPart;
+            String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
+            String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
+
+            boolean found = false;
+            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
+                if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                throw new IllegalArgumentException("Unknown column: " + column);
+            }
+
+            LOGGER.log(Level.FINE, "Parsed subquery condition (fallback): column={0}, operator={1}, subQuery={2}",
+                    new Object[]{normalizedColumn, operator, subQueryStr});
+            return new Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
         } else {
             column = columnAliases.entrySet().stream()
                     .filter(entry -> entry.getValue().equalsIgnoreCase(leftPart.split("\\.")[leftPart.contains(".") ? 1 : 0]))
@@ -2291,16 +2497,33 @@ class QueryParser {
 
         Operator operator;
         switch (selectedOperator.toUpperCase().trim()) {
-            case "=": operator = Operator.EQUALS; break;
+            case "=":
+                operator = Operator.EQUALS;
+                break;
             case "!=":
-            case "<>": operator = Operator.NOT_EQUALS; break;
-            case "<": operator = Operator.LESS_THAN; break;
-            case ">": operator = Operator.GREATER_THAN; break;
-            case "<=": operator = Operator.LESS_THAN_OR_EQUALS; break;
-            case ">=": operator = Operator.GREATER_THAN_OR_EQUALS; break;
-            case "LIKE": operator = Operator.LIKE; break;
-            case "NOT LIKE": operator = Operator.NOT_LIKE; break;
-            default: throw new IllegalArgumentException("Unsupported operator: " + selectedOperator);
+            case "<>":
+                operator = Operator.NOT_EQUALS;
+                break;
+            case "<":
+                operator = Operator.LESS_THAN;
+                break;
+            case ">":
+                operator = Operator.GREATER_THAN;
+                break;
+            case "<=":
+                operator = Operator.LESS_THAN_OR_EQUALS;
+                break;
+            case ">=":
+                operator = Operator.GREATER_THAN_OR_EQUALS;
+                break;
+            case "LIKE":
+                operator = Operator.LIKE;
+                break;
+            case "NOT LIKE":
+                operator = Operator.NOT_LIKE;
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported operator: " + selectedOperator);
         }
 
         if (isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn, tableAliases)) {
@@ -2309,8 +2532,6 @@ class QueryParser {
 
         if (rightColumn != null) {
             return new Condition(actualColumn, rightColumn, operator, conjunction, not);
-        } else if (subQuery != null) {
-            return new Condition(actualColumn, subQuery, operator, conjunction, not);
         } else {
             return new Condition(actualColumn, value, operator, conjunction, not);
         }
@@ -2594,6 +2815,7 @@ class QueryParser {
         LOGGER.log(Level.SEVERE, "No matching parenthesis found in string: {0}", str);
         throw new IllegalArgumentException("No matching parenthesis found in string: " + str);
     }
+
     private boolean areSubQueriesEquivalent(String subQuery1, String subQuery2) {
         String norm1 = normalizeQueryString(subQuery1).replaceAll("\\s+", " ").trim();
         String norm2 = normalizeQueryString(subQuery2).replaceAll("\\s+", " ").trim();
@@ -2721,6 +2943,7 @@ class QueryParser {
 
         return finalResult.toString().trim();
     }
+
     private String normalizeQueryString(String query) {
         return query.trim()
                 .replaceAll("\\s+", " ")

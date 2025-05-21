@@ -139,3 +139,4 @@
 1.3.9 fix subqueries in on conditions
 1.4.0 fix join
 1.4.1 fix IN in subqueries
+1.4.2 extra logging in Parser
