@@ -2101,11 +2101,20 @@ class QueryParser {
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
 
-            if (valuesStr.toUpperCase().startsWith("SELECT ")) {
-                Query<?> subQuery = parse(valuesStr, database);
+            // Check if the IN clause contains a subquery
+            if (valuesStr.trim().toUpperCase().startsWith("SELECT ")) {
+                int subQueryEnd = findMatchingParenthesis("(" + valuesStr + ")", 0);
+                if (subQueryEnd == -1) {
+                    throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + valuesStr);
+                }
+                String subQueryStr = valuesStr.trim();
+                validateSubquery(subQueryStr);
+                Query<?> subQuery = parse(subQueryStr, database);
+                LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
                 return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
             }
 
+            // Handle literal values in IN clause
             String[] valueParts = valuesStr.split(",(?=([^']*'[^']*')*[^']*$)");
             List<Object> inValues = new ArrayList<>();
             for (String val : valueParts) {
@@ -2145,6 +2154,43 @@ class QueryParser {
             return new Condition(actualColumn, isNotNull ? Operator.IS_NOT_NULL : Operator.IS_NULL, conjunction, not);
         }
 
+        // Новый подход для разбора подзапросов в условиях сравнения
+        Pattern subQueryPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\s*$");
+        Matcher subQueryMatcher = subQueryPattern.matcher(normalizedCondStr);
+
+        if (subQueryMatcher.matches()) {
+            String column = subQueryMatcher.group(1).trim();
+            String operatorStr = subQueryMatcher.group(2).trim();
+            String subQueryWithParens = normalizedCondStr.substring(normalizedCondStr.indexOf("(SELECT"));
+            String alias = subQueryMatcher.group(3);
+
+            int subQueryEnd = findMatchingParenthesis(subQueryWithParens, 0);
+            if (subQueryEnd == -1) {
+                throw new IllegalArgumentException("Invalid subquery syntax in condition: " + subQueryWithParens);
+            }
+
+            String subQueryStr = subQueryWithParens.substring(1, subQueryEnd).trim();
+            Query<?> subQuery = parse(subQueryStr, database);
+            SubQuery newSubQuery = new SubQuery(subQuery, alias);
+
+            Operator operator;
+            switch (operatorStr.toUpperCase()) {
+                case "=": operator = Operator.EQUALS; break;
+                case "!=":
+                case "<>": operator = Operator.NOT_EQUALS; break;
+                case "<": operator = Operator.LESS_THAN; break;
+                case ">": operator = Operator.GREATER_THAN; break;
+                case "<=": operator = Operator.LESS_THAN_OR_EQUALS; break;
+                case ">=": operator = Operator.GREATER_THAN_OR_EQUALS; break;
+                case "LIKE": operator = Operator.LIKE; break;
+                case "NOT LIKE": operator = Operator.NOT_LIKE; break;
+                default: throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
+            }
+
+            return new Condition(column, newSubQuery, operator, conjunction, not);
+        }
+
+        // Оригинальная обработка для простых условий сравнения
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         String selectedOperator = null;
         int operatorIndex = -1;
@@ -2196,39 +2242,6 @@ class QueryParser {
         Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
         if (columnPattern.matcher(rightPart).matches()) {
             rightColumn = rightPart;
-        } else if (rightPart.toUpperCase().startsWith("(SELECT ")) {
-            int openParens = 1;
-            int subQueryEnd = -1;
-            inQuotes = false;
-            for (int i = 1; i < rightPart.length(); i++) {
-                char c = rightPart.charAt(i);
-                if (c == '\'') {
-                    inQuotes = !inQuotes;
-                    continue;
-                }
-                if (!inQuotes) {
-                    if (c == '(') {
-                        openParens++;
-                    } else if (c == ')') {
-                        openParens--;
-                        if (openParens == 0) {
-                            subQueryEnd = i;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (subQueryEnd == -1) {
-                LOGGER.log(Level.SEVERE, "Failed to find closing parenthesis for subquery: {0}", rightPart);
-                throw new IllegalArgumentException("Invalid subquery syntax in condition: " + rightPart);
-            }
-            String subQueryStr = rightPart.substring(1, subQueryEnd).trim();
-            LOGGER.log(Level.FINEST, "Extracted subquery string: {0}", subQueryStr);
-            validateSubquery(rightPart.substring(0, subQueryEnd + 1));
-            Query<?> subQueryParsed = parse(subQueryStr, database);
-            String remaining = rightPart.substring(subQueryEnd + 1).trim();
-            String alias = remaining.toUpperCase().startsWith("AS ") ? remaining.substring(3).trim() : null;
-            subQuery = new SubQuery(subQueryParsed, alias);
         } else {
             column = columnAliases.entrySet().stream()
                     .filter(entry -> entry.getValue().equalsIgnoreCase(leftPart.split("\\.")[leftPart.contains(".") ? 1 : 0]))
@@ -2278,33 +2291,16 @@ class QueryParser {
 
         Operator operator;
         switch (selectedOperator.toUpperCase().trim()) {
-            case "=":
-                operator = Operator.EQUALS;
-                break;
+            case "=": operator = Operator.EQUALS; break;
             case "!=":
-            case "<>":
-                operator = Operator.NOT_EQUALS;
-                break;
-            case "<":
-                operator = Operator.LESS_THAN;
-                break;
-            case ">":
-                operator = Operator.GREATER_THAN;
-                break;
-            case "<=":
-                operator = Operator.LESS_THAN_OR_EQUALS;
-                break;
-            case ">=":
-                operator = Operator.GREATER_THAN_OR_EQUALS;
-                break;
-            case "LIKE":
-                operator = Operator.LIKE;
-                break;
-            case "NOT LIKE":
-                operator = Operator.NOT_LIKE;
-                break;
-            default:
-                throw new IllegalArgumentException("Unsupported operator: " + selectedOperator);
+            case "<>": operator = Operator.NOT_EQUALS; break;
+            case "<": operator = Operator.LESS_THAN; break;
+            case ">": operator = Operator.GREATER_THAN; break;
+            case "<=": operator = Operator.LESS_THAN_OR_EQUALS; break;
+            case ">=": operator = Operator.GREATER_THAN_OR_EQUALS; break;
+            case "LIKE": operator = Operator.LIKE; break;
+            case "NOT LIKE": operator = Operator.NOT_LIKE; break;
+            default: throw new IllegalArgumentException("Unsupported operator: " + selectedOperator);
         }
 
         if (isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn, tableAliases)) {
