@@ -22,14 +22,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.OrderByInfo> orderBy;
     private final List<String> groupBy;
     private final List<QueryParser.HavingCondition> havingConditions;
-    private final Map<String, String> tableAliases;
-    private final List<QueryParser.SubQuery> subQueries;
-    private final UUID transactionId; // Changed from String to UUID
+    private final Map<String, String> tableAliases; // Stores alias -> tableName mappings
 
     public SelectQuery(List<String> columns, List<QueryParser.AggregateFunction> aggregates, List<QueryParser.Condition> conditions,
                        List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
                        List<QueryParser.OrderByInfo> orderBy, List<String> groupBy, List<QueryParser.HavingCondition> havingConditions,
-                       Map<String, String> tableAliases, List<QueryParser.SubQuery> subQueries, UUID transactionId) {
+                       Map<String, String> tableAliases) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
         this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
         this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
@@ -41,8 +39,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
         this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
         this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
-        this.subQueries = subQueries != null ? new ArrayList<>(subQueries) : new ArrayList<>();
-        this.transactionId = transactionId;
+        // Ensure main table is in aliases
         this.tableAliases.putIfAbsent(mainTableName, mainTableName);
     }
 
@@ -55,6 +52,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         tables.put(mainTableName, table);
 
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>();
+        // Initialize column types with main table
         table.getColumnTypes().forEach((col, type) -> combinedColumnTypes.put(mainTableName + "." + col, type));
 
         for (QueryParser.JoinInfo join : joins) {
@@ -63,7 +61,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 throw new IllegalArgumentException("Join table not found: " + join.tableName);
             }
             tables.put(join.tableName, joinTable);
+            // Update column types with table prefix
             joinTable.getColumnTypes().forEach((col, type) -> combinedColumnTypes.put(join.tableName + "." + col, type));
+            // Add alias to tableAliases if present
             if (join.alias != null) {
                 tableAliases.put(join.alias, join.tableName);
             }
@@ -119,24 +119,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         }
                     }
 
-                    // Remove the redundant declaration and clear the existing newJoinedRows
-                    newJoinedRows.clear(); // Clear the list to reuse it
-                    List<Map<String, Object>> probeRows = getIndexedRows(probeTable, join.onConditions, probeTableName, combinedColumnTypes);
-                    if (probeRows == null) {
-                        probeRows = probeTable.getRows();
-                    }
-
-                    for (Map<String, Object> probeRow : probeRows) {
+                    for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
+                        Map<String, Object> probeRow = currentJoin.get(probeTableName);
                         Object probeKey = probeRow.get(normalizeColumnKey(probeColumn, probeTableName));
                         if (probeKey != null) {
                             List<Map<String, Object>> matches = hashTable.get(probeKey);
                             if (matches != null) {
                                 for (Map<String, Object> buildRow : matches) {
-                                    Map<String, Map<String, Object>> newRow = new HashMap<>();
-                                    newRow.put(probeTableName, probeRow);
+                                    Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
                                     newRow.put(buildTableName, buildRow);
                                     Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
-                                    if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
+                                    if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
                                         newJoinedRows.add(newRow);
                                     }
                                 }
@@ -144,7 +137,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         }
                     }
 
-                    joinedRows = newJoinedRows;
                     LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
                             new Object[]{newJoinedRows.size(), join.tableName});
                 } else {
@@ -171,7 +163,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 }
                                 newJoinedRows.add(newRow);
                             } else if (!join.onConditions.isEmpty()) {
-                                if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
+                                if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes)) {
                                     continue;
                                 }
                                 newJoinedRows.add(newRow);
@@ -193,7 +185,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             List<Map<String, Object>> filteredRows = new ArrayList<>();
             for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
                 Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
-                if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes, tables)) {
+                if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes)) {
                     filteredRows.add(flattenedRow);
                 }
             }
@@ -552,28 +544,31 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
         for (QueryParser.OrderByInfo order : orderBy) {
             String column = order.column;
-            String normalizedColumn = null;
+            String normalizedColumn = null; // Инициализируем null для ясности
             String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
 
+            // Проверяем, является ли столбец алиасом из SELECT
             for (String selectColumn : columns) {
                 String[] parts = selectColumn.trim().split("\\s+AS\\s+|\\s+", 2);
                 String columnAlias = parts.length > 1 ? parts[1].trim() : normalizeColumnKey(selectColumn, mainTableName);
                 if (unqualifiedColumn.equalsIgnoreCase(columnAlias)) {
-                    normalizedColumn = columnAlias;
+                    normalizedColumn = columnAlias; // Используем алиас напрямую
                     break;
                 }
             }
 
+            // Если не алиас, проверяем, является ли столбец квалифицированным именем с алиасом таблицы
             if (normalizedColumn == null) {
                 for (String alias : tableAliases.keySet()) {
                     if (column.equalsIgnoreCase(alias + "." + unqualifiedColumn)) {
                         String tableName = tableAliases.get(alias);
-                        normalizedColumn = tableName + "." + unqualifiedColumn;
+                        normalizedColumn = tableName + "." + unqualifiedColumn; // Разрешаем в реальное имя столбца
                         break;
                     }
                 }
             }
 
+            // Если всё ещё не разрешено, нормализуем как имя столбца
             if (normalizedColumn == null) {
                 normalizedColumn = normalizeColumnName(column, mainTableName);
             }
@@ -689,12 +684,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return flattened;
     }
 
-    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes) {
         boolean result = true;
         String lastConjunction = null;
 
         for (QueryParser.Condition condition : conditions) {
-            boolean conditionResult = evaluateCondition(row, condition, combinedColumnTypes, tables);
+            boolean conditionResult = evaluateCondition(row, condition, combinedColumnTypes);
             if (lastConjunction == null) {
                 result = conditionResult;
             } else if (lastConjunction.equals("AND")) {
@@ -708,10 +703,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return result;
     }
 
-    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition,
-                                      Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> combinedColumnTypes) {
         if (condition.isGrouped()) {
-            boolean subResult = evaluateConditions(row, condition.subConditions, combinedColumnTypes, tables);
+            boolean subResult = evaluateConditions(row, condition.subConditions, combinedColumnTypes);
             return condition.not ? !subResult : subResult;
         }
 
@@ -729,109 +723,64 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (value == null) {
                 return condition.not;
             }
-
-            List<Object> inValues;
-            if (condition.subQuery != null) {
-                Database database = tables.get(mainTableName).getDatabase();
-                String subQueryString = condition.subQuery.toString().trim();
-                if (subQueryString.startsWith("(") && subQueryString.endsWith(")")) {
-                    subQueryString = subQueryString.substring(1, subQueryString.length() - 1).trim();
-                }
-                LOGGER.log(Level.FINE, "Executing subquery: {0}", subQueryString);
-                Object subQueryResult = database.executeQuery(subQueryString, transactionId);
-                if (!(subQueryResult instanceof List)) {
-                    throw new IllegalStateException("Subquery must return a list of rows");
-                }
-                inValues = new ArrayList<>();
-                for (Map<String, Object> subRow : (List<Map<String, Object>>) subQueryResult) {
-                    if (!subRow.isEmpty()) {
-                        inValues.add(subRow.values().iterator().next());
-                    }
-                }
-            } else {
-                inValues = condition.inValues;
-            }
-
-            if (inValues == null) {
-                throw new IllegalStateException("IN condition has no values or subquery results");
-            }
-
-            boolean inResult = inValues.stream().anyMatch(v -> valuesEqual(v, value));
+            boolean inResult = condition.inValues.stream().anyMatch(v -> valuesEqual(v, value));
             return condition.not ? !inResult : inResult;
         }
 
-        if (condition.isColumnComparison()) {
-            String leftColumn = normalizeColumnName(condition.column, mainTableName);
-            String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
-            Object leftValue = row.get(leftColumn);
-            Object rightValue = row.get(rightColumn);
-
-            boolean comparisonResult;
-            switch (condition.operator) {
-                case EQUALS:
-                    comparisonResult = valuesEqual(leftValue, rightValue);
-                    break;
-                case NOT_EQUALS:
-                    comparisonResult = !valuesEqual(leftValue, rightValue);
-                    break;
-                case LESS_THAN:
-                    comparisonResult = compareValues(leftValue, rightValue) < 0;
-                    break;
-                case GREATER_THAN:
-                    comparisonResult = compareValues(leftValue, rightValue) > 0;
-                    break;
-                case LESS_THAN_OR_EQUALS:
-                    comparisonResult = compareValues(leftValue, rightValue) <= 0;
-                    break;
-                case GREATER_THAN_OR_EQUALS:
-                    comparisonResult = compareValues(leftValue, rightValue) >= 0;
-                    break;
-                case LIKE:
-                    comparisonResult = likeComparison(leftValue, condition.value);
-                    break;
-                case NOT_LIKE:
-                    comparisonResult = !likeComparison(leftValue, condition.value);
-                    break;
-                default:
-                    throw new IllegalStateException("Unsupported operator: " + condition.operator);
-            }
-            return condition.not ? !comparisonResult : comparisonResult;
+        String leftColumn = normalizeColumnName(condition.column, mainTableName);
+        Object leftValue = row.get(leftColumn);
+        if (leftValue == null) {
+            return condition.not;
         }
 
-        String column = normalizeColumnName(condition.column, mainTableName);
-        Object rowValue = row.get(column);
-        Object conditionValue = condition.value;
+        Object rightValue;
+        if (condition.isColumnComparison()) {
+            String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
+            rightValue = row.get(rightColumn);
+            if (rightValue == null) {
+                return condition.not;
+            }
+        } else {
+            rightValue = condition.value;
+        }
 
-        boolean comparisonResult;
+        int comparison;
+        if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
+            if (!(leftValue instanceof String) || !(rightValue instanceof String)) {
+                return condition.not;
+            }
+            String pattern = QueryParser.convertLikePatternToRegex((String) rightValue);
+            boolean matches = Pattern.matches(pattern, (String) leftValue);
+            boolean result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
+            return condition.not ? !result : result;
+        }
+
+        comparison = compareValues(leftValue, rightValue);
+        boolean result;
         switch (condition.operator) {
             case EQUALS:
-                comparisonResult = valuesEqual(rowValue, conditionValue);
+                result = comparison == 0;
                 break;
             case NOT_EQUALS:
-                comparisonResult = !valuesEqual(rowValue, conditionValue);
+                result = comparison != 0;
                 break;
             case LESS_THAN:
-                comparisonResult = compareValues(rowValue, conditionValue) < 0;
+                result = comparison < 0;
                 break;
             case GREATER_THAN:
-                comparisonResult = compareValues(rowValue, conditionValue) > 0;
+                result = comparison > 0;
                 break;
             case LESS_THAN_OR_EQUALS:
-                comparisonResult = compareValues(rowValue, conditionValue) <= 0;
+                result = comparison <= 0;
                 break;
             case GREATER_THAN_OR_EQUALS:
-                comparisonResult = compareValues(rowValue, conditionValue) >= 0;
-                break;
-            case LIKE:
-                comparisonResult = likeComparison(rowValue, conditionValue);
-                break;
-            case NOT_LIKE:
-                comparisonResult = !likeComparison(rowValue, conditionValue);
+                result = comparison >= 0;
                 break;
             default:
                 throw new IllegalStateException("Unsupported operator: " + condition.operator);
         }
-        return condition.not ? !comparisonResult : comparisonResult;
+
+        return condition.not ? !result : result;
     }
 
     private int compareValues(Object left, Object right) {
@@ -863,16 +812,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
-    private boolean likeComparison(Object value, Object pattern) {
-        if (value == null || pattern == null) {
-            return false;
-        }
-        String valueStr = value.toString();
-        String patternStr = pattern.toString();
-        patternStr = patternStr.replace("%", ".*").replace("_", ".");
-        return Pattern.compile(patternStr).matcher(valueStr).matches();
-    }
-
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
         Map<String, Object> filtered = new HashMap<>();
         for (String column : columns) {
@@ -890,6 +829,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (row.containsKey(normalizedColumn)) {
                 filtered.put(columnAlias, row.get(normalizedColumn));
             } else {
+                // Пытаемся найти столбец по его неквалифицированному имени
                 String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column.trim();
                 for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
                     String tableName = aliasEntry.getValue();
@@ -909,7 +849,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             String[] parts = column.split("\\.", 2);
             String prefix = parts[0].trim();
             String colName = parts[1].trim();
+            // Check if prefix is an alias or table name
             String resolvedTable = tableAliases.getOrDefault(prefix, prefix);
+            // If resolvedTable is not in tableAliases values, use defaultTable
             if (!tableAliases.containsValue(resolvedTable)) {
                 resolvedTable = defaultTable;
             }
@@ -970,10 +912,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("SELECT ");
+
+        // Append columns and aggregates
         List<String> selectItems = new ArrayList<>();
         selectItems.addAll(columns);
         selectItems.addAll(aggregates.stream().map(QueryParser.AggregateFunction::toString).toList());
         sb.append(String.join(", ", selectItems));
+
+        // Append FROM clause
         sb.append(" FROM ").append(mainTableName);
         String mainTableAlias = tableAliases.entrySet().stream()
                 .filter(e -> e.getValue().equals(mainTableName) && !e.getKey().equals(mainTableName))
@@ -984,6 +930,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             sb.append(" ").append(mainTableAlias);
         }
 
+        // Append JOIN clauses
         for (QueryParser.JoinInfo join : joins) {
             sb.append(" ").append(join.joinType.toString().replace("_", " ")).append(" ");
             sb.append(join.tableName);
@@ -998,6 +945,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
 
+        // Append WHERE clause
         if (!conditions.isEmpty()) {
             sb.append(" WHERE ");
             sb.append(conditions.stream()
@@ -1005,11 +953,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     .collect(Collectors.joining(" ")));
         }
 
+        // Append GROUP BY clause
         if (!groupBy.isEmpty()) {
             sb.append(" GROUP BY ");
             sb.append(String.join(", ", groupBy));
         }
 
+        // Append HAVING clause
         if (!havingConditions.isEmpty()) {
             sb.append(" HAVING ");
             sb.append(havingConditions.stream()
@@ -1017,6 +967,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     .collect(Collectors.joining(" ")));
         }
 
+        // Append ORDER BY clause
         if (!orderBy.isEmpty()) {
             sb.append(" ORDER BY ");
             sb.append(orderBy.stream()
@@ -1024,10 +975,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     .collect(Collectors.joining(", ")));
         }
 
+        // Append LIMIT clause
         if (limit != null) {
             sb.append(" LIMIT ").append(limit);
         }
 
+        // Append OFFSET clause
         if (offset != null) {
             sb.append(" OFFSET ").append(offset);
         }

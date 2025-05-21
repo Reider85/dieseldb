@@ -140,3 +140,4 @@
 1.4.0 fix join
 1.4.1 fix IN in subqueries
 1.4.2 extra logging in Parser
+1.4.3 revert 1.2.2
