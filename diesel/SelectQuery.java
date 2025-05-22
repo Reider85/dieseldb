@@ -26,15 +26,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.SubQuery> subQueries;
     private final UUID transactionId; // Changed from String to UUID
 
-    public SelectQuery(List<String> columns, List<QueryParser.AggregateFunction> aggregates, List<QueryParser.Condition> conditions,
-                       List<QueryParser.JoinInfo> joins, String mainTableName, Integer limit, Integer offset,
-                       List<QueryParser.OrderByInfo> orderBy, List<String> groupBy, List<QueryParser.HavingCondition> havingConditions,
-                       Map<String, String> tableAliases, List<QueryParser.SubQuery> subQueries, UUID transactionId) {
+    public SelectQuery(String tableName, String tableAlias, List<String> columns,
+                       List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
+                       List<QueryParser.Condition> conditions, List<String> groupBy,
+                       List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
+                       Integer limit, Integer offset, List<QueryParser.SubQuery> subQueries,
+                       Map<String, String> tableAliases, Map<String, String> extraTableAliases,
+                       Map<String, Class<?>> columnTypes) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
         this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
         this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
         this.joins = joins != null ? new ArrayList<>(joins) : new ArrayList<>();
-        this.mainTableName = mainTableName;
+        this.mainTableName = tableName; // Используем tableName вместо mainTableName
         this.limit = limit;
         this.offset = offset;
         this.orderBy = orderBy != null ? new ArrayList<>(orderBy) : new ArrayList<>();
@@ -42,8 +45,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
         this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
         this.subQueries = subQueries != null ? new ArrayList<>(subQueries) : new ArrayList<>();
-        this.transactionId = transactionId;
-        this.tableAliases.putIfAbsent(mainTableName, mainTableName);
+        this.transactionId = UUID.randomUUID(); // Генерируем UUID, если он не передан
+        // Добавляем tableAlias в tableAliases, если он не null
+        if (tableAlias != null && !tableAlias.isEmpty()) {
+            this.tableAliases.put(tableAlias, tableName);
+        }
+        // Добавляем mainTableName в tableAliases
+        this.tableAliases.putIfAbsent(tableName, tableName);
+        // Обрабатываем extraTableAliases
+        if (extraTableAliases != null) {
+            this.tableAliases.putAll(extraTableAliases);
+        }
     }
 
     @Override
