@@ -1072,8 +1072,8 @@ class QueryParser {
                 if (limitIndex != -1) {
                     String beforeLimit = conditionStr.substring(0, limitIndex).trim();
                     String afterLimit = conditionStr.substring(limitIndex + 5).trim(); // "LIMIT ".length() == 5
-                    // Extract only the numeric part of the LIMIT clause
-                    Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+.*)");
+                    // Извлекаем только числовое значение LIMIT, игнорируя остатки подзапросов
+                    Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
                     Matcher limitMatcher = limitPattern.matcher(afterLimit);
                     if (limitMatcher.find()) {
                         String limitValue = limitMatcher.group(1);
@@ -1084,7 +1084,7 @@ class QueryParser {
                             LOGGER.log(Level.SEVERE, "Invalid LIMIT value: {0}", limitValue);
                             throw new IllegalArgumentException("Invalid LIMIT value: " + limitValue);
                         }
-                        // Check for OFFSET
+                        // Проверяем наличие OFFSET
                         String[] limitOffsetSplit = afterLimit.toUpperCase().contains(" OFFSET ")
                                 ? afterLimit.split("(?i)\\s+OFFSET\\s+", 2)
                                 : new String[]{afterLimit, ""};
@@ -1269,53 +1269,104 @@ class QueryParser {
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
-        if (query == null || query.trim().isEmpty()) {
-            LOGGER.log(Level.FINEST, "No {0} clause found: query is null or empty", new Object[]{clause});
+        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
+            LOGGER.log(Level.FINEST, "Invalid input for findClauseOutsideSubquery: query={0}, clause={1}", new Object[]{query, clause});
             return -1;
         }
+
         String upperQuery = query.toUpperCase();
-        int parenDepth = 0;
-        boolean inQuotes = false;
+        String regex = "(?i)(?<!\\S)" + Pattern.quote(clause) + "(?!\\S)"; // Matches clause as a whole word
+        Pattern clausePattern = Pattern.compile(regex);
+        Matcher matcher = clausePattern.matcher(upperQuery);
+
         int lastIndex = -1;
 
-        for (int i = 0; i < query.length() - clause.length() - 1; i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-            } else if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0 && upperQuery.startsWith(" " + clause + " ", i)) {
-                    lastIndex = i + 1;
-                }
+        while (matcher.find()) {
+            int startIndex = matcher.start();
+            // Проверяем, находится ли найденная клауза вне подзапросов
+            if (isOutsideSubquery(upperQuery, startIndex)) {
+                lastIndex = startIndex;
             }
         }
 
         if (lastIndex != -1) {
-            int subQueryParenDepth = 0;
-            for (int i = 0; i < lastIndex; i++) {
-                char c = query.charAt(i);
-                if (c == '\'') {
-                    inQuotes = !inQuotes;
-                } else if (!inQuotes) {
-                    if (c == '(') {
-                        subQueryParenDepth++;
-                    } else if (c == ')') {
-                        subQueryParenDepth--;
-                    }
-                }
-            }
-            if (subQueryParenDepth == 0) {
-                LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastIndex, query});
-                return lastIndex;
-            }
+            LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastIndex, query});
+            return lastIndex;
         }
 
         LOGGER.log(Level.FINEST, "No valid {0} clause found outside subqueries in query: {1}", new Object[]{clause, query});
         return -1;
     }
+
+    private boolean isOutsideSubquery(String query, int index) {
+        if (query == null || index < 0 || index >= query.length()) {
+            LOGGER.log(Level.FINEST, "Invalid input for isOutsideSubquery: query={0}, index={1}", new Object[]{query, index});
+            return false;
+        }
+
+        String upperQuery = query.toUpperCase();
+        // Регулярное выражение для поиска подзапросов: (SELECT ... )
+        String subQueryRegex = "(?i)\\(SELECT\\b(?:[^()']*(?:'[^']*')?)*?\\)";
+        Pattern subQueryPattern = Pattern.compile(subQueryRegex, Pattern.DOTALL);
+        Matcher matcher = subQueryPattern.matcher(upperQuery.substring(0, index));
+
+        boolean inSubquery = false;
+        int lastSubQueryEnd = -1;
+
+        while (matcher.find()) {
+            int start = matcher.start();
+            int end = matcher.end();
+
+            // Проверяем, находится ли подзапрос вне кавычек
+            if (isOutsideQuotes(upperQuery, start)) {
+                // Проверяем, является ли подзапрос корректным (сбалансированным)
+                String subQueryContent = upperQuery.substring(start, end);
+                if (isBalancedSubQuery(subQueryContent)) {
+                    if (start <= index && index <= end) {
+                        inSubquery = true; // Индекс внутри подзапроса
+                        LOGGER.log(Level.FINEST, "Index {0} is inside subquery: {1}", new Object[]{index, subQueryContent});
+                        break;
+                    }
+                    lastSubQueryEnd = Math.max(lastSubQueryEnd, end);
+                }
+            }
+        }
+
+        boolean result = !inSubquery && lastSubQueryEnd < index;
+        LOGGER.log(Level.FINEST, "isOutsideSubquery: index={0}, inSubquery={1}, lastSubQueryEnd={2}, result={3}",
+                new Object[]{index, inSubquery, lastSubQueryEnd, result});
+        return result;
+    }
+
+    private boolean isOutsideQuotes(String query, int start) {
+        // Регулярное выражение для поиска строк в одинарных или двойных кавычках
+        String quoteRegex = "'([^']*(?:''[^']*)*)'|\"([^\"]*(?:\"\"[^\"]*)*)\"";
+        Pattern quotePattern = Pattern.compile(quoteRegex);
+        Matcher matcher = quotePattern.matcher(query.substring(0, start));
+
+        while (matcher.find()) {
+            int quoteStart = matcher.start();
+            int quoteEnd = matcher.end();
+            if (quoteStart <= start && start < quoteEnd) {
+                LOGGER.log(Level.FINEST, "Position {0} is inside quotes: {1}", new Object[]{start, query.substring(quoteStart, quoteEnd)});
+                return false;
+            }
+        }
+
+        boolean result = true;
+        LOGGER.log(Level.FINEST, "isOutsideQuotes: start={0}, result={1}", new Object[]{start, result});
+        return result;
+    }
+
+    private boolean isBalancedSubQuery(String subQuery) {
+        // Регулярное выражение для проверки сбалансированных скобок
+        String balancedRegex = "^\\((?:[^()']*(?:'[^']*')?)*\\)$";
+        boolean isBalanced = Pattern.matches(balancedRegex, subQuery);
+
+        LOGGER.log(Level.FINEST, "isBalancedSubQuery: subQuery={0}, isBalanced={1}", new Object[]{subQuery, isBalanced});
+        return isBalanced;
+    }
+
     private List<String> parseGroupByClause(String groupByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
                                             Map<String, String> tableAliases, Map<String, String> columnAliases, List<SubQuery> selectSubQueries) {
         List<String> groupBy = new ArrayList<>();
@@ -1959,10 +2010,8 @@ class QueryParser {
         boolean not = false;
         int subQueryStart = -1;
 
-        // Логируем входную строку условия
         LOGGER.log(Level.FINE, "Entering parseConditions: conditionStr={0}", conditionStr);
 
-        // Проверка целостности скобок
         long openParenCount = conditionStr.chars().filter(c -> c == '(').count();
         long closeParenCount = conditionStr.chars().filter(c -> c == ')').count();
         if (openParenCount != closeParenCount) {
@@ -1985,7 +2034,6 @@ class QueryParser {
                     parenDepth++;
                     if (parenDepth == 1 && i + 7 < conditionStr.length() && conditionStr.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
                         subQueryStart = i;
-                        // Логируем начало подзапроса
                         LOGGER.log(Level.FINE, "Detected subquery start at index {0}: {1}",
                                 new Object[]{i, conditionStr.substring(i, Math.min(i + 20, conditionStr.length()))});
                     }
@@ -1997,7 +2045,6 @@ class QueryParser {
                     if (parenDepth == 0 && subQueryStart != -1) {
                         int subQueryEnd = findMatchingParenthesis(conditionStr, subQueryStart);
                         if (subQueryEnd == i) {
-                            // Логируем конец подзапроса
                             LOGGER.log(Level.FINE, "Detected subquery end at index {0}: {1}",
                                     new Object[]{i, conditionStr.substring(subQueryStart, i + 1)});
                             subQueryStart = -1;
@@ -2008,7 +2055,6 @@ class QueryParser {
                         if (condStr.startsWith("(") && condStr.endsWith(")")) {
                             condStr = condStr.substring(1, condStr.length() - 1).trim();
                             if (!condStr.isEmpty()) {
-                                // Логируем групповое условие перед рекурсивным парсингом
                                 LOGGER.log(Level.FINE, "Processing grouped condition: {0}", condStr);
                                 List<Condition> subConditions = parseConditions(condStr, defaultTableName, database, originalQuery,
                                         isJoinCondition, combinedColumnTypes, tableAliases, columnAliases);
@@ -2022,13 +2068,11 @@ class QueryParser {
                     }
                 } else if (parenDepth == 0 && c == ' ' && subQueryStart == -1) {
                     String nextToken = getNextToken(conditionStr, i + 1);
-                    // Логируем пробел и извлекаемый токен
                     LOGGER.log(Level.FINE, "Found space at index {0}, nextToken={1}, currentCondition={2}",
                             new Object[]{i, nextToken, currentCondition.toString()});
                     if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
-                            // Логируем условие перед парсингом
                             LOGGER.log(Level.FINE, "Parsing condition before AND/OR: condStr={0}, fullCondition={1}",
                                     new Object[]{condStr, conditionStr});
                             try {
@@ -2056,7 +2100,6 @@ class QueryParser {
                             (nextToken.equalsIgnoreCase("OFFSET") && subQueryStart == -1)) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
-                            // Логируем условие перед завершением из-за LIMIT/OFFSET/ORDER BY
                             LOGGER.log(Level.FINE, "Parsing condition before LIMIT/OFFSET/ORDER BY: condStr={0}, fullCondition={1}",
                                     new Object[]{condStr, conditionStr});
                             try {
@@ -2069,6 +2112,7 @@ class QueryParser {
                                 throw e;
                             }
                         }
+                        currentCondition = new StringBuilder(); // Очищаем, чтобы избежать дублирования
                         break;
                     }
                 }
@@ -2077,8 +2121,7 @@ class QueryParser {
         }
 
         String finalCondStr = currentCondition.toString().trim();
-        if (!finalCondStr.isEmpty() && !finalCondStr.matches("\\s*\\)+\\s*")) {
-            // Логируем финальное условие перед парсингом
+        if (!finalCondStr.isEmpty() && !finalCondStr.matches("\\s*\\)+\\s*") && !finalCondStr.equalsIgnoreCase("LIMIT")) {
             LOGGER.log(Level.FINE, "Parsing final condition: condStr={0}, fullCondition={1}",
                     new Object[]{finalCondStr, conditionStr});
             try {
@@ -2088,14 +2131,14 @@ class QueryParser {
                         LOGGER.log(Level.SEVERE, "Invalid subquery syntax in final condition: {0}", finalCondStr);
                         throw new IllegalArgumentException("Invalid subquery syntax in final condition: " + finalCondStr);
                     }
-                    // Логируем подзапрос в финальном условии
                     LOGGER.log(Level.FINE, "Processing subquery in final condition: {0}", finalCondStr.substring(0, endIndex + 1));
                     String subQueryStr = finalCondStr.substring(1, endIndex).trim();
                     validateSubquery("(" + subQueryStr + ")");
                     Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
                     conditions.add(condition);
-                } else {
+                } else if (!conditions.stream().anyMatch(c -> c.toString().contains(finalCondStr))) {
+                    // Добавляем только если условие еще не было добавлено
                     Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
                     conditions.add(condition);
