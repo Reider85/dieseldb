@@ -147,3 +147,4 @@
 1.4.7 fix subqueries in on conditions
 1.4.8 fix subqueries in where conditions
 1.4.9 fix subqueries in where conditions
+1.5.0 fix subqueries in group by conditions
