@@ -2058,8 +2058,9 @@ class QueryParser {
                                 i += nextToken.length();
                                 continue;
                             } else if (nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET") ||
-                                    (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY"))) {
-                                // Прекращение парсинга условий и передача обработки LIMIT/OFFSET/ORDER BY в parseSelectQuery
+                                    (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
+                                    (nextToken.equalsIgnoreCase("GROUP") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY"))) {
+                                // Прекращение парсинга условий при обнаружении GROUP BY, LIMIT, OFFSET или ORDER BY
                                 LOGGER.log(Level.FINE, "Прекращение парсинга условий на предложении {0}: {1}", new Object[]{nextToken, remaining});
                                 return conditions;
                             }
@@ -2105,16 +2106,17 @@ class QueryParser {
                         i += nextToken.length();
                         continue;
                     } else if (nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET") ||
-                            (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY"))) {
+                            (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
+                            (nextToken.equalsIgnoreCase("GROUP") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY"))) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
-                            LOGGER.log(Level.FINE, "Парсинг условия перед LIMIT/OFFSET/ORDER BY: condStr={0}, fullCondition={1}",
+                            LOGGER.log(Level.FINE, "Парсинг условия перед LIMIT/OFFSET/ORDER BY/GROUP BY: condStr={0}, fullCondition={1}",
                                     new Object[]{condStr, conditionStr});
                             Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
                                     isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
                             conditions.add(condition);
                         }
-                        // Прекращение парсинга условий и передача обработки LIMIT/OFFSET/ORDER BY в parseSelectQuery
+                        // Прекращение парсинга условий и передача обработки LIMIT/OFFSET/ORDER BY/GROUP BY в parseSelectQuery
                         LOGGER.log(Level.FINE, "Прекращение парсинга условий на предложении {0}", new Object[]{nextToken});
                         return conditions;
                     }
