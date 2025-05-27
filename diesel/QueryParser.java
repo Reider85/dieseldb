@@ -2094,10 +2094,10 @@ class QueryParser {
         StringBuilder currentCondition = new StringBuilder();
         String conjunction = null;
         boolean inQuotes = false;
+        int parenDepth = 0;
 
         // Определяем простые регулярные выражения
         Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
-        Pattern subQueryPattern = Pattern.compile("\\([^()]*\\)");
         Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
         Pattern keywordPattern = Pattern.compile("\\b(LIMIT|OFFSET|ORDER BY|GROUP BY)\\b", Pattern.CASE_INSENSITIVE);
         Pattern tokenPattern = Pattern.compile("[^\\s]+");
@@ -2114,9 +2114,32 @@ class QueryParser {
                 break;
             }
 
+            // Проверяем, является ли это началом группового условия
+            if (conditionStr.charAt(currentPos) == '(' && !inQuotes) {
+                int endParen = findMatchingParenthesis(conditionStr, currentPos);
+                if (endParen == -1) {
+                    throw new IllegalArgumentException("Несбалансированные скобки в условии: " + conditionStr);
+                }
+                String groupStr = conditionStr.substring(currentPos + 1, endParen).trim();
+                if (!groupStr.isEmpty()) {
+                    List<Condition> subConditions = parseConditions(groupStr, defaultTableName, database, originalQuery,
+                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases);
+                    conditions.add(new Condition(subConditions, conjunction, false));
+                    LOGGER.log(Level.FINE, "Добавлено групповое условие: {0}", subConditions);
+                }
+                currentPos = endParen + 1;
+                // Проверяем следующий токен на логический оператор
+                String nextToken = getNextToken(conditionStr, currentPos);
+                if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
+                    conjunction = nextToken.toUpperCase();
+                    currentPos += nextToken.length();
+                    currentCondition = new StringBuilder();
+                }
+                continue;
+            }
+
             String remaining = conditionStr.substring(currentPos);
             Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
-            Matcher subQueryMatcher = subQueryPattern.matcher(remaining);
             Matcher logicalOperatorMatcher = logicalOperatorPattern.matcher(remaining);
             Matcher keywordMatcher = keywordPattern.matcher(remaining);
             Matcher tokenMatcher = tokenPattern.matcher(remaining);
@@ -2131,10 +2154,7 @@ class QueryParser {
                 token = quotedStringMatcher.group();
                 tokenLength = token.length();
                 inQuotes = !inQuotes && token.startsWith("'");
-            } else if (subQueryMatcher.lookingAt()) {
-                token = subQueryMatcher.group();
-                tokenLength = token.length();
-            } else if (logicalOperatorMatcher.lookingAt() && !inQuotes) {
+            } else if (logicalOperatorMatcher.lookingAt() && !inQuotes && parenDepth == 0) {
                 token = logicalOperatorMatcher.group();
                 tokenLength = token.length();
                 isLogicalOperator = true;
@@ -2335,12 +2355,12 @@ class QueryParser {
         // Проверка IN условия
         if (normalizedCondStr.toUpperCase().contains(" IN ")) {
             String[] parts = normalizedCondStr.split("\\s+IN\\s+", 2);
-            if (parts.length == 2 || !parts[0].matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
+            if (parts.length == 2 && parts[0].matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
                 String column = parts[0].trim();
                 boolean inNot = false;
                 if (column.toUpperCase().startsWith("NOT ")) {
                     inNot = true;
-                    column = column.substring(4).trim(); // Fixed: Changed 'columns' to 'column'
+                    column = column.substring(4).trim();
                 }
                 String valuesStr = parts[1].trim();
                 if (!valuesStr.startsWith("(") || !valuesStr.endsWith(")")) {
@@ -2388,14 +2408,14 @@ class QueryParser {
                 String actualColumn = columnAliases.getOrDefault(column.split("\\.")[column.contains(".") ? 1 : 0], column);
                 String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
                 validateColumn(normalizedColumn, combinedColumnTypes);
-                return new Condition(actualColumn, Operator.IS_NOT_NULL, conjunction, not); // Fixed: NOT_NULL -> IS_NOT_NULL
+                return new Condition(actualColumn, Operator.IS_NOT_NULL, conjunction, not);
             }
         }
 
         // Проверка условий с подзапросами
         if (normalizedCondStr.toUpperCase().contains("(SELECT ")) {
             String[] parts = normalizedCondStr.split("\\s*(?=|\\s*!=|<>|>=|<=|<|>|\\s+LIKE|\\s+NOT LIKE)\\s*", 2);
-            if (parts.length == 2 && parts[1].trim().startsWith("\\(SELECT ")) {
+            if (parts.length == 2 && parts[1].trim().startsWith("(SELECT ")) {
                 String column = parts[0].trim();
                 String operatorStr = normalizedCondStr.substring(column.length(), normalizedCondStr.indexOf("(")).trim();
                 String subQueryStr = parts[1].trim();
@@ -2441,6 +2461,27 @@ class QueryParser {
         String leftPart = normalizedCondStr.substring(0, splitIndex).trim();
         LOGGER.log(Level.FINEST, "Разделенное условие: leftPart={0}, operator={1}, rightPart={2}",
                 new Object[]{leftPart, selectedOperator, rightPart});
+
+        // Очистка rightPart от завершающих скобок, если они есть из-за группировки
+        if (rightPart.endsWith(")")) {
+            int parenCount = 0;
+            int endIndex = rightPart.length();
+            for (int i = rightPart.length() - 1; i >= 0; i--) {
+                if (rightPart.charAt(i) == ')') {
+                    parenCount++;
+                } else if (rightPart.charAt(i) == '(') {
+                    parenCount--;
+                }
+                if (parenCount == 0) {
+                    endIndex = i + 1;
+                    break;
+                }
+            }
+            rightPart = rightPart.substring(0, endIndex).trim();
+            if (rightPart.endsWith(")")) {
+                rightPart = rightPart.substring(0, rightPart.length() - 1).trim();
+            }
+        }
 
         String column = leftPart;
         String actualColumn = columnAliases.getOrDefault(column.split("\\.")[column.contains(".") ? 1 : 0], column);
