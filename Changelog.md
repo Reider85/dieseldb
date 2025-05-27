@@ -158,3 +158,4 @@
 1.5.8 regexp refactoring
 1.5.9 fix AND in queries
 1.6.0 regexp refactoring
+1.6.1 LIKE fix

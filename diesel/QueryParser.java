@@ -2408,6 +2408,28 @@ class QueryParser {
             return new Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
         }
 
+        // Split on logical operators first to handle multiple conditions
+        Pattern logicalOperatorPattern = Pattern.compile("(?i)\\s+(AND|OR)\\s+(?=([^']*'[^']*')*[^']*$)");
+        Matcher logicalMatcher = logicalOperatorPattern.matcher(normalizedCondStr);
+        if (logicalMatcher.find()) {
+            String firstCondition = normalizedCondStr.substring(0, logicalMatcher.start()).trim();
+            String remainingCondition = normalizedCondStr.substring(logicalMatcher.end()).trim();
+            String newConjunction = logicalMatcher.group(1).toUpperCase();
+
+            // Parse the first condition
+            Condition firstCond = parseSingleCondition(firstCondition, defaultTableName, database, originalQuery,
+                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr);
+
+            // Parse the remaining conditions recursively
+            List<Condition> remainingConditions = parseConditions(remainingCondition, defaultTableName, database, originalQuery,
+                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases);
+
+            List<Condition> subConditions = new ArrayList<>();
+            subConditions.add(firstCond);
+            subConditions.addAll(remainingConditions);
+            return new Condition(subConditions, newConjunction, not);
+        }
+
         // Handle column comparisons and literal values
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         String selectedOperator = null;
