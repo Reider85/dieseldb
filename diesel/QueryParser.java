@@ -624,107 +624,114 @@ class QueryParser {
     }
 
     private List<String> splitColumnDefinitions(String columnsPart) {
-        List<String> columnDefs = new ArrayList<>();
-        StringBuilder currentDef = new StringBuilder();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-
-        for (int i = 0; i < columnsPart.length(); i++) {
-            char c = columnsPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentDef.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (c == ',' && parenDepth == 0) {
-                    String def = currentDef.toString().trim();
-                    if (!def.isEmpty()) {
-                        columnDefs.add(def);
-                    }
-                    currentDef = new StringBuilder();
-                    continue;
-                }
-            }
-            currentDef.append(c);
+        if (columnsPart == null || columnsPart.trim().isEmpty()) {
+            return new ArrayList<>();
         }
 
-        String lastDef = currentDef.toString().trim();
-        if (!lastDef.isEmpty()) {
-            columnDefs.add(lastDef);
+        List<String> columnDefs = new ArrayList<>();
+        String regex = "(?=([^']*'[^']*')*[^']*$)(?![^()]*\\)),\\s*";
+        String[] parts = columnsPart.split(regex);
+
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                columnDefs.add(trimmed);
+            }
         }
 
         return columnDefs;
     }
 
     private int findMainFromClause(String query) {
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        String upperQuery = query.toUpperCase();
+        if (query == null || query.isEmpty()) {
+            LOGGER.log(Level.FINEST, "Invalid input: query={0}", query);
+            return -1;
+        }
 
-        for (int i = 0; i < query.length() - 4; i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0 && upperQuery.startsWith("FROM ", i)) {
-                    return i;
+        String regex = "(?i)" +
+                "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
+                "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Parenthesized groups
+                "|(\\bFROM\\b)" + // Group 3: FROM keyword
+                "|."; // Match any other character
+        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(query.toUpperCase());
+
+        int parenDepth = 0;
+        int fromIndex = -1;
+
+        while (matcher.find()) {
+            String group1 = matcher.group(1); // Quoted string
+            String group2 = matcher.group(2); // Parenthesized group
+            String group3 = matcher.group(3); // FROM
+
+            int start = matcher.start();
+
+            if (group1 != null) {
+                continue; // Skip quoted strings
+            } else if (group2 != null) {
+                if (group2.toUpperCase().contains("SELECT")) {
+                    parenDepth++; // Enter potential subquery
                 }
+                if (parenDepth > 0) {
+                    parenDepth--; // Exit subquery if depth returns to 0
+                }
+            } else if (group3 != null && parenDepth == 0) {
+                fromIndex = start;
+                LOGGER.log(Level.FINEST, "Found main FROM clause at index {0} in query: {1}", new Object[]{fromIndex, query});
+                return fromIndex;
             }
         }
+
+        LOGGER.log(Level.FINEST, "No main FROM clause found in query: {0}", query);
         return -1;
     }
 
     private int findLastClauseIndexOutsideSubquery(String query, String clause) {
-        String upperQuery = query.toUpperCase();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        int lastIndex = -1;
+        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
+            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
+            return -1;
+        }
 
-        for (int i = 0; i < query.length() - clause.length() - 1; i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-            } else if (!inQuotes) {
-                if (c == '(') {
+        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
+        String regex = String.format(
+                "(?i)" +
+                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
+                        "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Parenthesized groups
+                        "|(%s)" + // Group 3: Clause
+                        "|.", // Match any other character
+                clausePattern
+        );
+
+        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(query.toUpperCase());
+
+        int parenDepth = 0;
+        int lastClauseIndex = -1;
+
+        while (matcher.find()) {
+            String group1 = matcher.group(1);
+            String group2 = matcher.group(2);
+            String group3 = matcher.group(3);
+
+            int start = matcher.start();
+
+            if (group1 != null) {
+                continue;
+            } else if (group2 != null) {
+                if (group2.toUpperCase().contains("SELECT")) {
                     parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0 && upperQuery.startsWith(" " + clause + " ", i)) {
-                    lastIndex = i + 1; // Point to the start of the clause
                 }
+                if (parenDepth > 0) {
+                    parenDepth--;
+                }
+            } else if (group3 != null && parenDepth == 0) {
+                lastClauseIndex = start; // Update to the latest valid clause
             }
         }
 
-        // Verify that lastIndex is outside any subquery
-        if (lastIndex != -1) {
-            int subQueryParenDepth = 0;
-            for (int i = 0; i < lastIndex; i++) {
-                char c = query.charAt(i);
-                if (c == '\'') {
-                    inQuotes = !inQuotes;
-                } else if (!inQuotes) {
-                    if (c == '(') {
-                        subQueryParenDepth++;
-                    } else if (c == ')') {
-                        subQueryParenDepth--;
-                    }
-                }
-            }
-            if (subQueryParenDepth == 0) {
-                LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastIndex, query});
-                return lastIndex;
-            }
+        if (lastClauseIndex != -1) {
+            LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastClauseIndex, query});
+            return lastClauseIndex;
         }
 
         LOGGER.log(Level.FINEST, "No valid {0} clause found outside subqueries in query: {1}", new Object[]{clause, query});
@@ -732,26 +739,45 @@ class QueryParser {
     }
 
     private int findLastClauseIndex(String query, String clause) {
-        String upperQuery = query.toUpperCase();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        int lastIndex = -1;
+        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
+            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
+            return -1;
+        }
 
-        for (int i = 0; i < query.length(); i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-            } else if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0 && upperQuery.startsWith(" " + clause + " ", i)) {
-                    lastIndex = i + 1; // Point to the start of the clause
-                }
+        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
+        String regex = String.format(
+                "(?i)" +
+                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
+                        "|(%s)" + // Group 2: Clause
+                        "|.", // Match any other character
+                clausePattern
+        );
+
+        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(query.toUpperCase());
+
+        int lastClauseIndex = -1;
+
+        while (matcher.find()) {
+            String group1 = matcher.group(1);
+            String group2 = matcher.group(2);
+
+            int start = matcher.start();
+
+            if (group1 != null) {
+                continue;
+            } else if (group2 != null) {
+                lastClauseIndex = start;
             }
         }
-        return lastIndex;
+
+        if (lastClauseIndex != -1) {
+            LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastClauseIndex, query});
+            return lastClauseIndex;
+        }
+
+        LOGGER.log(Level.FINEST, "No {0} clause found in query: {1}", new Object[]{clause, query});
+        return -1;
     }
 
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
@@ -1520,72 +1546,22 @@ class QueryParser {
     }
 
     private List<String> splitSelectItems(String selectPart) {
-        List<String> items = new ArrayList<>();
-        StringBuilder currentItem = new StringBuilder();
-        boolean inQuotes = false;
-        int parenDepth = 0;
-        boolean afterAs = false;
-
-        for (int i = 0; i < selectPart.length(); i++) {
-            char c = selectPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentItem.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ',' && parenDepth == 0) {
-                    String item = currentItem.toString().trim();
-                    if (!item.isEmpty()) {
-                        items.add(item);
-                    }
-                    currentItem = new StringBuilder();
-                    afterAs = false;
-                    continue;
-                } else if (parenDepth == 0 && !afterAs) {
-                    // Handle AS clause or potential alias
-                    if (i + 3 <= selectPart.length() && selectPart.substring(i, i + 3).equalsIgnoreCase(" AS ") &&
-                            Character.isWhitespace(selectPart.charAt(i - 1))) {
-                        currentItem.append(c);
-                        currentItem.append(selectPart.charAt(i + 1));
-                        currentItem.append(selectPart.charAt(i + 2));
-                        i += 2;
-                        afterAs = true;
-                        continue;
-                    } else if (Character.isWhitespace(c) && !currentItem.toString().trim().isEmpty()) {
-                        String remaining = selectPart.substring(i + 1).trim();
-                        int nextSpace = remaining.indexOf(' ');
-                        int nextComma = remaining.indexOf(',');
-                        int endIndex = nextSpace == -1 ? (nextComma == -1 ? remaining.length() : nextComma) :
-                                Math.min(nextSpace, nextComma == -1 ? remaining.length() : nextComma);
-                        String potentialAlias = remaining.substring(0, endIndex).trim();
-                        if (potentialAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-                            currentItem.append(c);
-                            currentItem.append(potentialAlias);
-                            i += potentialAlias.length();
-                            afterAs = true;
-                            continue;
-                        }
-                    }
-                }
-            }
-            currentItem.append(c);
+        if (selectPart == null || selectPart.trim().isEmpty()) {
+            return new ArrayList<>();
         }
 
-        String lastItem = currentItem.toString().trim();
-        if (!lastItem.isEmpty()) {
-            items.add(lastItem);
+        List<String> selectItems = new ArrayList<>();
+        String regex = "(?=([^']*'[^']*')*[^']*$)(?![^()]*\\)),\\s*";
+        String[] parts = selectPart.split(regex);
+
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                selectItems.add(trimmed);
+            }
         }
 
-        return items;
+        return selectItems;
     }
 
     private List<OrderByInfo> parseOrderByClause(String orderByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes, Map<String, String> columnAliases, Map<String, String> tableAliases, List<SubQuery> selectSubQueries) {
