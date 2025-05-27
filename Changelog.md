@@ -150,3 +150,4 @@
 1.5.0 fix subqueries in group by conditions
 1.5.1 fix subqueries in group by conditions
 1.5.2 fix subqueries in limit conditions
+1.5.3 fix subqueries in limit conditions

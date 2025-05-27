@@ -2164,52 +2164,31 @@ class QueryParser {
     }
 
     private String getNextToken(String conditionStr, int startIndex) {
-        StringBuilder token = new StringBuilder();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-
-        // Логируем входные данные для getNextToken
-        LOGGER.log(Level.FINE, "Entering getNextToken: startIndex={0}, conditionStr={1}",
-                new Object[]{startIndex, conditionStr});
-
-        for (int i = startIndex; i < conditionStr.length(); i++) {
-            char c = conditionStr.charAt(i);
-            // Логируем текущий символ и состояние
-            LOGGER.log(Level.FINEST, "Processing char in getNextToken: index={0}, char='{1}', parenDepth={2}, inQuotes={3}, token={4}",
-                    new Object[]{i, c, parenDepth, inQuotes, token.toString()});
-
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                token.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    token.append(c);
-                } else if (c == ')') {
-                    parenDepth--;
-                    token.append(c);
-                    if (parenDepth == 0 && token.length() > 0) {
-                        break;
-                    }
-                } else if (parenDepth == 0 && Character.isWhitespace(c)) {
-                    if (token.length() > 0) {
-                        break;
-                    }
-                    continue;
-                } else {
-                    token.append(c);
-                }
-            } else {
-                token.append(c);
-            }
+        if (conditionStr == null || startIndex < 0 || startIndex >= conditionStr.length()) {
+            LOGGER.log(Level.FINE, "Invalid input for getNextToken: conditionStr={0}, startIndex={1}",
+                    new Object[]{conditionStr, startIndex});
+            return "";
         }
 
-        String result = token.toString().trim();
-        // Логируем извлеченный токен
-        LOGGER.log(Level.FINE, "Extracted token from index {0}: {1}", new Object[]{startIndex, result});
-        return result;
+        // Improved regex pattern to better handle nested parentheses and subqueries
+        Pattern tokenPattern = Pattern.compile(
+                "(?s)(?:'(?:\\\\.|[^'])*'|" +               // Match quoted strings
+                        "\\((?:[^()']+|'(?:\\\\.|[^'])*')*\\)|" +   // Match balanced parentheses (including nested ones)
+                        "[^\\s()']+)"                                // Match other tokens
+        );
+
+        // Find tokens starting from the given index
+        Matcher matcher = tokenPattern.matcher(conditionStr.substring(startIndex));
+
+        if (matcher.find()) {
+            String token = matcher.group().trim();
+            LOGGER.log(Level.FINE, "Extracted token from index {0}: {1}",
+                    new Object[]{startIndex, token});
+            return token;
+        }
+
+        LOGGER.log(Level.FINE, "No token found from index {0}", startIndex);
+        return "";
     }
 
     private Condition parseSingleCondition(String condStr, String defaultTableName, Database database, String originalQuery,
