@@ -1966,8 +1966,7 @@ class QueryParser {
         Pattern logicalOperatorPattern = Pattern.compile("\\bAND\\b|\\bOR\\b", Pattern.CASE_INSENSITIVE);
         Pattern inClausePattern = Pattern.compile(
                 "\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?IN\\s*\\([^)]+\\)",
-                Pattern.DOTALL
-        );
+                Pattern.DOTALL);
         Pattern quotedStringPattern = Pattern.compile("'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
         Pattern balancedParenPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
         Pattern identifierPattern = Pattern.compile("\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\b");
@@ -1976,12 +1975,32 @@ class QueryParser {
         Pattern operatorPattern = Pattern.compile("(?:=|[!=<>]=|[<>]|LIKE|NOT\\s+LIKE)");
         Pattern whitespacePattern = Pattern.compile("\\s+");
 
+        // Log regex patterns
+        LOGGER.log(Level.FINEST, "Regex patterns used in parseConditions: " +
+                        "logicalOperatorPattern={0}, inClausePattern={1}, quotedStringPattern={2}, " +
+                        "balancedParenPattern={3}, identifierPattern={4}, numberPattern={5}, " +
+                        "keywordPattern={6}, operatorPattern={7}, whitespacePattern={8}",
+                new Object[]{
+                        logicalOperatorPattern.pattern(),
+                        inClausePattern.pattern(),
+                        quotedStringPattern.pattern(),
+                        balancedParenPattern.pattern(),
+                        identifierPattern.pattern(),
+                        numberPattern.pattern(),
+                        keywordPattern.pattern(),
+                        operatorPattern.pattern(),
+                        whitespacePattern.pattern()
+                });
+
         // Process IN clauses
         StringBuilder processedInput = new StringBuilder();
         List<String> inConditions = new ArrayList<>();
         int lastEnd = 0;
         Matcher inMatcher = inClausePattern.matcher(normalized);
+        LOGGER.log(Level.FINEST, "Applying inClausePattern on input: {0}", normalized);
         while (inMatcher.find()) {
+            LOGGER.log(Level.FINEST, "inClausePattern matched: group={0}, start={1}, end={2}",
+                    new Object[]{inMatcher.group(), inMatcher.start(), inMatcher.end()});
             processedInput.append(normalized, lastEnd, inMatcher.start());
             String fullMatch = inMatcher.group();
             inConditions.add(fullMatch);
@@ -1990,6 +2009,7 @@ class QueryParser {
         }
         processedInput.append(normalized.substring(lastEnd));
         normalized = processedInput.toString().trim();
+        LOGGER.log(Level.FINEST, "After processing IN clauses: {0}", normalized);
 
         // Split into tokens
         List<String> tokens = new ArrayList<>();
@@ -1999,39 +2019,53 @@ class QueryParser {
             int matchLength = 0;
 
             Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
+            LOGGER.log(Level.FINEST, "Applying quotedStringPattern on input: {0}", remaining);
             if (quotedStringMatcher.lookingAt()) {
                 matchedToken = quotedStringMatcher.group();
                 matchLength = matchedToken.length();
+                LOGGER.log(Level.FINEST, "quotedStringPattern matched: group={0}", matchedToken);
             } else {
                 Matcher balancedParenMatcher = balancedParenPattern.matcher(remaining);
+                LOGGER.log(Level.FINEST, "Applying balancedParenPattern on input: {0}", remaining);
                 if (balancedParenMatcher.lookingAt()) {
                     matchedToken = balancedParenMatcher.group();
                     matchLength = matchedToken.length();
+                    LOGGER.log(Level.FINEST, "balancedParenPattern matched: group={0}", matchedToken);
                 } else {
                     Matcher identifierMatcher = identifierPattern.matcher(remaining);
+                    LOGGER.log(Level.FINEST, "Applying identifierPattern on input: {0}", remaining);
                     if (identifierMatcher.lookingAt()) {
                         matchedToken = identifierMatcher.group();
                         matchLength = matchedToken.length();
+                        LOGGER.log(Level.FINEST, "identifierPattern matched: group={0}", matchedToken);
                     } else {
                         Matcher numberMatcher = numberPattern.matcher(remaining);
+                        LOGGER.log(Level.FINEST, "Applying numberPattern on input: {0}", remaining);
                         if (numberMatcher.lookingAt()) {
                             matchedToken = numberMatcher.group();
                             matchLength = matchedToken.length();
+                            LOGGER.log(Level.FINEST, "numberPattern matched: group={0}", matchedToken);
                         } else {
                             Matcher keywordMatcher = keywordPattern.matcher(remaining);
+                            LOGGER.log(Level.FINEST, "Applying keywordPattern on input: {0}", remaining);
                             if (keywordMatcher.lookingAt()) {
                                 matchedToken = keywordMatcher.group();
                                 matchLength = matchedToken.length();
+                                LOGGER.log(Level.FINEST, "keywordPattern matched: group={0}", matchedToken);
                             } else {
                                 Matcher operatorMatcher = operatorPattern.matcher(remaining);
+                                LOGGER.log(Level.FINEST, "Applying operatorPattern on input: {0}", remaining);
                                 if (operatorMatcher.lookingAt()) {
                                     matchedToken = operatorMatcher.group();
                                     matchLength = matchedToken.length();
+                                    LOGGER.log(Level.FINEST, "operatorPattern matched: group={0}", matchedToken);
                                 } else {
                                     Matcher whitespaceMatcher = whitespacePattern.matcher(remaining);
+                                    LOGGER.log(Level.FINEST, "Applying whitespacePattern on input: {0}", remaining);
                                     if (whitespaceMatcher.lookingAt()) {
                                         matchedToken = whitespaceMatcher.group();
                                         matchLength = matchedToken.length();
+                                        LOGGER.log(Level.FINEST, "whitespacePattern matched: group={0}", matchedToken);
                                     }
                                 }
                             }
@@ -2050,7 +2084,9 @@ class QueryParser {
 
         // Process tokens
         Pattern inConditionPattern = Pattern.compile("IN_CONDITION_\\d+");
+        LOGGER.log(Level.FINEST, "Regex pattern for IN condition placeholder: {0}", inConditionPattern.pattern());
         Pattern groupedConditionPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
+        LOGGER.log(Level.FINEST, "Regex pattern for grouped condition: {0}", groupedConditionPattern.pattern());
         StringBuilder currentCondition = new StringBuilder();
         String conjunction = null;
         boolean not = false;
@@ -2064,11 +2100,15 @@ class QueryParser {
 
             // Handle IN_CONDITION_
             Matcher inConditionMatcher = inConditionPattern.matcher(token);
+            LOGGER.log(Level.FINEST, "Applying inConditionPattern on token: {0}", token);
             if (inConditionMatcher.matches()) {
+                LOGGER.log(Level.FINEST, "inConditionPattern matched: group={0}", token);
                 inConditionIndex++;
                 String inCondition = inConditions.get(inConditionIndex - 1);
                 Matcher inCondMatcher = inClausePattern.matcher(inCondition);
+                LOGGER.log(Level.FINEST, "Applying inClausePattern on IN condition: {0}", inCondition);
                 if (inCondMatcher.matches()) {
+                    LOGGER.log(Level.FINEST, "inClausePattern matched: group={0}", inCondMatcher.group());
                     String column = inCondition.split("\\s+")[0].trim();
                     boolean isNot = inCondition.toUpperCase().contains("NOT IN");
                     String valuesStr = inCondition.substring(inCondition.indexOf("(") + 1, inCondition.lastIndexOf(")")).trim();
@@ -2103,7 +2143,9 @@ class QueryParser {
             }
 
             // Handle logical operators
+            LOGGER.log(Level.FINEST, "Applying logicalOperatorPattern on token: {0}", token);
             if (logicalOperatorPattern.matcher(token).matches()) {
+                LOGGER.log(Level.FINEST, "logicalOperatorPattern matched: group={0}", token);
                 if (!currentCondition.toString().trim().isEmpty()) {
                     String condStr = currentCondition.toString().trim();
                     if (!condStr.matches("^\\(+\\s*\\)+$")) {
@@ -2129,7 +2171,9 @@ class QueryParser {
 
             // Handle grouped conditions
             Matcher groupedConditionMatcher = groupedConditionPattern.matcher(token);
+            LOGGER.log(Level.FINEST, "Applying groupedConditionPattern on token: {0}", token);
             if (groupedConditionMatcher.matches() && !token.toUpperCase().startsWith("(SELECT")) {
+                LOGGER.log(Level.FINEST, "groupedConditionPattern matched: group={0}", token);
                 String groupContent = token.substring(1, token.length() - 1).trim();
                 if (!groupContent.isEmpty()) {
                     List<Condition> subConditions = parseConditions(
@@ -2285,22 +2329,42 @@ class QueryParser {
             throw new IllegalArgumentException("Пустое условие: " + condStr);
         }
 
-        // Handle grouped conditions
+        // Log regex patterns
         Pattern groupedConditionPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
-        if (groupedConditionPattern.matcher(normalizedCondStr).matches()) {
+        Pattern inClausePattern = Pattern.compile(
+                "\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?IN\\s*\\([^)]+\\)");
+        Pattern operatorPattern = Pattern.compile("\\s*(?:=|[!=<>]=|[<>]|LIKE|NOT\\s+LIKE)\\s*");
+        Pattern trailingParenPattern = Pattern.compile(".*?\\)+$");
+        LOGGER.log(Level.FINEST, "Regex patterns used in parseSingleCondition: " +
+                        "groupedConditionPattern={0}, inClausePattern={1}, operatorPattern={2}, trailingParenPattern={3}",
+                new Object[]{
+                        groupedConditionPattern.pattern(),
+                        inClausePattern.pattern(),
+                        operatorPattern.pattern(),
+                        trailingParenPattern.pattern()
+                });
+
+        // Handle grouped conditions
+        Matcher groupedConditionMatcher = groupedConditionPattern.matcher(normalizedCondStr);
+        LOGGER.log(Level.FINEST, "Applying groupedConditionPattern on input: {0}", normalizedCondStr);
+        if (groupedConditionMatcher.matches()) {
+            LOGGER.log(Level.FINEST, "groupedConditionPattern matched: group={0}", normalizedCondStr);
             String subCondStr = normalizedCondStr.substring(1, normalizedCondStr.length() - 1).trim();
             if (!subCondStr.isEmpty()) {
                 List<Condition> subConditions = parseConditions(subCondStr, defaultTableName, database, originalQuery,
                         isJoinCondition, combinedColumnTypes, tableAliases, columnAliases);
                 return new Condition(subConditions, conjunction, not);
             }
+        } else {
+            LOGGER.log(Level.FINEST, "groupedConditionPattern did not match: {0}", normalizedCondStr);
         }
 
         // Handle IN clause
-        Pattern inClausePattern = Pattern.compile(
-                "\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?IN\\s*\\([^)]+\\)"
-        );
-        if (inClausePattern.matcher(normalizedCondStr.toUpperCase()).find()) {
+        Matcher inClauseMatcher = inClausePattern.matcher(normalizedCondStr.toUpperCase());
+        LOGGER.log(Level.FINEST, "Applying inClausePattern on input: {0}", normalizedCondStr.toUpperCase());
+        if (inClauseMatcher.find()) {
+            LOGGER.log(Level.FINEST, "inClausePattern matched: group={0}, start={1}, end={2}",
+                    new Object[]{inClauseMatcher.group(), inClauseMatcher.start(), inClauseMatcher.end()});
             String[] parts = normalizedCondStr.split("\\s+IN\\s+", 2);
             if (parts.length == 2 && parts[0].matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
                 String column = parts[0].trim();
@@ -2333,6 +2397,8 @@ class QueryParser {
                 }
                 return new Condition(actualColumn, inValues, conjunction, inNot);
             }
+        } else {
+            LOGGER.log(Level.FINEST, "inClausePattern did not match: {0}", normalizedCondStr.toUpperCase());
         }
 
         // Handle IS NULL / IS NOT NULL
@@ -2377,15 +2443,19 @@ class QueryParser {
         }
 
         // Handle operators
-        Pattern operatorPattern = Pattern.compile("\\s*(?:=|[!=<>]=|[<>]|LIKE|NOT\\s+LIKE)\\s*");
+        Matcher operatorMatcher = operatorPattern.matcher(normalizedCondStr);
+        LOGGER.log(Level.FINEST, "Applying operatorPattern on input: {0}", normalizedCondStr);
         String selectedOperator = null;
         int splitIndex = -1;
         String rightPart = null;
-        Matcher operatorMatcher = operatorPattern.matcher(normalizedCondStr);
         if (operatorMatcher.find()) {
             selectedOperator = operatorMatcher.group().trim();
             splitIndex = operatorMatcher.start();
             rightPart = normalizedCondStr.substring(operatorMatcher.end()).trim();
+            LOGGER.log(Level.FINEST, "operatorPattern matched: group={0}, start={1}, end={2}",
+                    new Object[]{selectedOperator, operatorMatcher.start(), operatorMatcher.end()});
+        } else {
+            LOGGER.log(Level.FINEST, "operatorPattern did not match: {0}", normalizedCondStr);
         }
 
         if (selectedOperator == null) {
@@ -2398,23 +2468,30 @@ class QueryParser {
                 new Object[]{leftPart, selectedOperator, rightPart});
 
         // Clean rightPart of trailing parentheses
-        Pattern trailingParenPattern = Pattern.compile(".*?\\)+$");
-        if (trailingParenPattern.matcher(rightPart).matches()) {
+        Matcher trailingParenMatcher = trailingParenPattern.matcher(rightPart);
+        LOGGER.log(Level.FINEST, "Applying trailingParenPattern on rightPart: {0}", rightPart);
+        if (trailingParenMatcher.matches()) {
+            LOGGER.log(Level.FINEST, "trailingParenPattern matched: group={0}", rightPart);
             StringBuilder cleanedRightPart = new StringBuilder();
             String remaining = rightPart;
             while (remaining.endsWith(")")) {
                 Matcher balancedParenMatcher = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)$").matcher(remaining);
+                LOGGER.log(Level.FINEST, "Applying balancedParenPattern on remaining: {0}", remaining);
                 if (balancedParenMatcher.find()) {
                     String group = balancedParenMatcher.group();
+                    LOGGER.log(Level.FINEST, "balancedParenPattern matched: group={0}", group);
                     cleanedRightPart.insert(0, group.substring(0, group.length() - 1));
                     remaining = remaining.substring(0, remaining.length() - group.length()).trim();
                 } else {
+                    LOGGER.log(Level.FINEST, "balancedParenPattern did not match, appending closing parenthesis");
                     cleanedRightPart.insert(0, ")");
                     remaining = remaining.substring(0, remaining.length() - 1).trim();
                 }
             }
             cleanedRightPart.insert(0, remaining);
             rightPart = cleanedRightPart.toString().trim();
+        } else {
+            LOGGER.log(Level.FINEST, "trailingParenPattern did not match: {0}", rightPart);
         }
 
         String column = leftPart;
