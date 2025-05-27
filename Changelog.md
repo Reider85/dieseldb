@@ -165,3 +165,4 @@
 1.6.5 JOIN fix
 1.6.6 JOIN fix
 1.6.7 JOIN fix
+1.6.8 LIKE fix

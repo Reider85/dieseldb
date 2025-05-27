@@ -745,99 +745,6 @@ class QueryParser {
         LOGGER.log(Level.FINEST, "Основной FROM не найден в запросе: {0}", query);
         return -1;
     }
-    private int findLastClauseIndexOutsideSubquery(String query, String clause) {
-        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
-            return -1;
-        }
-
-        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
-        String regex = String.format(
-                "(?i)" +
-                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
-                        "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Parenthesized groups
-                        "|(%s)" + // Group 3: Clause
-                        "|.", // Match any other character
-                clausePattern
-        );
-
-        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(query.toUpperCase());
-
-        int parenDepth = 0;
-        int lastClauseIndex = -1;
-
-        while (matcher.find()) {
-            String group1 = matcher.group(1);
-            String group2 = matcher.group(2);
-            String group3 = matcher.group(3);
-
-            int start = matcher.start();
-
-            if (group1 != null) {
-                continue;
-            } else if (group2 != null) {
-                if (group2.toUpperCase().contains("SELECT")) {
-                    parenDepth++;
-                }
-                if (parenDepth > 0) {
-                    parenDepth--;
-                }
-            } else if (group3 != null && parenDepth == 0) {
-                lastClauseIndex = start; // Update to the latest valid clause
-            }
-        }
-
-        if (lastClauseIndex != -1) {
-            LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastClauseIndex, query});
-            return lastClauseIndex;
-        }
-
-        LOGGER.log(Level.FINEST, "No valid {0} clause found outside subqueries in query: {1}", new Object[]{clause, query});
-        return -1;
-    }
-
-    private int findLastClauseIndex(String query, String clause) {
-        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
-            return -1;
-        }
-
-        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
-        String regex = String.format(
-                "(?i)" +
-                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
-                        "|(%s)" + // Group 2: Clause
-                        "|.", // Match any other character
-                clausePattern
-        );
-
-        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(query.toUpperCase());
-
-        int lastClauseIndex = -1;
-
-        while (matcher.find()) {
-            String group1 = matcher.group(1);
-            String group2 = matcher.group(2);
-
-            int start = matcher.start();
-
-            if (group1 != null) {
-                continue;
-            } else if (group2 != null) {
-                lastClauseIndex = start;
-            }
-        }
-
-        if (lastClauseIndex != -1) {
-            LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastClauseIndex, query});
-            return lastClauseIndex;
-        }
-
-        LOGGER.log(Level.FINEST, "No {0} clause found in query: {1}", new Object[]{clause, query});
-        return -1;
-    }
 
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
         int fromIndex = findMainFromClause(original);
@@ -1124,7 +1031,6 @@ class QueryParser {
                 tableAliases.put(joinTableName, joinTableName);
 
                 // Find WHERE clause outside subqueries
-                // Find WHERE clause outside subqueries
                 int whereIndex = findClauseOutsideSubquery(onCondition, "WHERE");
                 if (whereIndex != -1) {
                     String beforeWhere = onCondition.substring(0, whereIndex).trim();
@@ -1168,7 +1074,6 @@ class QueryParser {
                     conditionStr = onCondition;
                     onCondition = "";
                 }
-                onConditions = parseConditions(onCondition, tableName, database, original, true, combinedColumnTypes, tableAliases, columnAliases);
 
                 // Find GROUP BY clause outside subqueries
                 int groupByIndex = findClauseOutsideSubquery(onCondition, "GROUP BY");
@@ -1351,7 +1256,6 @@ class QueryParser {
 
             if (remaining.toUpperCase().contains(" OFFSET ")) {
                 String[] offsetSplit = remaining.split("(?i)\\s+OFFSET\\s+", 2);
-                remaining = offsetSplit[0].trim();
                 if (offsetSplit.length > 1) {
                     offset = parseOffsetClause("OFFSET " + offsetSplit[1].trim());
                 }
@@ -1473,28 +1377,6 @@ class QueryParser {
 
         LOGGER.log(Level.FINEST, "Клаузер {0} не найден вне подзапросов в запросе: {1}", new Object[]{clause, query});
         return -1;
-    }
-    private int findLastSelectBefore(String query, int endIndex) {
-        String upperQuery = query.toUpperCase();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        int lastSelectIndex = -1;
-
-        for (int i = 0; i < endIndex; i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-            } else if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0 && upperQuery.startsWith("SELECT ", i)) {
-                    lastSelectIndex = i;
-                }
-            }
-        }
-        return lastSelectIndex;
     }
 
     private List<String> parseGroupByClause(String groupByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
