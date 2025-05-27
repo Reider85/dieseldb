@@ -648,41 +648,67 @@ class QueryParser {
             return -1;
         }
 
+        // Регулярное выражение для токенизации
         String regex = "(?i)" +
-                "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
-                "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Parenthesized groups
-                "|(\\bFROM\\b)" + // Group 3: FROM keyword
-                "|."; // Match any other character
+                "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Группа 1: строки в кавычках
+                "|\\(" + // Группа 2: открывающая скобка
+                "|\\)" + // Группа 3: закрывающая скобка
+                "|(\\bFROM\\b)" + // Группа 4: ключевое слово FROM
+                "|(\\S+)"; // Группа 5: слова (непробельные последовательности)
+
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(query.toUpperCase());
 
-        int parenDepth = 0;
+        int bracketDepth = 0;
         int fromIndex = -1;
+        StringBuilder currentToken = new StringBuilder();
 
         while (matcher.find()) {
-            String group1 = matcher.group(1); // Quoted string
-            String group2 = matcher.group(2); // Parenthesized group
-            String group3 = matcher.group(3); // FROM
-
+            String group1 = matcher.group(1); // Строки в кавычках
+            String group2 = matcher.group(2); // Открывающая скобка
+            String group3 = matcher.group(3); // Закрывающая скобка
+            String group4 = matcher.group(4); // FROM
+            String group5 = matcher.groupCount() >= 5 ? matcher.group(5) : null; // Слова
             int start = matcher.start();
+            int end = matcher.end();
+
+            // Логируем токен для отладки
+            LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, group1={2}, group2={3}, group3={4}, group4={5}, group5={6}, bracketDepth={7}",
+                    new Object[]{start, end, group1, group2, group3, group4, group5, bracketDepth});
 
             if (group1 != null) {
-                continue; // Skip quoted strings
+                // Пропускаем строки в кавычках
+                currentToken.append(query, start, end);
+                continue;
             } else if (group2 != null) {
-                if (group2.toUpperCase().contains("SELECT")) {
-                    parenDepth++; // Enter potential subquery
+                // Увеличиваем глубину скобок
+                bracketDepth++;
+                currentToken.append(query, start, end);
+            } else if (group3 != null) {
+                // Уменьшаем глубину скобок
+                bracketDepth--;
+                if (bracketDepth < 0) {
+                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на индексе {0}: {1}", new Object[]{start, query});
+                    return -1;
                 }
-                if (parenDepth > 0) {
-                    parenDepth--; // Exit subquery if depth returns to 0
-                }
-            } else if (group3 != null && parenDepth == 0) {
+                currentToken.append(query, start, end);
+            } else if (group4 != null && bracketDepth == 0) {
+                // Основной FROM найден
                 fromIndex = start;
-                LOGGER.log(Level.FINEST, "Found main FROM clause at index {0} in query: {1}", new Object[]{fromIndex, query});
+                LOGGER.log(Level.FINEST, "Найден основной FROM на индексе {0} в запросе: {1}", new Object[]{fromIndex, query});
                 return fromIndex;
+            } else if (group5 != null) {
+                // Собираем слова
+                currentToken.append(query, start, end);
             }
         }
 
-        LOGGER.log(Level.FINEST, "No main FROM clause found in query: {0}", query);
+        if (bracketDepth != 0) {
+            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: bracketDepth={0}, query={1}", new Object[]{bracketDepth, query});
+            return -1;
+        }
+
+        LOGGER.log(Level.FINEST, "Основной FROM не найден в запросе: {0}", query);
         return -1;
     }
 
