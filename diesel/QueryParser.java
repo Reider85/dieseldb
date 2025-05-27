@@ -2094,17 +2094,34 @@ class QueryParser {
         String normalized = normalizeCondition(conditionStr).trim();
 
         // Регулярные выражения для токенизации
-        Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'"); // Строки в кавычках
-        Pattern parenGroupPattern = Pattern.compile("\\([^()]+\\)"); // Группы в скобках
         Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE); // AND/OR
+        Pattern inClausePattern = Pattern.compile(
+                "(?i)\\b([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s+)?IN\\s*\\(([^)]+)\\)",
+                Pattern.DOTALL
+        ); // Условие IN
         Pattern conditionPattern = Pattern.compile(
-                "(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|\\([^()]+\\))+" // Слова, строки или группы
-        );
+                "(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|\\((?:[^()']+|'(?:\\\\.[^'])*')*\\))+"
+        ); // Общий шаблон для токенов
 
-        // Разбиваем строку на токены, сохраняя пробелы для корректного разделения
+        // Обрабатываем IN-условия
+        StringBuilder processedInput = new StringBuilder();
+        List<String> inConditions = new ArrayList<>();
+        int lastEnd = 0;
+        Matcher inMatcher = inClausePattern.matcher(normalized);
+        while (inMatcher.find()) {
+            processedInput.append(normalized, lastEnd, inMatcher.start());
+            String fullMatch = inMatcher.group(0);
+            inConditions.add(fullMatch); // Сохраняем условие IN для последующей обработки
+            processedInput.append("IN_CONDITION_" + inConditions.size()); // Заменяем условие плейсхолдером
+            lastEnd = inMatcher.end();
+        }
+        processedInput.append(normalized.substring(lastEnd));
+        normalized = processedInput.toString().trim();
+
+        // Разбиваем строку на токены
         List<String> tokens = new ArrayList<>();
         Matcher tokenMatcher = conditionPattern.matcher(normalized);
-        int lastEnd = 0;
+        lastEnd = 0;
         while (tokenMatcher.find()) {
             String preTokenSpace = normalized.substring(lastEnd, tokenMatcher.start());
             if (!preTokenSpace.trim().isEmpty()) {
@@ -2124,11 +2141,53 @@ class QueryParser {
         StringBuilder currentCondition = new StringBuilder();
         String conjunction = null;
         boolean not = false;
+        int inConditionIndex = 0;
 
         for (int i = 0; i < tokens.size(); i++) {
             String token = tokens.get(i).trim();
             if (token.isEmpty()) {
                 continue;
+            }
+
+            // Проверяем плейсхолдер IN-условия
+            if (token.startsWith("IN_CONDITION_")) {
+                inConditionIndex++;
+                String inCondition = inConditions.get(inConditionIndex - 1);
+                Matcher inCondMatcher = inClausePattern.matcher(inCondition);
+                if (inCondMatcher.matches()) {
+                    String column = inCondMatcher.group(1).trim();
+                    boolean isNot = inCondMatcher.group(2) != null;
+                    String valuesStr = inCondMatcher.group(3).trim();
+                    String actualColumn = columnAliases.getOrDefault(column.split("\\.")[column.contains(".") ? 1 : 0], column);
+                    String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
+                    Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
+
+                    if (valuesStr.toUpperCase().startsWith("SELECT ")) {
+                        // Подзапрос
+                        String subQueryStr = valuesStr;
+                        if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
+                            subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
+                        }
+                        validateSubquery("(" + subQueryStr + ")");
+                        Query<?> subQuery = parse(subQueryStr, database);
+                        conditions.add(new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, isNot));
+                        LOGGER.log(Level.FINE, "Добавлено IN условие с подзапросом: {0} IN ({1})", new Object[]{actualColumn, subQueryStr});
+                    } else {
+                        // Список значений
+                        String[] valueParts = valuesStr.split(",\\s*");
+                        List<Object> inValues = new ArrayList<>();
+                        for (String val : valueParts) {
+                            Object value = parseConditionValue(actualColumn, val.trim(), columnType);
+                            inValues.add(value);
+                        }
+                        conditions.add(new Condition(actualColumn, inValues, conjunction, isNot));
+                        LOGGER.log(Level.FINE, "Добавлено IN условие: {0} IN ({1})", new Object[]{actualColumn, valuesStr});
+                    }
+                    conjunction = null;
+                    not = false;
+                    currentCondition = new StringBuilder();
+                    continue;
+                }
             }
 
             // Проверяем логические операторы
@@ -2153,14 +2212,14 @@ class QueryParser {
                 continue;
             }
 
-            // Проверяем, является ли токен началом группового условия
+            // Проверяем групповые условия
             if (token.startsWith("(") && token.endsWith(")")) {
                 String groupContent = token.substring(1, token.length() - 1).trim();
                 if (groupContent.toUpperCase().startsWith("SELECT")) {
-                    // Это подзапрос, добавляем его как часть текущего условия
-                    currentCondition.append(token);
+                    // Подзапрос
+                    currentCondition.append(token).append(" ");
                 } else if (!groupContent.isEmpty()) {
-                    // Это групповое условие
+                    // Групповое условие
                     List<Condition> subConditions = parseConditions(
                             groupContent, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases
@@ -2174,7 +2233,7 @@ class QueryParser {
                 continue;
             }
 
-            // Проверяем, является ли токен ключевым словом (LIMIT, OFFSET, ORDER BY, GROUP BY)
+            // Проверяем ключевые слова (LIMIT, OFFSET, ORDER BY, GROUP BY)
             if (token.matches("(?i)^(LIMIT|OFFSET|ORDER BY|GROUP BY)$")) {
                 if (!currentCondition.toString().trim().isEmpty()) {
                     Condition condition = parseSingleCondition(
@@ -2184,7 +2243,7 @@ class QueryParser {
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{token, condition});
                 }
-                break; // Прекращаем обработку условий
+                break;
             }
 
             // Добавляем токен в текущее условие
