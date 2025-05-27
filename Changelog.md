@@ -162,3 +162,4 @@
 1.6.2 JOIN fix
 1.6.3 JOIN fix
 1.6.4 JOIN fix
+1.6.5 JOIN fix
