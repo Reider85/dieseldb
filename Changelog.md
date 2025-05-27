@@ -152,3 +152,4 @@
 1.5.2 fix subqueries in limit conditions
 1.5.3 fix subqueries in limit conditions
 1.5.4 fix subqueries in limit conditions
+1.5.5 fix subqueries in limit conditions
