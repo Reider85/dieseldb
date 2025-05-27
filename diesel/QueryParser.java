@@ -1291,91 +1291,78 @@ class QueryParser {
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
-        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
+        if (query == null || query.isEmpty() || clause == null || clause.isEmpty()) {
             LOGGER.log(Level.FINEST, "Недопустимый ввод: query={0}, clause={1}", new Object[]{query, clause});
             return -1;
         }
 
-        // Регулярные выражения для различных токенов
-        Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
-        Pattern subQueryStartPattern = Pattern.compile("\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
-        Pattern openParenPattern = Pattern.compile("\\(");
-        Pattern closeParenPattern = Pattern.compile("\\)");
-        Pattern clausePattern = Pattern.compile("\\b" + Pattern.quote(clause.toUpperCase()) + "\\b");
+        String normalizedQuery = query.trim();
+        String upperClause = clause.toUpperCase();
 
-        int currentPos = 0;
-        int lastClauseIndex = -1;
-        Deque<String> contextStack = new ArrayDeque<>(); // Стек для отслеживания контекста (скобки, подзапросы)
-        boolean inQuotes = false;
+        // Регулярное выражение для строк в одинарных кавычках
+        String quotedStringRegex = "'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'";
+        // Регулярное выражение для подзапросов
+        String subQueryRegex = "\\(SELECT\\s+.*?\\s*\\)";
+        // Регулярное выражение для ключевого слова вне строк и подзапросов
+        String clauseRegex = "(?i)" + Pattern.quote("\\b" + upperClause + "\\b");
 
-        while (currentPos < query.length()) {
-            String remaining = query.substring(currentPos);
+        // Заменяем строки и подзапросы на плейсхолдеры, чтобы исключить их из поиска
+        String processedQuery = normalizedQuery;
+        List<String> placeholders = new ArrayList<>();
+        int placeholderIndex = 0;
 
-            // Проверяем строки в кавычках
-            Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
-            if (!inQuotes && quotedStringMatcher.lookingAt()) {
-                currentPos += quotedStringMatcher.end();
-                continue;
-            }
+        // Заменяем строки
+        Matcher quotedStringMatcher = Pattern.compile(quotedStringRegex).matcher(processedQuery);
+        StringBuilder tempQuery = new StringBuilder();
+        int lastEnd = 0;
+        while (quotedStringMatcher.find()) {
+            tempQuery.append(processedQuery, lastEnd, quotedStringMatcher.start());
+            String placeholder = "STRING_" + placeholderIndex++;
+            tempQuery.append(placeholder);
+            placeholders.add(quotedStringMatcher.group());
+            lastEnd = quotedStringMatcher.end();
+        }
+        tempQuery.append(processedQuery.substring(lastEnd));
+        processedQuery = tempQuery.toString();
 
-            // Проверяем начало подзапроса
-            Matcher subQueryMatcher = subQueryStartPattern.matcher(remaining);
-            if (!inQuotes && subQueryMatcher.lookingAt()) {
-                contextStack.push("SUBQUERY");
-                currentPos += subQueryMatcher.end();
-                continue;
-            }
+        // Заменяем подзапросы
+        tempQuery.setLength(0);
+        lastEnd = 0;
+        Matcher subQueryMatcher = Pattern.compile(subQueryRegex, Pattern.DOTALL).matcher(processedQuery);
+        while (subQueryMatcher.find()) {
+            tempQuery.append(processedQuery, lastEnd, subQueryMatcher.start());
+            String placeholder = "SUBQUERY_" + placeholderIndex++;
+            tempQuery.append(placeholder);
+            placeholders.add(subQueryMatcher.group());
+            lastEnd = subQueryMatcher.end();
+        }
+        tempQuery.append(processedQuery.substring(lastEnd));
+        processedQuery = tempQuery.toString();
 
-            // Проверяем открывающую скобку
-            Matcher openParenMatcher = openParenPattern.matcher(remaining);
-            if (!inQuotes && openParenMatcher.lookingAt()) {
-                contextStack.push("PAREN");
-                currentPos += openParenMatcher.end();
-                continue;
-            }
+        // Ищем ключевое слово в обработанной строке
+        Matcher clauseMatcher = Pattern.compile(clauseRegex).matcher(processedQuery);
+        if (clauseMatcher.find()) {
+            int indexInProcessed = clauseMatcher.start();
+            String beforeMatch = processedQuery.substring(0, indexInProcessed);
+            int actualIndex = indexInProcessed;
 
-            // Проверяем закрывающую скобку
-            Matcher closeParenMatcher = closeParenPattern.matcher(remaining);
-            if (!inQuotes && closeParenMatcher.lookingAt()) {
-                if (!contextStack.isEmpty()) {
-                    contextStack.pop();
-                } else {
-                    LOGGER.log(Level.WARNING, "Несбалансированная закрывающая скобка на позиции {0} в запросе: {1}",
-                            new Object[]{currentPos, query});
+            // Корректируем индекс, учитывая длину плейсхолдеров
+            for (String placeholder : placeholders) {
+                String placeholderRegex = Pattern.quote(placeholder);
+                Matcher placeholderMatcher = Pattern.compile(placeholderRegex).matcher(beforeMatch);
+                while (placeholderMatcher.find()) {
+                    int placeholderLength = placeholder.length();
+                    int originalLength = placeholders.get(Integer.parseInt(placeholder.substring(placeholder.indexOf("_") + 1))).length();
+                    actualIndex += (originalLength - placeholderLength);
                 }
-                currentPos += closeParenMatcher.end();
-                continue;
             }
 
-            // Проверяем целевой клаузер
-            Matcher clauseMatcher = clausePattern.matcher(remaining);
-            if (!inQuotes && clauseMatcher.lookingAt() && contextStack.isEmpty()) {
-                lastClauseIndex = currentPos;
-                LOGGER.log(Level.FINEST, "Найден клаузер {0} на позиции {1}", new Object[]{clause, lastClauseIndex});
-                currentPos += clauseMatcher.end();
-                continue;
-            }
-
-            // Обработка символа кавычек
-            if (remaining.charAt(0) == '\'') {
-                inQuotes = !inQuotes;
-            }
-
-            currentPos++;
+            LOGGER.log(Level.FINEST, "Найдено ключевое слово {0} на позиции {1} в запросе: {2}",
+                    new Object[]{clause, actualIndex, query});
+            return actualIndex;
         }
 
-        if (!contextStack.isEmpty()) {
-            LOGGER.log(Level.WARNING, "Несбалансированные скобки или подзапросы в запросе: {0}, стек: {1}",
-                    new Object[]{query, contextStack});
-        }
-
-        if (lastClauseIndex != -1) {
-            LOGGER.log(Level.FINEST, "Найден последний {0} клаузер на индексе {1} в запросе: {2}",
-                    new Object[]{clause, lastClauseIndex, query});
-            return lastClauseIndex;
-        }
-
-        LOGGER.log(Level.FINEST, "Клаузер {0} не найден вне подзапросов в запросе: {1}", new Object[]{clause, query});
+        LOGGER.log(Level.FINEST, "Ключевое слово {0} не найдено в запросе: {1}", new Object[]{clause, query});
         return -1;
     }
 
@@ -1976,18 +1963,19 @@ class QueryParser {
         String normalized = normalizeCondition(conditionStr).trim();
 
         // Регулярные выражения для токенизации
-        Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
+        Pattern logicalOperatorPattern = Pattern.compile("\\bAND\\b|\\bOR\\b", Pattern.CASE_INSENSITIVE);
         Pattern inClausePattern = Pattern.compile(
-                "(?i)\\b([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s+)?IN\\s*\\(([^)]+)\\)",
+                "\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?IN\\s*\\([^)]+\\)",
                 Pattern.DOTALL
         );
-        // Улучшенное регулярное выражение для токенов, исключающее одиночные скобки
-        Pattern conditionPattern = Pattern.compile(
-                "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Quoted strings
-                        "|\\((?:[^()']+|'(?:\\\\.[^'])*')*\\)" + // Balanced parenthesized groups
-                        "|\\b(?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|[0-9]+|TRUE|FALSE|NULL|NOT|LIKE)\\b" + // Identifiers, numbers, keywords
-                        "|(?:=|!=|<>|>=|<=|<|>|\\s+)" // Operators and spaces
-        );
+        // Разделенные регулярные выражения для токенов
+        Pattern quotedStringPattern = Pattern.compile("'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
+        Pattern balancedParenPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
+        Pattern identifierPattern = Pattern.compile("\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\b");
+        Pattern numberPattern = Pattern.compile("\\b[0-9]+\\b");
+        Pattern keywordPattern = Pattern.compile("\\bTRUE\\b|\\bFALSE\\b|\\bNULL\\b|\\bNOT\\b|\\bLIKE\\b");
+        Pattern operatorPattern = Pattern.compile("[=<>!]=|[<>]");
+        Pattern whitespacePattern = Pattern.compile("\\s+");
 
         // Обрабатываем IN-условия
         StringBuilder processedInput = new StringBuilder();
@@ -1996,7 +1984,7 @@ class QueryParser {
         Matcher inMatcher = inClausePattern.matcher(normalized);
         while (inMatcher.find()) {
             processedInput.append(normalized, lastEnd, inMatcher.start());
-            String fullMatch = inMatcher.group(0);
+            String fullMatch = inMatcher.group();
             inConditions.add(fullMatch);
             processedInput.append("IN_CONDITION_" + inConditions.size());
             lastEnd = inMatcher.end();
@@ -2006,13 +1994,67 @@ class QueryParser {
 
         // Разбиваем строку на токены
         List<String> tokens = new ArrayList<>();
-        Matcher tokenMatcher = conditionPattern.matcher(normalized);
-        while (tokenMatcher.find()) {
-            String token = tokenMatcher.group().trim();
-            if (!token.isEmpty()) {
-                tokens.add(token);
+        String remaining = normalized;
+        while (!remaining.isEmpty()) {
+            String matchedToken = null;
+            int matchLength = 0;
+
+            // Проверяем каждое регулярное выражение
+            Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
+            if (quotedStringMatcher.lookingAt()) {
+                matchedToken = quotedStringMatcher.group();
+                matchLength = matchedToken.length();
+            } else {
+                Matcher balancedParenMatcher = balancedParenPattern.matcher(remaining);
+                if (balancedParenMatcher.lookingAt()) {
+                    matchedToken = balancedParenMatcher.group();
+                    matchLength = matchedToken.length();
+                } else {
+                    Matcher identifierMatcher = identifierPattern.matcher(remaining);
+                    if (identifierMatcher.lookingAt()) {
+                        matchedToken = identifierMatcher.group();
+                        matchLength = matchedToken.length();
+                    } else {
+                        Matcher numberMatcher = numberPattern.matcher(remaining);
+                        if (numberMatcher.lookingAt()) {
+                            matchedToken = numberMatcher.group();
+                            matchLength = matchedToken.length();
+                        } else {
+                            Matcher keywordMatcher = keywordPattern.matcher(remaining);
+                            if (keywordMatcher.lookingAt()) {
+                                matchedToken = keywordMatcher.group();
+                                matchLength = matchedToken.length();
+                            } else {
+                                Matcher operatorMatcher = operatorPattern.matcher(remaining);
+                                if (operatorMatcher.lookingAt()) {
+                                    matchedToken = operatorMatcher.group();
+                                    matchLength = matchedToken.length();
+                                } else {
+                                    Matcher whitespaceMatcher = whitespacePattern.matcher(remaining);
+                                    if (whitespaceMatcher.lookingAt()) {
+                                        matchedToken = whitespaceMatcher.group();
+                                        matchLength = matchedToken.length();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (matchedToken != null && !matchedToken.trim().isEmpty()) {
+                tokens.add(matchedToken.trim());
+                remaining = remaining.substring(matchLength).trim();
+            } else {
+                remaining = remaining.substring(1).trim();
             }
         }
+
+        // Регулярное выражение для проверки IN_CONDITION_
+        Pattern inConditionPattern = Pattern.compile("IN_CONDITION_\\d+");
+
+        // Регулярное выражение для проверки групповых условий в скобках
+        Pattern groupedConditionPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
 
         // Обрабатываем токены
         StringBuilder currentCondition = new StringBuilder();
@@ -2032,15 +2074,16 @@ class QueryParser {
                 continue;
             }
 
-            // Проверяем плейсхолдер IN-условия
-            if (token.startsWith("IN_CONDITION_")) {
+            // Проверяем IN_CONDITION_
+            Matcher inConditionMatcher = inConditionPattern.matcher(token);
+            if (inConditionMatcher.matches()) {
                 inConditionIndex++;
                 String inCondition = inConditions.get(inConditionIndex - 1);
                 Matcher inCondMatcher = inClausePattern.matcher(inCondition);
                 if (inCondMatcher.matches()) {
-                    String column = inCondMatcher.group(1).trim();
-                    boolean isNot = inCondMatcher.group(2) != null;
-                    String valuesStr = inCondMatcher.group(3).trim();
+                    String column = inCondition.split("\\s+")[0].trim();
+                    boolean isNot = inCondition.toUpperCase().contains("NOT IN");
+                    String valuesStr = inCondition.substring(inCondition.indexOf("(") + 1, inCondition.lastIndexOf(")")).trim();
                     String actualColumn = columnAliases.getOrDefault(column.split("\\.")[column.contains(".") ? 1 : 0], column);
                     String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
                     Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
@@ -2075,7 +2118,7 @@ class QueryParser {
             if (logicalOperatorPattern.matcher(token).matches()) {
                 if (!currentCondition.toString().trim().isEmpty()) {
                     String condStr = currentCondition.toString().trim();
-                    if (!condStr.matches("^\\(+\\s*\\)+$")) { // Пропускаем токены, состоящие только из скобок
+                    if (!condStr.matches("^\\(+\\s*\\)+$")) {
                         Condition condition = parseSingleCondition(
                                 condStr, defaultTableName, database, originalQuery,
                                 isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr
@@ -2097,11 +2140,10 @@ class QueryParser {
             }
 
             // Проверяем групповые условия
-            if (token.startsWith("(") && token.endsWith(")")) {
+            Matcher groupedConditionMatcher = groupedConditionPattern.matcher(token);
+            if (groupedConditionMatcher.matches() && !token.toUpperCase().startsWith("(SELECT")) {
                 String groupContent = token.substring(1, token.length() - 1).trim();
-                if (groupContent.toUpperCase().startsWith("SELECT")) {
-                    currentCondition.append(token).append(" ");
-                } else if (!groupContent.isEmpty()) {
+                if (!groupContent.isEmpty()) {
                     List<Condition> subConditions = parseConditions(
                             groupContent, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases
@@ -2116,7 +2158,7 @@ class QueryParser {
             }
 
             // Проверяем ключевые слова
-            if (token.matches("(?i)^(LIMIT|OFFSET|ORDER BY|GROUP BY)$")) {
+            if (token.matches("(?i)^LIMIT\\b|^OFFSET\\b|^ORDER BY\\b|^GROUP BY\\b")) {
                 if (!currentCondition.toString().trim().isEmpty()) {
                     String condStr = currentCondition.toString().trim();
                     if (!condStr.matches("^\\(+\\s*\\)+$")) {
@@ -2251,7 +2293,8 @@ class QueryParser {
         }
 
         // Проверка на групповые условия в скобках
-        if (normalizedCondStr.startsWith("(") && normalizedCondStr.endsWith(")")) {
+        Pattern groupedConditionPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
+        if (groupedConditionPattern.matcher(normalizedCondStr).matches()) {
             String subCondStr = normalizedCondStr.substring(1, normalizedCondStr.length() - 1).trim();
             if (!subCondStr.isEmpty()) {
                 List<Condition> subConditions = parseConditions(subCondStr, defaultTableName, database, originalQuery,
@@ -2261,7 +2304,10 @@ class QueryParser {
         }
 
         // Проверка IN условия
-        if (normalizedCondStr.toUpperCase().contains(" IN ")) {
+        Pattern inClausePattern = Pattern.compile(
+                "\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?IN\\s*\\([^)]+\\)"
+        );
+        if (inClausePattern.matcher(normalizedCondStr.toUpperCase()).find()) {
             String[] parts = normalizedCondStr.split("\\s+IN\\s+", 2);
             if (parts.length == 2 && parts[0].matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
                 String column = parts[0].trim();
@@ -2322,7 +2368,7 @@ class QueryParser {
 
         // Проверка условий с подзапросами
         if (normalizedCondStr.toUpperCase().contains("(SELECT ")) {
-            String[] parts = normalizedCondStr.split("\\s*(?=|\\s*!=|<>|>=|<=|<|>|\\s+LIKE|\\s+NOT LIKE)\\s*", 2);
+            String[] parts = normalizedCondStr.split("\\s*(?:=|[!=<>]=|[<>]|LIKE|NOT LIKE)\\s*", 2);
             if (parts.length == 2 && parts[1].trim().startsWith("(SELECT ")) {
                 String column = parts[0].trim();
                 String operatorStr = normalizedCondStr.substring(column.length(), normalizedCondStr.indexOf("(")).trim();
@@ -2341,24 +2387,17 @@ class QueryParser {
             }
         }
 
-        // Обработка стандартных операторов
-        String[] operators = {"=", "!=", "<>", ">=", "<=", "<", ">", "LIKE", "NOT LIKE"};
+        // Регулярное выражение для операторов
+        Pattern operatorPattern = Pattern.compile("\\s+(?:=|[!=<>]=|[<>]|LIKE|NOT LIKE)\\s+");
+
         String selectedOperator = null;
         int splitIndex = -1;
         String rightPart = null;
-        for (String op : operators) {
-            int index = normalizedCondStr.toUpperCase().indexOf(" " + op + " ");
-            if (index != -1) {
-                selectedOperator = op;
-                splitIndex = index + 1; // Учитываем пробел перед оператором
-                rightPart = normalizedCondStr.substring(splitIndex + op.length()).trim();
-                if (!rightPart.isEmpty() && !rightPart.toUpperCase().startsWith("(SELECT")) {
-                    break;
-                }
-                selectedOperator = null;
-                splitIndex = -1;
-                rightPart = null;
-            }
+        Matcher operatorMatcher = operatorPattern.matcher(" " + normalizedCondStr + " ");
+        if (operatorMatcher.find()) {
+            selectedOperator = operatorMatcher.group().trim();
+            splitIndex = operatorMatcher.start();
+            rightPart = normalizedCondStr.substring(splitIndex + selectedOperator.length()).trim();
         }
 
         if (selectedOperator == null) {
@@ -2370,25 +2409,24 @@ class QueryParser {
         LOGGER.log(Level.FINEST, "Разделенное условие: leftPart={0}, operator={1}, rightPart={2}",
                 new Object[]{leftPart, selectedOperator, rightPart});
 
-        // Очистка rightPart от завершающих скобок, если они есть из-за группировки
-        if (rightPart.endsWith(")")) {
-            int parenCount = 0;
-            int endIndex = rightPart.length();
-            for (int i = rightPart.length() - 1; i >= 0; i--) {
-                if (rightPart.charAt(i) == ')') {
-                    parenCount++;
-                } else if (rightPart.charAt(i) == '(') {
-                    parenCount--;
-                }
-                if (parenCount == 0) {
-                    endIndex = i + 1;
-                    break;
+        // Очистка rightPart от завершающих скобок
+        Pattern trailingParenPattern = Pattern.compile(".*?\\)+$");
+        if (trailingParenPattern.matcher(rightPart).matches()) {
+            StringBuilder cleanedRightPart = new StringBuilder();
+            String remaining = rightPart;
+            while (remaining.endsWith(")")) {
+                Matcher balancedParenMatcher = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)$").matcher(remaining);
+                if (balancedParenMatcher.find()) {
+                    String group = balancedParenMatcher.group();
+                    cleanedRightPart.insert(0, group.substring(0, group.length() - 1));
+                    remaining = remaining.substring(0, remaining.length() - group.length()).trim();
+                } else {
+                    cleanedRightPart.insert(0, ")");
+                    remaining = remaining.substring(0, remaining.length() - 1).trim();
                 }
             }
-            rightPart = rightPart.substring(0, endIndex).trim();
-            if (rightPart.endsWith(")")) {
-                rightPart = rightPart.substring(0, rightPart.length() - 1).trim();
-            }
+            cleanedRightPart.insert(0, remaining);
+            rightPart = cleanedRightPart.toString().trim();
         }
 
         String column = leftPart;
@@ -2396,13 +2434,11 @@ class QueryParser {
         String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
         validateColumn(normalizedColumn, combinedColumnTypes);
 
-        // Проверка, является ли правая часть столбцом
         String rightColumn = null;
         Object value = null;
         if (rightPart.matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
             rightColumn = rightPart;
         } else {
-            // Пробуем разобрать как значение
             try {
                 value = parseConditionValue(actualColumn, rightPart, getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
             } catch (IllegalArgumentException e) {
@@ -2482,89 +2518,126 @@ class QueryParser {
         List<HavingCondition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
-        int parenDepth = 0;
         String conjunction = null;
         boolean not = false;
-        int subQueryStart = -1; // Added declaration
 
-        for (int i = 0; i < havingClause.length(); i++) {
-            char c = havingClause.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentCondition.append(c);
+        // Регулярные выражения
+        Pattern quotedStringPattern = Pattern.compile("'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
+        Pattern subQueryPattern = Pattern.compile("\\(SELECT\\s+.*?\\s*\\)", Pattern.DOTALL);
+        Pattern logicalOperatorPattern = Pattern.compile("\\bAND\\b|\\bOR\\b", Pattern.CASE_INSENSITIVE);
+        Pattern keywordPattern = Pattern.compile("\\bORDER BY\\b|\\bLIMIT\\b|\\bOFFSET\\b", Pattern.CASE_INSENSITIVE);
+        Pattern notPattern = Pattern.compile("\\bNOT\\b", Pattern.CASE_INSENSITIVE);
+        Pattern balancedParenPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
+
+        StringBuilder processedInput = new StringBuilder();
+        List<String> placeholders = new ArrayList<>();
+        int placeholderIndex = 0;
+
+        // Заменяем строки и подзапросы на плейсхолдеры
+        String temp = havingClause;
+        Matcher quotedStringMatcher = quotedStringPattern.matcher(temp);
+        int lastEnd = 0;
+        while (quotedStringMatcher.find()) {
+            processedInput.append(temp, lastEnd, quotedStringMatcher.start());
+            String placeholder = "STRING_" + placeholderIndex++;
+            processedInput.append(placeholder);
+            placeholders.add(quotedStringMatcher.group());
+            lastEnd = quotedStringMatcher.end();
+        }
+        processedInput.append(temp.substring(lastEnd));
+        temp = processedInput.toString();
+        processedInput.setLength(0);
+        lastEnd = 0;
+
+        Matcher subQueryMatcher = subQueryPattern.matcher(temp);
+        while (subQueryMatcher.find()) {
+            processedInput.append(temp, lastEnd, subQueryMatcher.start());
+            String placeholder = "SUBQUERY_" + placeholderIndex++;
+            processedInput.append(placeholder);
+            placeholders.add(subQueryMatcher.group());
+            lastEnd = subQueryMatcher.end();
+        }
+        processedInput.append(temp.substring(lastEnd));
+        String processedClause = processedInput.toString();
+
+        // Разбиваем на токены
+        List<String> tokens = new ArrayList<>();
+        Matcher tokenMatcher = Pattern.compile(
+                quotedStringPattern.pattern() + "|" +
+                        balancedParenPattern.pattern() + "|" +
+                        logicalOperatorPattern.pattern() + "|" +
+                        keywordPattern.pattern() + "|" +
+                        notPattern.pattern() + "|" +
+                        "\\S+"
+        ).matcher(processedClause);
+        while (tokenMatcher.find()) {
+            String token = tokenMatcher.group().trim();
+            if (!token.isEmpty()) {
+                tokens.add(token);
+            }
+        }
+
+        for (String token : tokens) {
+            if (inQuotes) {
+                currentCondition.append(token).append(" ");
+                if (quotedStringPattern.matcher(token).matches()) {
+                    inQuotes = false;
+                }
                 continue;
             }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    if (parenDepth == 1 && i + 7 < havingClause.length() && havingClause.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                        subQueryStart = i;
-                    }
-                    currentCondition.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentCondition.append(c);
-                    if (parenDepth == 0 && subQueryStart != -1) {
-                        subQueryStart = -1; // End of subquery
-                    }
-                    if (parenDepth == 0 && currentCondition.length() > 0) {
-                        String condStr = currentCondition.toString().trim();
-                        if (condStr.startsWith("(") && condStr.endsWith(")")) {
-                            condStr = condStr.substring(1, condStr.length() - 1).trim();
-                            if (!condStr.isEmpty()) {
-                                List<HavingCondition> subConditions = parseHavingConditions(condStr, defaultTableName,
-                                        database, originalQuery, aggregates, combinedColumnTypes, tableAliases, columnAliases);
-                                conditions.add(new HavingCondition(subConditions, conjunction, not));
-                                LOGGER.log(Level.FINE, "Parsed grouped HAVING condition: {0}, conjunction={1}, not={2}",
-                                        new Object[]{subConditions, conjunction, not});
-                            }
-                        }
-                        currentCondition = new StringBuilder();
-                        conjunction = null;
-                        not = false;
-                    }
-                    continue;
-                } else if (parenDepth == 0 && c == ' ' && subQueryStart == -1) {
-                    String nextToken = getNextToken(havingClause, i + 1);
-                    if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty()) {
-                            HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
-                                    aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
-                            conditions.add(condition);
-                            LOGGER.log(Level.FINE, "Parsed HAVING condition: {0}", condition);
-                            conjunction = nextToken.toUpperCase();
-                            not = false;
-                            currentCondition = new StringBuilder();
-                            i += nextToken.length();
-                        } else {
-                            conjunction = nextToken.toUpperCase();
-                            not = false;
-                            currentCondition = new StringBuilder();
-                            i += nextToken.length();
-                        }
-                        continue;
-                    } else if (nextToken.equalsIgnoreCase("NOT")) {
-                        not = true;
-                        currentCondition.append(c);
-                        i += nextToken.length();
-                        continue;
-                    } else if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
-                            (nextToken.equalsIgnoreCase("LIMIT") && subQueryStart == -1) ||
-                            (nextToken.equalsIgnoreCase("OFFSET") && subQueryStart == -1)) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty()) {
-                            HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
-                                    aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
-                            conditions.add(condition);
-                            LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
-                        }
-                        break;
-                    }
-                }
+
+            if (quotedStringPattern.matcher(token).matches()) {
+                inQuotes = true;
+                currentCondition.append(token).append(" ");
+                continue;
             }
-            currentCondition.append(c);
+
+            if (logicalOperatorPattern.matcher(token).matches()) {
+                String condStr = currentCondition.toString().trim();
+                if (!condStr.isEmpty()) {
+                    HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
+                            aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    conditions.add(condition);
+                    LOGGER.log(Level.FINE, "Parsed HAVING condition: {0}", condition);
+                }
+                conjunction = token.toUpperCase();
+                not = false;
+                currentCondition = new StringBuilder();
+                continue;
+            }
+
+            if (notPattern.matcher(token).matches()) {
+                not = true;
+                continue;
+            }
+
+            if (balancedParenPattern.matcher(token).matches() && !subQueryPattern.matcher(token).matches()) {
+                String condStr = token.substring(1, token.length() - 1).trim();
+                if (!condStr.isEmpty()) {
+                    List<HavingCondition> subConditions = parseHavingConditions(condStr, defaultTableName, database, originalQuery,
+                            aggregates, combinedColumnTypes, tableAliases, columnAliases);
+                    conditions.add(new HavingCondition(subConditions, conjunction, not));
+                    LOGGER.log(Level.FINE, "Parsed grouped HAVING condition: {0}, conjunction={1}, not={2}",
+                            new Object[]{subConditions, conjunction, not});
+                }
+                conjunction = null;
+                not = false;
+                currentCondition = new StringBuilder();
+                continue;
+            }
+
+            if (keywordPattern.matcher(token).matches()) {
+                String condStr = currentCondition.toString().trim();
+                if (!condStr.isEmpty()) {
+                    HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
+                            aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    conditions.add(condition);
+                    LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
+                }
+                break;
+            }
+
+            currentCondition.append(token).append(" ");
         }
 
         String finalCondStr = currentCondition.toString().trim();
@@ -2590,17 +2663,15 @@ class QueryParser {
             return new HavingCondition(subConditions, conjunction, not);
         }
 
-        String[] operators = {"=", "!=", "<>", ">=", "<=", "<", ">"};
+        // Регулярное выражение для операторов
+        Pattern operatorPattern = Pattern.compile("\\s+(?:=|[!=<>]=|[<>])\\s+");
+
         String selectedOperator = null;
         int operatorIndex = -1;
-        for (String op : operators) {
-            Pattern opPattern = Pattern.compile("(?i)\\s+" + Pattern.quote(op) + "\\s+");
-            Matcher opMatcher = opPattern.matcher(" " + condStr + " ");
-            if (opMatcher.find()) {
-                selectedOperator = op;
-                operatorIndex = opMatcher.start();
-                break;
-            }
+        Matcher operatorMatcher = operatorPattern.matcher(" " + condStr + " ");
+        if (operatorMatcher.find()) {
+            selectedOperator = operatorMatcher.group().trim();
+            operatorIndex = operatorMatcher.start();
         }
 
         if (operatorIndex == -1) {
@@ -2689,43 +2760,72 @@ class QueryParser {
             throw new IllegalArgumentException("Недопустимый вход для findMatchingParenthesis: startIndex должен указывать на открывающую скобку");
         }
 
-        // Проверка, что строка, начиная с startIndex, похожа на подзапрос
-        Pattern subQueryPattern = Pattern.compile("\\s*\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
-        String fromStart = startIndex + 7 < str.length() ? str.substring(startIndex, startIndex + 7) : "";
-        if (!subQueryPattern.matcher(fromStart).lookingAt()) {
-            LOGGER.log(Level.FINE, "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
+        // Регулярное выражение для строк
+        Pattern quotedStringPattern = Pattern.compile("'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
+        // Регулярное выражение для подзапросов
+        Pattern subQueryPattern = Pattern.compile("\\(SELECT\\s+.*?\\s*\\)", Pattern.DOTALL);
+        // Регулярное выражение для сбалансированных скобок
+        Pattern balancedParenPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
+
+        String remaining = str.substring(startIndex);
+        StringBuilder processedInput = new StringBuilder();
+        List<String> placeholders = new ArrayList<>();
+        int placeholderIndex = 0;
+
+        // Заменяем строки
+        Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
+        int lastEnd = 0;
+        while (quotedStringMatcher.find()) {
+            processedInput.append(remaining, lastEnd, quotedStringMatcher.start());
+            String placeholder = "STRING_" + placeholderIndex++;
+            processedInput.append(placeholder);
+            placeholders.add(quotedStringMatcher.group());
+            lastEnd = quotedStringMatcher.end();
         }
+        processedInput.append(remaining.substring(lastEnd));
+        remaining = processedInput.toString();
+        processedInput.setLength(0);
+        lastEnd = 0;
 
-        int parenDepth = 0;
-        boolean inQuotes = false;
+        // Заменяем подзапросы
+        Matcher subQueryMatcher = subQueryPattern.matcher(remaining);
+        while (subQueryMatcher.find()) {
+            processedInput.append(remaining, lastEnd, subQueryMatcher.start());
+            String placeholder = "SUBQUERY_" + placeholderIndex++;
+            processedInput.append(placeholder);
+            placeholders.add(subQueryMatcher.group());
+            lastEnd = subQueryMatcher.end();
+        }
+        processedInput.append(remaining.substring(lastEnd));
+        remaining = processedInput.toString();
 
-        for (int i = startIndex; i < str.length(); i++) {
-            char c = str.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth == 0) {
-                        String subQueryStr = str.substring(startIndex, i + 1);
-                        // Проверка структуры подзапроса с использованием регулярного выражения
-                        Pattern selectPattern = Pattern.compile(
-                                "\\s*\\(\\s*SELECT\\s+.*?\\s+FROM\\s+.*?\\s*\\)",
-                                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
-                        );
-                        if (!selectPattern.matcher(subQueryStr).matches()) {
-                            LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
-                        }
-                        LOGGER.log(Level.FINE, "Найдена парная закрывающая скобка на индексе {0} для подзапроса: {1}",
-                                new Object[]{i, subQueryStr});
-                        return i;
-                    }
+        // Ищем ближайшую сбалансированную группу скобок
+        Matcher balancedParenMatcher = balancedParenPattern.matcher(remaining);
+        if (balancedParenMatcher.lookingAt()) {
+            String matchedGroup = balancedParenMatcher.group();
+            int indexInProcessed = startIndex + matchedGroup.length() - 1;
+
+            // Корректируем индекс, учитывая плейсхолдеры
+            String beforeMatch = remaining.substring(0, matchedGroup.length());
+            int actualIndex = indexInProcessed;
+            for (String placeholder : placeholders) {
+                String placeholderRegex = Pattern.quote(placeholder);
+                Matcher placeholderMatcher = Pattern.compile(placeholderRegex).matcher(beforeMatch);
+                while (placeholderMatcher.find()) {
+                    int placeholderLength = placeholder.length();
+                    int originalLength = placeholders.get(Integer.parseInt(placeholder.substring(placeholder.indexOf("_") + 1))).length();
+                    actualIndex += (originalLength - placeholderLength);
                 }
             }
+
+            String subQueryStr = str.substring(startIndex, actualIndex + 1);
+            Pattern selectPattern = Pattern.compile("\\s*\\(\\s*SELECT\\s+.*?\\s+FROM\\s+.*?\\s*\\)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+            if (!selectPattern.matcher(subQueryStr).matches()) {
+                LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
+            }
+            LOGGER.log(Level.FINE, "Найдена парная закрывающая скобка на индексе {0} для подзапроса: {1}",
+                    new Object[]{actualIndex, subQueryStr});
+            return actualIndex;
         }
 
         LOGGER.log(Level.SEVERE, "Парная закрывающая скобка не найдена: str={0}, startIndex={1}",
@@ -2748,25 +2848,44 @@ class QueryParser {
         }
 
         try {
-            Pattern selectPattern = Pattern.compile(
-                    "(?i)^\\(\\s*SELECT\\s+([^\\s]+)\\s+FROM\\s+([^\\s]+)(?:\\s+WHERE\\s+(.+?))?(?:\\s+LIMIT\\s+(\\d+))?\\s*\\)$"
-            );
-            Matcher matcher1 = selectPattern.matcher(norm1);
-            Matcher matcher2 = selectPattern.matcher(norm2);
+            // Регулярные выражения без групп
+            Pattern selectPattern = Pattern.compile("\\s*\\(\\s*SELECT\\s+[^\\s]+\\s+FROM\\s+[^\\s]+.*\\)");
+            Pattern wherePattern = Pattern.compile("\\s*WHERE\\s+.+");
+            Pattern limitPattern = Pattern.compile("\\s*LIMIT\\s+\\d+");
 
-            if (!matcher1.matches() || !matcher2.matches()) {
+            Matcher selectMatcher1 = selectPattern.matcher(norm1);
+            Matcher selectMatcher2 = selectPattern.matcher(norm2);
+            if (!selectMatcher1.matches() || !selectMatcher2.matches()) {
                 LOGGER.log(Level.FINE, "Subquery pattern mismatch: {0} vs {1}", new Object[]{norm1, norm2});
                 return false;
             }
 
-            String select1 = matcher1.group(1).trim();
-            String select2 = matcher2.group(1).trim();
-            String from1 = matcher1.group(2).trim();
-            String from2 = matcher2.group(2).trim();
-            String where1 = matcher1.group(3) != null ? normalizeQueryString(matcher1.group(3).trim()).replaceAll("\\s+", " ") : "";
-            String where2 = matcher2.group(3) != null ? normalizeQueryString(matcher2.group(3).trim()).replaceAll("\\s+", " ") : "";
-            String limit1 = matcher1.group(4) != null ? matcher1.group(4).trim() : "";
-            String limit2 = matcher2.group(4) != null ? matcher2.group(4).trim() : "";
+            String select1 = norm1.replaceAll(".*SELECT\\s+([^\\s]+)\\s+.*", "$1").trim();
+            String select2 = norm2.replaceAll(".*SELECT\\s+([^\\s]+)\\s+.*", "$1").trim();
+            String from1 = norm1.replaceAll(".*FROM\\s+([^\\s]+).*", "$1").trim();
+            String from2 = norm2.replaceAll(".*FROM\\s+([^\\s]+).*", "$1").trim();
+
+            String where1 = "";
+            String where2 = "";
+            Matcher whereMatcher1 = wherePattern.matcher(norm1);
+            Matcher whereMatcher2 = wherePattern.matcher(norm2);
+            if (whereMatcher1.find()) {
+                where1 = normalizeQueryString(norm1.replaceAll(".*WHERE\\s+(.+?)(?:\\s+LIMIT.*|$)", "$1").trim()).replaceAll("\\s+", " ");
+            }
+            if (whereMatcher2.find()) {
+                where2 = normalizeQueryString(norm2.replaceAll(".*WHERE\\s+(.+?)(?:\\s+LIMIT.*|$)", "$1").trim()).replaceAll("\\s+", " ");
+            }
+
+            String limit1 = "";
+            String limit2 = "";
+            Matcher limitMatcher1 = limitPattern.matcher(norm1);
+            Matcher limitMatcher2 = limitPattern.matcher(norm2);
+            if (limitMatcher1.find()) {
+                limit1 = norm1.replaceAll(".*LIMIT\\s+(\\d+).*", "$1").trim();
+            }
+            if (limitMatcher2.find()) {
+                limit2 = norm2.replaceAll(".*LIMIT\\s+(\\d+).*", "$1").trim();
+            }
 
             where1 = where1.replace("ID=U.ID", "ID = U.ID").replace("U.ID=ID", "ID = U.ID");
             where2 = where2.replace("ID=U.ID", "ID = U.ID").replace("U.ID=ID", "ID = U.ID");
@@ -2791,133 +2910,65 @@ class QueryParser {
             return "";
         }
 
-        StringBuilder result = new StringBuilder();
-        Deque<Character> bracketStack = new ArrayDeque<>();
-        boolean inQuotes = false;
-        boolean inSubQuery = false;
-        int subQueryParenLevel = 0;
+        // Регулярное выражение для строк
+        Pattern quotedStringPattern = Pattern.compile("'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
+        // Регулярное выражение для подзапросов
+        Pattern subQueryPattern = Pattern.compile("\\(SELECT\\s+.*?\\s*\\)", Pattern.DOTALL);
+        // Регулярное выражение для операторов
+        Pattern operatorPattern = Pattern.compile("\\bEQUALS\\b|\\bNOT_EQUALS\\b|\\bGREATER_THAN\\b|\\bLIKE\\b|\\bNOT_LIKE\\b", Pattern.CASE_INSENSITIVE);
+        // Регулярное выражение для лишних пробелов
+        Pattern whitespacePattern = Pattern.compile("\\s+");
 
-        for (int i = 0; i < condition.length(); i++) {
-            char c = condition.charAt(i);
+        StringBuilder processedInput = new StringBuilder();
+        List<String> placeholders = new ArrayList<>();
+        int placeholderIndex = 0;
 
-            // Обработка кавычек
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                result.append(c);
-                continue;
-            }
-
-            // Пропускаем обработку, если в строке
-            if (inQuotes) {
-                result.append(c);
-                continue;
-            }
-
-            // Обработка скобок
-            if (c == '(') {
-                bracketStack.push(c);
-                result.append(c);
-
-                // Проверяем, начинается ли подзапрос
-                if (i + 7 < condition.length() && condition.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                    inSubQuery = true;
-                    subQueryParenLevel = bracketStack.size();
-                }
-                continue;
-            } else if (c == ')') {
-                if (bracketStack.isEmpty()) {
-                    throw new IllegalArgumentException("Unmatched closing parenthesis at position " + i);
-                }
-                bracketStack.pop();
-                result.append(c);
-
-                // Проверяем завершение подзапроса
-                if (inSubQuery && bracketStack.size() < subQueryParenLevel) {
-                    inSubQuery = false;
-                    subQueryParenLevel = 0;
-                }
-                continue;
-            }
-
-            // Пропускаем обработку внутри подзапроса
-            if (inSubQuery) {
-                result.append(c);
-                continue;
-            }
-
-            // Добавляем символ, если не в подзапросе
-            result.append(c);
+        // Заменяем строки
+        String temp = condition;
+        Matcher quotedStringMatcher = quotedStringPattern.matcher(temp);
+        int lastEnd = 0;
+        while (quotedStringMatcher.find()) {
+            processedInput.append(temp, lastEnd, quotedStringMatcher.start());
+            String placeholder = "STRING_" + placeholderIndex++;
+            processedInput.append(placeholder);
+            placeholders.add(quotedStringMatcher.group());
+            lastEnd = quotedStringMatcher.end();
         }
+        processedInput.append(temp.substring(lastEnd));
+        temp = processedInput.toString();
+        processedInput.setLength(0);
+        lastEnd = 0;
 
-        // Проверка на несбалансированные скобки
-        if (!bracketStack.isEmpty()) {
-            throw new IllegalArgumentException("Unmatched opening parenthesis in condition");
+        // Заменяем подзапросы
+        Matcher subQueryMatcher = subQueryPattern.matcher(temp);
+        while (subQueryMatcher.find()) {
+            processedInput.append(temp, lastEnd, subQueryMatcher.start());
+            String placeholder = "SUBQUERY_" + placeholderIndex++;
+            processedInput.append(placeholder);
+            placeholders.add(subQueryMatcher.group());
+            lastEnd = subQueryMatcher.end();
         }
-
-        // Нормализация операторов и пробелов вне подзапросов
-        String normalized = result.toString();
-        result.setLength(0);
-        inQuotes = false;
-        inSubQuery = false;
-        subQueryParenLevel = 0;
-        bracketStack.clear();
-
-        for (int i = 0; i < normalized.length(); i++) {
-            char c = normalized.charAt(i);
-
-            // Обработка кавычек
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                result.append(c);
-                continue;
-            }
-
-            // Пропускаем содержимое строк
-            if (inQuotes) {
-                result.append(c);
-                continue;
-            }
-
-            // Отслеживание скобок для подзапросов
-            if (c == '(') {
-                bracketStack.push(c);
-                if (i + 7 < normalized.length() && normalized.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                    inSubQuery = true;
-                    subQueryParenLevel = bracketStack.size();
-                }
-            } else if (c == ')') {
-                bracketStack.pop();
-                if (inSubQuery && bracketStack.size() < subQueryParenLevel) {
-                    inSubQuery = false;
-                    subQueryParenLevel = 0;
-                }
-            }
-
-            // Пропускаем нормализацию в подзапросах
-            if (inSubQuery) {
-                result.append(c);
-                continue;
-            }
-
-            // Удаляем лишние пробелы
-            if (Character.isWhitespace(c) && result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
-                continue;
-            }
-
-            result.append(c);
-        }
+        processedInput.append(temp.substring(lastEnd));
+        String normalized = processedInput.toString();
 
         // Нормализация операторов
-        normalized = result.toString();
         normalized = normalized.replaceAll("(?i)\\bEQUALS\\b", "=")
                 .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
                 .replaceAll("(?i)\\bGREATER_THAN\\b", ">")
                 .replaceAll("(?i)\\bLIKE\\b", "LIKE")
                 .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE")
-                // Очистка пробелов в числах
-                .replaceAll("(\\d+)\\s+(\\d+)", "$1$2");
+                .replaceAll("\\d+\\s+\\d+", "$0"); // Очистка пробелов в числах
 
-        return normalized.trim();
+        // Удаление лишних пробелов
+        normalized = whitespacePattern.matcher(normalized).replaceAll(" ").trim();
+
+        // Восстанавливаем строки и подзапросы
+        for (int i = 0; i < placeholders.size(); i++) {
+            String placeholder = (i < placeholderIndex / 2 ? "STRING_" : "SUBQUERY_") + i;
+            normalized = normalized.replace(placeholder, placeholders.get(i));
+        }
+
+        return normalized;
     }
 
     private String normalizeQueryString(String query) {
