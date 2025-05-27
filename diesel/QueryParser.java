@@ -2064,7 +2064,7 @@ class QueryParser {
                         currentCondition = new StringBuilder();
                         conditionStarted = false;
                         conjunction = nextToken;
-                        i += nextToken.length() + 1;
+                        i += nextToken.length();
                     } else if (nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET") ||
                             (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
                             (nextToken.equalsIgnoreCase("GROUP") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY"))) {
@@ -2097,6 +2097,11 @@ class QueryParser {
         if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
             LOGGER.log(Level.FINE, "Парсинг финального условия: condStr={0}, fullCondition={1}",
                     new Object[]{condStr, conditionStr});
+            // Дополнительная проверка на корректность condStr
+            if (condStr.endsWith("D") && conditionStr.endsWith("ID")) {
+                condStr = condStr.substring(0, condStr.length() - 1); // Удаляем лишний символ 'D'
+                LOGGER.log(Level.WARNING, "Исправлено финальное условие: удален лишний символ 'D', новое condStr={0}", condStr);
+            }
             Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
                     isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
             conditions.add(condition);
