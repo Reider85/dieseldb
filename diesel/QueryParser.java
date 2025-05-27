@@ -2094,14 +2094,18 @@ class QueryParser {
         String normalized = normalizeCondition(conditionStr).trim();
 
         // Регулярные выражения для токенизации
-        Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE); // AND/OR
+        Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
         Pattern inClausePattern = Pattern.compile(
                 "(?i)\\b([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s+)?IN\\s*\\(([^)]+)\\)",
                 Pattern.DOTALL
-        ); // Условие IN
+        );
+        // Улучшенное регулярное выражение для токенов, исключающее одиночные скобки
         Pattern conditionPattern = Pattern.compile(
-                "(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|\\((?:[^()']+|'(?:\\\\.[^'])*')*\\))+"
-        ); // Общий шаблон для токенов
+                "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Quoted strings
+                        "|\\((?:[^()']+|'(?:\\\\.[^'])*')*\\)" + // Balanced parenthesized groups
+                        "|\\b(?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|[0-9]+|TRUE|FALSE|NULL|NOT|LIKE)\\b" + // Identifiers, numbers, keywords
+                        "|(?:=|!=|<>|>=|<=|<|>|\\s+)" // Operators and spaces
+        );
 
         // Обрабатываем IN-условия
         StringBuilder processedInput = new StringBuilder();
@@ -2111,8 +2115,8 @@ class QueryParser {
         while (inMatcher.find()) {
             processedInput.append(normalized, lastEnd, inMatcher.start());
             String fullMatch = inMatcher.group(0);
-            inConditions.add(fullMatch); // Сохраняем условие IN для последующей обработки
-            processedInput.append("IN_CONDITION_" + inConditions.size()); // Заменяем условие плейсхолдером
+            inConditions.add(fullMatch);
+            processedInput.append("IN_CONDITION_" + inConditions.size());
             lastEnd = inMatcher.end();
         }
         processedInput.append(normalized.substring(lastEnd));
@@ -2121,31 +2125,28 @@ class QueryParser {
         // Разбиваем строку на токены
         List<String> tokens = new ArrayList<>();
         Matcher tokenMatcher = conditionPattern.matcher(normalized);
-        lastEnd = 0;
         while (tokenMatcher.find()) {
-            String preTokenSpace = normalized.substring(lastEnd, tokenMatcher.start());
-            if (!preTokenSpace.trim().isEmpty()) {
-                tokens.add(preTokenSpace);
-            }
-            tokens.add(tokenMatcher.group());
-            lastEnd = tokenMatcher.end();
-        }
-        if (lastEnd < normalized.length()) {
-            String remaining = normalized.substring(lastEnd).trim();
-            if (!remaining.isEmpty()) {
-                tokens.add(remaining);
+            String token = tokenMatcher.group().trim();
+            if (!token.isEmpty()) {
+                tokens.add(token);
             }
         }
 
-        // Обрабатываем токены для формирования условий
+        // Обрабатываем токены
         StringBuilder currentCondition = new StringBuilder();
         String conjunction = null;
         boolean not = false;
         int inConditionIndex = 0;
 
         for (int i = 0; i < tokens.size(); i++) {
-            String token = tokens.get(i).trim();
+            String token = tokens.get(i);
             if (token.isEmpty()) {
+                continue;
+            }
+
+            // Пропускаем одиночные скобки
+            if (token.equals("(") || token.equals(")")) {
+                currentCondition.append(token).append(" ");
                 continue;
             }
 
@@ -2163,7 +2164,6 @@ class QueryParser {
                     Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
 
                     if (valuesStr.toUpperCase().startsWith("SELECT ")) {
-                        // Подзапрос
                         String subQueryStr = valuesStr;
                         if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
                             subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
@@ -2173,7 +2173,6 @@ class QueryParser {
                         conditions.add(new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, isNot));
                         LOGGER.log(Level.FINE, "Добавлено IN условие с подзапросом: {0} IN ({1})", new Object[]{actualColumn, subQueryStr});
                     } else {
-                        // Список значений
                         String[] valueParts = valuesStr.split(",\\s*");
                         List<Object> inValues = new ArrayList<>();
                         for (String val : valueParts) {
@@ -2193,12 +2192,15 @@ class QueryParser {
             // Проверяем логические операторы
             if (logicalOperatorPattern.matcher(token).matches()) {
                 if (!currentCondition.toString().trim().isEmpty()) {
-                    Condition condition = parseSingleCondition(
-                            currentCondition.toString().trim(), defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr
-                    );
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено условие перед логическим оператором {0}: {1}", new Object[]{token, condition});
+                    String condStr = currentCondition.toString().trim();
+                    if (!condStr.matches("^\\(+\\s*\\)+$")) { // Пропускаем токены, состоящие только из скобок
+                        Condition condition = parseSingleCondition(
+                                condStr, defaultTableName, database, originalQuery,
+                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr
+                        );
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Добавлено условие перед логическим оператором {0}: {1}", new Object[]{token, condition});
+                    }
                     currentCondition = new StringBuilder();
                 }
                 conjunction = token.toUpperCase();
@@ -2216,10 +2218,8 @@ class QueryParser {
             if (token.startsWith("(") && token.endsWith(")")) {
                 String groupContent = token.substring(1, token.length() - 1).trim();
                 if (groupContent.toUpperCase().startsWith("SELECT")) {
-                    // Подзапрос
                     currentCondition.append(token).append(" ");
                 } else if (!groupContent.isEmpty()) {
-                    // Групповое условие
                     List<Condition> subConditions = parseConditions(
                             groupContent, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases
@@ -2233,15 +2233,18 @@ class QueryParser {
                 continue;
             }
 
-            // Проверяем ключевые слова (LIMIT, OFFSET, ORDER BY, GROUP BY)
+            // Проверяем ключевые слова
             if (token.matches("(?i)^(LIMIT|OFFSET|ORDER BY|GROUP BY)$")) {
                 if (!currentCondition.toString().trim().isEmpty()) {
-                    Condition condition = parseSingleCondition(
-                            currentCondition.toString().trim(), defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr
-                    );
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{token, condition});
+                    String condStr = currentCondition.toString().trim();
+                    if (!condStr.matches("^\\(+\\s*\\)+$")) {
+                        Condition condition = parseSingleCondition(
+                                condStr, defaultTableName, database, originalQuery,
+                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr
+                        );
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{token, condition});
+                    }
                 }
                 break;
             }
@@ -2252,7 +2255,7 @@ class QueryParser {
 
         // Обрабатываем оставшееся условие
         String finalCondStr = currentCondition.toString().trim();
-        if (!finalCondStr.isEmpty()) {
+        if (!finalCondStr.isEmpty() && !finalCondStr.matches("^\\(+\\s*\\)+$")) {
             Condition condition = parseSingleCondition(
                     finalCondStr, defaultTableName, database, originalQuery,
                     isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, conditionStr
@@ -2905,75 +2908,134 @@ class QueryParser {
         if (condition == null || condition.isEmpty()) {
             return "";
         }
+
         StringBuilder result = new StringBuilder();
-        boolean inSubQuery = false;
-        int parenDepth = 0;
+        Deque<Character> bracketStack = new ArrayDeque<>();
         boolean inQuotes = false;
+        boolean inSubQuery = false;
+        int subQueryParenLevel = 0;
 
         for (int i = 0; i < condition.length(); i++) {
             char c = condition.charAt(i);
+
+            // Обработка кавычек
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 result.append(c);
                 continue;
             }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    if (parenDepth == 1 && i + 7 < condition.length() && condition.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                        inSubQuery = true;
-                    }
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth == 0 && inSubQuery) {
-                        inSubQuery = false;
-                    }
-                }
+
+            // Пропускаем обработку, если в строке
+            if (inQuotes) {
+                result.append(c);
+                continue;
             }
+
+            // Обработка скобок
+            if (c == '(') {
+                bracketStack.push(c);
+                result.append(c);
+
+                // Проверяем, начинается ли подзапрос
+                if (i + 7 < condition.length() && condition.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                    inSubQuery = true;
+                    subQueryParenLevel = bracketStack.size();
+                }
+                continue;
+            } else if (c == ')') {
+                if (bracketStack.isEmpty()) {
+                    throw new IllegalArgumentException("Unmatched closing parenthesis at position " + i);
+                }
+                bracketStack.pop();
+                result.append(c);
+
+                // Проверяем завершение подзапроса
+                if (inSubQuery && bracketStack.size() < subQueryParenLevel) {
+                    inSubQuery = false;
+                    subQueryParenLevel = 0;
+                }
+                continue;
+            }
+
+            // Пропускаем обработку внутри подзапроса
+            if (inSubQuery) {
+                result.append(c);
+                continue;
+            }
+
+            // Добавляем символ, если не в подзапросе
             result.append(c);
         }
 
-        String normalized = result.toString();
-        if (!inSubQuery) {
-            normalized = normalized.replaceAll("(?i)\\bEQUALS\\b", "=")
-                    .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
-                    .replaceAll("(?i)\\bGREATER_THAN\\b", ">")
-                    .replaceAll("(?i)\\bLIKE\\b", "LIKE")
-                    .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE");
+        // Проверка на несбалансированные скобки
+        if (!bracketStack.isEmpty()) {
+            throw new IllegalArgumentException("Unmatched opening parenthesis in condition");
         }
 
-        StringBuilder finalResult = new StringBuilder();
-        parenDepth = 0;
+        // Нормализация операторов и пробелов вне подзапросов
+        String normalized = result.toString();
+        result.setLength(0);
         inQuotes = false;
         inSubQuery = false;
+        subQueryParenLevel = 0;
+        bracketStack.clear();
+
         for (int i = 0; i < normalized.length(); i++) {
             char c = normalized.charAt(i);
+
+            // Обработка кавычек
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                finalResult.append(c);
+                result.append(c);
                 continue;
             }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    if (parenDepth == 1 && i + 7 < normalized.length() && normalized.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                        inSubQuery = true;
-                    }
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth == 0 && inSubQuery) {
-                        inSubQuery = false;
-                    }
+
+            // Пропускаем содержимое строк
+            if (inQuotes) {
+                result.append(c);
+                continue;
+            }
+
+            // Отслеживание скобок для подзапросов
+            if (c == '(') {
+                bracketStack.push(c);
+                if (i + 7 < normalized.length() && normalized.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                    inSubQuery = true;
+                    subQueryParenLevel = bracketStack.size();
+                }
+            } else if (c == ')') {
+                bracketStack.pop();
+                if (inSubQuery && bracketStack.size() < subQueryParenLevel) {
+                    inSubQuery = false;
+                    subQueryParenLevel = 0;
                 }
             }
-            // Only collapse spaces outside subqueries
-            if (!inSubQuery && Character.isWhitespace(c) && finalResult.length() > 0 && Character.isWhitespace(finalResult.charAt(finalResult.length() - 1))) {
+
+            // Пропускаем нормализацию в подзапросах
+            if (inSubQuery) {
+                result.append(c);
                 continue;
             }
-            finalResult.append(c);
+
+            // Удаляем лишние пробелы
+            if (Character.isWhitespace(c) && result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
+                continue;
+            }
+
+            result.append(c);
         }
 
-        return finalResult.toString().trim();
+        // Нормализация операторов
+        normalized = result.toString();
+        normalized = normalized.replaceAll("(?i)\\bEQUALS\\b", "=")
+                .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
+                .replaceAll("(?i)\\bGREATER_THAN\\b", ">")
+                .replaceAll("(?i)\\bLIKE\\b", "LIKE")
+                .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE")
+                // Очистка пробелов в числах
+                .replaceAll("(\\d+)\\s+(\\d+)", "$1$2");
+
+        return normalized.trim();
     }
 
     private String normalizeQueryString(String query) {
