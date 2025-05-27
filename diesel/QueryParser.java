@@ -1872,78 +1872,56 @@ class QueryParser {
         return new DeleteQuery(conditions);
     }
 
-    private Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {
+    private Object parseConditionValue(String column, String value, Class<?> type) {
         try {
-            if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
-                if (columnType == String.class) {
+            // Обработка строковых значений в кавычках
+            if (value.startsWith("'") && value.endsWith("'")) {
+                String strippedValue = value.substring(1, value.length() - 1);
+                if (type == String.class) {
                     return strippedValue;
-                } else if (columnType == LocalDate.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                    return LocalDate.parse(strippedValue);
-                } else if (columnType == LocalDateTime.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
-                    return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
-                } else if (columnType == LocalDateTime.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
-                    return LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
-                } else if (columnType == UUID.class && strippedValue.matches(UUID_PATTERN)) {
-                    return UUID.fromString(strippedValue);
-                } else if (columnType == Character.class && strippedValue.length() == 1) {
-                    return strippedValue.charAt(0);
-                } else {
-                    throw new IllegalArgumentException("Value '" + strippedValue + "' does not match column type: " + columnType.getSimpleName());
                 }
-            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
-                if (columnType == Boolean.class) {
-                    return Boolean.parseBoolean(valueStr);
-                } else {
-                    throw new IllegalArgumentException("Boolean value '" + valueStr + "' does not match column type: " + columnType.getSimpleName());
+                // Для других типов продолжаем с удаленными кавычками
+                value = strippedValue;
+            }
+
+            // Обработка типов
+            if (type == String.class) {
+                return value; // Возвращаем строку без дополнительной обработки
+            } else if (type == Integer.class) {
+                return Integer.parseInt(value);
+            } else if (type == Long.class) {
+                return Long.parseLong(value);
+            } else if (type == BigDecimal.class) {
+                return new BigDecimal(value);
+            } else if (type == Float.class) {
+                return Float.parseFloat(value);
+            } else if (type == Double.class) {
+                return Double.parseDouble(value);
+            } else if (type == Short.class) {
+                return Short.parseShort(value);
+            } else if (type == Byte.class) {
+                return Byte.parseByte(value);
+            } else if (type == Character.class) {
+                if (value.length() != 1) {
+                    throw new IllegalArgumentException("Character value must be a single character: " + value);
                 }
-            } else {
-                try {
-                    if (columnType == BigDecimal.class) {
-                        return new BigDecimal(valueStr);
-                    } else if (columnType == Float.class) {
-                        BigDecimal bd = new BigDecimal(valueStr);
-                        float floatValue = bd.floatValue();
-                        if (Float.isInfinite(floatValue) || Float.isNaN(floatValue)) {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Float");
-                        }
-                        return floatValue;
-                    } else if (columnType == Double.class) {
-                        BigDecimal bd = new BigDecimal(valueStr);
-                        double doubleValue = bd.doubleValue();
-                        if (Double.isInfinite(doubleValue) || Double.isNaN(doubleValue)) {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Double");
-                        }
-                        return doubleValue;
-                    } else if (columnType == Byte.class) {
-                        long parsedLong = Long.parseLong(valueStr);
-                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                            return (byte) parsedLong;
-                        } else {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Byte");
-                        }
-                    } else if (columnType == Short.class) {
-                        long parsedLong = Long.parseLong(valueStr);
-                        if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                            return (short) parsedLong;
-                        } else {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Short");
-                        }
-                    } else if (columnType == Integer.class) {
-                        return Integer.parseInt(valueStr);
-                    } else if (columnType == Long.class) {
-                        return Long.parseLong(valueStr);
-                    } else {
-                        throw new IllegalArgumentException("Numeric value '" + valueStr + "' does not match column type: " + columnType.getSimpleName());
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value '" + valueStr + "' for column type: " + columnType.getSimpleName());
+                return value.charAt(0);
+            } else if (type == Boolean.class) {
+                return Boolean.parseBoolean(value);
+            } else if (type == UUID.class) {
+                return UUID.fromString(value);
+            } else if (type == LocalDate.class) {
+                return LocalDate.parse(value, DateTimeFormatter.ISO_LOCAL_DATE);
+            } else if (type == LocalDateTime.class) {
+                if (value.contains(".")) {
+                    return LocalDateTime.parse(value, DATETIME_MS_FORMATTER);
+                } else {
+                    return LocalDateTime.parse(value, DATETIME_FORMATTER);
                 }
             }
+            throw new IllegalArgumentException("Unsupported column type: " + type.getSimpleName() + " for value: " + value);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to parse condition value: column={0}, value={1}, type={2}, error={3}",
-                    new Object[]{conditionColumn, valueStr, columnType.getSimpleName(), e.getMessage()});
-            throw new IllegalArgumentException("Invalid value for column " + conditionColumn + ": " + valueStr, e);
+            throw new IllegalArgumentException("Invalid value for column " + column + ": " + value + " (expected type: " + type.getSimpleName() + ")", e);
         }
     }
 
