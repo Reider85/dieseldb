@@ -1110,7 +1110,6 @@ class QueryParser {
                 if (limitIndex != -1) {
                     String beforeLimit = tableAndJoinsOriginal.substring(0, limitIndex).trim();
                     String afterLimit = tableAndJoinsOriginal.substring(limitIndex + 5).trim(); // "LIMIT ".length() == 5
-                    // Extract only the numeric value for LIMIT, ignoring subquery LIMITs
                     Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
                     Matcher limitMatcher = limitPattern.matcher(afterLimit);
                     if (limitMatcher.find()) {
@@ -1122,7 +1121,6 @@ class QueryParser {
                             LOGGER.log(Level.SEVERE, "Invalid LIMIT value: {0}", limitValue);
                             throw new IllegalArgumentException("Invalid LIMIT value: " + limitValue);
                         }
-                        // Check for OFFSET
                         String[] limitOffsetSplit = afterLimit.split("(?i)\\s+OFFSET\\s+", 2);
                         if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
                             offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
@@ -1131,8 +1129,7 @@ class QueryParser {
                         LOGGER.log(Level.SEVERE, "Invalid LIMIT clause format: {0}", afterLimit);
                         throw new IllegalArgumentException("Invalid LIMIT clause format: " + afterLimit);
                     }
-                    // Update conditionStr or tableAndJoins to exclude LIMIT
-                    tableAndJoinsOriginal = beforeLimit;
+                    tableAndJoinsOriginal = beforeLimit; // Exclude LIMIT from further processing
                 }
                 // Find OFFSET clause outside subqueries
                 int offsetIndex = findClauseOutsideSubquery(onCondition, "OFFSET");
@@ -1305,50 +1302,67 @@ class QueryParser {
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
-        LOGGER.log(Level.FINEST, "Поиск предложения {0} вне подзапросов в запросе: {1}", new Object[]{clause, query});
+        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
+            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
+            return -1;
+        }
 
-        // Regex to match the clause as a whole word at the top level, ensuring it's not within parentheses
-        String regex = "(?i)(?:^|\\s+)(" + Pattern.quote(clause) + ")\\b(?![^()]*\\))";
-        Pattern pattern = Pattern.compile(regex);
-        Matcher matcher = pattern.matcher(query);
+        // Build regex to match the clause outside subqueries
+        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
+        String regex = String.format(
+                "(?i)" +
+                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Match quoted strings
+                        "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Match balanced parentheses (potential subqueries)
+                        "|(%s)" + // Group 3: Match the clause
+                        "|.", // Match any other character
+                clausePattern
+        );
 
-        int lastValidIndex = -1;
+        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(query.toUpperCase());
+
+        int parenDepth = 0;
+        int lastSelectIndex = -1;
+        int clauseIndex = -1;
+
         while (matcher.find()) {
-            int clauseIndex = matcher.start(1); // Start of the clause (e.g., "LIMIT")
-            LOGGER.log(Level.FINEST, "Найдено совпадение для {0} на индексе {1}: {2}",
-                    new Object[]{clause, clauseIndex, matcher.group(1)});
+            String group1 = matcher.group(1); // Quoted string
+            String group2 = matcher.group(2); // Parenthesized group
+            String group3 = matcher.group(3); // Clause
 
-            // Verify that the clause is at the top level (parenDepth == 0)
-            String prefix = query.substring(0, clauseIndex);
-            int parenDepth = 0;
-            boolean inQuotes = false;
+            int start = matcher.start();
 
-            for (int i = 0; i < prefix.length(); i++) {
-                char c = prefix.charAt(i);
-                if (c == '\'') {
-                    inQuotes = !inQuotes;
-                } else if (!inQuotes) {
-                    if (c == '(') {
-                        parenDepth++;
-                    } else if (c == ')') {
-                        parenDepth--;
+            if (group1 != null) {
+                // Skip quoted strings
+                continue;
+            } else if (group2 != null) {
+                // Handle parenthesized groups
+                if (group2.toUpperCase().contains("SELECT")) {
+                    // Potential subquery; increment depth
+                    parenDepth++;
+                    lastSelectIndex = start;
+                } else if (parenDepth > 0) {
+                    // Nested within a subquery; do not reset depth
+                    continue;
+                }
+                // Check if this closes a subquery
+                if (parenDepth > 0 && group2.startsWith("(") && group2.endsWith(")")) {
+                    parenDepth--;
+                    if (parenDepth == 0) {
+                        lastSelectIndex = -1;
                     }
                 }
-            }
-
-            if (parenDepth == 0) {
-                lastValidIndex = clauseIndex;
-                LOGGER.log(Level.FINEST, "Подтверждено: предложение {0} находится вне подзапросов на индексе {1}",
-                        new Object[]{clause, lastValidIndex});
+            } else if (group3 != null && parenDepth == 0) {
+                // Clause found outside subqueries
+                clauseIndex = start;
+                LOGGER.log(Level.FINEST, "Found {0} clause at index {1} in query: {2}",
+                        new Object[]{clause, clauseIndex, query});
+                return clauseIndex;
             }
         }
 
-        if (lastValidIndex != -1) {
-            LOGGER.log(Level.FINEST, "Возвращен последний валидный индекс для {0}: {1}", new Object[]{clause, lastValidIndex});
-            return lastValidIndex;
-        }
-
-        LOGGER.log(Level.FINEST, "Предложение {0} не найдено вне подзапросов в запросе: {1}", new Object[]{clause, query});
+        LOGGER.log(Level.FINEST, "No {0} clause found outside subqueries in query: {1}",
+                new Object[]{clause, query});
         return -1;
     }
     private int findLastSelectBefore(String query, int endIndex) {
@@ -2011,98 +2025,97 @@ class QueryParser {
                                             Map<String, String> tableAliases, Map<String, String> columnAliases) {
         LOGGER.log(Level.FINE, "Начало парсинга условий: conditionStr={0}, defaultTableName={1}, isJoinCondition={2}",
                 new Object[]{conditionStr, defaultTableName, isJoinCondition});
-        List<Condition> conditions = new ArrayList<>();
-        StringBuilder currentCondition = new StringBuilder();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        boolean conditionStarted = false;
-        String conjunction = null;
 
-        for (int i = 0; i < conditionStr.length(); i++) {
-            char c = conditionStr.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentCondition.append(c);
-                conditionStarted = true;
-            } else if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentCondition.append(c);
-                    conditionStarted = true;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentCondition.append(c);
-                    conditionStarted = true;
-                    if (parenDepth == 0 && conditionStarted) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
-                            LOGGER.log(Level.FINE, "Парсинг условия на закрытии скобки: condStr={0}, fullCondition={1}",
-                                    new Object[]{condStr, conditionStr});
-                            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                            conditions.add(condition);
-                        }
-                        currentCondition = new StringBuilder();
-                        conditionStarted = false;
-                        conjunction = null;
-                    }
-                } else if (parenDepth == 0 && (c == ' ' || i == conditionStr.length() - 1)) {
-                    if (i == conditionStr.length() - 1 && c != ' ') {
-                        currentCondition.append(c);
-                    }
-                    String nextToken = getNextToken(conditionStr, i + 1).toUpperCase();
-                    LOGGER.log(Level.FINEST, "Следующий токен: {0} на позиции {1}", new Object[]{nextToken, i});
-                    if (nextToken.equals("AND") || nextToken.equals("OR")) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
-                            LOGGER.log(Level.FINE, "Парсинг условия перед AND/OR: condStr={0}, fullCondition={1}",
-                                    new Object[]{condStr, conditionStr});
-                            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                            conditions.add(condition);
-                        }
-                        currentCondition = new StringBuilder();
-                        conditionStarted = false;
-                        conjunction = nextToken;
-                        i += nextToken.length();
-                    } else if (nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET") ||
-                            (nextToken.equalsIgnoreCase("ORDER") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
-                            (nextToken.equalsIgnoreCase("GROUP") && getNextToken(conditionStr, i + nextToken.length() + 2).equalsIgnoreCase("BY"))) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
-                            LOGGER.log(Level.FINE, "Парсинг условия перед LIMIT/OFFSET/ORDER BY/GROUP BY: condStr={0}, fullCondition={1}",
-                                    new Object[]{condStr, conditionStr});
-                            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                            conditions.add(condition);
-                        }
-                        LOGGER.log(Level.FINE, "Прекращение парсинга условий на предложении {0}: {1}",
-                                new Object[]{nextToken, conditionStr.substring(i)});
-                        return conditions;
-                    } else {
-                        currentCondition.append(c);
-                        conditionStarted = true;
-                    }
-                } else {
-                    currentCondition.append(c);
-                    conditionStarted = true;
-                }
-            } else {
-                currentCondition.append(c);
-                conditionStarted = true;
-            }
+        if (conditionStr == null || conditionStr.trim().isEmpty()) {
+            LOGGER.log(Level.FINE, "Пустая строка условий, возвращается пустой список условий");
+            return new ArrayList<>();
         }
 
-        String condStr = currentCondition.toString().trim();
-        if (!condStr.isEmpty() && !condStr.matches("\\s*\\)+\\s*")) {
-            LOGGER.log(Level.FINE, "Парсинг финального условия: condStr={0}, fullCondition={1}",
-                    new Object[]{condStr, conditionStr});
-            // Дополнительная проверка на корректность condStr
-            if (condStr.endsWith("D") && conditionStr.endsWith("ID")) {
-                condStr = condStr.substring(0, condStr.length() - 1); // Удаляем лишний символ 'D'
-                LOGGER.log(Level.WARNING, "Исправлено финальное условие: удален лишний символ 'D', новое condStr={0}", condStr);
+        List<Condition> conditions = new ArrayList<>();
+        StringBuilder currentCondition = new StringBuilder();
+        String conjunction = null;
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        boolean inSubQuery = false;
+        int lastEnd = 0;
+
+        // Regular expression (unchanged, but verified for correctness)
+        String regex = "(?i)" +
+                "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Группа 1: строки в кавычках
+                "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Группа 2: группы в скобках или подзапросы
+                "|\\b(AND|OR)\\b" + // Группа 3: логические операторы
+                "|\\b(LIMIT|OFFSET|ORDER\\s+BY|GROUP\\s+BY)\\b" + // Группа 4: ключевые слова
+                "|([^\\s]+)"; // Группа 5: прочие токены
+        Pattern pattern = Pattern.compile(regex, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(conditionStr);
+
+        while (matcher.find()) {
+            String token = matcher.group(0);
+            int start = matcher.start();
+            int end = matcher.end();
+
+            // Add any skipped characters (e.g., spaces) between tokens
+            if (start > lastEnd) {
+                currentCondition.append(conditionStr, lastEnd, start);
             }
-            Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+
+            // Safely access matcher groups
+            String group1 = matcher.group(1); // Quoted strings
+            String group2 = matcher.group(2); // Parenthesized groups or subqueries
+            String group3 = matcher.group(3); // AND/OR
+            String group4 = matcher.groupCount() >= 4 ? matcher.group(4) : null; // LIMIT/OFFSET/ORDER BY/GROUP BY
+            String group5 = matcher.groupCount() >= 5 ? matcher.group(5) : null; // Other tokens
+
+            if (group4 != null) {
+                // Stop parsing conditions at LIMIT, OFFSET, ORDER BY, or GROUP BY
+                String condStr = currentCondition.toString().trim();
+                if (!condStr.isEmpty()) {
+                    LOGGER.log(Level.FINE, "Парсинг условия перед {0}: condStr={1}, fullCondition={2}",
+                            new Object[]{group4, condStr, conditionStr});
+                    Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                    conditions.add(condition);
+                }
+                LOGGER.log(Level.FINE, "Прекращение парсинга условий на предложении {0}: {1}",
+                        new Object[]{group4, conditionStr.substring(start)});
+                break; // Exit parsing to avoid processing LIMIT as part of condition
+            } else if (group3 != null) {
+                // Handle AND or OR
+                String condStr = currentCondition.toString().trim();
+                if (!condStr.isEmpty()) {
+                    LOGGER.log(Level.FINE, "Парсинг условия перед {0}: condStr={1}, fullCondition={2}",
+                            new Object[]{group3, condStr, conditionStr});
+                    Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                    conditions.add(condition);
+                }
+                conjunction = group3.toUpperCase();
+                currentCondition = new StringBuilder();
+            } else if (group2 != null) {
+                // Handle parenthesized groups or subqueries
+                if (group2.toUpperCase().contains("SELECT")) {
+                    inSubQuery = true;
+                    currentCondition.append(token);
+                } else {
+                    currentCondition.append(token);
+                }
+            } else if (group1 != null) {
+                // Handle quoted strings
+                currentCondition.append(token);
+            } else if (group5 != null) {
+                // Handle other tokens
+                currentCondition.append(token);
+            }
+
+            lastEnd = end;
+        }
+
+        // Process any remaining condition
+        String finalCondStr = currentCondition.toString().trim();
+        if (!finalCondStr.isEmpty() && !finalCondStr.matches("\\s*\\)+\\s*")) {
+            LOGGER.log(Level.FINE, "Парсинг финального условия: condStr={0}, fullCondition={1}",
+                    new Object[]{finalCondStr, conditionStr});
+            Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
                     isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
             conditions.add(condition);
         }
@@ -2110,7 +2123,6 @@ class QueryParser {
         LOGGER.log(Level.FINE, "Условия успешно разобраны: {0}", conditions);
         return conditions;
     }
-
     private void validateSubquery(String subquery) {
         if (!subquery.startsWith("(") || !subquery.endsWith(")")) {
             LOGGER.log(Level.SEVERE, "Subquery does not start with '(' or end with ')': {0}", subquery);
