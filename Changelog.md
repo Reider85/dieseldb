@@ -160,3 +160,4 @@
 1.6.0 regexp refactoring
 1.6.1 LIKE fix
 1.6.2 JOIN fix
+1.6.3 JOIN fix
