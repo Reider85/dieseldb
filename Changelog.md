@@ -156,3 +156,4 @@
 1.5.6 regexp refactoring
 1.5.7 regexp refactoring
 1.5.8 regexp refactoring
+1.5.9 fix AND in queries

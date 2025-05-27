@@ -2071,10 +2071,8 @@ class QueryParser {
         String conjunction = null;
         int parenDepth = 0;
         boolean inQuotes = false;
-        boolean inSubQuery = false;
         int lastEnd = 0;
 
-        // Regular expression (unchanged, but verified for correctness)
         String regex = "(?i)" +
                 "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Группа 1: строки в кавычках
                 "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Группа 2: группы в скобках или подзапросы
@@ -2089,70 +2087,95 @@ class QueryParser {
             int start = matcher.start();
             int end = matcher.end();
 
-            // Add any skipped characters (e.g., spaces) between tokens
+            // Добавляем пропущенные символы (например, пробелы) между токенами
             if (start > lastEnd) {
                 currentCondition.append(conditionStr, lastEnd, start);
             }
 
-            // Safely access matcher groups
-            String group1 = matcher.group(1); // Quoted strings
-            String group2 = matcher.group(2); // Parenthesized groups or subqueries
+            String group1 = matcher.group(1); // Строки в кавычках
+            String group2 = matcher.group(2); // Группы в скобках или подзапросы
             String group3 = matcher.group(3); // AND/OR
             String group4 = matcher.groupCount() >= 4 ? matcher.group(4) : null; // LIMIT/OFFSET/ORDER BY/GROUP BY
-            String group5 = matcher.groupCount() >= 5 ? matcher.group(5) : null; // Other tokens
+            String group5 = matcher.groupCount() >= 5 ? matcher.group(5) : null; // Прочие токены
 
             if (group4 != null) {
-                // Stop parsing conditions at LIMIT, OFFSET, ORDER BY, or GROUP BY
+                // Останавливаем парсинг условий при встрече LIMIT, OFFSET, ORDER BY, GROUP BY
                 String condStr = currentCondition.toString().trim();
                 if (!condStr.isEmpty()) {
                     LOGGER.log(Level.FINE, "Парсинг условия перед {0}: condStr={1}, fullCondition={2}",
                             new Object[]{group4, condStr, conditionStr});
-                    Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                    conditions.add(condition);
+                    try {
+                        Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                        conditions.add(condition);
+                    } catch (IllegalArgumentException e) {
+                        LOGGER.log(Level.SEVERE, "Ошибка парсинга условия перед {0}: {1}, condStr={2}",
+                                new Object[]{group4, e.getMessage(), condStr});
+                        throw e;
+                    }
                 }
                 LOGGER.log(Level.FINE, "Прекращение парсинга условий на предложении {0}: {1}",
                         new Object[]{group4, conditionStr.substring(start)});
-                break; // Exit parsing to avoid processing LIMIT as part of condition
-            } else if (group3 != null) {
-                // Handle AND or OR
+                break;
+            } else if (group3 != null && parenDepth == 0) {
+                // Обрабатываем AND или OR только вне скобок
                 String condStr = currentCondition.toString().trim();
                 if (!condStr.isEmpty()) {
                     LOGGER.log(Level.FINE, "Парсинг условия перед {0}: condStr={1}, fullCondition={2}",
                             new Object[]{group3, condStr, conditionStr});
-                    Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                    conditions.add(condition);
+                    try {
+                        Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                        conditions.add(condition);
+                    } catch (IllegalArgumentException e) {
+                        LOGGER.log(Level.SEVERE, "Ошибка парсинга условия перед {0}: {1}, condStr={2}",
+                                new Object[]{group3, e.getMessage(), condStr});
+                        throw e;
+                    }
+                } else {
+                    LOGGER.log(Level.WARNING, "Пустое условие перед логическим оператором {0} на позиции {1}",
+                            new Object[]{group3, start});
                 }
                 conjunction = group3.toUpperCase();
                 currentCondition = new StringBuilder();
-            } else if (group2 != null) {
-                // Handle parenthesized groups or subqueries
-                if (group2.toUpperCase().contains("SELECT")) {
-                    inSubQuery = true;
-                    currentCondition.append(token);
-                } else {
-                    currentCondition.append(token);
+            } else {
+                // Добавляем токен в текущее условие
+                if (group1 != null) {
+                    currentCondition.append(group1);
+                } else if (group2 != null) {
+                    currentCondition.append(group2);
+                    if (group2.startsWith("(")) {
+                        parenDepth++;
+                    } else if (group2.endsWith(")")) {
+                        parenDepth--;
+                    }
+                } else if (group5 != null) {
+                    currentCondition.append(group5);
                 }
-            } else if (group1 != null) {
-                // Handle quoted strings
-                currentCondition.append(token);
-            } else if (group5 != null) {
-                // Handle other tokens
-                currentCondition.append(token);
             }
 
             lastEnd = end;
         }
 
-        // Process any remaining condition
+        // Обрабатываем оставшееся условие
         String finalCondStr = currentCondition.toString().trim();
         if (!finalCondStr.isEmpty() && !finalCondStr.matches("\\s*\\)+\\s*")) {
             LOGGER.log(Level.FINE, "Парсинг финального условия: condStr={0}, fullCondition={1}",
                     new Object[]{finalCondStr, conditionStr});
-            Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
-                    isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-            conditions.add(condition);
+            try {
+                Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
+                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                conditions.add(condition);
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.SEVERE, "Ошибка парсинга финального условия: {0}, condStr={1}",
+                        new Object[]{e.getMessage(), finalCondStr});
+                throw e;
+            }
+        }
+
+        if (conditions.isEmpty() && !conditionStr.trim().isEmpty()) {
+            LOGGER.log(Level.SEVERE, "Не удалось разобрать ни одного условия: conditionStr={0}", conditionStr);
+            throw new IllegalArgumentException("Invalid condition: unable to parse any conditions in '" + conditionStr + "'");
         }
 
         LOGGER.log(Level.FINE, "Условия успешно разобраны: {0}", conditions);
