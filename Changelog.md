@@ -167,3 +167,4 @@
 1.6.7 JOIN fix
 1.6.8 LIKE fix
 1.6.9 refactoring
+1.7.0 WHERE fix

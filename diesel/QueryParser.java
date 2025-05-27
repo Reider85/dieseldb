@@ -1962,22 +1962,21 @@ class QueryParser {
         List<Condition> conditions = new ArrayList<>();
         String normalized = normalizeCondition(conditionStr).trim();
 
-        // Регулярные выражения для токенизации
+        // Regular expressions for tokenization
         Pattern logicalOperatorPattern = Pattern.compile("\\bAND\\b|\\bOR\\b", Pattern.CASE_INSENSITIVE);
         Pattern inClausePattern = Pattern.compile(
                 "\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?IN\\s*\\([^)]+\\)",
                 Pattern.DOTALL
         );
-        // Разделенные регулярные выражения для токенов
         Pattern quotedStringPattern = Pattern.compile("'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
         Pattern balancedParenPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
         Pattern identifierPattern = Pattern.compile("\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\b");
         Pattern numberPattern = Pattern.compile("\\b[0-9]+\\b");
         Pattern keywordPattern = Pattern.compile("\\bTRUE\\b|\\bFALSE\\b|\\bNULL\\b|\\bNOT\\b|\\bLIKE\\b");
-        Pattern operatorPattern = Pattern.compile("[=<>!]=|[<>]");
+        Pattern operatorPattern = Pattern.compile("(?:=|[!=<>]=|[<>]|LIKE|NOT\\s+LIKE)");
         Pattern whitespacePattern = Pattern.compile("\\s+");
 
-        // Обрабатываем IN-условия
+        // Process IN clauses
         StringBuilder processedInput = new StringBuilder();
         List<String> inConditions = new ArrayList<>();
         int lastEnd = 0;
@@ -1992,14 +1991,13 @@ class QueryParser {
         processedInput.append(normalized.substring(lastEnd));
         normalized = processedInput.toString().trim();
 
-        // Разбиваем строку на токены
+        // Split into tokens
         List<String> tokens = new ArrayList<>();
         String remaining = normalized;
         while (!remaining.isEmpty()) {
             String matchedToken = null;
             int matchLength = 0;
 
-            // Проверяем каждое регулярное выражение
             Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
             if (quotedStringMatcher.lookingAt()) {
                 matchedToken = quotedStringMatcher.group();
@@ -2043,20 +2041,16 @@ class QueryParser {
             }
 
             if (matchedToken != null && !matchedToken.trim().isEmpty()) {
-                tokens.add(matchedToken.trim());
+                tokens.add(matchedToken);
                 remaining = remaining.substring(matchLength).trim();
             } else {
                 remaining = remaining.substring(1).trim();
             }
         }
 
-        // Регулярное выражение для проверки IN_CONDITION_
+        // Process tokens
         Pattern inConditionPattern = Pattern.compile("IN_CONDITION_\\d+");
-
-        // Регулярное выражение для проверки групповых условий в скобках
         Pattern groupedConditionPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
-
-        // Обрабатываем токены
         StringBuilder currentCondition = new StringBuilder();
         String conjunction = null;
         boolean not = false;
@@ -2068,13 +2062,7 @@ class QueryParser {
                 continue;
             }
 
-            // Пропускаем одиночные скобки
-            if (token.equals("(") || token.equals(")")) {
-                currentCondition.append(token).append(" ");
-                continue;
-            }
-
-            // Проверяем IN_CONDITION_
+            // Handle IN_CONDITION_
             Matcher inConditionMatcher = inConditionPattern.matcher(token);
             if (inConditionMatcher.matches()) {
                 inConditionIndex++;
@@ -2114,7 +2102,7 @@ class QueryParser {
                 }
             }
 
-            // Проверяем логические операторы
+            // Handle logical operators
             if (logicalOperatorPattern.matcher(token).matches()) {
                 if (!currentCondition.toString().trim().isEmpty()) {
                     String condStr = currentCondition.toString().trim();
@@ -2133,13 +2121,13 @@ class QueryParser {
                 continue;
             }
 
-            // Проверяем NOT
+            // Handle NOT
             if (token.equalsIgnoreCase("NOT")) {
                 not = true;
                 continue;
             }
 
-            // Проверяем групповые условия
+            // Handle grouped conditions
             Matcher groupedConditionMatcher = groupedConditionPattern.matcher(token);
             if (groupedConditionMatcher.matches() && !token.toUpperCase().startsWith("(SELECT")) {
                 String groupContent = token.substring(1, token.length() - 1).trim();
@@ -2157,7 +2145,7 @@ class QueryParser {
                 continue;
             }
 
-            // Проверяем ключевые слова
+            // Handle keywords like LIMIT, OFFSET, ORDER BY, GROUP BY
             if (token.matches("(?i)^LIMIT\\b|^OFFSET\\b|^ORDER BY\\b|^GROUP BY\\b")) {
                 if (!currentCondition.toString().trim().isEmpty()) {
                     String condStr = currentCondition.toString().trim();
@@ -2173,11 +2161,16 @@ class QueryParser {
                 break;
             }
 
-            // Добавляем токен в текущее условие
-            currentCondition.append(token).append(" ");
+            // Add token to current condition, preserving operators
+            currentCondition.append(token);
+            if (operatorPattern.matcher(token).matches()) {
+                currentCondition.append(" "); // Ensure space after operator
+            } else if (i < tokens.size() - 1 && !operatorPattern.matcher(tokens.get(i + 1)).matches()) {
+                currentCondition.append(" "); // Add space between non-operator tokens
+            }
         }
 
-        // Обрабатываем оставшееся условие
+        // Process any remaining condition
         String finalCondStr = currentCondition.toString().trim();
         if (!finalCondStr.isEmpty() && !finalCondStr.matches("^\\(+\\s*\\)+$")) {
             Condition condition = parseSingleCondition(
@@ -2292,7 +2285,7 @@ class QueryParser {
             throw new IllegalArgumentException("Пустое условие: " + condStr);
         }
 
-        // Проверка на групповые условия в скобках
+        // Handle grouped conditions
         Pattern groupedConditionPattern = Pattern.compile("\\([^()']*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[^()']*)*\\)");
         if (groupedConditionPattern.matcher(normalizedCondStr).matches()) {
             String subCondStr = normalizedCondStr.substring(1, normalizedCondStr.length() - 1).trim();
@@ -2303,7 +2296,7 @@ class QueryParser {
             }
         }
 
-        // Проверка IN условия
+        // Handle IN clause
         Pattern inClausePattern = Pattern.compile(
                 "\\b[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?IN\\s*\\([^)]+\\)"
         );
@@ -2311,11 +2304,7 @@ class QueryParser {
             String[] parts = normalizedCondStr.split("\\s+IN\\s+", 2);
             if (parts.length == 2 && parts[0].matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
                 String column = parts[0].trim();
-                boolean inNot = false;
-                if (column.toUpperCase().startsWith("NOT ")) {
-                    inNot = true;
-                    column = column.substring(4).trim();
-                }
+                boolean inNot = normalizedCondStr.toUpperCase().contains("NOT IN");
                 String valuesStr = parts[1].trim();
                 if (!valuesStr.startsWith("(") || !valuesStr.endsWith(")")) {
                     throw new IllegalArgumentException("Недопустимый синтаксис IN: " + normalizedCondStr);
@@ -2346,7 +2335,7 @@ class QueryParser {
             }
         }
 
-        // Проверка IS NULL / IS NOT NULL
+        // Handle IS NULL / IS NOT NULL
         if (normalizedCondStr.toUpperCase().endsWith(" IS NULL")) {
             String column = normalizedCondStr.substring(0, normalizedCondStr.length() - 8).trim();
             if (column.matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
@@ -2366,7 +2355,7 @@ class QueryParser {
             }
         }
 
-        // Проверка условий с подзапросами
+        // Handle subquery conditions
         if (normalizedCondStr.toUpperCase().contains("(SELECT ")) {
             String[] parts = normalizedCondStr.split("\\s*(?:=|[!=<>]=|[<>]|LIKE|NOT LIKE)\\s*", 2);
             if (parts.length == 2 && parts[1].trim().startsWith("(SELECT ")) {
@@ -2387,17 +2376,16 @@ class QueryParser {
             }
         }
 
-        // Регулярное выражение для операторов
-        Pattern operatorPattern = Pattern.compile("\\s+(?:=|[!=<>]=|[<>]|LIKE|NOT LIKE)\\s+");
-
+        // Handle operators
+        Pattern operatorPattern = Pattern.compile("\\s*(?:=|[!=<>]=|[<>]|LIKE|NOT\\s+LIKE)\\s*");
         String selectedOperator = null;
         int splitIndex = -1;
         String rightPart = null;
-        Matcher operatorMatcher = operatorPattern.matcher(" " + normalizedCondStr + " ");
+        Matcher operatorMatcher = operatorPattern.matcher(normalizedCondStr);
         if (operatorMatcher.find()) {
             selectedOperator = operatorMatcher.group().trim();
             splitIndex = operatorMatcher.start();
-            rightPart = normalizedCondStr.substring(splitIndex + selectedOperator.length()).trim();
+            rightPart = normalizedCondStr.substring(operatorMatcher.end()).trim();
         }
 
         if (selectedOperator == null) {
@@ -2409,7 +2397,7 @@ class QueryParser {
         LOGGER.log(Level.FINEST, "Разделенное условие: leftPart={0}, operator={1}, rightPart={2}",
                 new Object[]{leftPart, selectedOperator, rightPart});
 
-        // Очистка rightPart от завершающих скобок
+        // Clean rightPart of trailing parentheses
         Pattern trailingParenPattern = Pattern.compile(".*?\\)+$");
         if (trailingParenPattern.matcher(rightPart).matches()) {
             StringBuilder cleanedRightPart = new StringBuilder();
