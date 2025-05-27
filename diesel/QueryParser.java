@@ -1388,66 +1388,90 @@ class QueryParser {
 
     private int findClauseOutsideSubquery(String query, String clause) {
         if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
+            LOGGER.log(Level.FINEST, "Недопустимый ввод: query={0}, clause={1}", new Object[]{query, clause});
             return -1;
         }
 
-        // Build regex to match the clause outside subqueries
-        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
-        String regex = String.format(
-                "(?i)" +
-                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Match quoted strings
-                        "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Match balanced parentheses (potential subqueries)
-                        "|(%s)" + // Group 3: Match the clause
-                        "|.", // Match any other character
-                clausePattern
-        );
+        // Регулярные выражения для различных токенов
+        Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
+        Pattern subQueryStartPattern = Pattern.compile("\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
+        Pattern openParenPattern = Pattern.compile("\\(");
+        Pattern closeParenPattern = Pattern.compile("\\)");
+        Pattern clausePattern = Pattern.compile("\\b" + Pattern.quote(clause.toUpperCase()) + "\\b");
 
-        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(query.toUpperCase());
+        int currentPos = 0;
+        int lastClauseIndex = -1;
+        Deque<String> contextStack = new ArrayDeque<>(); // Стек для отслеживания контекста (скобки, подзапросы)
+        boolean inQuotes = false;
 
-        int parenDepth = 0;
-        int lastSelectIndex = -1;
-        int clauseIndex = -1;
+        while (currentPos < query.length()) {
+            String remaining = query.substring(currentPos);
 
-        while (matcher.find()) {
-            String group1 = matcher.group(1); // Quoted string
-            String group2 = matcher.group(2); // Parenthesized group
-            String group3 = matcher.group(3); // Clause
-
-            int start = matcher.start();
-
-            if (group1 != null) {
-                // Skip quoted strings
+            // Проверяем строки в кавычках
+            Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
+            if (!inQuotes && quotedStringMatcher.lookingAt()) {
+                currentPos += quotedStringMatcher.end();
                 continue;
-            } else if (group2 != null) {
-                // Handle parenthesized groups
-                if (group2.toUpperCase().contains("SELECT")) {
-                    // Potential subquery; increment depth
-                    parenDepth++;
-                    lastSelectIndex = start;
-                } else if (parenDepth > 0) {
-                    // Nested within a subquery; do not reset depth
-                    continue;
-                }
-                // Check if this closes a subquery
-                if (parenDepth > 0 && group2.startsWith("(") && group2.endsWith(")")) {
-                    parenDepth--;
-                    if (parenDepth == 0) {
-                        lastSelectIndex = -1;
-                    }
-                }
-            } else if (group3 != null && parenDepth == 0) {
-                // Clause found outside subqueries
-                clauseIndex = start;
-                LOGGER.log(Level.FINEST, "Found {0} clause at index {1} in query: {2}",
-                        new Object[]{clause, clauseIndex, query});
-                return clauseIndex;
             }
+
+            // Проверяем начало подзапроса
+            Matcher subQueryMatcher = subQueryStartPattern.matcher(remaining);
+            if (!inQuotes && subQueryMatcher.lookingAt()) {
+                contextStack.push("SUBQUERY");
+                currentPos += subQueryMatcher.end();
+                continue;
+            }
+
+            // Проверяем открывающую скобку
+            Matcher openParenMatcher = openParenPattern.matcher(remaining);
+            if (!inQuotes && openParenMatcher.lookingAt()) {
+                contextStack.push("PAREN");
+                currentPos += openParenMatcher.end();
+                continue;
+            }
+
+            // Проверяем закрывающую скобку
+            Matcher closeParenMatcher = closeParenPattern.matcher(remaining);
+            if (!inQuotes && closeParenMatcher.lookingAt()) {
+                if (!contextStack.isEmpty()) {
+                    contextStack.pop();
+                } else {
+                    LOGGER.log(Level.WARNING, "Несбалансированная закрывающая скобка на позиции {0} в запросе: {1}",
+                            new Object[]{currentPos, query});
+                }
+                currentPos += closeParenMatcher.end();
+                continue;
+            }
+
+            // Проверяем целевой клаузер
+            Matcher clauseMatcher = clausePattern.matcher(remaining);
+            if (!inQuotes && clauseMatcher.lookingAt() && contextStack.isEmpty()) {
+                lastClauseIndex = currentPos;
+                LOGGER.log(Level.FINEST, "Найден клаузер {0} на позиции {1}", new Object[]{clause, lastClauseIndex});
+                currentPos += clauseMatcher.end();
+                continue;
+            }
+
+            // Обработка символа кавычек
+            if (remaining.charAt(0) == '\'') {
+                inQuotes = !inQuotes;
+            }
+
+            currentPos++;
         }
 
-        LOGGER.log(Level.FINEST, "No {0} clause found outside subqueries in query: {1}",
-                new Object[]{clause, query});
+        if (!contextStack.isEmpty()) {
+            LOGGER.log(Level.WARNING, "Несбалансированные скобки или подзапросы в запросе: {0}, стек: {1}",
+                    new Object[]{query, contextStack});
+        }
+
+        if (lastClauseIndex != -1) {
+            LOGGER.log(Level.FINEST, "Найден последний {0} клаузер на индексе {1} в запросе: {2}",
+                    new Object[]{clause, lastClauseIndex, query});
+            return lastClauseIndex;
+        }
+
+        LOGGER.log(Level.FINEST, "Клаузер {0} не найден вне подзапросов в запросе: {1}", new Object[]{clause, query});
         return -1;
     }
     private int findLastSelectBefore(String query, int endIndex) {
