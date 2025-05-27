@@ -644,74 +644,107 @@ class QueryParser {
 
     private int findMainFromClause(String query) {
         if (query == null || query.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Invalid input: query={0}", query);
+            LOGGER.log(Level.FINEST, "Недопустимый ввод: query={0}", query);
             return -1;
         }
 
-        // Регулярное выражение для токенизации
-        String regex = "(?i)" +
-                "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Группа 1: строки в кавычках
-                "|\\(" + // Группа 2: открывающая скобка
-                "|\\)" + // Группа 3: закрывающая скобка
-                "|(\\bFROM\\b)" + // Группа 4: ключевое слово FROM
-                "|(\\S+)"; // Группа 5: слова (непробельные последовательности)
-
-        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(query.toUpperCase());
+        // Регулярные выражения для разных типов токенов
+        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'", Pattern.DOTALL);
+        Pattern openParenPattern = Pattern.compile("\\(");
+        Pattern closeParenPattern = Pattern.compile("\\)");
+        Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
+        Pattern wordPattern = Pattern.compile("\\S+");
 
         int bracketDepth = 0;
         int fromIndex = -1;
+        int currentPos = 0;
         StringBuilder currentToken = new StringBuilder();
 
-        while (matcher.find()) {
-            String group1 = matcher.group(1); // Строки в кавычках
-            String group2 = matcher.group(2); // Открывающая скобка
-            String group3 = matcher.group(3); // Закрывающая скобка
-            String group4 = matcher.group(4); // FROM
-            String group5 = matcher.groupCount() >= 5 ? matcher.group(5) : null; // Слова
-            int start = matcher.start();
-            int end = matcher.end();
+        while (currentPos < query.length()) {
+            // Проверяем строки в кавычках
+            Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем открывающую скобку
+            Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем закрывающую скобку
+            Matcher closeParenMatcher = closeParenPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем FROM
+            Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем слово
+            Matcher wordMatcher = wordPattern.matcher(query).region(currentPos, query.length());
 
-            // Логируем токен для отладки
-            LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, group1={2}, group2={3}, group3={4}, group4={5}, group5={6}, bracketDepth={7}",
-                    new Object[]{start, end, group1, group2, group3, group4, group5, bracketDepth});
+            int nextPos = query.length();
+            String token = null;
+            String tokenType = null;
+            int start = currentPos;
 
-            if (group1 != null) {
-                // Пропускаем строки в кавычках
-                currentToken.append(query, start, end);
+            // Находим ближайший токен
+            if (quotedStringMatcher.lookingAt()) {
+                token = quotedStringMatcher.group();
+                nextPos = quotedStringMatcher.end();
+                tokenType = "quotedString";
+            } else if (openParenMatcher.lookingAt()) {
+                token = openParenMatcher.group();
+                nextPos = openParenMatcher.end();
+                tokenType = "openParen";
+            } else if (closeParenMatcher.lookingAt()) {
+                token = closeParenMatcher.group();
+                nextPos = closeParenMatcher.end();
+                tokenType = "closeParen";
+            } else if (fromMatcher.lookingAt()) {
+                token = fromMatcher.group();
+                nextPos = fromMatcher.end();
+                tokenType = "from";
+            } else if (wordMatcher.lookingAt()) {
+                token = wordMatcher.group();
+                nextPos = wordMatcher.end();
+                tokenType = "word";
+            }
+
+            if (token == null) {
+                // Пропускаем пробелы или неизвестные символы
+                currentPos++;
                 continue;
-            } else if (group2 != null) {
-                // Увеличиваем глубину скобок
+            }
+
+            // Логируем токен
+            LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, value={3}, bracketDepth={4}",
+                    new Object[]{start, nextPos, tokenType, token, bracketDepth});
+
+            // Обрабатываем токен
+            if (tokenType.equals("quotedString")) {
+                currentToken.append(token);
+            } else if (tokenType.equals("openParen")) {
                 bracketDepth++;
-                currentToken.append(query, start, end);
-            } else if (group3 != null) {
-                // Уменьшаем глубину скобок
+                currentToken.append(token);
+            } else if (tokenType.equals("closeParen")) {
                 bracketDepth--;
                 if (bracketDepth < 0) {
-                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на индексе {0}: {1}", new Object[]{start, query});
+                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
+                            new Object[]{start, query});
                     return -1;
                 }
-                currentToken.append(query, start, end);
-            } else if (group4 != null && bracketDepth == 0) {
-                // Основной FROM найден
+                currentToken.append(token);
+            } else if (tokenType.equals("from") && bracketDepth == 0) {
                 fromIndex = start;
-                LOGGER.log(Level.FINEST, "Найден основной FROM на индексе {0} в запросе: {1}", new Object[]{fromIndex, query});
+                LOGGER.log(Level.FINEST, "Найден основной FROM на позиции {0} в запросе: {1}",
+                        new Object[]{fromIndex, query});
                 return fromIndex;
-            } else if (group5 != null) {
-                // Собираем слова
-                currentToken.append(query, start, end);
+            } else if (tokenType.equals("word")) {
+                currentToken.append(token);
             }
+
+            currentPos = nextPos;
         }
 
         if (bracketDepth != 0) {
-            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: bracketDepth={0}, query={1}", new Object[]{bracketDepth, query});
+            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: bracketDepth={0}, query={1}",
+                    new Object[]{bracketDepth, query});
             return -1;
         }
 
         LOGGER.log(Level.FINEST, "Основной FROM не найден в запросе: {0}", query);
         return -1;
     }
-
     private int findLastClauseIndexOutsideSubquery(String query, String clause) {
         if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
             LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});

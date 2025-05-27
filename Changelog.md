@@ -155,3 +155,4 @@
 1.5.5 fix subqueries in limit conditions
 1.5.6 regexp refactoring
 1.5.7 regexp refactoring
+1.5.8 regexp refactoring
