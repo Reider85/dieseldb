@@ -1972,17 +1972,17 @@ class QueryParser {
         String conjunction = null;
         boolean inQuotes = false;
 
-        // Определяем простые регулярные выражения
         Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
         Pattern subQueryPattern = Pattern.compile("\\([^()]*\\)");
         Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
         Pattern keywordPattern = Pattern.compile("\\b(LIMIT|OFFSET|ORDER BY|GROUP BY)\\b", Pattern.CASE_INSENSITIVE);
         Pattern tokenPattern = Pattern.compile("[^\\s]+");
 
-        // Токенизация строки условий
+        LOGGER.log(Level.FINE, "Применение регулярных выражений для условий: quotedStringPattern, subQueryPattern, logicalOperatorPattern, keywordPattern, tokenPattern");
+
+        LOGGER.log(Level.FINEST, "Начало цикла токенизации строки условий");
         int currentPos = 0;
         while (currentPos < conditionStr.length()) {
-            // Пропускаем пробелы
             while (currentPos < conditionStr.length() && Character.isWhitespace(conditionStr.charAt(currentPos))) {
                 currentCondition.append(conditionStr.charAt(currentPos));
                 currentPos++;
@@ -2003,7 +2003,6 @@ class QueryParser {
             boolean isLogicalOperator = false;
             boolean isKeyword = false;
 
-            // Проверяем, какой токен найден
             if (quotedStringMatcher.lookingAt()) {
                 token = quotedStringMatcher.group();
                 tokenLength = token.length();
@@ -2025,17 +2024,12 @@ class QueryParser {
             }
 
             if (token == null) {
-                // Неизвестный символ, пропускаем
                 currentCondition.append(conditionStr.charAt(currentPos));
                 currentPos++;
                 continue;
             }
 
-            LOGGER.log(Level.FINEST, "Токен: pos={0}, value={1}, isLogicalOperator={2}, isKeyword={3}",
-                    new Object[]{currentPos, token, isLogicalOperator, isKeyword});
-
             if (isKeyword) {
-                // Останавливаем парсинг условий при встрече ключевых слов
                 String condStr = currentCondition.toString().trim();
                 if (!condStr.isEmpty()) {
                     try {
@@ -2052,7 +2046,6 @@ class QueryParser {
                 LOGGER.log(Level.FINE, "Прекращение парсинга условий на {0}", token);
                 break;
             } else if (isLogicalOperator) {
-                // Обрабатываем логический оператор
                 String condStr = currentCondition.toString().trim();
                 if (!condStr.isEmpty()) {
                     try {
@@ -2072,14 +2065,13 @@ class QueryParser {
                 conjunction = token.toUpperCase();
                 currentCondition = new StringBuilder();
             } else {
-                // Добавляем токен в текущее условие
                 currentCondition.append(token);
             }
 
             currentPos += tokenLength;
         }
+        LOGGER.log(Level.FINEST, "Конец цикла токенизации строки условий");
 
-        // Обрабатываем оставшееся условие
         String finalCondStr = currentCondition.toString().trim();
         if (!finalCondStr.isEmpty()) {
             LOGGER.log(Level.FINE, "Парсинг финального условия: condStr={0}", finalCondStr);
@@ -2195,6 +2187,16 @@ class QueryParser {
         LOGGER.log(Level.FINEST, "Parsing single condition: {0}, full condition={1}", new Object[]{condStr, conditionStr});
 
         String normalizedCondStr = normalizeCondition(condStr);
+        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
+        Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
+        Pattern subQueryPattern = Pattern.compile(
+                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
+                Pattern.DOTALL
+        );
+        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
+
+        LOGGER.log(Level.FINE, "Применение регулярных выражений для условия: inPattern, isNullPattern, subQueryPattern, columnPattern");
+
         if (normalizedCondStr.toUpperCase().startsWith("(") && normalizedCondStr.toUpperCase().endsWith(")")) {
             String subCondStr = normalizedCondStr.substring(1, normalizedCondStr.length() - 1).trim();
             List<Condition> subConditions = parseConditions(subCondStr, defaultTableName, database, originalQuery,
@@ -2202,8 +2204,6 @@ class QueryParser {
             return new Condition(subConditions, conjunction, not);
         }
 
-        // Handle IN conditions
-        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
         Matcher inMatcher = inPattern.matcher(normalizedCondStr);
         if (inMatcher.matches()) {
             String column = inMatcher.group(1).trim();
@@ -2255,8 +2255,6 @@ class QueryParser {
             return new Condition(actualColumn, inValues, conjunction, inNot);
         }
 
-        // Handle IS NULL / IS NOT NULL conditions
-        Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(normalizedCondStr);
         if (isNullMatcher.matches()) {
             String column = isNullMatcher.group(1).trim();
@@ -2285,11 +2283,6 @@ class QueryParser {
             return new Condition(actualColumn, isNotNull ? Operator.IS_NOT_NULL : Operator.IS_NULL, conjunction, not);
         }
 
-        // Handle subquery conditions
-        Pattern subQueryPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
-                Pattern.DOTALL
-        );
         Matcher subQueryMatcher = subQueryPattern.matcher(normalizedCondStr);
         if (subQueryMatcher.matches()) {
             String column = subQueryMatcher.group(1).trim();
@@ -2309,7 +2302,6 @@ class QueryParser {
             return new Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
         }
 
-        // Handle column comparisons and literal values
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         String selectedOperator = null;
         int operatorIndex = -1;
@@ -2318,6 +2310,7 @@ class QueryParser {
         boolean inQuotes = false;
         int subQueryStart = -1;
 
+        LOGGER.log(Level.FINEST, "Начало цикла поиска оператора в условии");
         for (int i = 0; i < normalizedCondStr.length(); i++) {
             char c = normalizedCondStr.charAt(i);
             if (c == '\'') {
@@ -2342,6 +2335,7 @@ class QueryParser {
                     for (String op : operators) {
                         String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
                         Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
+                        LOGGER.log(Level.FINE, "Применение регулярного выражения для оператора: opPattern={0}", patternStr);
                         Matcher opMatcher = opPattern.matcher(normalizedCondStr.substring(i));
                         if (opMatcher.lookingAt()) {
                             String remaining = normalizedCondStr.substring(i + opMatcher.group().length()).trim();
@@ -2359,6 +2353,7 @@ class QueryParser {
                 }
             }
         }
+        LOGGER.log(Level.FINEST, "Конец цикла поиска оператора в условии");
 
         if (operatorIndex == -1) {
             LOGGER.log(Level.SEVERE, "No valid operator found in condition: {0}", normalizedCondStr);
@@ -2374,13 +2369,10 @@ class QueryParser {
         String rightColumn = null;
         Object value = null;
 
-        // Check if rightPart is a column
-        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
         Matcher columnMatcher = columnPattern.matcher(rightPart);
         if (columnMatcher.matches()) {
             rightColumn = rightPart;
         } else {
-            // Try parsing as a value
             column = columnAliases.entrySet().stream()
                     .filter(entry -> entry.getValue().equalsIgnoreCase(leftPart.split("\\.")[leftPart.contains(".") ? 1 : 0]))
                     .map(Map.Entry::getKey)
@@ -2391,12 +2383,11 @@ class QueryParser {
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
                         new Object[]{rightPart, e.getMessage()});
-                // Recheck rightPart for column pattern after stripping potential trailing clauses
                 String[] rightParts = rightPart.split("\\s+", 2);
                 if (rightParts.length > 0 && columnPattern.matcher(rightParts[0]).matches()) {
                     rightColumn = rightParts[0];
                 } else {
-                    throw e; // Rethrow if still not a column
+                    throw e;
                 }
             }
         }
