@@ -171,3 +171,4 @@
 1.7.1 extra logging
 1.7.2 WHERE fix
 1.7.3 Value type fix
+1.7.4 placeholders fix

@@ -2295,8 +2295,10 @@ class QueryParser {
         for (int i = 0; i < placeholders.size(); i++) {
             String placeholder = "STRING_" + i;
             if (processedCondStr.contains(placeholder)) {
-                processedCondStr = processedCondStr.replace(placeholder, placeholders.get(i));
-                LOGGER.log(Level.FINEST, "Restored placeholder {0} -> {1}", new Object[]{placeholder, placeholders.get(i)});
+                // Убедимся, что строка из placeholders экранирована корректно
+                String restoredValue = "'" + placeholders.get(i).replace("'", "\\'") + "'";
+                processedCondStr = processedCondStr.replace(placeholder, restoredValue);
+                LOGGER.log(Level.FINEST, "Restored placeholder {0} -> {1}", new Object[]{placeholder, restoredValue});
             }
         }
 
@@ -2450,16 +2452,15 @@ class QueryParser {
 
         String rightColumn = null;
         Object value = null;
-        if (rightPart.matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
+        // Проверяем, является ли rightPart строкой
+        if (rightPart.startsWith("'") && rightPart.endsWith("'")) {
+            String valueStr = rightPart.substring(1, rightPart.length() - 1);
+            value = parseConditionValue(actualColumn, valueStr, getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
+        } else if (rightPart.matches("^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$")) {
             rightColumn = rightPart;
         } else {
             try {
-                // Удаляем кавычки из строкового значения
-                String valueStr = rightPart;
-                if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                    valueStr = valueStr.substring(1, valueStr.length() - 1);
-                }
-                value = parseConditionValue(actualColumn, valueStr, getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
+                value = parseConditionValue(actualColumn, rightPart, getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, retrying as column: rightPart={0}, error={1}",
                         new Object[]{rightPart, e.getMessage()});
