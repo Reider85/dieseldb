@@ -745,100 +745,6 @@ class QueryParser {
         LOGGER.log(Level.FINEST, "Основной FROM не найден в запросе: {0}", query);
         return -1;
     }
-    private int findLastClauseIndexOutsideSubquery(String query, String clause) {
-        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
-            return -1;
-        }
-
-        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
-        String regex = String.format(
-                "(?i)" +
-                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
-                        "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Parenthesized groups
-                        "|(%s)" + // Group 3: Clause
-                        "|.", // Match any other character
-                clausePattern
-        );
-
-        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(query.toUpperCase());
-
-        int parenDepth = 0;
-        int lastClauseIndex = -1;
-
-        while (matcher.find()) {
-            String group1 = matcher.group(1);
-            String group2 = matcher.group(2);
-            String group3 = matcher.group(3);
-
-            int start = matcher.start();
-
-            if (group1 != null) {
-                continue;
-            } else if (group2 != null) {
-                if (group2.toUpperCase().contains("SELECT")) {
-                    parenDepth++;
-                }
-                if (parenDepth > 0) {
-                    parenDepth--;
-                }
-            } else if (group3 != null && parenDepth == 0) {
-                lastClauseIndex = start; // Update to the latest valid clause
-            }
-        }
-
-        if (lastClauseIndex != -1) {
-            LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastClauseIndex, query});
-            return lastClauseIndex;
-        }
-
-        LOGGER.log(Level.FINEST, "No valid {0} clause found outside subqueries in query: {1}", new Object[]{clause, query});
-        return -1;
-    }
-
-    private int findLastClauseIndex(String query, String clause) {
-        if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
-            return -1;
-        }
-
-        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
-        String regex = String.format(
-                "(?i)" +
-                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Quoted strings
-                        "|(%s)" + // Group 2: Clause
-                        "|.", // Match any other character
-                clausePattern
-        );
-
-        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(query.toUpperCase());
-
-        int lastClauseIndex = -1;
-
-        while (matcher.find()) {
-            String group1 = matcher.group(1);
-            String group2 = matcher.group(2);
-
-            int start = matcher.start();
-
-            if (group1 != null) {
-                continue;
-            } else if (group2 != null) {
-                lastClauseIndex = start;
-            }
-        }
-
-        if (lastClauseIndex != -1) {
-            LOGGER.log(Level.FINEST, "Found last {0} clause at index {1} in query: {2}", new Object[]{clause, lastClauseIndex, query});
-            return lastClauseIndex;
-        }
-
-        LOGGER.log(Level.FINEST, "No {0} clause found in query: {1}", new Object[]{clause, query});
-        return -1;
-    }
-
     private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
         int fromIndex = findMainFromClause(original);
         if (fromIndex == -1) {
@@ -1388,91 +1294,86 @@ class QueryParser {
 
     private int findClauseOutsideSubquery(String query, String clause) {
         if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Invalid input: query={0}, clause={1}", new Object[]{query, clause});
+            LOGGER.log(Level.FINEST, "Недопустимый ввод: query={0}, clause={1}", new Object[]{query, clause});
             return -1;
         }
 
-        // Build regex to match the clause outside subqueries
-        String clausePattern = String.format("\\b%s\\b", Pattern.quote(clause.toUpperCase()));
-        String regex = String.format(
-                "(?i)" +
-                        "(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*')" + // Group 1: Match quoted strings
-                        "|\\((?:[^()']+|'(?:\\\\.[^']*')|\\([^()]*\\))*\\)" + // Group 2: Match balanced parentheses (potential subqueries)
-                        "|(%s)" + // Group 3: Match the clause
-                        "|.", // Match any other character
-                clausePattern
-        );
-
-        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(query.toUpperCase());
+        // Регулярные выражения для разных типов токенов
+        Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
+        Pattern openParenPattern = Pattern.compile("\\(");
+        Pattern closeParenPattern = Pattern.compile("\\)");
+        Pattern clausePattern = Pattern.compile("\\b" + Pattern.quote(clause.toUpperCase()) + "\\b");
 
         int parenDepth = 0;
-        int lastSelectIndex = -1;
-        int clauseIndex = -1;
+        int lastClauseIndex = -1;
+        int currentPos = 0;
+        boolean inQuotes = false;
 
-        while (matcher.find()) {
-            String group1 = matcher.group(1); // Quoted string
-            String group2 = matcher.group(2); // Parenthesized group
-            String group3 = matcher.group(3); // Clause
+        while (currentPos < query.length()) {
+            // Проверяем строки в кавычках
+            Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем скобки
+            Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
+            Matcher closeParenMatcher = closeParenPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем ключевое слово
+            Matcher clauseMatcher = clausePattern.matcher(query.toUpperCase()).region(currentPos, query.length());
 
-            int start = matcher.start();
+            int nextPos = query.length();
+            String tokenType = null;
 
-            if (group1 != null) {
-                // Skip quoted strings
-                continue;
-            } else if (group2 != null) {
-                // Handle parenthesized groups
-                if (group2.toUpperCase().contains("SELECT")) {
-                    // Potential subquery; increment depth
-                    parenDepth++;
-                    lastSelectIndex = start;
-                } else if (parenDepth > 0) {
-                    // Nested within a subquery; do not reset depth
-                    continue;
+            // Определяем следующий токен
+            if (quotedStringMatcher.lookingAt()) {
+                tokenType = "quotedString";
+                nextPos = quotedStringMatcher.end();
+                inQuotes = !inQuotes;
+            } else if (openParenMatcher.lookingAt() && !inQuotes) {
+                tokenType = "openParen";
+                nextPos = openParenMatcher.end();
+                parenDepth++;
+            } else if (closeParenMatcher.lookingAt() && !inQuotes) {
+                tokenType = "closeParen";
+                nextPos = closeParenMatcher.end();
+                parenDepth--;
+                if (parenDepth < 0) {
+                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
+                            new Object[]{currentPos, query});
+                    return -1;
                 }
-                // Check if this closes a subquery
-                if (parenDepth > 0 && group2.startsWith("(") && group2.endsWith(")")) {
-                    parenDepth--;
-                    if (parenDepth == 0) {
-                        lastSelectIndex = -1;
-                    }
-                }
-            } else if (group3 != null && parenDepth == 0) {
-                // Clause found outside subqueries
-                clauseIndex = start;
-                LOGGER.log(Level.FINEST, "Found {0} clause at index {1} in query: {2}",
-                        new Object[]{clause, clauseIndex, query});
-                return clauseIndex;
+            } else if (clauseMatcher.lookingAt() && !inQuotes && parenDepth == 0) {
+                tokenType = "clause";
+                lastClauseIndex = currentPos;
+                nextPos = clauseMatcher.end();
             }
+
+            // Логируем токен для отладки
+            LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, parenDepth={3}, inQuotes={4}",
+                    new Object[]{currentPos, nextPos, tokenType != null ? tokenType : "none", parenDepth, inQuotes});
+
+            // Если токен не найден, переходим к следующему символу
+            if (tokenType == null) {
+                currentPos++;
+                continue;
+            }
+
+            currentPos = nextPos;
         }
 
-        LOGGER.log(Level.FINEST, "No {0} clause found outside subqueries in query: {1}",
+        if (parenDepth != 0) {
+            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: parenDepth={0}, query={1}",
+                    new Object[]{parenDepth, query});
+            return -1;
+        }
+
+        if (lastClauseIndex != -1) {
+            LOGGER.log(Level.FINEST, "Найдено последнее {0} на индексе {1} в запросе: {2}",
+                    new Object[]{clause, lastClauseIndex, query});
+            return lastClauseIndex;
+        }
+
+        LOGGER.log(Level.FINEST, "Допустимое {0} не найдено вне подзапросов в запросе: {1}",
                 new Object[]{clause, query});
         return -1;
     }
-    private int findLastSelectBefore(String query, int endIndex) {
-        String upperQuery = query.toUpperCase();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        int lastSelectIndex = -1;
-
-        for (int i = 0; i < endIndex; i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-            } else if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0 && upperQuery.startsWith("SELECT ", i)) {
-                    lastSelectIndex = i;
-                }
-            }
-        }
-        return lastSelectIndex;
-    }
-
     private List<String> parseGroupByClause(String groupByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
                                             Map<String, String> tableAliases, Map<String, String> columnAliases, List<SubQuery> selectSubQueries) {
         List<String> groupBy = new ArrayList<>();

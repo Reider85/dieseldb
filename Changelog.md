@@ -173,3 +173,4 @@
 1.7.3 Value type fix
 1.7.4 placeholders fix
 1.7.5 revert 1.6.0
+1.7.6 WHERE fix
