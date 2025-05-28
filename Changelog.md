@@ -174,3 +174,6 @@
 1.7.4 placeholders fix
 1.7.5 revert 1.6.0
 1.7.6 WHERE fix
+1.7.7 extra logging
+1.7.8 logging fix
+1.7.9 logging fix

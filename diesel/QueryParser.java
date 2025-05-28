@@ -707,8 +707,8 @@ class QueryParser {
             }
 
             // Логируем токен
-            LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, value={3}, bracketDepth={4}",
-                    new Object[]{start, nextPos, tokenType, token, bracketDepth});
+            //LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, value={3}, bracketDepth={4}",
+            //        new Object[]{start, nextPos, tokenType, token, bracketDepth});
 
             // Обрабатываем токен
             if (tokenType.equals("quotedString")) {
@@ -1346,8 +1346,8 @@ class QueryParser {
             }
 
             // Логируем токен для отладки
-            LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, parenDepth={3}, inQuotes={4}",
-                    new Object[]{currentPos, nextPos, tokenType != null ? tokenType : "none", parenDepth, inQuotes});
+            //LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, parenDepth={3}, inQuotes={4}",
+           //         new Object[]{currentPos, nextPos, tokenType != null ? tokenType : "none", parenDepth, inQuotes});
 
             // Если токен не найден, переходим к следующему символу
             if (tokenType == null) {
@@ -2335,7 +2335,7 @@ class QueryParser {
                     for (String op : operators) {
                         String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
                         Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
-                        LOGGER.log(Level.FINE, "Применение регулярного выражения для оператора: opPattern={0}", patternStr);
+                        //LOGGER.log(Level.FINE, "Применение регулярного выражения для оператора: opPattern={0}", patternStr);
                         Matcher opMatcher = opPattern.matcher(normalizedCondStr.substring(i));
                         if (opMatcher.lookingAt()) {
                             String remaining = normalizedCondStr.substring(i + opMatcher.group().length()).trim();
