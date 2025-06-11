@@ -196,3 +196,4 @@
 1.9.6 refactoring
 1.9.7 refactoring
 1.9.8 refactoring
+1.9.9 tokenizeConditions fix

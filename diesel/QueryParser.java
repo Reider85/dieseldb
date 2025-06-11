@@ -1846,7 +1846,7 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}", new Object[]{patternName, tokenValue, matcher.end()});
                     if (!tokenValue.isEmpty()) {
                         int end = matcher.end();
-                        if (end < nextPos) {
+                        if (end <= nextPos) { // Изменено с < на <=
                             nextPos = end;
                             matchedToken = tokenValue;
                             matchedPatternName = patternName;
