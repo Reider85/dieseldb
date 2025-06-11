@@ -178,3 +178,4 @@
 1.7.8 logging fix
 1.7.9 logging fix
 1.8.0 LIKE fix
+1.8.1 parseSelectQuery refactoring
