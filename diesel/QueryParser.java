@@ -1811,7 +1811,8 @@ class QueryParser {
         // Определяем паттерны с их описаниями
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
         patterns.add(Map.entry("Quoted String", Pattern.compile("(?i)'(?:[^'\\\\]|\\\\.)*'", Pattern.DOTALL)));
-        patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\s*(?:AND|OR)\\s*")));
+        // Убедимся, что логические операторы проверяются раньше
+        patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
         patterns.add(Map.entry("NOT IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("Balanced Parentheses", Pattern.compile("(?i)\\([^()]+\\)")));
@@ -1823,6 +1824,7 @@ class QueryParser {
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
         patterns.add(Map.entry("Comparison Column Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
+        // "Invalid Token" в конце
         patterns.add(Map.entry("Invalid Token", Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)[^\\s()']+")));
 
         List<Token> tokens = new ArrayList<>();
@@ -1911,7 +1913,7 @@ class QueryParser {
 
     // Классифицирует токен как условие или логический оператор
     private Token classifyToken(String tokenValue) {
-        Pattern logicalOperatorPattern = Pattern.compile("(?i)^\\s*(AND|OR)\\s*$");
+        Pattern logicalOperatorPattern = Pattern.compile("(?i)^(AND|OR)$");
         Matcher logicalMatcher = logicalOperatorPattern.matcher(tokenValue);
 
         if (logicalMatcher.matches()) {
