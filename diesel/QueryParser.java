@@ -1800,64 +1800,104 @@ class QueryParser {
     }
 
     // Токенизирует строку условий
+    // Токенизирует строку условий с использованием регулярных выражений
+// Токенизирует строку условий с использованием регулярных выражений
     private List<Token> tokenizeConditions(String conditionStr) {
-        List<Token> tokens = new ArrayList<>();
-        StringBuilder currentToken = new StringBuilder();
-        boolean inQuotes = false;
-        int parenDepth = 0;
-        Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
+        LOGGER.log(Level.FINE, "Начало токенизации условий: {0}", conditionStr);
 
-        for (int i = 0; i < conditionStr.length(); i++) {
-            char c = conditionStr.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentToken.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentToken.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth < 0) {
-                        throw new IllegalArgumentException("Несбалансированные скобки в условии: " + conditionStr);
-                    }
-                    currentToken.append(c);
-                    if (parenDepth == 0 && currentToken.length() > 0) {
-                        tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
-                        currentToken = new StringBuilder();
-                    }
-                    continue;
-                } else if (parenDepth == 0 && Character.isWhitespace(c)) {
-                    String nextToken = getNextToken(conditionStr, i + 1);
-                    if (logicalOperatorPattern.matcher(nextToken).matches()) {
-                        if (currentToken.length() > 0) {
-                            tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
-                            currentToken = new StringBuilder();
-                        }
-                        tokens.add(new Token(TokenType.LOGICAL_OPERATOR, nextToken.toUpperCase()));
-                        i += nextToken.length();
-                        continue;
-                    }
+        if (conditionStr == null || conditionStr.trim().isEmpty()) {
+            LOGGER.log(Level.WARNING, "Пустая или null строка условий");
+            return new ArrayList<>();
+        }
+
+        List<Token> tokens = new ArrayList<>();
+        // Обновленное регулярное выражение
+        Pattern tokenPattern = Pattern.compile(
+                "(?i)" +
+                        "'(?:[^'\\\\]|\\\\.)*'|\\s*(?:AND|OR)\\s*|" + // Строки в кавычках или логические операторы
+                        "\\([^()]*\\)|" +                             // Сбалансированные скобки
+                        "(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))" // Условия с оператором и значением
+        );
+        Matcher matcher = tokenPattern.matcher(conditionStr);
+
+        int lastEnd = 0;
+        while (matcher.find()) {
+            String tokenValue = matcher.group().trim();
+            int start = matcher.start();
+            int end = matcher.end();
+
+            // Проверяем, что между токенами нет значимых символов
+            if (start > lastEnd) {
+                String skipped = conditionStr.substring(lastEnd, start).trim();
+                if (!skipped.isEmpty()) {
+                    LOGGER.log(Level.WARNING, "Пропущены неожиданные символы между токенами: {0} на позициях {1}-{2}",
+                            new Object[]{skipped, lastEnd, start});
                 }
             }
-            currentToken.append(c);
+
+            if (tokenValue.isEmpty()) {
+                LOGGER.log(Level.FINEST, "Пропущен пустой токен на позициях {0}-{1}", new Object[]{start, end});
+                continue;
+            }
+
+            // Проверяем сбалансированность скобок для токенов, содержащих скобки
+            if (tokenValue.contains("(") || tokenValue.contains(")")) {
+                validateTokenBrackets(tokenValue, start);
+            }
+
+            Token token = classifyToken(tokenValue);
+            tokens.add(token);
+            LOGGER.log(Level.FINEST, "Добавлен токен: {0} на позициях {1}-{2}", new Object[]{token, start, end});
+
+            lastEnd = end;
         }
 
-        if (currentToken.length() > 0) {
-            tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
+        // Проверяем остаток строки после последнего токена
+        if (lastEnd < conditionStr.length()) {
+            String remaining = conditionStr.substring(lastEnd).trim();
+            if (!remaining.isEmpty()) {
+                LOGGER.log(Level.WARNING, "Остаток строки после токенизации: {0} на позициях {1}-{2}",
+                        new Object[]{remaining, lastEnd, conditionStr.length()});
+                throw new IllegalArgumentException("Невалидные символы в условии после токенизации: " + remaining);
+            }
         }
 
-        if (tokens.isEmpty() && !conditionStr.trim().isEmpty()) {
-            throw new IllegalArgumentException("Invalid condition: unable to parse any conditions in '" + conditionStr + "'");
+        if (tokens.isEmpty()) {
+            LOGGER.log(Level.SEVERE, "Не удалось выделить токены из условия: {0}", conditionStr);
+            throw new IllegalArgumentException("Невалидное условие: не удалось выделить токенов из '" + conditionStr + "'");
         }
 
-        LOGGER.log(Level.FINEST, "Токены условий: {0}", tokens);
+        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}", new Object[]{tokens.size(), tokens});
         return tokens;
     }
 
+    // Классифицирует токен как условие или логический оператор
+    private Token classifyToken(String tokenValue) {
+        Pattern logicalOperatorPattern = Pattern.compile("(?i)^\\s*(AND|OR)\\s*$");
+        Matcher logicalMatcher = logicalOperatorPattern.matcher(tokenValue);
+
+        if (logicalMatcher.matches()) {
+            LOGGER.log(Level.FINEST, "Классифицирован логический оператор: {0}", tokenValue);
+            return new Token(TokenType.LOGICAL_OPERATOR, logicalMatcher.group(1).toUpperCase());
+        }
+
+        LOGGER.log(Level.FINEST, "Классифицировано как условие: {0}", tokenValue);
+        return new Token(TokenType.CONDITION, tokenValue);
+    }
+
+    // Проверяет сбалансированность скобок в токене
+    private void validateTokenBrackets(String tokenValue, int startIndex) {
+        long openCount = tokenValue.chars().filter(c -> c == '(').count();
+        long closeCount = tokenValue.chars().filter(c -> c == ')').count();
+
+        if (openCount != closeCount) {
+            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в токене на позиции {0}: {1}, открывающих: {2}, закрывающих: {3}",
+                    new Object[]{startIndex, tokenValue, openCount, closeCount});
+            throw new IllegalArgumentException("Несбалансированные скобки в токене: " + tokenValue);
+        }
+
+        LOGGER.log(Level.FINEST, "Скобки в токене сбалансированы: {0}", tokenValue);
+    }
     // Парсит токенизированные условия
     private List<Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
                                                      String originalQuery, boolean isJoinCondition,
