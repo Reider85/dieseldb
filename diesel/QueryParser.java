@@ -1825,7 +1825,7 @@ class QueryParser {
         // Условия сравнения с LIKE/NOT LIKE
         patterns.add(Map.entry("Like Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*'(?:[^'\\\\]|\\\\.)*?'")));
         // Условия сравнения (без LIKE)
-        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?:=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*?'|[0-9]+(?:\\.[0-9]+)?|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
+        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?:=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*?'|[0-9]+(?:\\.[0-9]+)?|[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
         // Некорректные токены (для выявления ошибок)
         patterns.add(Map.entry("Invalid Token", Pattern.compile("(?i)[^\\s()']+")));
 
@@ -2277,9 +2277,11 @@ class QueryParser {
     private Condition parseComparisonCondition(String condStr, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
                                                Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                String conjunction, boolean not, boolean isJoinCondition, String conditionStr) {
+        LOGGER.log(Level.FINEST, "Parsing comparison condition: {0}", condStr);
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         OperatorInfo operatorInfo = findOperator(condStr, operators);
         if (operatorInfo == null) {
+            LOGGER.log(Level.SEVERE, "No valid operator found in condition: {0}", condStr);
             throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + condStr + "'");
         }
 
