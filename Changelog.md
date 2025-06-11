@@ -181,3 +181,4 @@
 1.8.1 parseSelectQuery refactoring
 1.8.2 refactoring
 1.8.3 JOIN fix
+1.8.4 parseSingleCondition refactoring
