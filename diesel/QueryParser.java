@@ -1826,18 +1826,28 @@ class QueryParser {
                     }
                     currentToken.append(c);
                     if (parenDepth == 0 && currentToken.length() > 0) {
-                        tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
+                        String tokenValue = currentToken.toString().trim();
+                        if (!tokenValue.isEmpty()) {
+                            tokens.add(new Token(TokenType.CONDITION, tokenValue));
+                        }
                         currentToken = new StringBuilder();
+                    }
+                    // Проверяем, не следует ли логический оператор сразу после закрывающей скобки
+                    String nextToken = getNextToken(conditionStr, i + 1);
+                    if (logicalOperatorPattern.matcher(nextToken).matches()) {
+                        tokens.add(new Token(TokenType.LOGICAL_OPERATOR, nextToken.toUpperCase()));
+                        i += nextToken.length();
                     }
                     continue;
                 } else if (parenDepth == 0 && Character.isWhitespace(c)) {
                     String nextToken = getNextToken(conditionStr, i + 1);
                     if (logicalOperatorPattern.matcher(nextToken).matches()) {
-                        if (currentToken.length() > 0) {
-                            tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
-                            currentToken = new StringBuilder();
+                        String tokenValue = currentToken.toString().trim();
+                        if (!tokenValue.isEmpty()) {
+                            tokens.add(new Token(TokenType.CONDITION, tokenValue));
                         }
                         tokens.add(new Token(TokenType.LOGICAL_OPERATOR, nextToken.toUpperCase()));
+                        currentToken = new StringBuilder();
                         i += nextToken.length();
                         continue;
                     }
@@ -1846,8 +1856,9 @@ class QueryParser {
             currentToken.append(c);
         }
 
-        if (currentToken.length() > 0) {
-            tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
+        String finalTokenValue = currentToken.toString().trim();
+        if (!finalTokenValue.isEmpty()) {
+            tokens.add(new Token(TokenType.CONDITION, finalTokenValue));
         }
 
         if (tokens.isEmpty() && !conditionStr.trim().isEmpty()) {

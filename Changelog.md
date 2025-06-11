@@ -189,3 +189,4 @@
 1.8.9 JOIN fix
 1.9.0 JOIN fix
 1.9.1 refactoring
+1.9.2 JOIN fix
