@@ -1825,7 +1825,12 @@ class QueryParser {
         // Условия сравнения с LIKE/NOT LIKE
         patterns.add(Map.entry("Like Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*'(?:[^'\\\\]|\\\\.)*?'")));
         // Условия сравнения (без LIKE)
-        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?:=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*?'|[0-9]+(?:\\.[0-9]+)?|[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
+        patterns.add(Map.entry("Comparison String Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*?')")));
+        patterns.add(Map.entry("Comparison Number Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
+        patterns.add(Map.entry("Comparison Column Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
         // Некорректные токены (для выявления ошибок)
         patterns.add(Map.entry("Invalid Token", Pattern.compile("(?i)[^\\s()']+")));
 

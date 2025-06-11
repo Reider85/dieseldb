@@ -200,3 +200,4 @@
 2.0.0 LIKE fix
 2.0.1 LIKE fix
 2.0.2 tokenizeConditions fix
+2.0.3 tokenizeConditions fix
