@@ -1886,7 +1886,7 @@ class QueryParser {
         Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
         Pattern subQueryPattern = Pattern.compile("\\([^()]*\\)");
         Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
-        Pattern keywordPattern = Pattern.compile("\\b(LIMIT|OFFSET|ORDER BY|GROUP BY)\\b", Pattern.CASE_INSENSITIVE);
+        Pattern keywordPattern = Pattern.compile("\\b(LIMIT|OFFSET|ORDER BY|GROUP BY|WHERE)\\b", Pattern.CASE_INSENSITIVE);
         Pattern tokenPattern = Pattern.compile("[^\\s]+");
 
         LOGGER.log(Level.FINE, "Применение регулярных выражений для условий: quotedStringPattern, subQueryPattern, logicalOperatorPattern, keywordPattern, tokenPattern");
@@ -1955,7 +1955,7 @@ class QueryParser {
                     }
                 }
                 LOGGER.log(Level.FINE, "Прекращение парсинга условий на {0}", token);
-                break;
+                break; // Прерываем цикл, если встретили WHERE, LIMIT и т.д.
             } else if (isLogicalOperator) {
                 String condStr = currentCondition.toString().trim();
                 if (!condStr.isEmpty()) {
@@ -2105,7 +2105,6 @@ class QueryParser {
                 Pattern.DOTALL
         );
         Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
-        LOGGER.log(Level.FINE, "Применение регулярных выражений для условия: inPattern, isNullPattern, subQueryPattern, columnPattern");
 
         if (normalizedCondStr.toUpperCase().startsWith("(") && normalizedCondStr.toUpperCase().endsWith(")")) {
             String subCondStr = normalizedCondStr.substring(1, normalizedCondStr.length() - 1).trim();
@@ -2125,21 +2124,7 @@ class QueryParser {
                     .findFirst()
                     .orElse(column);
             String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
-            String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-
-            Class<?> columnType = null;
-            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-                if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                    columnType = entry.getValue();
-                    break;
-                }
-            }
-            if (columnType == null) {
-                LOGGER.log(Level.SEVERE, "Unknown column in IN condition: {0}, available columns: {1}",
-                        new Object[]{column, combinedColumnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column: " + column);
-            }
+            Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
 
             if (valuesStr.trim().toUpperCase().startsWith("SELECT ")) {
                 String subQueryStr = valuesStr.trim();
@@ -2175,21 +2160,7 @@ class QueryParser {
                     .findFirst()
                     .orElse(column);
             String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
-            String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-
-            boolean found = false;
-            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-                if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                LOGGER.log(Level.SEVERE, "Unknown column in IS NULL condition: {0}, available columns: {1}",
-                        new Object[]{column, combinedColumnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column: " + column);
-            }
+            validateColumn(normalizedColumn, combinedColumnTypes);
             return new Condition(actualColumn, isNotNull ? Operator.IS_NOT_NULL : Operator.IS_NULL, conjunction, not);
         }
 
@@ -2270,17 +2241,17 @@ class QueryParser {
         String leftPart = normalizedCondStr.substring(0, operatorIndex).trim();
         String rightPart = normalizedCondStr.substring(operatorEndIndex).trim();
 
-        // Новая логика для обработки rightPart
+        // Проверка на наличие ключевых слов в rightPart
+        String actualRightPart = rightPart;
+        Pattern keywordPattern = Pattern.compile("\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY)\\b", Pattern.CASE_INSENSITIVE);
+        Matcher keywordMatcher = keywordPattern.matcher(rightPart);
+        if (keywordMatcher.find()) {
+            actualRightPart = rightPart.substring(0, keywordMatcher.start()).trim();
+        }
+
         String column;
         String rightColumn = null;
         Object value = null;
-        String actualRightPart = rightPart;
-
-        // Проверка на наличие логических операторов (AND, OR) в rightPart
-        int logicalOpIndex = findLogicalOperator(rightPart);
-        if (logicalOpIndex != -1) {
-            actualRightPart = rightPart.substring(0, logicalOpIndex).trim();
-        }
 
         Matcher columnMatcher = columnPattern.matcher(actualRightPart);
         if (columnMatcher.matches()) {
@@ -2296,9 +2267,8 @@ class QueryParser {
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
                         new Object[]{actualRightPart, e.getMessage()});
-                String[] rightParts = actualRightPart.split("\\s+", 2);
-                if (rightParts.length > 0 && columnPattern.matcher(rightParts[0]).matches()) {
-                    rightColumn = rightParts[0];
+                if (columnPattern.matcher(actualRightPart).matches()) {
+                    rightColumn = actualRightPart;
                 } else {
                     throw e;
                 }
