@@ -197,3 +197,4 @@
 1.9.7 refactoring
 1.9.8 refactoring
 1.9.9 tokenizeConditions fix
+2.0.0 LIKE fix

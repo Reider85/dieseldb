@@ -1815,7 +1815,7 @@ class QueryParser {
         patterns.add(Map.entry("NOT IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("Balanced Parentheses", Pattern.compile("(?i)\\([^()]+\\)")));
-        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
+        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*('(?:[^'\\\\]|\\\\.)*?'|[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
@@ -1846,7 +1846,7 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}", new Object[]{patternName, tokenValue, matcher.end()});
                     if (!tokenValue.isEmpty()) {
                         int end = matcher.end();
-                        if (end <= nextPos) { // Изменено с < на <=
+                        if (end <= nextPos) {
                             nextPos = end;
                             matchedToken = tokenValue;
                             matchedPatternName = patternName;
@@ -2073,6 +2073,23 @@ class QueryParser {
         if (isSubQueryCondition(normalizedCondStr)) {
             return parseSubQueryCondition(normalizedCondStr, defaultTableName, database, originalQuery, combinedColumnTypes,
                     tableAliases, columnAliases, conjunction, not);
+        }
+
+        // Проверка на корректность шаблона LIKE
+        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:[^']|)*')");
+        Matcher likeMatcher = likePattern.matcher(normalizedCondStr);
+        if (likeMatcher.matches()) {
+            String column = likeMatcher.group(1).trim();
+            String operatorStr = likeMatcher.group(2).toUpperCase();
+            String value = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1); // Удаляем кавычки
+            String actualColumn = resolveColumnAlias(column, columnAliases);
+            String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
+            validateColumn(normalizedColumn, combinedColumnTypes);
+
+            Operator operator = operatorStr.equals("LIKE") ? Operator.LIKE : Operator.NOT_LIKE;
+            Object parsedValue = parseConditionValue(actualColumn, "'" + value + "'", getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
+
+            return new Condition(actualColumn, parsedValue, operator, conjunction, not);
         }
 
         LOGGER.log(Level.FINEST, "Передача в parseComparisonCondition: condStr={0}", normalizedCondStr);
