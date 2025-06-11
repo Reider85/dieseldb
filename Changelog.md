@@ -204,3 +204,4 @@
 2.0.4 tokenizeConditions fix
 2.0.5 tokenizeConditions fix
 2.0.6 tokenizeConditions fix
+2.0.7 tokenizeConditions fix

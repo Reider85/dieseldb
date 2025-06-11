@@ -1802,29 +1802,22 @@ class QueryParser {
     // Токенизирует строку условий с использованием регулярных выражений
     private List<Token> tokenizeConditions(String conditionStr) {
         LOGGER.log(Level.FINE, "Начало токенизации условий: {0}", conditionStr);
-
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
             LOGGER.log(Level.WARNING, "Пустая или null строка условий");
             return new ArrayList<>();
         }
 
-        // Определяем паттерны с их описаниями
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
-        // Логические операторы первыми для приоритета
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
         patterns.add(Map.entry("Quoted String", Pattern.compile("(?i)'(?:[^'\\\\]|\\\\.)*'", Pattern.DOTALL)));
         patterns.add(Map.entry("NOT IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("Balanced Parentheses", Pattern.compile("(?i)\\([^()]+\\)")));
         patterns.add(Map.entry("Null Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IS\\s*(NOT\\s+)?NULL\\b")));
-        patterns.add(Map.entry("Like Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*'(?:[^'\\\\]|\\\\.)*?'")));
-        patterns.add(Map.entry("Comparison String Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*?')")));
-        patterns.add(Map.entry("Comparison Number Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
-        patterns.add(Map.entry("Comparison Column Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
-        // "Invalid Token" последним
+        patterns.add(Map.entry("Like Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('[^']*')")));
+        patterns.add(Map.entry("Comparison String Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*?')")));
+        patterns.add(Map.entry("Comparison Number Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
+        patterns.add(Map.entry("Comparison Column Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
         patterns.add(Map.entry("Invalid Token", Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)[^\\s()']+")));
 
         List<Token> tokens = new ArrayList<>();
@@ -1837,7 +1830,6 @@ class QueryParser {
             String matchedToken = null;
             String matchedPatternName = null;
 
-            // Пропускаем пробелы
             while (currentPos < stringLength && Character.isWhitespace(conditionStr.charAt(currentPos))) {
                 currentPos++;
             }
@@ -1845,9 +1837,8 @@ class QueryParser {
                 break;
             }
 
-            LOGGER.log(Level.FINEST, "Проверяемый токен: '{0}', позиция: {1}", new Object[]{conditionStr.substring(currentPos), currentPos});
+            LOGGER.log(Level.FINEST, "Checking token at position {0}: {1}", new Object[]{currentPos, conditionStr.substring(currentPos)});
 
-            // Проверяем каждый паттерн
             for (Map.Entry<String, Pattern> entry : patterns) {
                 String patternName = entry.getKey();
                 Pattern pattern = entry.getValue();
@@ -1858,46 +1849,37 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}", new Object[]{patternName, tokenValue, matcher.end()});
                     if (!tokenValue.isEmpty()) {
                         int end = matcher.end();
-                        // Выбираем токен, только если он более специфичен или первый подходящий
-                        if (!matched || patternName.equals("Logical Operator")) {
+                        if (!matched || patternName.equals("Logical Operator") || patternName.equals("Like Condition")) {
                             nextPos = end;
                             matchedToken = tokenValue;
                             matchedPatternName = patternName;
                             matched = true;
                         }
                     }
-                } else {
-                    LOGGER.log(Level.FINEST, "Паттерн '{0}' не сработал на позиции {1}", new Object[]{patternName, currentPos});
                 }
             }
 
-            // Если токен найден
             if (matched) {
-                LOGGER.log(Level.FINEST, "Сопоставлен токен с паттерном '{0}': {1}, позиции {2}-{3}",
-                        new Object[]{matchedPatternName, matchedToken, currentPos, nextPos});
-
-                // Проверяем скобки, если они есть
+                if (matchedPatternName.equals("Like Condition")) {
+                    String[] parts = matchedToken.split("'(.*)'");
+                    if (parts.length > 1) {
+                        validateLikePattern(parts[1], currentPos);
+                    }
+                }
                 if (matchedToken.contains("(") || matchedToken.contains(")")) {
                     validateTokenBrackets(matchedToken, currentPos);
                 }
-
-                // Обрабатываем токен
                 if (matchedPatternName.equals("Invalid Token")) {
                     LOGGER.log(Level.WARNING, "Обнаружен некорректный токен на позиции {0}: {1}", new Object[]{currentPos, matchedToken});
                     throw new IllegalArgumentException("Некорректный токен в условии на позиции " + currentPos + ": " + matchedToken);
                 }
-
                 Token token = classifyToken(matchedToken);
                 tokens.add(token);
-                LOGGER.log(Level.FINEST, "Добавлен токен: {0} на позициях {1}-{2}",
-                        new Object[]{token, currentPos, nextPos});
-
+                LOGGER.log(Level.FINEST, "Добавлен токен: {0} на позициях {1}-{2}", new Object[]{token, currentPos, nextPos});
                 currentPos = nextPos;
             } else {
-                // Если ни один паттерн не сработал, логируем ошибку и прерываем
                 String remaining = conditionStr.substring(currentPos).trim();
-                LOGGER.log(Level.WARNING, "Не удалось сопоставить токен на позиции {0}, остаток: {1}",
-                        new Object[]{currentPos, remaining});
+                LOGGER.log(Level.WARNING, "Не удалось сопоставить токен на позиции {0}, остаток: {1}", new Object[]{currentPos, remaining});
                 throw new IllegalArgumentException("Невалидные символы в условии на позиции " + currentPos + ": " + remaining);
             }
         }
@@ -1907,9 +1889,15 @@ class QueryParser {
             throw new IllegalArgumentException("Невалидное условие: не удалось выделить токенов из '" + conditionStr + "'");
         }
 
-        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}",
-                new Object[]{tokens.size(), tokens});
+        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}", new Object[]{tokens.size(), tokens});
         return tokens;
+    }
+
+    private void validateLikePattern(String pattern, int position) {
+        if (pattern.toUpperCase().contains("LIKE ") || pattern.toUpperCase().contains("WHERE ")) {
+            LOGGER.log(Level.WARNING, "Invalid LIKE pattern at position {0}: {1}", new Object[]{position, pattern});
+            throw new IllegalArgumentException("Invalid LIKE pattern contains reserved keywords: " + pattern);
+        }
     }
 
     // Классифицирует токен как условие или логический оператор
