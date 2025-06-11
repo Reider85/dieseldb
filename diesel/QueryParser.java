@@ -376,6 +376,60 @@ class QueryParser {
         }
     }
 
+
+    // Вспомогательный класс для хранения результатов парсинга элементов SELECT
+    private static class SelectItems {
+        List<String> columns;
+        List<AggregateFunction> aggregates;
+        List<SubQuery> subQueries;
+        Map<String, String> columnAliases;
+
+        SelectItems(List<String> columns, List<AggregateFunction> aggregates, List<SubQuery> subQueries,
+                    Map<String, String> columnAliases) {
+            this.columns = columns;
+            this.aggregates = aggregates;
+            this.subQueries = subQueries;
+            this.columnAliases = columnAliases;
+        }
+    }
+
+    // Вспомогательный класс для хранения результатов парсинга таблиц и соединений
+    private static class TableJoins {
+        String tableName;
+        String tableAlias;
+        List<JoinInfo> joins;
+        Map<String, String> tableAliases;
+        Map<String, Class<?>> combinedColumnTypes;
+
+        TableJoins(String tableName, String tableAlias, List<JoinInfo> joins, Map<String, String> tableAliases,
+                   Map<String, Class<?>> combinedColumnTypes) {
+            this.tableName = tableName;
+            this.tableAlias = tableAlias;
+            this.joins = joins;
+            this.tableAliases = tableAliases;
+            this.combinedColumnTypes = combinedColumnTypes;
+        }
+    }
+
+    // Вспомогательный класс для хранения дополнительных клауз
+    private static class AdditionalClauses {
+        List<Condition> conditions;
+        List<String> groupBy;
+        List<HavingCondition> havingConditions;
+        List<OrderByInfo> orderBy;
+        Integer limit;
+        Integer offset;
+
+        AdditionalClauses(List<Condition> conditions, List<String> groupBy, List<HavingCondition> havingConditions,
+                          List<OrderByInfo> orderBy, Integer limit, Integer offset) {
+            this.conditions = conditions;
+            this.groupBy = groupBy;
+            this.havingConditions = havingConditions;
+            this.orderBy = orderBy;
+            this.limit = limit;
+            this.offset = offset;
+        }
+    }
     private boolean isOperator(String str) {
         for (String op : OPERATORS) {
             if (str.toUpperCase().startsWith(op)) {
@@ -788,21 +842,6 @@ class QueryParser {
                 groupBy, havingConditions, orderBy, limit, offset, subQueries, columnAliases, tableAliases, tableJoins.combinedColumnTypes);
     }
 
-    // Вспомогательный класс для хранения результатов парсинга элементов SELECT
-    private static class SelectItems {
-        List<String> columns;
-        List<AggregateFunction> aggregates;
-        List<SubQuery> subQueries;
-        Map<String, String> columnAliases;
-
-        SelectItems(List<String> columns, List<AggregateFunction> aggregates, List<SubQuery> subQueries,
-                    Map<String, String> columnAliases) {
-            this.columns = columns;
-            this.aggregates = aggregates;
-            this.subQueries = subQueries;
-            this.columnAliases = columnAliases;
-        }
-    }
 
     // Парсит элементы SELECT (столбцы, агрегации, подзапросы)
     private SelectItems parseSelectItems(String selectPartOriginal, Database database) {
@@ -936,24 +975,6 @@ class QueryParser {
         return new SelectItems(columns, aggregates, subQueries, columnAliases);
     }
 
-    // Вспомогательный класс для хранения результатов парсинга таблиц и соединений
-    private static class TableJoins {
-        String tableName;
-        String tableAlias;
-        List<JoinInfo> joins;
-        Map<String, String> tableAliases;
-        Map<String, Class<?>> combinedColumnTypes;
-
-        TableJoins(String tableName, String tableAlias, List<JoinInfo> joins, Map<String, String> tableAliases,
-                   Map<String, Class<?>> combinedColumnTypes) {
-            this.tableName = tableName;
-            this.tableAlias = tableAlias;
-            this.joins = joins;
-            this.tableAliases = tableAliases;
-            this.combinedColumnTypes = combinedColumnTypes;
-        }
-    }
-
     // Парсит таблицы и соединения
     private TableJoins parseTableAndJoins(String tableAndJoinsOriginal, Database database) {
         String tableAndJoins = tableAndJoinsOriginal.toUpperCase().trim();
@@ -1081,26 +1102,6 @@ class QueryParser {
             case "CROSS JOIN" -> JoinType.CROSS;
             default -> throw new IllegalArgumentException("Неподдерживаемый тип соединения: " + joinTypeStr);
         };
-    }
-
-    // Вспомогательный класс для хранения дополнительных клауз
-    private static class AdditionalClauses {
-        List<Condition> conditions;
-        List<String> groupBy;
-        List<HavingCondition> havingConditions;
-        List<OrderByInfo> orderBy;
-        Integer limit;
-        Integer offset;
-
-        AdditionalClauses(List<Condition> conditions, List<String> groupBy, List<HavingCondition> havingConditions,
-                          List<OrderByInfo> orderBy, Integer limit, Integer offset) {
-            this.conditions = conditions;
-            this.groupBy = groupBy;
-            this.havingConditions = havingConditions;
-            this.orderBy = orderBy;
-            this.limit = limit;
-            this.offset = offset;
-        }
     }
 
     // Парсит дополнительные клаузы (WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET)
