@@ -1047,7 +1047,21 @@ class QueryParser {
                 LOGGER.log(Level.FINE, "Обрезана часть после ON до {0}: {1}", new Object[]{clauseMatcher.group(1), onClausePart});
             }
 
-            String[] joinTableTokens = onClausePart.split("\\s+(?=(ON))\\b", 2);
+// Обновляем разделение joinPart
+            String[] joinTableTokens;
+            if (joinType == JoinType.CROSS) {
+                joinTableTokens = new String[]{joinPart.trim()};
+            } else {
+                // Ищем позицию ON вне скобок и кавычек
+                int onIndex = findOnClausePosition(joinPart);
+                if (onIndex == -1) {
+                    throw new IllegalArgumentException("Недопустимый формат " + joinTypeStr + ": отсутствует ON");
+                }
+                String joinTablePart = joinPart.substring(0, onIndex).trim();
+                String onClause = joinPart.substring(onIndex + 2).trim(); // Пропускаем "ON"
+                joinTableTokens = new String[]{joinTablePart, onClause};
+            }
+
             String joinTablePart = joinTableTokens[0].trim();
             String[] joinTableParts = joinTablePart.split("\\s+");
             joinTableName = joinTableParts[0].trim();
@@ -1080,14 +1094,9 @@ class QueryParser {
                 joins.add(new JoinInfo(tableName, joinTableName, joinTableAlias, null, null, joinType, onConditions));
             } else {
                 if (joinTableTokens.length != 2) {
-                    throw new IllegalArgumentException("Недопустимый формат " + joinTypeStr + ": отсутствует ON");
-                }
-                String onClause = joinTableTokens[1].trim();
-                String[] onSplit = onClause.split("(?i)ON\\s+", 2);
-                if (onSplit.length != 2) {
                     throw new IllegalArgumentException("Недопустимый формат " + joinTypeStr + ": неверный ON");
                 }
-                String onCondition = onSplit[1].trim();
+                String onClause = joinTableTokens[1].trim();
 
                 Table joinTable = database.getTable(joinTableName);
                 if (joinTable == null) {
@@ -1096,7 +1105,7 @@ class QueryParser {
                 combinedColumnTypes.putAll(joinTable.getColumnTypes());
                 tableAliases.put(joinTableName, joinTableName);
 
-                onConditions = parseConditions(onCondition, tableName, database, tableAndJoinsOriginal, true,
+                onConditions = parseConditions(onClause, tableName, database, tableAndJoinsOriginal, true,
                         combinedColumnTypes, tableAliases, new HashMap<>());
 
                 for (Condition cond : onConditions) {
@@ -1268,137 +1277,33 @@ class QueryParser {
                 new Object[]{clause, query});
         return -1;
     }
-    private List<String> parseGroupByClause(String groupByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
-                                            Map<String, String> tableAliases, Map<String, String> columnAliases, List<SubQuery> selectSubQueries) {
-        List<String> groupBy = new ArrayList<>();
-        String[] groupByParts = splitGroupByClause(groupByClause);
-        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)$");
 
-        for (String part : groupByParts) {
-            String trimmedPart = part.trim();
-            if (trimmedPart.isEmpty()) {
-                throw new IllegalArgumentException("Invalid GROUP BY clause: empty expression");
-            }
-
-            String expression = trimmedPart;
-            boolean found = false;
-
-            // First check if it's a direct column reference
-            if (columnPattern.matcher(expression).matches()) {
-                String normalizedColumn = normalizeColumnName(expression, defaultTableName, tableAliases);
-                String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-
-                // Check against column aliases
-                for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
-                    if (aliasEntry.getValue().equalsIgnoreCase(unqualifiedColumn)) {
-                        groupBy.add(aliasEntry.getKey());
-                        found = true;
-                        break;
-                    }
-                }
-
-                // If not found as alias, check against actual columns
-                if (!found) {
-                    for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                        String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-                        if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                            groupBy.add(normalizedColumn);
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // If not found yet, check if it's a subquery or subquery alias
-            if (!found) {
-                // Check against subquery aliases
-                for (SubQuery subQuery : selectSubQueries) {
-                    if (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(expression)) {
-                        groupBy.add(subQuery.alias);
-                        found = true;
-                        break;
-                    }
-                }
-
-                // Check if it's a subquery that matches one in the SELECT
-                if (!found && subQueryPattern.matcher(expression).matches()) {
-                    String normalizedExpression = normalizeQueryString(expression);
-                    for (SubQuery subQuery : selectSubQueries) {
-                        String subQueryStr = normalizeQueryString("(" + subQuery.query.toString() + ")");
-                        if (normalizedExpression.equalsIgnoreCase(subQueryStr) ||
-                                areSubQueriesEquivalent(expression, subQuery.query.toString())) {
-                            String resolvedExpression = subQuery.alias != null ? subQuery.alias : expression;
-                            groupBy.add(resolvedExpression);
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (!found) {
-                LOGGER.log(Level.SEVERE, "Unknown column, alias, or subquery in GROUP BY: {0}, available columns: {1}, aliases: {2}, subqueries: {3}",
-                        new Object[]{expression, combinedColumnTypes.keySet(), columnAliases.values(), selectSubQueries});
-                throw new IllegalArgumentException("Unknown column in GROUP BY: " + expression);
-            }
-        }
-        return groupBy;
-    }
-
-    private String[] splitGroupByClause(String groupByClause) {
-        List<String> parts = new ArrayList<>();
-        StringBuilder currentPart = new StringBuilder();
+    private int findOnClausePosition(String joinPart) {
         boolean inQuotes = false;
         int parenDepth = 0;
+        Pattern onPattern = Pattern.compile("(?i)\\bON\\b");
 
-        for (int i = 0; i < groupByClause.length(); i++) {
-            char c = groupByClause.charAt(i);
+        for (int i = 0; i < joinPart.length(); i++) {
+            char c = joinPart.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                currentPart.append(c);
                 continue;
             }
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
-                    currentPart.append(c);
-                    continue;
                 } else if (c == ')') {
                     parenDepth--;
-                    currentPart.append(c);
-                    continue;
-                } else if (c == ',' && parenDepth == 0) {
-                    String part = currentPart.toString().trim();
-                    if (!part.isEmpty()) {
-                        parts.add(part);
-                    }
-                    currentPart = new StringBuilder();
-                    continue;
-                } else if (parenDepth == 0 && c == ' ') {
-                    String nextToken = getNextToken(groupByClause, i + 1);
-                    if (nextToken.equalsIgnoreCase("ORDER") && getNextToken(groupByClause, i + nextToken.length() + 2).equalsIgnoreCase("BY") ||
-                            nextToken.equalsIgnoreCase("LIMIT") || nextToken.equalsIgnoreCase("OFFSET")) {
-                        String part = currentPart.toString().trim();
-                        if (!part.isEmpty()) {
-                            parts.add(part);
-                        }
-                        break;
+                } else if (parenDepth == 0) {
+                    Matcher onMatcher = onPattern.matcher(joinPart.substring(i));
+                    if (onMatcher.lookingAt()) {
+                        return i;
                     }
                 }
             }
-            currentPart.append(c);
         }
-
-        String lastPart = currentPart.toString().trim();
-        if (!lastPart.isEmpty()) {
-            parts.add(lastPart);
-        }
-
-        return parts.toArray(new String[0]);
+        return -1;
     }
-
     private List<String> splitSelectItems(String selectPart) {
         if (selectPart == null || selectPart.trim().isEmpty()) {
             return new ArrayList<>();
@@ -1875,33 +1780,30 @@ class QueryParser {
         boolean inQuotes = false;
         int parenDepth = 0;
 
-        Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
-        Pattern subQueryPattern = Pattern.compile("\\((?:[^()']+|'(?:\\\\.[^'])*')*\\)");
         Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
-        Pattern tokenPattern = Pattern.compile("[^\\s]+");
 
-        int currentPos = 0;
-        while (currentPos < conditionStr.length()) {
-            char c = conditionStr.charAt(currentPos);
+        for (int i = 0; i < conditionStr.length(); i++) {
+            char c = conditionStr.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 currentCondition.append(c);
-                currentPos++;
                 continue;
             }
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
                     currentCondition.append(c);
-                    currentPos++;
                     continue;
                 } else if (c == ')') {
                     parenDepth--;
+                    if (parenDepth < 0) {
+                        throw new IllegalArgumentException("Несбалансированные скобки в условии: " + conditionStr);
+                    }
                     currentCondition.append(c);
-                    currentPos++;
                     continue;
                 } else if (parenDepth == 0 && Character.isWhitespace(c)) {
-                    String nextToken = getNextToken(conditionStr, currentPos + 1);
+                    // Проверяем следующий токен
+                    String nextToken = getNextToken(conditionStr, i + 1);
                     if (logicalOperatorPattern.matcher(nextToken).matches()) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
@@ -1918,23 +1820,35 @@ class QueryParser {
                         }
                         conjunction = nextToken.toUpperCase();
                         currentCondition = new StringBuilder();
-                        currentPos += nextToken.length() + 1;
+                        i += nextToken.length();
                         continue;
                     }
                 }
             }
             currentCondition.append(c);
-            currentPos++;
         }
 
         String finalCondStr = currentCondition.toString().trim();
         if (!finalCondStr.isEmpty()) {
             LOGGER.log(Level.FINE, "Парсинг финального условия: condStr={0}", finalCondStr);
             try {
-                Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
-                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                conditions.add(condition);
-                LOGGER.log(Level.FINE, "Добавлено финальное условие: {0}", condition);
+                // Если строка начинается и заканчивается скобками, обработать как группированное условие
+                if (finalCondStr.startsWith("(") && finalCondStr.endsWith(")")) {
+                    int endParen = findMatchingParenthesis(finalCondStr, 0);
+                    if (endParen == finalCondStr.length() - 1) {
+                        Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
+                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Добавлено группированное финальное условие: {0}", condition);
+                    } else {
+                        throw new IllegalArgumentException("Некорректная структура группированного условия: " + finalCondStr);
+                    }
+                } else {
+                    Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
+                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                    conditions.add(condition);
+                    LOGGER.log(Level.FINE, "Добавлено финальное условие: {0}", condition);
+                }
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.SEVERE, "Ошибка парсинга финального условия: {0}, condStr={1}",
                         new Object[]{e.getMessage(), finalCondStr});
@@ -2076,8 +1990,14 @@ class QueryParser {
                                             Map<String, String> tableAliases, Map<String, String> columnAliases,
                                             String conjunction, boolean not) {
         String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
+        if (subCondStr.isEmpty()) {
+            throw new IllegalArgumentException("Пустое группированное условие: " + condStr);
+        }
         List<Condition> subConditions = parseConditions(subCondStr, defaultTableName, database, originalQuery,
                 isJoinCondition, combinedColumnTypes, tableAliases, columnAliases);
+        if (subConditions.isEmpty()) {
+            throw new IllegalArgumentException("Не удалось разобрать подусловия в группированном условии: " + subCondStr);
+        }
         return new Condition(subConditions, conjunction, not);
     }
 
