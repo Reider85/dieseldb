@@ -1957,7 +1957,7 @@ class QueryParser {
                             }
                         }
                         LOGGER.log(Level.FINE, "Прекращение парсинга условий на {0}", nextToken);
-                        break;
+                        return conditions; // Завершаем парсинг условий
                     }
                 }
             }
@@ -2328,7 +2328,7 @@ class QueryParser {
         if (keywordMatcher.find()) {
             return rightPart.substring(0, keywordMatcher.start()).trim();
         }
-        return rightPart;
+        return rightPart.trim();
     }
 
     private int findLogicalOperator(String input) {
