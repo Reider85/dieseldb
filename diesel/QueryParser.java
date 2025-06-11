@@ -68,6 +68,12 @@ class QueryParser {
         INNER, LEFT_INNER, RIGHT_INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER, CROSS
     }
 
+    // Вспомогательный класс для токенов
+    private enum TokenType {
+        CONDITION,
+        LOGICAL_OPERATOR
+    }
+
     static class SubQuery {
         Query<?> query;
         String alias;
@@ -442,13 +448,20 @@ class QueryParser {
             this.endIndex = endIndex;
         }
     }
-    private boolean isOperator(String str) {
-        for (String op : OPERATORS) {
-            if (str.toUpperCase().startsWith(op)) {
-                return true;
-            }
+
+    private static class Token {
+        final TokenType type;
+        final String value;
+
+        Token(TokenType type, String value) {
+            this.type = type;
+            this.value = value;
         }
-        return false;
+
+        @Override
+        public String toString() {
+            return "Token{type=" + type + ", value='" + value + "'}'}";
+        }
     }
 
     public static String convertLikePatternToRegex(String pattern) {
@@ -1884,26 +1897,6 @@ class QueryParser {
         return conditions;
     }
 
-    // Вспомогательный класс для токенов
-    private enum TokenType {
-        CONDITION,
-        LOGICAL_OPERATOR
-    }
-
-    private static class Token {
-        final TokenType type;
-        final String value;
-
-        Token(TokenType type, String value) {
-            this.type = type;
-            this.value = value;
-        }
-
-        @Override
-        public String toString() {
-            return "Token{type=" + type + ", value='" + value + "'}'}";
-        }
-    }
     private void validateSubquery(String subquery) {
         if (!subquery.startsWith("(") || !subquery.endsWith(")")) {
             LOGGER.log(Level.SEVERE, "Subquery does not start with '(' or end with ')': {0}", subquery);
