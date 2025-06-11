@@ -1766,103 +1766,143 @@ class QueryParser {
             return new ArrayList<>();
         }
 
-        // Проверяем наличие ключевых слов и обрезаем строку
+        // Обрезаем строку до ключевых слов
+        String trimmedConditionStr = trimToClause(conditionStr);
+        LOGGER.log(Level.FINE, "Условие обрезано до: {0}", trimmedConditionStr);
+
+        List<Condition> conditions = new ArrayList<>();
+        List<Token> tokens = tokenizeConditions(trimmedConditionStr);
+        return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
+                combinedColumnTypes, tableAliases, columnAliases, null, false);
+    }
+
+    // Обрезает строку до ключевых слов
+    private String trimToClause(String conditionStr) {
         Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY)\\b");
         Matcher clauseMatcher = clausePattern.matcher(conditionStr);
         if (clauseMatcher.find()) {
-            conditionStr = conditionStr.substring(0, clauseMatcher.start()).trim();
-            LOGGER.log(Level.FINE, "Условие обрезано до ключевого слова {0}: {1}", new Object[]{clauseMatcher.group(1), conditionStr});
+            return conditionStr.substring(0, clauseMatcher.start()).trim();
         }
+        return conditionStr.trim();
+    }
 
-        List<Condition> conditions = new ArrayList<>();
-        StringBuilder currentCondition = new StringBuilder();
-        String conjunction = null;
+    // Токенизирует строку условий
+    private List<Token> tokenizeConditions(String conditionStr) {
+        List<Token> tokens = new ArrayList<>();
+        StringBuilder currentToken = new StringBuilder();
         boolean inQuotes = false;
         int parenDepth = 0;
-
         Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
 
         for (int i = 0; i < conditionStr.length(); i++) {
             char c = conditionStr.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                currentCondition.append(c);
+                currentToken.append(c);
                 continue;
             }
             if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
-                    currentCondition.append(c);
+                    currentToken.append(c);
                     continue;
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth < 0) {
                         throw new IllegalArgumentException("Несбалансированные скобки в условии: " + conditionStr);
                     }
-                    currentCondition.append(c);
+                    currentToken.append(c);
+                    if (parenDepth == 0 && currentToken.length() > 0) {
+                        tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
+                        currentToken = new StringBuilder();
+                    }
                     continue;
                 } else if (parenDepth == 0 && Character.isWhitespace(c)) {
-                    // Проверяем следующий токен
                     String nextToken = getNextToken(conditionStr, i + 1);
                     if (logicalOperatorPattern.matcher(nextToken).matches()) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty()) {
-                            try {
-                                Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                                conditions.add(condition);
-                                LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{nextToken, condition});
-                            } catch (IllegalArgumentException e) {
-                                LOGGER.log(Level.SEVERE, "Ошибка парсинга условия перед {0}: {1}, condStr={2}",
-                                        new Object[]{nextToken, e.getMessage(), condStr});
-                                throw e;
-                            }
+                        if (currentToken.length() > 0) {
+                            tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
+                            currentToken = new StringBuilder();
                         }
-                        conjunction = nextToken.toUpperCase();
-                        currentCondition = new StringBuilder();
+                        tokens.add(new Token(TokenType.LOGICAL_OPERATOR, nextToken.toUpperCase()));
                         i += nextToken.length();
                         continue;
                     }
                 }
             }
-            currentCondition.append(c);
+            currentToken.append(c);
         }
 
-        String finalCondStr = currentCondition.toString().trim();
-        if (!finalCondStr.isEmpty()) {
-            LOGGER.log(Level.FINE, "Парсинг финального условия: condStr={0}", finalCondStr);
-            try {
-                // Если строка начинается и заканчивается скобками, обработать как группированное условие
-                if (finalCondStr.startsWith("(") && finalCondStr.endsWith(")")) {
-                    int endParen = findMatchingParenthesis(finalCondStr, 0);
-                    if (endParen == finalCondStr.length() - 1) {
-                        Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
-                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                        conditions.add(condition);
-                        LOGGER.log(Level.FINE, "Добавлено группированное финальное условие: {0}", condition);
-                    } else {
-                        throw new IllegalArgumentException("Некорректная структура группированного условия: " + finalCondStr);
-                    }
-                } else {
-                    Condition condition = parseSingleCondition(finalCondStr, defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено финальное условие: {0}", condition);
-                }
-            } catch (IllegalArgumentException e) {
-                LOGGER.log(Level.SEVERE, "Ошибка парсинга финального условия: {0}, condStr={1}",
-                        new Object[]{e.getMessage(), finalCondStr});
-                throw e;
-            }
+        if (currentToken.length() > 0) {
+            tokens.add(new Token(TokenType.CONDITION, currentToken.toString().trim()));
         }
 
-        if (conditions.isEmpty() && !conditionStr.trim().isEmpty()) {
-            LOGGER.log(Level.SEVERE, "Не удалось разобрать ни одного условия: conditionStr={0}", conditionStr);
+        if (tokens.isEmpty() && !conditionStr.trim().isEmpty()) {
             throw new IllegalArgumentException("Invalid condition: unable to parse any conditions in '" + conditionStr + "'");
         }
 
-        LOGGER.log(Level.FINE, "Условия успешно разобраны: {0}", conditions);
+        LOGGER.log(Level.FINEST, "Токены условий: {0}", tokens);
+        return tokens;
+    }
+
+    // Парсит токенизированные условия
+    private List<Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
+                                                     String originalQuery, boolean isJoinCondition,
+                                                     Map<String, Class<?>> combinedColumnTypes, // Changed from Map<String, Object>
+                                                     Map<String, String> tableAliases,
+                                                     Map<String, String> columnAliases,
+                                                     String conjunction, boolean not) {
+        List<Condition> conditions = new ArrayList<>();
+        for (int i = 0; i < tokens.size(); i++) {
+            Token token = tokens.get(i);
+            if (token.type == TokenType.CONDITION) {
+                String condStr = token.value;
+                if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                    int endParen = findMatchingParenthesis(condStr, 0);
+                    if (endParen == condStr.length() - 1) {
+                        String subCondStr = condStr.substring(1, endParen).trim();
+                        List<Token> subTokens = tokenizeConditions(subCondStr);
+                        List<Condition> subConditions = parseTokenizedConditions(subTokens, defaultTableName, database,
+                                originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                        conditions.add(new Condition(subConditions, conjunction, not));
+                        LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
+                    } else {
+                        throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
+                    }
+                } else {
+                    Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, condStr);
+                    conditions.add(condition);
+                    LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
+                }
+                if (i + 1 < tokens.size() && tokens.get(i + 1).type == TokenType.LOGICAL_OPERATOR) {
+                    conjunction = tokens.get(i + 1).value;
+                    i++; // Пропускаем логический оператор
+                }
+            }
+        }
         return conditions;
+    }
+
+    // Вспомогательный класс для токенов
+    private enum TokenType {
+        CONDITION,
+        LOGICAL_OPERATOR
+    }
+
+    private static class Token {
+        final TokenType type;
+        final String value;
+
+        Token(TokenType type, String value) {
+            this.type = type;
+            this.value = value;
+        }
+
+        @Override
+        public String toString() {
+            return "Token{type=" + type + ", value='" + value + "'}'}";
+        }
     }
     private void validateSubquery(String subquery) {
         if (!subquery.startsWith("(") || !subquery.endsWith(")")) {

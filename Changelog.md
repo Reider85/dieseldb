@@ -187,3 +187,4 @@
 1.8.7 ORDER BY fix
 1.8.8 ORDER BY fix
 1.8.9 JOIN fix
+1.9.0 JOIN fix
