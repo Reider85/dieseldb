@@ -1815,7 +1815,7 @@ class QueryParser {
         patterns.add(Map.entry("NOT IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)")));
         patterns.add(Map.entry("Balanced Parentheses", Pattern.compile("(?i)\\([^()]+\\)")));
-        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))")));
+        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
@@ -1843,6 +1843,7 @@ class QueryParser {
 
                 if (matcher.lookingAt()) {
                     String tokenValue = matcher.group().trim();
+                    LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}", new Object[]{patternName, tokenValue, matcher.end()});
                     if (!tokenValue.isEmpty()) {
                         int end = matcher.end();
                         if (end < nextPos) {
@@ -1852,6 +1853,8 @@ class QueryParser {
                             matched = true;
                         }
                     }
+                } else {
+                    LOGGER.log(Level.FINEST, "Паттерн '{0}' не сработал на позиции {1}", new Object[]{patternName, currentPos});
                 }
             }
 
