@@ -183,4 +183,5 @@
 1.8.3 JOIN fix
 1.8.4 parseSingleCondition refactoring
 1.8.5 LIKE fix
-1.8.6 ORDER BY fi
+1.8.6 ORDER BY fix
+1.8.7 ORDER BY fix

@@ -2100,6 +2100,7 @@ class QueryParser {
                     tableAliases, columnAliases, conjunction, not);
         }
 
+        LOGGER.log(Level.FINEST, "Передача в parseComparisonCondition: condStr={0}", normalizedCondStr);
         return parseComparisonCondition(normalizedCondStr, defaultTableName, combinedColumnTypes, tableAliases, columnAliases,
                 conjunction, not, isJoinCondition, conditionStr);
     }
