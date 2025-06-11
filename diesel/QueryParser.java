@@ -1810,29 +1810,20 @@ class QueryParser {
 
         // Определяем паттерны с их описаниями
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
-        // Строки в кавычках
         patterns.add(Map.entry("Quoted String", Pattern.compile("(?i)'(?:[^'\\\\]|\\\\.)*'", Pattern.DOTALL)));
-        // Логические операторы
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\s*(?:AND|OR)\\s*")));
-        // Условия NOT IN
         patterns.add(Map.entry("NOT IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)")));
-        // Условия IN
         patterns.add(Map.entry("IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)")));
-        // Сбалансированные скобки (группировка условий)
         patterns.add(Map.entry("Balanced Parentheses", Pattern.compile("(?i)\\([^()]+\\)")));
-        // Условия IS NULL или IS NOT NULL
         patterns.add(Map.entry("Null Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IS\\s*(NOT\\s+)?NULL\\b")));
-        // Условия сравнения с LIKE/NOT LIKE
         patterns.add(Map.entry("Like Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*'(?:[^'\\\\]|\\\\.)*?'")));
-        // Условия сравнения (без LIKE)
         patterns.add(Map.entry("Comparison String Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*?')")));
         patterns.add(Map.entry("Comparison Number Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
         patterns.add(Map.entry("Comparison Column Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
-        // Некорректные токены (для выявления ошибок)
-        patterns.add(Map.entry("Invalid Token", Pattern.compile("(?i)[^\\s()']+")));
+        patterns.add(Map.entry("Invalid Token", Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)[^\\s()']+")));
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
@@ -1851,6 +1842,8 @@ class QueryParser {
             if (currentPos >= stringLength) {
                 break;
             }
+
+            LOGGER.log(Level.FINEST, "Проверяемый токен: '{0}', позиция: {1}", new Object[]{conditionStr.substring(currentPos), currentPos});
 
             // Проверяем каждый паттерн
             for (Map.Entry<String, Pattern> entry : patterns) {
