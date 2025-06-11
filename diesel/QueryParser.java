@@ -2194,7 +2194,6 @@ class QueryParser {
                 Pattern.DOTALL
         );
         Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
-
         LOGGER.log(Level.FINE, "Применение регулярных выражений для условия: inPattern, isNullPattern, subQueryPattern, columnPattern");
 
         if (normalizedCondStr.toUpperCase().startsWith("(") && normalizedCondStr.toUpperCase().endsWith(")")) {
@@ -2310,7 +2309,7 @@ class QueryParser {
         boolean inQuotes = false;
         int subQueryStart = -1;
 
-        LOGGER.log(Level.FINEST, "Начало цикла поиска оператора в условии");
+        // Поиск оператора
         for (int i = 0; i < normalizedCondStr.length(); i++) {
             char c = normalizedCondStr.charAt(i);
             if (c == '\'') {
@@ -2335,7 +2334,6 @@ class QueryParser {
                     for (String op : operators) {
                         String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
                         Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
-                        //LOGGER.log(Level.FINE, "Применение регулярного выражения для оператора: opPattern={0}", patternStr);
                         Matcher opMatcher = opPattern.matcher(normalizedCondStr.substring(i));
                         if (opMatcher.lookingAt()) {
                             String remaining = normalizedCondStr.substring(i + opMatcher.group().length()).trim();
@@ -2353,25 +2351,29 @@ class QueryParser {
                 }
             }
         }
-        LOGGER.log(Level.FINEST, "Конец цикла поиска оператора в условии");
 
         if (operatorIndex == -1) {
-            LOGGER.log(Level.SEVERE, "No valid operator found in condition: {0}", normalizedCondStr);
             throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + normalizedCondStr + "'");
         }
 
         String leftPart = normalizedCondStr.substring(0, operatorIndex).trim();
         String rightPart = normalizedCondStr.substring(operatorEndIndex).trim();
-        LOGGER.log(Level.FINEST, "Split condition: leftPart={0}, operator={1}, rightPart={2}",
-                new Object[]{leftPart, selectedOperator, rightPart});
 
+        // Новая логика для обработки rightPart
         String column;
         String rightColumn = null;
         Object value = null;
+        String actualRightPart = rightPart;
 
-        Matcher columnMatcher = columnPattern.matcher(rightPart);
+        // Проверка на наличие логических операторов (AND, OR) в rightPart
+        int logicalOpIndex = findLogicalOperator(rightPart);
+        if (logicalOpIndex != -1) {
+            actualRightPart = rightPart.substring(0, logicalOpIndex).trim();
+        }
+
+        Matcher columnMatcher = columnPattern.matcher(actualRightPart);
         if (columnMatcher.matches()) {
-            rightColumn = rightPart;
+            rightColumn = actualRightPart;
         } else {
             column = columnAliases.entrySet().stream()
                     .filter(entry -> entry.getValue().equalsIgnoreCase(leftPart.split("\\.")[leftPart.contains(".") ? 1 : 0]))
@@ -2379,11 +2381,11 @@ class QueryParser {
                     .findFirst()
                     .orElse(leftPart);
             try {
-                value = parseConditionValue(column, rightPart, getColumnType(column, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
+                value = parseConditionValue(column, actualRightPart, getColumnType(column, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
-                        new Object[]{rightPart, e.getMessage()});
-                String[] rightParts = rightPart.split("\\s+", 2);
+                        new Object[]{actualRightPart, e.getMessage()});
+                String[] rightParts = actualRightPart.split("\\s+", 2);
                 if (rightParts.length > 0 && columnPattern.matcher(rightParts[0]).matches()) {
                     rightColumn = rightParts[0];
                 } else {
@@ -2417,6 +2419,32 @@ class QueryParser {
         }
     }
 
+    private int findLogicalOperator(String input) {
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        Pattern logicalOpPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                } else if (parenDepth == 0) {
+                    Matcher matcher = logicalOpPattern.matcher(input.substring(i));
+                    if (matcher.lookingAt()) {
+                        return i;
+                    }
+                }
+            }
+        }
+        return -1;
+    }
 
     private boolean rightColumnIsFromDifferentTable(String leftColumn, String rightColumn, Map<String, String> tableAliases) {
         if (rightColumn == null) {

@@ -177,3 +177,4 @@
 1.7.7 extra logging
 1.7.8 logging fix
 1.7.9 logging fix
+1.8.0 LIKE fix
