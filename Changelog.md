@@ -182,3 +182,4 @@
 1.8.2 refactoring
 1.8.3 JOIN fix
 1.8.4 parseSingleCondition refactoring
+1.8.5 LIKE fix

@@ -1894,106 +1894,76 @@ class QueryParser {
         StringBuilder currentCondition = new StringBuilder();
         String conjunction = null;
         boolean inQuotes = false;
+        int parenDepth = 0;
 
         Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
-        Pattern subQueryPattern = Pattern.compile("\\([^()]*\\)");
+        Pattern subQueryPattern = Pattern.compile("\\((?:[^()']+|'(?:\\\\.[^'])*')*\\)");
         Pattern logicalOperatorPattern = Pattern.compile("\\b(AND|OR)\\b", Pattern.CASE_INSENSITIVE);
         Pattern keywordPattern = Pattern.compile("\\b(LIMIT|OFFSET|ORDER BY|GROUP BY|WHERE)\\b", Pattern.CASE_INSENSITIVE);
         Pattern tokenPattern = Pattern.compile("[^\\s]+");
 
-        LOGGER.log(Level.FINE, "Применение регулярных выражений для условий: quotedStringPattern, subQueryPattern, logicalOperatorPattern, keywordPattern, tokenPattern");
-
-        LOGGER.log(Level.FINEST, "Начало цикла токенизации строки условий");
         int currentPos = 0;
         while (currentPos < conditionStr.length()) {
-            while (currentPos < conditionStr.length() && Character.isWhitespace(conditionStr.charAt(currentPos))) {
-                currentCondition.append(conditionStr.charAt(currentPos));
-                currentPos++;
-            }
-            if (currentPos >= conditionStr.length()) {
-                break;
-            }
-
-            String remaining = conditionStr.substring(currentPos);
-            Matcher quotedStringMatcher = quotedStringPattern.matcher(remaining);
-            Matcher subQueryMatcher = subQueryPattern.matcher(remaining);
-            Matcher logicalOperatorMatcher = logicalOperatorPattern.matcher(remaining);
-            Matcher keywordMatcher = keywordPattern.matcher(remaining);
-            Matcher tokenMatcher = tokenPattern.matcher(remaining);
-
-            String token = null;
-            int tokenLength = 0;
-            boolean isLogicalOperator = false;
-            boolean isKeyword = false;
-
-            if (quotedStringMatcher.lookingAt()) {
-                token = quotedStringMatcher.group();
-                tokenLength = token.length();
-                inQuotes = !inQuotes && token.startsWith("'");
-            } else if (subQueryMatcher.lookingAt()) {
-                token = subQueryMatcher.group();
-                tokenLength = token.length();
-            } else if (logicalOperatorMatcher.lookingAt() && !inQuotes) {
-                token = logicalOperatorMatcher.group();
-                tokenLength = token.length();
-                isLogicalOperator = true;
-            } else if (keywordMatcher.lookingAt() && !inQuotes) {
-                token = keywordMatcher.group();
-                tokenLength = token.length();
-                isKeyword = true;
-            } else if (tokenMatcher.lookingAt()) {
-                token = tokenMatcher.group();
-                tokenLength = token.length();
-            }
-
-            if (token == null) {
-                currentCondition.append(conditionStr.charAt(currentPos));
+            char c = conditionStr.charAt(currentPos);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                currentCondition.append(c);
                 currentPos++;
                 continue;
             }
-
-            if (isKeyword) {
-                String condStr = currentCondition.toString().trim();
-                if (!condStr.isEmpty()) {
-                    try {
-                        Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                        conditions.add(condition);
-                        LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{token, condition});
-                    } catch (IllegalArgumentException e) {
-                        LOGGER.log(Level.SEVERE, "Ошибка парсинга условия перед {0}: {1}, condStr={2}",
-                                new Object[]{token, e.getMessage(), condStr});
-                        throw e;
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    currentCondition.append(c);
+                    currentPos++;
+                    continue;
+                } else if (c == ')') {
+                    parenDepth--;
+                    currentCondition.append(c);
+                    currentPos++;
+                    continue;
+                } else if (parenDepth == 0 && Character.isWhitespace(c)) {
+                    String nextToken = getNextToken(conditionStr, currentPos + 1);
+                    if (logicalOperatorPattern.matcher(nextToken).matches()) {
+                        String condStr = currentCondition.toString().trim();
+                        if (!condStr.isEmpty()) {
+                            try {
+                                Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                                conditions.add(condition);
+                                LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{nextToken, condition});
+                            } catch (IllegalArgumentException e) {
+                                LOGGER.log(Level.SEVERE, "Ошибка парсинга условия перед {0}: {1}, condStr={2}",
+                                        new Object[]{nextToken, e.getMessage(), condStr});
+                                throw e;
+                            }
+                        }
+                        conjunction = nextToken.toUpperCase();
+                        currentCondition = new StringBuilder();
+                        currentPos += nextToken.length() + 1;
+                        continue;
+                    } else if (keywordPattern.matcher(nextToken).matches()) {
+                        String condStr = currentCondition.toString().trim();
+                        if (!condStr.isEmpty()) {
+                            try {
+                                Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
+                                conditions.add(condition);
+                                LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{nextToken, condition});
+                            } catch (IllegalArgumentException e) {
+                                LOGGER.log(Level.SEVERE, "Ошибка парсинга условия перед {0}: {1}, condStr={2}",
+                                        new Object[]{nextToken, e.getMessage(), condStr});
+                                throw e;
+                            }
+                        }
+                        LOGGER.log(Level.FINE, "Прекращение парсинга условий на {0}", nextToken);
+                        break;
                     }
                 }
-                LOGGER.log(Level.FINE, "Прекращение парсинга условий на {0}", token);
-                break; // Прерываем цикл, если встретили WHERE, LIMIT и т.д.
-            } else if (isLogicalOperator) {
-                String condStr = currentCondition.toString().trim();
-                if (!condStr.isEmpty()) {
-                    try {
-                        Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, false, conditionStr);
-                        conditions.add(condition);
-                        LOGGER.log(Level.FINE, "Добавлено условие перед {0}: {1}", new Object[]{token, condition});
-                    } catch (IllegalArgumentException e) {
-                        LOGGER.log(Level.SEVERE, "Ошибка парсинга условия перед {0}: {1}, condStr={2}",
-                                new Object[]{token, e.getMessage(), condStr});
-                        throw e;
-                    }
-                } else {
-                    LOGGER.log(Level.WARNING, "Пустое условие перед логическим оператором {0} на позиции {1}",
-                            new Object[]{token, currentPos});
-                }
-                conjunction = token.toUpperCase();
-                currentCondition = new StringBuilder();
-            } else {
-                currentCondition.append(token);
             }
-
-            currentPos += tokenLength;
+            currentCondition.append(c);
+            currentPos++;
         }
-        LOGGER.log(Level.FINEST, "Конец цикла токенизации строки условий");
 
         String finalCondStr = currentCondition.toString().trim();
         if (!finalCondStr.isEmpty()) {
@@ -2350,7 +2320,10 @@ class QueryParser {
     }
 
     private String trimRightPart(String rightPart) {
-        Pattern keywordPattern = Pattern.compile("\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY)\\b", Pattern.CASE_INSENSITIVE);
+        Pattern keywordPattern = Pattern.compile(
+                "\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|AND|OR)\\b",
+                Pattern.CASE_INSENSITIVE
+        );
         Matcher keywordMatcher = keywordPattern.matcher(rightPart);
         if (keywordMatcher.find()) {
             return rightPart.substring(0, keywordMatcher.start()).trim();
