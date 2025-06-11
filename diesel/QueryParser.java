@@ -1808,63 +1808,74 @@ class QueryParser {
             return new ArrayList<>();
         }
 
-        // Определяем отдельные паттерны
-        String quotedStringPattern = "'(?:[^'\\\\]|\\\\.)*'";
-        String logicalOperatorPattern = "\\s*(?:AND|OR)\\s*";
-        String inPattern = "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)";
-        String notInPattern = "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)";
-        String balancedParenthesesPattern = "\\([^()]+\\)";
-        String comparisonPattern = "(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))";
-
-        // Объединяем паттерны
-        String combinedPattern = String.format("(?i)(?:%s|%s|%s|%s|%s|%s)",
-                quotedStringPattern,
-                logicalOperatorPattern,
-                notInPattern,
-                inPattern,
-                balancedParenthesesPattern,
-                comparisonPattern);
-
-        Pattern tokenPattern = Pattern.compile(combinedPattern);
-        Matcher matcher = tokenPattern.matcher(conditionStr);
+        // Определяем паттерны с их описаниями
+        List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
+        patterns.add(Map.entry("Quoted String", Pattern.compile("(?i)'(?:[^'\\\\]|\\\\.)*'", Pattern.DOTALL)));
+        patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\s*(?:AND|OR)\\s*")));
+        patterns.add(Map.entry("NOT IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)")));
+        patterns.add(Map.entry("IN Condition", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)")));
+        patterns.add(Map.entry("Balanced Parentheses", Pattern.compile("(?i)\\([^()]+\\)")));
+        patterns.add(Map.entry("Comparison Condition", Pattern.compile("(?i)(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))")));
 
         List<Token> tokens = new ArrayList<>();
-        int lastEnd = 0;
-        while (matcher.find()) {
-            String tokenValue = matcher.group().trim();
-            int start = matcher.start();
-            int end = matcher.end();
+        int currentPos = 0;
+        int stringLength = conditionStr.length();
 
-            if (start > lastEnd) {
-                String skipped = conditionStr.substring(lastEnd, start).trim();
-                if (!skipped.isEmpty()) {
-                    LOGGER.log(Level.WARNING, "Пропущены неожиданные символы между токенами: {0} на позициях {1}-{2}",
-                            new Object[]{skipped, lastEnd, start});
+        while (currentPos < stringLength) {
+            boolean matched = false;
+            int nextPos = stringLength;
+            String matchedToken = null;
+            String matchedPatternName = null;
+
+            // Пропускаем пробелы
+            while (currentPos < stringLength && Character.isWhitespace(conditionStr.charAt(currentPos))) {
+                currentPos++;
+            }
+            if (currentPos >= stringLength) {
+                break;
+            }
+
+            // Проверяем каждый паттерн
+            for (Map.Entry<String, Pattern> entry : patterns) {
+                String patternName = entry.getKey();
+                Pattern pattern = entry.getValue();
+                Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
+
+                if (matcher.lookingAt()) {
+                    String tokenValue = matcher.group().trim();
+                    if (!tokenValue.isEmpty()) {
+                        int end = matcher.end();
+                        if (end < nextPos) {
+                            nextPos = end;
+                            matchedToken = tokenValue;
+                            matchedPatternName = patternName;
+                            matched = true;
+                        }
+                    }
                 }
             }
 
-            if (tokenValue.isEmpty()) {
-                LOGGER.log(Level.FINEST, "Пропущен пустой токен на позициях {0}-{1}", new Object[]{start, end});
-                continue;
-            }
+            // Если токен найден
+            if (matched) {
+                LOGGER.log(Level.FINEST, "Сопоставлен токен с паттерном '{0}': {1}, позиции {2}-{3}",
+                        new Object[]{matchedPatternName, matchedToken, currentPos, nextPos});
 
-            if (tokenValue.contains("(") || tokenValue.contains(")")) {
-                validateTokenBrackets(tokenValue, start);
-            }
+                if (matchedToken.contains("(") || matchedToken.contains(")")) {
+                    validateTokenBrackets(matchedToken, currentPos);
+                }
 
-            Token token = classifyToken(tokenValue);
-            tokens.add(token);
-            LOGGER.log(Level.FINEST, "Добавлен токен: {0} на позициях {1}-{2}", new Object[]{token, start, end});
+                Token token = classifyToken(matchedToken);
+                tokens.add(token);
+                LOGGER.log(Level.FINEST, "Добавлен токен: {0} на позициях {1}-{2}",
+                        new Object[]{token, currentPos, nextPos});
 
-            lastEnd = end;
-        }
-
-        if (lastEnd < conditionStr.length()) {
-            String remaining = conditionStr.substring(lastEnd).trim();
-            if (!remaining.isEmpty()) {
-                LOGGER.log(Level.WARNING, "Остаток строки после токенизации: {0} на позициях {1}-{2}",
-                        new Object[]{remaining, lastEnd, conditionStr.length()});
-                throw new IllegalArgumentException("Невалидные символы в условии после токенизации: " + remaining);
+                currentPos = nextPos;
+            } else {
+                // Если ни один паттерн не сработал, логируем ошибку и прерываем
+                String remaining = conditionStr.substring(currentPos).trim();
+                LOGGER.log(Level.WARNING, "Не удалось сопоставить токен на позиции {0}, остаток: {1}",
+                        new Object[]{currentPos, remaining});
+                throw new IllegalArgumentException("Невалидные символы в условии на позиции " + currentPos + ": " + remaining);
             }
         }
 
@@ -1873,7 +1884,8 @@ class QueryParser {
             throw new IllegalArgumentException("Невалидное условие: не удалось выделить токенов из '" + conditionStr + "'");
         }
 
-        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}", new Object[]{tokens.size(), tokens});
+        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}",
+                new Object[]{tokens.size(), tokens});
         return tokens;
     }
 
