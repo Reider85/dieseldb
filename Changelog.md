@@ -192,3 +192,4 @@
 1.9.2 JOIN fix
 1.9.3 revert 1.9.1
 1.9.4 tokenizeConditions fix
+1.9.5 IN fix

@@ -1799,9 +1799,7 @@ class QueryParser {
         return conditionStr.trim();
     }
 
-    // Токенизирует строку условий
     // Токенизирует строку условий с использованием регулярных выражений
-// Токенизирует строку условий с использованием регулярных выражений
     private List<Token> tokenizeConditions(String conditionStr) {
         LOGGER.log(Level.FINE, "Начало токенизации условий: {0}", conditionStr);
 
@@ -1811,12 +1809,13 @@ class QueryParser {
         }
 
         List<Token> tokens = new ArrayList<>();
-        // Обновленное регулярное выражение
         Pattern tokenPattern = Pattern.compile(
                 "(?i)" +
                         "'(?:[^'\\\\]|\\\\.)*'|\\s*(?:AND|OR)\\s*|" + // Строки в кавычках или логические операторы
-                        "\\([^()]*\\)|" +                             // Сбалансированные скобки
-                        "(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))" // Условия с оператором и значением
+                        "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)|" + // Условие NOT IN
+                        "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)|" + // Условие IN
+                        "\\([^()]+\\)|" +                             // Сбалансированные скобки для подзапросов или группировки
+                        "(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))" // Условия с оператором
         );
         Matcher matcher = tokenPattern.matcher(conditionStr);
 
@@ -1826,7 +1825,6 @@ class QueryParser {
             int start = matcher.start();
             int end = matcher.end();
 
-            // Проверяем, что между токенами нет значимых символов
             if (start > lastEnd) {
                 String skipped = conditionStr.substring(lastEnd, start).trim();
                 if (!skipped.isEmpty()) {
@@ -1840,7 +1838,6 @@ class QueryParser {
                 continue;
             }
 
-            // Проверяем сбалансированность скобок для токенов, содержащих скобки
             if (tokenValue.contains("(") || tokenValue.contains(")")) {
                 validateTokenBrackets(tokenValue, start);
             }
@@ -1852,7 +1849,6 @@ class QueryParser {
             lastEnd = end;
         }
 
-        // Проверяем остаток строки после последнего токена
         if (lastEnd < conditionStr.length()) {
             String remaining = conditionStr.substring(lastEnd).trim();
             if (!remaining.isEmpty()) {
@@ -1901,7 +1897,7 @@ class QueryParser {
     // Парсит токенизированные условия
     private List<Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
                                                      String originalQuery, boolean isJoinCondition,
-                                                     Map<String, Class<?>> combinedColumnTypes, // Changed from Map<String, Object>
+                                                     Map<String, Class<?>> combinedColumnTypes,
                                                      Map<String, String> tableAliases,
                                                      Map<String, String> columnAliases,
                                                      String conjunction, boolean not) {
@@ -1910,7 +1906,12 @@ class QueryParser {
             Token token = tokens.get(i);
             if (token.type == TokenType.CONDITION) {
                 String condStr = token.value;
-                if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                if (condStr.toUpperCase().contains(" IN ")) {
+                    Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
+                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    conditions.add(condition);
+                    LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
+                } else if (condStr.startsWith("(") && condStr.endsWith(")")) {
                     int endParen = findMatchingParenthesis(condStr, 0);
                     if (endParen == condStr.length() - 1) {
                         String subCondStr = condStr.substring(1, endParen).trim();
@@ -2084,7 +2085,10 @@ class QueryParser {
                                        Map<String, String> columnAliases, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
         Matcher inMatcher = inPattern.matcher(condStr);
-        inMatcher.matches();
+        if (!inMatcher.matches()) {
+            throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
+        }
+
         String column = inMatcher.group(1).trim();
         boolean inNot = inMatcher.group(2) != null;
         String valuesStr = inMatcher.group(3).trim();
@@ -2094,26 +2098,66 @@ class QueryParser {
 
         if (valuesStr.trim().toUpperCase().startsWith("SELECT ")) {
             String subQueryStr = valuesStr.trim();
-            if (subQueryStr.toUpperCase().startsWith("(SELECT") && subQueryStr.endsWith(")")) {
+            if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
                 int subQueryEnd = findMatchingParenthesis(subQueryStr, 0);
                 if (subQueryEnd != subQueryStr.length() - 1) {
                     throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + subQueryStr);
                 }
                 subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
             }
+            validateSubquery(subQueryStr);
             Query<?> subQuery = parse(subQueryStr, database);
             LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
             return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
         }
 
-        String[] valueParts = valuesStr.split(",(?=([^']*'[^']*')*[^']*$)");
+        // Разделение списка значений с учётом кавычек
+        List<String> valueParts = splitInValues(valuesStr);
         List<Object> inValues = new ArrayList<>();
         for (String val : valueParts) {
-            val = val.trim();
-            Object value = parseConditionValue(actualColumn, val, columnType);
+            String trimmedVal = val.trim();
+            if (trimmedVal.isEmpty()) continue;
+            Object value = parseConditionValue(actualColumn, trimmedVal, columnType);
             inValues.add(value);
         }
+        if (inValues.isEmpty()) {
+            throw new IllegalArgumentException("Empty IN list in: " + condStr);
+        }
+
+        LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}", new Object[]{actualColumn, inValues});
         return new Condition(actualColumn, inValues, conjunction, inNot);
+    }
+
+    private List<String> splitInValues(String input) {
+        List<String> values = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                current.append(c);
+                continue;
+            }
+            if (c == ',' && !inQuotes) {
+                String value = current.toString().trim();
+                if (!value.isEmpty()) {
+                    values.add(value);
+                }
+                current = new StringBuilder();
+                continue;
+            }
+            current.append(c);
+        }
+
+        // Добавляем последнее значение
+        String value = current.toString().trim();
+        if (!value.isEmpty()) {
+            values.add(value);
+        }
+
+        return values;
     }
 
     private boolean isNullCondition(String condStr) {
