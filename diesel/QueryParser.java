@@ -1808,17 +1808,27 @@ class QueryParser {
             return new ArrayList<>();
         }
 
-        List<Token> tokens = new ArrayList<>();
-        Pattern tokenPattern = Pattern.compile(
-                "(?i)" +
-                        "'(?:[^'\\\\]|\\\\.)*'|\\s*(?:AND|OR)\\s*|" + // Строки в кавычках или логические операторы
-                        "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)|" + // Условие NOT IN
-                        "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)|" + // Условие IN
-                        "\\([^()]+\\)|" +                             // Сбалансированные скобки для подзапросов или группировки
-                        "(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))" // Условия с оператором
-        );
+        // Определяем отдельные паттерны
+        String quotedStringPattern = "'(?:[^'\\\\]|\\\\.)*'";
+        String logicalOperatorPattern = "\\s*(?:AND|OR)\\s*";
+        String inPattern = "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*IN\\s*\\([^)]+\\)";
+        String notInPattern = "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*NOT\\s*IN\\s*\\([^)]+\\)";
+        String balancedParenthesesPattern = "\\([^()]+\\)";
+        String comparisonPattern = "(?:[^\\s()']+\\s*(?:=|>|<|>=|<=|!=|<>|\\bLIKE\\b|\\bNOT LIKE\\b)\\s*(?:[^\\s()']+|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'))";
+
+        // Объединяем паттерны
+        String combinedPattern = String.format("(?i)(?:%s|%s|%s|%s|%s|%s)",
+                quotedStringPattern,
+                logicalOperatorPattern,
+                notInPattern,
+                inPattern,
+                balancedParenthesesPattern,
+                comparisonPattern);
+
+        Pattern tokenPattern = Pattern.compile(combinedPattern);
         Matcher matcher = tokenPattern.matcher(conditionStr);
 
+        List<Token> tokens = new ArrayList<>();
         int lastEnd = 0;
         while (matcher.find()) {
             String tokenValue = matcher.group().trim();
