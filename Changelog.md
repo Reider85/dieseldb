@@ -209,3 +209,4 @@
 2.0.9 LIKE fix
 2.1.0 LIKE fix
 2.1.1 LIKE fix
+2.1.2 aliases fix

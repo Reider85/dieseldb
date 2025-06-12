@@ -1336,95 +1336,80 @@ class QueryParser {
         return selectItems;
     }
 
-    private List<OrderByInfo> parseOrderByClause(String orderByClause, String defaultTableName, Map<String, Class<?>> combinedColumnTypes, Map<String, String> columnAliases, Map<String, String> tableAliases, List<SubQuery> selectSubQueries) {
+    private List<OrderByInfo> parseOrderByClause(String orderByClause, String defaultTableName,
+                                                 Map<String, Class<?>> combinedColumnTypes,
+                                                 Map<String, String> tableAliases,
+                                                 Map<String, String> columnAliases,
+                                                 List<SubQuery> subQueries) {
         List<OrderByInfo> orderBy = new ArrayList<>();
-        String[] orderByParts = splitOrderByClause(orderByClause);
-        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)$");
+        String[] orderItems = orderByClause.split(",");
+        Pattern orderPattern = Pattern.compile("(?i)^\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|[a-zA-Z_][a-zA-Z0-9_]*)\\s*(ASC|DESC)?\\s*$");
 
-        for (String part : orderByParts) {
-            String trimmedPart = part.trim();
-            if (trimmedPart.isEmpty()) {
-                throw new IllegalArgumentException("Invalid ORDER BY clause: empty expression");
+        for (String item : orderItems) {
+            String trimmedItem = item.trim();
+            Matcher orderMatcher = orderPattern.matcher(trimmedItem);
+            if (!orderMatcher.matches()) {
+                LOGGER.log(Level.SEVERE, "Invalid ORDER BY item: {0}", trimmedItem);
+                throw new IllegalArgumentException("Invalid ORDER BY item: " + trimmedItem);
             }
+            String column = orderMatcher.group(1).trim();
+            String direction = orderMatcher.group(2) != null ? orderMatcher.group(2).toUpperCase() : "ASC";
+            boolean ascending = direction.equals("ASC");
 
-            String expression;
-            boolean ascending = true;
-
-            // Check sorting direction (ASC/DESC)
-            Pattern directionPattern = Pattern.compile("(?i)\\s+(ASC|DESC)$");
-            Matcher directionMatcher = directionPattern.matcher(trimmedPart);
-            if (directionMatcher.find()) {
-                expression = trimmedPart.substring(0, directionMatcher.start()).trim();
-                String direction = directionMatcher.group(1).toUpperCase();
-                ascending = direction.equals("ASC");
-            } else {
-                expression = trimmedPart;
-            }
-
+            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
             boolean found = false;
-            String unqualifiedExpression = expression.contains(".") ? expression.split("\\.")[1].trim() : expression;
 
-            // Check if expression is an alias from SELECT
-            for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
-                if (aliasEntry.getValue().equalsIgnoreCase(unqualifiedExpression)) {
-                    orderBy.add(new OrderByInfo(aliasEntry.getKey(), ascending));
+            // Проверка имени столбца
+            for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
+                if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
                     found = true;
-                    LOGGER.log(Level.FINE, "Matched ORDER BY by alias: {0} -> {1}, ascending={2}", new Object[]{unqualifiedExpression, aliasEntry.getKey(), ascending});
                     break;
                 }
             }
 
-            // Check if expression matches a subquery alias
+            // Проверка алиаса столбца
             if (!found) {
-                for (SubQuery subQuery : selectSubQueries) {
-                    if (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(unqualifiedExpression)) {
-                        orderBy.add(new OrderByInfo(subQuery.alias, ascending));
-                        found = true;
-                        LOGGER.log(Level.FINE, "Matched ORDER BY by subquery alias: {0}, ascending={1}", new Object[]{subQuery.alias, ascending});
+                for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
+                    if (aliasEntry.getValue().equalsIgnoreCase(unqualifiedColumn)) {
+                        String actualColumn = aliasEntry.getKey();
+                        String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
+                        for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                            String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
+                            if (entryKeyUnqualified.equalsIgnoreCase(normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn)) {
+                                found = true;
+                                column = actualColumn; // Используем исходное имя столбца
+                                break;
+                            }
+                        }
                         break;
                     }
                 }
             }
 
-            // Check if expression is a subquery and matches any SELECT subquery
-            if (!found && subQueryPattern.matcher(expression).matches()) {
-                String normalizedExpression = normalizeQueryString(expression);
-                LOGGER.log(Level.FINEST, "Normalized ORDER BY subquery: {0}", normalizedExpression);
-                for (SubQuery subQuery : selectSubQueries) {
-                    String subQueryStr = normalizeQueryString("(" + subQuery.query.toString() + ")");
-                    LOGGER.log(Level.FINEST, "Comparing ORDER BY subquery: '{0}' vs SELECT subquery: '{1}'", new Object[]{normalizedExpression, subQueryStr});
-                    if (normalizedExpression.equalsIgnoreCase(subQueryStr) || areSubQueriesEquivalent(expression, subQuery.query.toString())) {
-                        String resolvedExpression = subQuery.alias != null ? subQuery.alias : expression;
-                        orderBy.add(new OrderByInfo(resolvedExpression, ascending));
-                        found = true;
-                        LOGGER.log(Level.FINE, "Matched ORDER BY by subquery content: {0}, resolved as: {1}, ascending={2}", new Object[]{expression, resolvedExpression, ascending});
-                        break;
-                    }
-                }
+            // Проверка алиаса таблицы
+            if (!found && tableAliases.containsKey(unqualifiedColumn)) {
+                found = true;
             }
 
-            // Check if expression is a column
-            if (!found && columnPattern.matcher(expression).matches()) {
-                String normalizedColumn = expression.contains(".") ? normalizeColumnName(expression, defaultTableName, tableAliases) : defaultTableName + "." + expression;
-                String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-                for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-                    String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-                    if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn) || entry.getKey().equalsIgnoreCase(normalizedColumn)) {
-                        orderBy.add(new OrderByInfo(normalizedColumn, ascending));
-                        found = true;
-                        LOGGER.log(Level.FINE, "Matched ORDER BY by column: {0}, ascending={1}", new Object[]{normalizedColumn, ascending});
-                        break;
-                    }
+            // Проверка алиаса подзапроса
+            for (SubQuery subQuery : subQueries) {
+                if (subQuery.alias != null && subQuery.alias.equalsIgnoreCase(unqualifiedColumn)) {
+                    found = true;
+                    break;
                 }
             }
 
             if (!found) {
                 LOGGER.log(Level.SEVERE, "Unknown column, alias, or subquery in ORDER BY: {0}, available columns: {1}, aliases: {2}, subqueries: {3}",
-                        new Object[]{expression, combinedColumnTypes.keySet(), columnAliases.values(), selectSubQueries});
-                throw new IllegalArgumentException("Invalid column name or subquery in ORDER BY: " + expression);
+                        new Object[]{unqualifiedColumn, combinedColumnTypes.keySet(), tableAliases.keySet(), subQueries});
+                throw new IllegalArgumentException("Invalid column name or subquery in ORDER BY: " + unqualifiedColumn);
             }
+
+            orderBy.add(new OrderByInfo(column, ascending));
+            LOGGER.log(Level.FINE, "Parsed ORDER BY item: column={0}, ascending={1}", new Object[]{column, ascending});
         }
+
         return orderBy;
     }
 
