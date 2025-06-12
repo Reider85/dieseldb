@@ -206,3 +206,4 @@
 2.0.6 tokenizeConditions fix
 2.0.7 tokenizeConditions fix
 2.0.8 tokenizeConditions fix
+2.0.9 LIKE fix

@@ -1801,43 +1801,49 @@ class QueryParser {
 
     // Токенизирует строку условий с использованием регулярных выражений
     private List<Token> tokenizeConditions(String conditionStr) {
-        LOGGER.log(Level.FINE, "Начало токенизации условий: {0}", conditionStr);
-        if (conditionStr == null || conditionStr.trim().isEmpty()) {
-            LOGGER.log(Level.WARNING, "Пустая или null строка условий");
-            return new ArrayList<>();
-        }
-
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
-        // 1. Строковые литералы (высший приоритет)
-        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:[^'\\\\]|\\\\.)*'", Pattern.DOTALL)));
-        // 2. Сбалансированные скобки
-        patterns.add(Map.entry("Balanced Parentheses", Pattern.compile("\\((?:[^()']|'[^']*')+\\)")));
-        // 3. Условия LIKE
-        patterns.add(Map.entry("Like Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*LIKE\\s*('(?:[^'\\\\]|\\\\.)*')")));
-        patterns.add(Map.entry("Not Like Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*NOT\\s*LIKE\\s*('(?:[^'\\\\]|\\\\.)*')")));
+
+        // 1. Строковые литералы (в кавычках)
+        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
+
+        // 2. Условия LIKE и NOT LIKE
+        patterns.add(Map.entry("Like Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\.|[^'\\\\])*')")));
+
+        // 3. Подзапросы
+        patterns.add(Map.entry("SubQuery",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\(\\s*SELECT\\s+[^)]+\\)")));
+
         // 4. Условия IN
-        patterns.add(Map.entry("IN Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IN\\s*\\([^)]+\\)")));
-        patterns.add(Map.entry("NOT IN Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*NOT\\s*IN\\s*\\([^)]+\\)")));
+        patterns.add(Map.entry("In Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\([^)]+\\)")));
+
         // 5. Условия NULL
-        patterns.add(Map.entry("Null Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IS\\s*(NOT\\s+)?NULL\\b")));
-        // 6. Условия сравнения
-        patterns.add(Map.entry("Comparison String Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:[^'\\\\]|\\\\.)*')")));
-        patterns.add(Map.entry("Comparison Number Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
-        patterns.add(Map.entry("Comparison Column Condition", Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
+        patterns.add(Map.entry("Null Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IS\\s*(NOT\\s+)?NULL\\b")));
+
+        // 6. Условия сравнения (строки, числа, столбцы)
+        patterns.add(Map.entry("Comparison String Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:\\\\.|[^'\\\\])*')")));
+        patterns.add(Map.entry("Comparison Number Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
+        patterns.add(Map.entry("Comparison Column Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
+
         // 7. Логические операторы
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
-        // 8. Некорректные токены
-        patterns.add(Map.entry("Invalid Token", Pattern.compile("(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)[^\\s()']+")));
+
+        // 8. Некорректные токены (исключая строковые литералы)
+        patterns.add(Map.entry("Invalid Token",
+                Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!'(?:\\\\.|[^'\\\\])*')[^\\s()']+")));
+
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
         int stringLength = conditionStr.length();
+        boolean inQuotes = false;
+        StringBuilder currentToken = new StringBuilder();
 
         while (currentPos < stringLength) {
-            boolean matched = false;
-            int nextPos = stringLength;
-            String matchedToken = null;
-            String matchedPatternName = null;
-
             // Пропускаем пробелы
             while (currentPos < stringLength && Character.isWhitespace(conditionStr.charAt(currentPos))) {
                 currentPos++;
@@ -1846,51 +1852,69 @@ class QueryParser {
                 break;
             }
 
-            LOGGER.log(Level.FINEST, "Processing token at position {0}: {1}", new Object[]{currentPos, conditionStr.substring(currentPos)});
+            LOGGER.log(Level.FINEST, "Processing token at position {0}: {1}",
+                    new Object[]{currentPos, conditionStr.substring(currentPos)});
 
-            for (Map.Entry<String, Pattern> entry : patterns) {
+            boolean matched = false;
+            int nextPos = stringLength;
+            String matchedToken = null;
+            String matchedPatternName = null;
+
+            // Проверяем строковые литералы первыми
+            if (conditionStr.charAt(currentPos) == '\'') {
+                Pattern quotedStringPattern = patterns.get(0).getValue(); // Quoted String
+                Matcher matcher = quotedStringPattern.matcher(conditionStr).region(currentPos, stringLength);
+                if (matcher.lookingAt()) {
+                    matchedToken = matcher.group();
+                    matchedPatternName = "Quoted String";
+                    nextPos = matcher.end();
+                    matched = true;
+                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
+                    LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
+                    currentPos = nextPos;
+                    continue;
+                }
+            }
+
+            // Проверяем остальные паттерны, исключая содержимое строк
+            for (Map.Entry<String, Pattern> entry : patterns.subList(1, patterns.size())) {
                 String patternName = entry.getKey();
                 Pattern pattern = entry.getValue();
                 Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
 
                 if (matcher.lookingAt()) {
                     String tokenValue = matcher.group().trim();
-                    LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}", new Object[]{patternName, tokenValue, matcher.end()});
+                    LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}",
+                            new Object[]{patternName, tokenValue, matcher.end()});
                     if (!tokenValue.isEmpty()) {
-                        int end = matcher.end();
-                        nextPos = end;
+                        nextPos = matcher.end();
                         matchedToken = tokenValue;
                         matchedPatternName = patternName;
                         matched = true;
-                        break; // Прерываем цикл, чтобы использовать первый подходящий паттерн
+                        break;
                     }
                 }
             }
 
             if (matched) {
-                if (matchedPatternName.equals("Quoted String")) {
-                    // Проверяем строковый литерал
-                    validateLikePattern(matchedToken.substring(1, matchedToken.length() - 1), currentPos);
-                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                    LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
-                } else if (matchedPatternName.equals("Like Condition") || matchedPatternName.equals("Not Like Condition")) {
-                    // Проверяем шаблон LIKE (строковый литерал уже обработан)
-                    Matcher likeMatcher = Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:[^'\\\\]|\\\\.)*')").matcher(matchedToken);
+                if (matchedPatternName.equals("Like Condition")) {
+                    // Проверяем шаблон LIKE
+                    Matcher likeMatcher = Pattern.compile(
+                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\.|[^'\\\\])*')")
+                            .matcher(matchedToken);
                     if (likeMatcher.matches()) {
-                        String pattern = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1); // Удаляем кавычки
-                        validateLikePattern(pattern, currentPos);
+                        String pattern = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1);
+                        validateLikePattern(pattern, currentPos); // Проверяем только % и _
+                        tokens.add(new Token(TokenType.CONDITION, matchedToken));
+                        LOGGER.log(Level.FINEST, "Добавлен токен Like Condition: {0}", matchedToken);
+                    } else {
+                        LOGGER.log(Level.WARNING, "Некорректный LIKE токен на позиции {0}: {1}",
+                                new Object[]{currentPos, matchedToken});
+                        throw new IllegalArgumentException("Некорректный LIKE токен на позиции " + currentPos + ": " + matchedToken);
                     }
-                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                    LOGGER.log(Level.FINEST, "Добавлен токен Like Condition: {0}", matchedToken);
-                } else if (matchedToken.contains("(") || matchedToken.contains(")")) {
-                    validateTokenBrackets(matchedToken, currentPos);
-                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                    LOGGER.log(Level.FINEST, "Добавлен токен с скобками: {0}", matchedToken);
-                } else if (matchedPatternName.equals("Logical Operator")) {
-                    tokens.add(new Token(TokenType.LOGICAL_OPERATOR, matchedToken.toUpperCase()));
-                    LOGGER.log(Level.FINEST, "Добавлен логический оператор: {0}", matchedToken);
                 } else if (matchedPatternName.equals("Invalid Token")) {
-                    LOGGER.log(Level.WARNING, "Обнаружен некорректный токен на позиции {0}: {1}", new Object[]{currentPos, matchedToken});
+                    LOGGER.log(Level.WARNING, "Обнаружен некорректный токен на позиции {0}: {1}",
+                            new Object[]{currentPos, matchedToken});
                     throw new IllegalArgumentException("Некорректный токен в условии на позиции " + currentPos + ": " + matchedToken);
                 } else {
                     tokens.add(new Token(TokenType.CONDITION, matchedToken));
@@ -1899,7 +1923,8 @@ class QueryParser {
                 currentPos = nextPos;
             } else {
                 String remaining = conditionStr.substring(currentPos).trim();
-                LOGGER.log(Level.WARNING, "Не удалось сопоставить токен на позиции {0}, остаток: {1}", new Object[]{currentPos, remaining});
+                LOGGER.log(Level.WARNING, "Не удалось сопоставить токен на позиции {0}, остаток: {1}",
+                        new Object[]{currentPos, remaining});
                 throw new IllegalArgumentException("Невалидные символы в условии на позиции " + currentPos + ": " + remaining);
             }
         }
@@ -1909,7 +1934,8 @@ class QueryParser {
             throw new IllegalArgumentException("Невалидное условие: не удалось выделить токенов из '" + conditionStr + "'");
         }
 
-        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}", new Object[]{tokens.size(), tokens});
+        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}",
+                new Object[]{tokens.size(), tokens});
         return tokens;
     }
 
@@ -1926,33 +1952,7 @@ class QueryParser {
         }
     }
 
-    // Классифицирует токен как условие или логический оператор
-    private Token classifyToken(String tokenValue) {
-        Pattern logicalOperatorPattern = Pattern.compile("(?i)^(AND|OR)$");
-        Matcher logicalMatcher = logicalOperatorPattern.matcher(tokenValue);
 
-        if (logicalMatcher.matches()) {
-            LOGGER.log(Level.FINEST, "Классифицирован логический оператор: {0}", tokenValue);
-            return new Token(TokenType.LOGICAL_OPERATOR, logicalMatcher.group(1).toUpperCase());
-        }
-
-        LOGGER.log(Level.FINEST, "Классифицировано как условие: {0}", tokenValue);
-        return new Token(TokenType.CONDITION, tokenValue);
-    }
-
-    // Проверяет сбалансированность скобок в токене
-    private void validateTokenBrackets(String tokenValue, int startIndex) {
-        long openCount = tokenValue.chars().filter(c -> c == '(').count();
-        long closeCount = tokenValue.chars().filter(c -> c == ')').count();
-
-        if (openCount != closeCount) {
-            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в токене на позиции {0}: {1}, открывающих: {2}, закрывающих: {3}",
-                    new Object[]{startIndex, tokenValue, openCount, closeCount});
-            throw new IllegalArgumentException("Несбалансированные скобки в токене: " + tokenValue);
-        }
-
-        LOGGER.log(Level.FINEST, "Скобки в токене сбалансированы: {0}", tokenValue);
-    }
     // Парсит токенизированные условия
     private List<Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
                                                      String originalQuery, boolean isJoinCondition,
@@ -1965,6 +1965,10 @@ class QueryParser {
             Token token = tokens.get(i);
             if (token.type == TokenType.CONDITION) {
                 String condStr = token.value;
+                if (condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'")) {
+                    // Пропускаем строковые литералы, так как они обрабатываются в контексте LIKE или сравнений
+                    continue;
+                }
                 if (condStr.toUpperCase().contains(" IN ")) {
                     Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
                             combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
