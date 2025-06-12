@@ -454,7 +454,7 @@ public class LikeTest {
     private void updateWithLikePrimaryKey() {
         try {
             LOGGER.log(Level.INFO, "Starting test: updateWithLikePrimaryKey");
-            String query = "UPDATE USERS SET BALANCE = 6000 WHERE USER_CODE LIKE '%ODE500 drags USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%'";
+            String query = "UPDATE USERS SET BALANCE = 6000 WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%'";
             executeUpdateQuery(query);
             LOGGER.log(Level.INFO, "Test updateWithLikePrimaryKey: OK");
         } catch (Exception e) {

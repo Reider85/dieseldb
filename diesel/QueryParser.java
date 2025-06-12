@@ -1808,7 +1808,7 @@ class QueryParser {
 
         // 2. Условия LIKE и NOT LIKE
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|[^'])*')")));
+                Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?LIKE\\s*'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'")));
 
         // 3. Подзапросы
         patterns.add(Map.entry("SubQuery",
