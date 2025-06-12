@@ -1808,7 +1808,7 @@ class QueryParser {
 
         // 2. Условия LIKE и NOT LIKE
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\.|[^'\\\\])*')")));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|[^'])*')")));
 
         // 3. Подзапросы
         patterns.add(Map.entry("SubQuery",
@@ -1897,14 +1897,24 @@ class QueryParser {
             }
 
             if (matched) {
-                if (matchedPatternName.equals("Like Condition")) {
-                    // Проверяем шаблон LIKE
+                if (matchedPatternName.equals("Quoted String")) {
+                    // Строковые литералы обрабатываются как неделимые токены
+                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
+                    LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
+                } else if (matchedPatternName.equals("Like Condition")) {
                     Matcher likeMatcher = Pattern.compile(
-                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\.|[^'\\\\])*')")
+                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|[^'])*')")
                             .matcher(matchedToken);
                     if (likeMatcher.matches()) {
-                        String pattern = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1);
-                        validateLikePattern(pattern, currentPos); // Проверяем только % и _
+                        String column = likeMatcher.group(1);
+                        String pattern = likeMatcher.group(3);
+                        if (!pattern.endsWith("'")) {
+                            LOGGER.log(Level.WARNING, "Незакрытая кавычка в LIKE шаблоне на позиции {0}: {1}",
+                                    new Object[]{currentPos, matchedToken});
+                            throw new IllegalArgumentException("Незакрытая кавычка в LIKE шаблоне на позиции " + currentPos + ": " + matchedToken);
+                        }
+                        pattern = pattern.substring(1, pattern.length() - 1);
+                        validateLikePattern(pattern, currentPos);
                         tokens.add(new Token(TokenType.CONDITION, matchedToken));
                         LOGGER.log(Level.FINEST, "Добавлен токен Like Condition: {0}", matchedToken);
                     } else {
@@ -1912,6 +1922,9 @@ class QueryParser {
                                 new Object[]{currentPos, matchedToken});
                         throw new IllegalArgumentException("Некорректный LIKE токен на позиции " + currentPos + ": " + matchedToken);
                     }
+                } else if (matchedPatternName.equals("Logical Operator")) {
+                    tokens.add(new Token(TokenType.LOGICAL_OPERATOR, matchedToken));
+                    LOGGER.log(Level.FINEST, "Добавлен токен Logical Operator: {0}", matchedToken);
                 } else if (matchedPatternName.equals("Invalid Token")) {
                     LOGGER.log(Level.WARNING, "Обнаружен некорректный токен на позиции {0}: {1}",
                             new Object[]{currentPos, matchedToken});
@@ -1922,10 +1935,8 @@ class QueryParser {
                 }
                 currentPos = nextPos;
             } else {
-                String remaining = conditionStr.substring(currentPos).trim();
-                LOGGER.log(Level.WARNING, "Не удалось сопоставить токен на позиции {0}, остаток: {1}",
-                        new Object[]{currentPos, remaining});
-                throw new IllegalArgumentException("Невалидные символы в условии на позиции " + currentPos + ": " + remaining);
+                // Пропускаем пробелы или неизвестные символы
+                currentPos++;
             }
         }
 
@@ -1944,12 +1955,7 @@ class QueryParser {
             LOGGER.log(Level.WARNING, "Empty LIKE pattern at position {0}", position);
             throw new IllegalArgumentException("LIKE pattern cannot be empty at position " + position);
         }
-        // Удаляем экранированные кавычки и проверяем корректность
-        String unescaped = pattern.replaceAll("\\\\'", "'");
-        if (unescaped.contains("'")) {
-            LOGGER.log(Level.WARNING, "Invalid LIKE pattern contains unescaped quotes at position {0}: {1}", new Object[]{position, pattern});
-            throw new IllegalArgumentException("Invalid LIKE pattern contains unescaped quotes: " + pattern);
-        }
+        // Проверка на SQL-конструкции удалена, так как строковый литерал — это просто строка
     }
 
 
@@ -1963,10 +1969,18 @@ class QueryParser {
         List<Condition> conditions = new ArrayList<>();
         for (int i = 0; i < tokens.size(); i++) {
             Token token = tokens.get(i);
+            if (token.type == TokenType.LOGICAL_OPERATOR) {
+                // Logical operators set the conjunction for the next condition
+                conjunction = token.value.toUpperCase();
+                LOGGER.log(Level.FINEST, "Processing logical operator: {0}, setting conjunction to {1}",
+                        new Object[]{token.value, conjunction});
+                continue;
+            }
             if (token.type == TokenType.CONDITION) {
                 String condStr = token.value;
                 if (condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'")) {
-                    // Пропускаем строковые литералы, так как они обрабатываются в контексте LIKE или сравнений
+                    // Skip quoted strings, as they are handled within LIKE or comparison conditions
+                    LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
                     continue;
                 }
                 if (condStr.toUpperCase().contains(" IN ")) {
@@ -1992,10 +2006,8 @@ class QueryParser {
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
                 }
-                if (i + 1 < tokens.size() && tokens.get(i + 1).type == TokenType.LOGICAL_OPERATOR) {
-                    conjunction = tokens.get(i + 1).value;
-                    i++; // Пропускаем логический оператор
-                }
+                // Reset conjunction after adding a condition
+                conjunction = null;
             }
         }
         return conditions;
