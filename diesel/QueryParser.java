@@ -1807,6 +1807,7 @@ class QueryParser {
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
         // 9. Операторы сравнения (новый паттерн)
         patterns.add(Map.entry("Comparison Operator", Pattern.compile("(?i)(?:=|>|<|>=|<=|!=|<>)")));
+        patterns.add(Map.entry("Identifier", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")));
         // 10. Логические операторы
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
         // 11. Некорректные токены (оставляем последним)
@@ -1855,7 +1856,10 @@ class QueryParser {
             }
 
             if (matched) {
-                if (matchedPatternName.equals("Comparison Operator")) {
+                if (matchedPatternName.equals("Identifier")) {
+                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
+                    LOGGER.log(Level.FINEST, "Добавлен токен Identifier: {0}", matchedToken);
+                } else if (matchedPatternName.equals("Comparison Operator")) {
                     tokens.add(new Token(TokenType.CONDITION, matchedToken));
                     LOGGER.log(Level.FINEST, "Добавлен токен Comparison Operator: {0}", matchedToken);
                 } else if (matchedPatternName.equals("Quoted String")) {
@@ -1962,17 +1966,25 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
                     continue;
                 }
+                // Проверка на оператор сравнения
                 if (condStr.matches("(?i)(?:=|>|<|>=|<=|!=|<>)")) {
                     // Оператор сравнения, ожидаем идентификатор перед ним и подзапрос/значение после
-                    if (i == 0 || i == tokens.size() - 1) {
+                    if (i == 0 || i >= tokens.size() - 1) {
+                        LOGGER.log(Level.SEVERE, "Некорректное положение оператора: {0}", condStr);
                         throw new IllegalArgumentException("Некорректное положение оператора: " + condStr);
                     }
                     Token prevToken = tokens.get(i - 1);
                     Token nextToken = tokens.get(i + 1);
+                    // Проверяем, что предыдущий токен — идентификатор столбца
                     if (prevToken.type != TokenType.CONDITION || !prevToken.value.matches("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
+                        LOGGER.log(Level.SEVERE, "Ожидался идентификатор перед оператором: {0}, предыдущий токен: {1}",
+                                new Object[]{condStr, prevToken});
                         throw new IllegalArgumentException("Ожидался идентификатор перед оператором: " + condStr);
                     }
-                    if (nextToken.type != TokenType.CONDITION || (!nextToken.value.startsWith("(") && !nextToken.value.matches("(?i)'(?:\\\\'|[^'])*'|[0-9]+(?:\\.[0-9]+)?"))) {
+                    // Проверяем, что следующий токен — значение, подзапрос или другой идентификатор
+                    if (nextToken.type != TokenType.CONDITION) {
+                        LOGGER.log(Level.SEVERE, "Ожидался подзапрос, значение или идентификатор после оператора: {0}, следующий токен: {1}",
+                                new Object[]{condStr, nextToken});
                         throw new IllegalArgumentException("Ожидался подзапрос или значение после оператора: " + condStr);
                     }
                     // Объединяем токены в одно условие
@@ -1981,16 +1993,18 @@ class QueryParser {
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, combinedCond);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено условие с оператором: {0}", condition);
-                    i += 2; // Пропускаем следующие два токена
+                    i += 2; // Пропускаем следующие два токена (идентификатор и значение/подзапрос)
                     conjunction = null;
                     continue;
                 }
+                // Проверка на условие IN
                 if (condStr.toUpperCase().contains(" IN ")) {
                     Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
                             combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
                 } else if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                    // Проверка на группированное условие
                     int endParen = findMatchingParenthesis(condStr, 0);
                     if (endParen == condStr.length() - 1) {
                         String subCondStr = condStr.substring(1, endParen).trim();
@@ -2000,9 +2014,11 @@ class QueryParser {
                         conditions.add(new Condition(subConditions, conjunction, not));
                         LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
                     } else {
+                        LOGGER.log(Level.SEVERE, "Некорректная структура группированного условия: {0}", condStr);
                         throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
                     }
                 } else {
+                    // Одиночное условие (например, LIKE, IS NULL или сравнение столбцов)
                     Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, condStr);
                     conditions.add(condition);
