@@ -2003,6 +2003,7 @@ class QueryParser {
                             combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
+                    conjunction = null;
                 } else if (condStr.startsWith("(") && condStr.endsWith(")")) {
                     // Проверка на группированное условие
                     int endParen = findMatchingParenthesis(condStr, 0);
@@ -2013,9 +2014,26 @@ class QueryParser {
                                 originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
                         conditions.add(new Condition(subConditions, conjunction, not));
                         LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
+                        conjunction = null;
                     } else {
                         LOGGER.log(Level.SEVERE, "Некорректная структура группированного условия: {0}", condStr);
                         throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
+                    }
+                } else if (i + 2 < tokens.size() && tokens.get(i + 1).type == TokenType.CONDITION &&
+                        tokens.get(i + 1).value.matches("(?i)(?:=|>|<|>=|<=|!=|<>)")) {
+                    // Проверяем, является ли текущий токен началом условия вида [идентификатор, оператор, значение/подзапрос]
+                    Token nextToken = tokens.get(i + 1);
+                    Token valueToken = tokens.get(i + 2);
+                    if (valueToken.type == TokenType.CONDITION &&
+                            condStr.matches("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
+                        String combinedCond = condStr + " " + nextToken.value + " " + valueToken.value;
+                        Condition condition = parseSingleCondition(combinedCond, defaultTableName, database, originalQuery,
+                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, combinedCond);
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Добавлено составное условие: {0}", condition);
+                        i += 2; // Пропускаем следующие два токена
+                        conjunction = null;
+                        continue;
                     }
                 } else {
                     // Одиночное условие (например, LIKE, IS NULL или сравнение столбцов)
@@ -2023,13 +2041,12 @@ class QueryParser {
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, condStr);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
+                    conjunction = null;
                 }
-                conjunction = null;
             }
         }
         return conditions;
     }
-
     private void validateSubquery(String subquery) {
         if (!subquery.startsWith("(") || !subquery.endsWith(")")) {
             LOGGER.log(Level.SEVERE, "Subquery does not start with '(' or end with ')': {0}", subquery);
