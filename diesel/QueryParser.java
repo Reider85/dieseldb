@@ -1750,20 +1750,15 @@ class QueryParser {
                                             String originalQuery, boolean isJoinCondition,
                                             Map<String, Class<?>> combinedColumnTypes,
                                             Map<String, String> tableAliases, Map<String, String> columnAliases) {
-        LOGGER.log(Level.FINE, "Начало парсинга условий: conditionStr={0}, defaultTableName={1}, isJoinCondition={2}",
-                new Object[]{conditionStr, defaultTableName, isJoinCondition});
-
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
-            LOGGER.log(Level.FINE, "Пустая строка условий, возвращается пустой список условий");
             return new ArrayList<>();
         }
 
-        // Обрезаем строку до ключевых слов
-        String trimmedConditionStr = trimToClause(conditionStr);
-        LOGGER.log(Level.FINE, "Условие обрезано до: {0}", trimmedConditionStr);
+        LOGGER.log(Level.FINE, "Начало парсинга условий: conditionStr={0}, defaultTableName={1}, isJoinCondition={2}",
+                new Object[]{conditionStr, defaultTableName, isJoinCondition});
 
-        List<Condition> conditions = new ArrayList<>();
-        List<Token> tokens = tokenizeConditions(trimmedConditionStr);
+        // Токенизируем условие
+        List<Token> tokens = tokenizeConditions(conditionStr);
         return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
                 combinedColumnTypes, tableAliases, columnAliases, null, false);
     }
@@ -1789,9 +1784,9 @@ class QueryParser {
         // 0. Строковые литералы
         patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\'|[^'])*'")));
         // 1. Подзапросы
-        patterns.add(Map.entry("SubQuery Condition",
-                Pattern.compile("(?i)\\(\\s*SELECT\\s+.*?\\)\\s*(?=(?:$|\\s*(?:AND|OR|LIMIT|OFFSET|ORDER\\s+BY|GROUP\\s+BY)))",
-                        Pattern.DOTALL)));
+        patterns.add(Map.entry("SubQuery Condition", Pattern.compile(
+                "\\(\\s*SELECT\\s+[^()]+(?:\\([^()]+\\))*[^()]*?(?:\\s+WHERE\\s+[^()]+(?:\\([^()]+\\))*[^()]*?)?(?:\\s+LIMIT\\s+\\d+)?\\s*\\)",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL)));
         // 2. Условия LIKE
         patterns.add(Map.entry("Like Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\'|[^'])*'")));
@@ -2694,21 +2689,15 @@ class QueryParser {
 
     private int findMatchingParenthesis(String str, int startIndex) {
         if (str == null || startIndex < 0 || startIndex >= str.length() || str.charAt(startIndex) != '(') {
-            LOGGER.log(Level.SEVERE, "Недопустимый вход для findMatchingParenthesis: str={0}, startIndex={1}", new Object[]{str, startIndex});
-            throw new IllegalArgumentException("Недопустимый вход для findMatchingParenthesis: startIndex должен указывать на открывающую скобку");
+            LOGGER.log(Level.SEVERE, "Недопустимый вход для findMatchingParenthesis: str={0}, startIndex={1}",
+                    new Object[]{str, startIndex});
+            throw new IllegalArgumentException("Недопустимый вход для findMatchingParenthesis");
         }
 
-        // Проверка, что строка, начиная с startIndex, похожа на подзапрос
-        Pattern subQueryPattern = Pattern.compile("\\s*\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
-        String fromStart = startIndex + 7 < str.length() ? str.substring(startIndex, startIndex + 7) : "";
-        if (!subQueryPattern.matcher(fromStart).lookingAt()) {
-            LOGGER.log(Level.FINE, "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
-        }
-
-        int parenDepth = 0;
+        int parenDepth = 1; // Начинаем с 1, так как startIndex указывает на '('
         boolean inQuotes = false;
 
-        for (int i = startIndex; i < str.length(); i++) {
+        for (int i = startIndex + 1; i < str.length(); i++) {
             char c = str.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
@@ -2720,17 +2709,6 @@ class QueryParser {
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth == 0) {
-                        String subQueryStr = str.substring(startIndex, i + 1);
-                        // Проверка структуры подзапроса с использованием регулярного выражения
-                        Pattern selectPattern = Pattern.compile(
-                                "\\s*\\(\\s*SELECT\\s+.*?\\s+FROM\\s+.*?\\s*\\)",
-                                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
-                        );
-                        if (!selectPattern.matcher(subQueryStr).matches()) {
-                            LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
-                        }
-                        LOGGER.log(Level.FINE, "Найдена парная закрывающая скобка на индексе {0} для подзапроса: {1}",
-                                new Object[]{i, subQueryStr});
                         return i;
                     }
                 }

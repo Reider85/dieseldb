@@ -212,3 +212,4 @@
 2.1.2 aliases fix
 2.1.3 fix subqueries
 2.1.4 fix subqueries
+2.1.5 fix subqueries
