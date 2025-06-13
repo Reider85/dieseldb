@@ -727,92 +727,86 @@ class QueryParser {
             return -1;
         }
 
-        // Регулярные выражения для разных типов токенов
+        // Регулярные выражения для токенов
         Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'", Pattern.DOTALL);
         Pattern openParenPattern = Pattern.compile("\\(");
         Pattern closeParenPattern = Pattern.compile("\\)");
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
-        Pattern wordPattern = Pattern.compile("\\S+");
+        Pattern selectPattern = Pattern.compile("(?i)\\bSELECT\\b");
 
         int bracketDepth = 0;
         int fromIndex = -1;
         int currentPos = 0;
-        StringBuilder currentToken = new StringBuilder();
+        boolean inQuotes = false;
+        boolean inSubQuery = false;
 
         while (currentPos < query.length()) {
-            // Проверяем строки в кавычках
-            Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
-            // Проверяем открывающую скобку
-            Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
-            // Проверяем закрывающую скобку
-            Matcher closeParenMatcher = closeParenPattern.matcher(query).region(currentPos, query.length());
-            // Проверяем FROM
-            Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
-            // Проверяем слово
-            Matcher wordMatcher = wordPattern.matcher(query).region(currentPos, query.length());
-
-            int nextPos = query.length();
-            String token = null;
-            String tokenType = null;
-            int start = currentPos;
-
-            // Находим ближайший токен
-            if (quotedStringMatcher.lookingAt()) {
-                token = quotedStringMatcher.group();
-                nextPos = quotedStringMatcher.end();
-                tokenType = "quotedString";
-            } else if (openParenMatcher.lookingAt()) {
-                token = openParenMatcher.group();
-                nextPos = openParenMatcher.end();
-                tokenType = "openParen";
-            } else if (closeParenMatcher.lookingAt()) {
-                token = closeParenMatcher.group();
-                nextPos = closeParenMatcher.end();
-                tokenType = "closeParen";
-            } else if (fromMatcher.lookingAt()) {
-                token = fromMatcher.group();
-                nextPos = fromMatcher.end();
-                tokenType = "from";
-            } else if (wordMatcher.lookingAt()) {
-                token = wordMatcher.group();
-                nextPos = wordMatcher.end();
-                tokenType = "word";
+            // Пропускаем пробелы
+            while (currentPos < query.length() && Character.isWhitespace(query.charAt(currentPos))) {
+                currentPos++;
+            }
+            if (currentPos >= query.length()) {
+                break;
             }
 
-            if (token == null) {
-                // Пропускаем пробелы или неизвестные символы
-                currentPos++;
+            // Проверяем строковые литералы
+            Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
+            if (quotedStringMatcher.lookingAt()) {
+                currentPos = quotedStringMatcher.end();
                 continue;
             }
 
-            // Логируем токен
-            //LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, value={3}, bracketDepth={4}",
-            //        new Object[]{start, nextPos, tokenType, token, bracketDepth});
-
-            // Обрабатываем токен
-            if (tokenType.equals("quotedString")) {
-                currentToken.append(token);
-            } else if (tokenType.equals("openParen")) {
-                bracketDepth++;
-                currentToken.append(token);
-            } else if (tokenType.equals("closeParen")) {
-                bracketDepth--;
-                if (bracketDepth < 0) {
-                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                            new Object[]{start, query});
-                    return -1;
+            // Проверяем открывающую скобку
+            Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
+            if (openParenMatcher.lookingAt()) {
+                if (!inQuotes) {
+                    bracketDepth++;
+                    if (bracketDepth == 1 && currentPos + 7 < query.length() &&
+                            query.substring(currentPos, currentPos + 7).toUpperCase().startsWith("(SELECT")) {
+                        inSubQuery = true;
+                    }
                 }
-                currentToken.append(token);
-            } else if (tokenType.equals("from") && bracketDepth == 0) {
-                fromIndex = start;
+                currentPos = openParenMatcher.end();
+                continue;
+            }
+
+            // Проверяем закрывающую скобку
+            Matcher closeParenMatcher = closeParenPattern.matcher(query).region(currentPos, query.length());
+            if (closeParenMatcher.lookingAt()) {
+                if (!inQuotes) {
+                    bracketDepth--;
+                    if (bracketDepth < 0) {
+                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
+                                new Object[]{currentPos, query});
+                        return -1;
+                    }
+                    if (bracketDepth == 0 && inSubQuery) {
+                        inSubQuery = false;
+                    }
+                }
+                currentPos = closeParenMatcher.end();
+                continue;
+            }
+
+            // Проверяем FROM
+            Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
+            if (fromMatcher.lookingAt() && !inQuotes && !inSubQuery && bracketDepth == 0) {
+                fromIndex = currentPos;
                 LOGGER.log(Level.FINEST, "Найден основной FROM на позиции {0} в запросе: {1}",
                         new Object[]{fromIndex, query});
                 return fromIndex;
-            } else if (tokenType.equals("word")) {
-                currentToken.append(token);
             }
 
-            currentPos = nextPos;
+            // Проверяем SELECT для начала подзапроса
+            Matcher selectMatcher = selectPattern.matcher(query).region(currentPos, query.length());
+            if (selectMatcher.lookingAt() && !inQuotes && bracketDepth > 0) {
+                // Пропускаем SELECT внутри подзапроса
+                currentPos = selectMatcher.end();
+                continue;
+            }
+
+            // Пропускаем любой другой символ
+            currentPos++;
         }
 
         if (bracketDepth != 0) {
