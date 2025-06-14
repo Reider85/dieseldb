@@ -1968,6 +1968,15 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
                     continue;
                 }
+                // Новая проверка на условие IN
+                if (condStr.toUpperCase().contains(" IN ")) {
+                    Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
+                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    conditions.add(condition);
+                    LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
+                    conjunction = null;
+                    continue;
+                }
                 // Проверка на оператор сравнения
                 if (condStr.matches("(?i)(?:=|>|<|>=|<=|!=|<>)")) {
                     // Оператор сравнения, ожидаем идентификатор перед ним и подзапрос/значение после
@@ -1999,14 +2008,8 @@ class QueryParser {
                     conjunction = null;
                     continue;
                 }
-                // Проверка на условие IN
-                if (condStr.toUpperCase().contains(" IN ")) {
-                    Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
-                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
-                    conjunction = null;
-                } else if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                // Проверка на группированное условие
+                if (condStr.startsWith("(") && condStr.endsWith(")")) {
                     // Проверка на группированное условие
                     int endParen = findMatchingParenthesis(condStr, 0);
                     if (endParen == condStr.length() - 1) {
