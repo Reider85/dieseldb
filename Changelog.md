@@ -223,3 +223,4 @@
 2.2.3 revert 2.1.2
 2.2.4 subqueries refactoring
 2.2.5 fix subqueries
+2.2.6 fix subqueries

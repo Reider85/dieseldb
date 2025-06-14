@@ -909,10 +909,14 @@ public class SubqueryParser {
         return new QueryParser.Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
     }
 
+    // Обновленный parseSingleCondition
     private QueryParser.Condition parseSingleCondition(String condStr, String defaultTableName, Database database, String originalQuery,
                                                        boolean isJoinCondition, Map<String, Class<?>> combinedColumnTypes,
                                                        Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                        String conjunction, boolean not) {
+        LOGGER.log(Level.FINEST, "Parsing single condition: {0}", condStr);
+
+        // Проверка на LIKE
         Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:[^']|)*')");
         Matcher likeMatcher = likePattern.matcher(condStr);
         if (likeMatcher.matches()) {
@@ -923,9 +927,11 @@ public class SubqueryParser {
             validateColumn(normalizedColumn, combinedColumnTypes);
             QueryParser.Operator operator = operatorStr.equals("LIKE") ? QueryParser.Operator.LIKE : QueryParser.Operator.NOT_LIKE;
             Object parsedValue = parseConditionValue(normalizedColumn, "'" + value + "'", getColumnType(normalizedColumn, combinedColumnTypes));
+            LOGGER.log(Level.FINE, "Parsed LIKE condition: {0} {1} '{2}'", new Object[]{normalizedColumn, operatorStr, value});
             return new QueryParser.Condition(normalizedColumn, parsedValue, operator, conjunction, not);
         }
 
+        // Проверка на IS NULL
         Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(condStr);
         if (isNullMatcher.matches()) {
@@ -933,9 +939,12 @@ public class SubqueryParser {
             boolean isNotNull = isNullMatcher.group(2) != null;
             String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
             validateColumn(normalizedColumn, combinedColumnTypes);
-            return new QueryParser.Condition(normalizedColumn, isNotNull ? QueryParser.Operator.IS_NOT_NULL : QueryParser.Operator.IS_NULL, conjunction, not);
+            QueryParser.Operator operator = isNotNull ? QueryParser.Operator.IS_NOT_NULL : QueryParser.Operator.IS_NULL;
+            LOGGER.log(Level.FINE, "Parsed NULL condition: {0} {1}", new Object[]{normalizedColumn, operator});
+            return new QueryParser.Condition(normalizedColumn, operator, conjunction, not);
         }
 
+        // Проверка на сравнение
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         QueryParser.OperatorInfo operatorInfo = findOperator(condStr, operators);
         if (operatorInfo == null) {
@@ -966,12 +975,15 @@ public class SubqueryParser {
         if (rightColumn != null) {
             String normalizedRightColumn = normalizeColumnName(rightColumn, defaultTableName, tableAliases);
             validateColumn(normalizedRightColumn, combinedColumnTypes);
-            return new QueryParser.Condition(normalizedColumn, rightColumn, operator, conjunction, not);
+            LOGGER.log(Level.FINE, "Parsed column comparison: {0} {1} {2}", new Object[]{normalizedColumn, getOperatorString(operator), normalizedRightColumn});
+            return new QueryParser.Condition(normalizedColumn, normalizedRightColumn, operator, conjunction, not);
         } else {
+            LOGGER.log(Level.FINE, "Parsed value comparison: {0} {1} {2}", new Object[]{normalizedColumn, getOperatorString(operator), value});
             return new QueryParser.Condition(normalizedColumn, value, operator, conjunction, not);
         }
     }
 
+    // Переопределяем parseOperator для возврата Operator
     private QueryParser.Operator parseOperator(String operatorStr) {
         return switch (operatorStr.toUpperCase().trim()) {
             case "=" -> QueryParser.Operator.EQUALS;
@@ -983,6 +995,23 @@ public class SubqueryParser {
             case "LIKE" -> QueryParser.Operator.LIKE;
             case "NOT LIKE" -> QueryParser.Operator.NOT_LIKE;
             default -> throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
+        };
+    }
+
+    // Новый метод для получения строкового представления оператора
+    private String getOperatorString(QueryParser.Operator operator) {
+        return switch (operator) {
+            case EQUALS -> "=";
+            case NOT_EQUALS -> "!=";
+            case LESS_THAN -> "<";
+            case GREATER_THAN -> ">"; // Возвращаем ">" вместо "GREATER_THAN"
+            case LESS_THAN_OR_EQUALS -> "<=";
+            case GREATER_THAN_OR_EQUALS -> ">=";
+            case LIKE -> "LIKE";
+            case NOT_LIKE -> "NOT LIKE";
+            case IS_NULL -> "IS NULL";
+            case IS_NOT_NULL -> "IS NOT NULL";
+            default -> throw new IllegalArgumentException("Unsupported operator: " + operator);
         };
     }
 
@@ -1269,11 +1298,44 @@ public class SubqueryParser {
         }
         return "";
     }
-
-    private String normalizeQueryString(String query) {
+    protected String normalizeQueryString(String query) {
+        if (query == null || query.isEmpty()) {
+            return "";
+        }
         return query.trim()
                 .replaceAll("\\s+", " ")
                 .replaceAll("\\s*([=><!(),])\\s*", "$1")
+                .replaceAll("\\s*;", "")
+                .replaceAll("(?i)\\bLIMIT\\s*(\\d+)\\b", " LIMIT $1 ")
+                .replaceAll("(?i)\\bWHERE\\b", " WHERE ")
+                .replaceAll("(?i)\\bFROM\\b", " FROM ")
+                .replaceAll("(?i)\\bSELECT\\b", " SELECT ")
+                .replaceAll("(?i)\\bAS\\b", " AS ")
+                .replaceAll("\\(\\s+", "(")
+                .replaceAll("\\s+\\)", ")")
                 .toUpperCase();
+        // Убраны замены EQUALS, NOT_EQUALS, GREATER_THAN, чтобы сохранить >, <, =
+    }
+
+    // Вспомогательный метод для проверки, является ли подстрока оператором сравнения
+    private boolean isComparisonOperator(String substring) {
+        String[] operators = {"=", ">", "<", ">=", "<=", "!=", "<>"};
+        for (String op : operators) {
+            if (substring.startsWith(op)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Вспомогательный метод для извлечения оператора сравнения
+    private String extractOperator(String substring) {
+        String[] operators = {"!=", "<>", ">=", "<=", "=", ">", "<"}; // Порядок важен: сначала двухсимвольные операторы
+        for (String op : operators) {
+            if (substring.startsWith(op)) {
+                return op;
+            }
+        }
+        return "";
     }
 }
