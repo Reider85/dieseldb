@@ -216,3 +216,4 @@
 2.1.6 fix subqueries
 2.1.7 fix subqueries
 2.1.8 fix subqueries
+2.1.9 fix subqueries IN

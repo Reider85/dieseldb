@@ -2048,18 +2048,19 @@ class QueryParser {
         return conditions;
     }
     private void validateSubquery(String subquery) {
-        if (!subquery.startsWith("(") || !subquery.endsWith(")")) {
-            LOGGER.log(Level.SEVERE, "Subquery does not start with '(' or end with ')': {0}", subquery);
-            throw new IllegalArgumentException("Invalid subquery syntax: " + subquery);
+        String normalizedSubquery = subquery.trim();
+        // Если подзапрос не в скобках, добавляем их для проверки
+        if (!normalizedSubquery.startsWith("(") || !normalizedSubquery.endsWith(")")) {
+            normalizedSubquery = "(" + normalizedSubquery + ")";
         }
-        long openParen = subquery.chars().filter(c -> c == '(').count();
-        long closeParen = subquery.chars().filter(c -> c == ')').count();
+        long openParen = normalizedSubquery.chars().filter(c -> c == '(').count();
+        long closeParen = normalizedSubquery.chars().filter(c -> c == ')').count();
         if (openParen != closeParen) {
             LOGGER.log(Level.SEVERE, "Unbalanced parentheses in subquery: {0}, open={1}, close={2}",
                     new Object[]{subquery, openParen, closeParen});
             throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subquery);
         }
-        String upperSubquery = subquery.toUpperCase();
+        String upperSubquery = normalizedSubquery.toUpperCase();
         if (!upperSubquery.contains("SELECT ") || !upperSubquery.contains("FROM ")) {
             LOGGER.log(Level.SEVERE, "Subquery missing SELECT or FROM clause: {0}", subquery);
             throw new IllegalArgumentException("Subquery must contain SELECT and FROM clauses: " + subquery);
@@ -2257,16 +2258,20 @@ class QueryParser {
 
         if (valuesStr.trim().toUpperCase().startsWith("SELECT ")) {
             String subQueryStr = valuesStr.trim();
-            if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
-                int subQueryEnd = findMatchingParenthesis(subQueryStr, 0);
-                if (subQueryEnd != subQueryStr.length() - 1) {
-                    throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + subQueryStr);
-                }
-                subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
+            // Проверяем, что подзапрос в скобках
+            if (!subQueryStr.startsWith("(") || !subQueryStr.endsWith(")")) {
+                throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + subQueryStr);
             }
+            int subQueryEnd = findMatchingParenthesis(subQueryStr, 0);
+            if (subQueryEnd != subQueryStr.length() - 1) {
+                throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + subQueryStr);
+            }
+            // Валидируем подзапрос с внешними скобками
             validateSubquery(subQueryStr);
-            Query<?> subQuery = parse(subQueryStr, database);
-            LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
+            // Удаляем скобки только для парсинга
+            String innerSubQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
+            Query<?> subQuery = parse(innerSubQueryStr, database);
+            LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", innerSubQueryStr);
             return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
         }
 
