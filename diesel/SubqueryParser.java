@@ -373,34 +373,30 @@ public class SubqueryParser {
         Integer limit = null;
         Integer offset = null;
 
+        // Найти индексы всех клауз
+        int whereIndex = findClauseOutsideSubquery(tableAndJoins, "WHERE");
+        int groupByIndex = findClauseOutsideSubquery(tableAndJoins, "GROUP BY");
         int orderByIndex = findClauseOutsideSubquery(tableAndJoins, "ORDER BY");
-        if (orderByIndex != -1) {
-            String beforeOrderBy = tableAndJoins.substring(0, orderByIndex).trim();
-            String orderByClause = tableAndJoins.substring(orderByIndex + 8).trim();
-            orderBy = parseOrderByClause(orderByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases, subQueries);
-            tableAndJoins = beforeOrderBy;
-        }
-
         int limitIndex = findClauseOutsideSubquery(tableAndJoins, "LIMIT");
-        if (limitIndex != -1) {
-            String beforeLimit = tableAndJoins.substring(0, limitIndex).trim();
-            String afterLimit = tableAndJoins.substring(limitIndex + 5).trim();
-            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
-            Matcher limitMatcher = limitPattern.matcher(afterLimit);
-            if (limitMatcher.find()) {
-                limit = Integer.parseInt(limitMatcher.group(1));
-                String remaining = afterLimit.substring(limitMatcher.end()).trim();
-                Pattern offsetPattern = Pattern.compile("(?i)^OFFSET\\s+(\\d+)\\s*(?:$|\\s*;\\s*$)");
-                Matcher offsetMatcher = offsetPattern.matcher(remaining);
-                if (offsetMatcher.find()) {
-                    offset = Integer.parseInt(offsetMatcher.group(1));
+
+        // Определить конец WHERE-условий
+        int whereEndIndex = -1;
+        if (whereIndex != -1) {
+            // Найти ближайшую следующую клаузу после WHERE
+            int[] clauseIndices = {groupByIndex, orderByIndex, limitIndex};
+            whereEndIndex = tableAndJoins.length();
+            for (int idx : clauseIndices) {
+                if (idx != -1 && idx > whereIndex && idx < whereEndIndex) {
+                    whereEndIndex = idx;
                 }
             }
-            tableAndJoins = beforeLimit;
+            String conditionStr = tableAndJoins.substring(whereIndex + 5, whereEndIndex).trim();
+            conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
+                    combinedColumnTypes, tableAliases, columnAliases);
         }
 
-        int groupByIndex = findClauseOutsideSubquery(tableAndJoins, "GROUP BY");
-        if (groupByIndex != -1) {
+        // Обработка GROUP BY
+        if (groupByIndex != -1 && groupByIndex > whereIndex) {
             String beforeGroupBy = tableAndJoins.substring(0, groupByIndex).trim();
             String groupByClause = tableAndJoins.substring(groupByIndex + 8).trim();
             int havingIndex = findClauseOutsideSubquery(groupByClause, "HAVING");
@@ -417,11 +413,30 @@ public class SubqueryParser {
             tableAndJoins = beforeGroupBy;
         }
 
-        int whereIndex = findClauseOutsideSubquery(tableAndJoins, "WHERE");
-        if (whereIndex != -1) {
-            String conditionStr = tableAndJoins.substring(whereIndex + 5).trim();
-            conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
-                    combinedColumnTypes, tableAliases, columnAliases);
+        // Обработка ORDER BY
+        if (orderByIndex != -1 && orderByIndex > whereIndex && orderByIndex > groupByIndex) {
+            String beforeOrderBy = tableAndJoins.substring(0, orderByIndex).trim();
+            String orderByClause = tableAndJoins.substring(orderByIndex + 8).trim();
+            orderBy = parseOrderByClause(orderByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases, subQueries);
+            tableAndJoins = beforeOrderBy;
+        }
+
+        // Обработка LIMIT
+        if (limitIndex != -1 && limitIndex > whereIndex && limitIndex > groupByIndex && limitIndex > orderByIndex) {
+            String beforeLimit = tableAndJoins.substring(0, limitIndex).trim();
+            String afterLimit = tableAndJoins.substring(limitIndex + 5).trim();
+            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
+            Matcher limitMatcher = limitPattern.matcher(afterLimit);
+            if (limitMatcher.find()) {
+                limit = Integer.parseInt(limitMatcher.group(1));
+                String remaining = afterLimit.substring(limitMatcher.end()).trim();
+                Pattern offsetPattern = Pattern.compile("(?i)^OFFSET\\s+(\\d+)\\s*(?:$|\\s*;\\s*$)");
+                Matcher offsetMatcher = offsetPattern.matcher(remaining);
+                if (offsetMatcher.find()) {
+                    offset = Integer.parseInt(offsetMatcher.group(1));
+                }
+            }
+            tableAndJoins = beforeLimit;
         }
 
         return new QueryParser.AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset);
@@ -590,7 +605,7 @@ public class SubqueryParser {
         patterns.add(Map.entry("In Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)")));
         patterns.add(Map.entry("Subquery Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)", Pattern.DOTALL)));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?", Pattern.DOTALL)));
         patterns.add(Map.entry("Like Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Null Condition",
@@ -647,7 +662,6 @@ public class SubqueryParser {
         }
         return tokens;
     }
-
     private List<QueryParser.Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
                                                                  String originalQuery, boolean isJoinCondition,
                                                                  Map<String, Class<?>> combinedColumnTypes,
