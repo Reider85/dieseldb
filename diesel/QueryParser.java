@@ -53,8 +53,8 @@ class QueryParser {
             handler.setLevel(Level.INFO);
         }
     }
-    private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
     private String originalQuery;
     private static final String[] OPERATORS = {"!=", "<>", ">=", "<=", "=", "<", ">", "LIKE", "NOT LIKE"};
@@ -69,7 +69,7 @@ class QueryParser {
     }
 
     // Вспомогательный класс для токенов
-    private enum TokenType {
+    enum TokenType {
         CONDITION,
         LOGICAL_OPERATOR
     }
@@ -384,7 +384,7 @@ class QueryParser {
 
 
     // Вспомогательный класс для хранения результатов парсинга элементов SELECT
-    private static class SelectItems {
+    public static class SelectItems {
         List<String> columns;
         List<AggregateFunction> aggregates;
         List<SubQuery> subQueries;
@@ -400,7 +400,7 @@ class QueryParser {
     }
 
     // Вспомогательный класс для хранения результатов парсинга таблиц и соединений
-    private static class TableJoins {
+    public static class TableJoins {
         String tableName;
         String tableAlias;
         List<JoinInfo> joins;
@@ -418,7 +418,7 @@ class QueryParser {
     }
 
     // Вспомогательный класс для хранения дополнительных клауз
-    private static class AdditionalClauses {
+    public static class AdditionalClauses {
         List<Condition> conditions;
         List<String> groupBy;
         List<HavingCondition> havingConditions;
@@ -437,7 +437,7 @@ class QueryParser {
         }
     }
 
-    private static class OperatorInfo {
+    static class OperatorInfo {
         String operator;
         int index;
         int endIndex;
@@ -449,7 +449,7 @@ class QueryParser {
         }
     }
 
-    private static class Token {
+    public static class Token {
         final TokenType type;
         final String value;
 

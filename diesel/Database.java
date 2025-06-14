@@ -28,7 +28,10 @@ class Database {
 
     public Object executeQuery(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
-        Query<?> parsedQuery = new QueryParser().parse(query, this);
+        SubqueryParser subqueryParser = new SubqueryParser();
+        Query<?> parsedQuery = subqueryParser.containsSubquery(query)
+                ? subqueryParser.parse(query, this)
+                : new QueryParser().parse(query, this);
         LOGGER.log(Level.FINE, "Parsed query type: {0}", parsedQuery.getClass().getSimpleName());
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
@@ -268,7 +271,7 @@ class Database {
         }
     }
 
-    public boolean isInTransaction(UUID transactionId)  {
+    public boolean isInTransaction(UUID transactionId) {
         Transaction transaction = activeTransactions.get(transactionId);
         return transaction != null && transaction.isActive();
     }
