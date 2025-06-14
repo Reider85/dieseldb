@@ -727,86 +727,92 @@ class QueryParser {
             return -1;
         }
 
-        // Регулярные выражения для токенов
+        // Регулярные выражения для разных типов токенов
         Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'", Pattern.DOTALL);
         Pattern openParenPattern = Pattern.compile("\\(");
         Pattern closeParenPattern = Pattern.compile("\\)");
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
-        Pattern selectPattern = Pattern.compile("(?i)\\bSELECT\\b");
+        Pattern wordPattern = Pattern.compile("\\S+");
 
         int bracketDepth = 0;
         int fromIndex = -1;
         int currentPos = 0;
-        boolean inQuotes = false;
-        boolean inSubQuery = false;
+        StringBuilder currentToken = new StringBuilder();
 
         while (currentPos < query.length()) {
-            // Пропускаем пробелы
-            while (currentPos < query.length() && Character.isWhitespace(query.charAt(currentPos))) {
-                currentPos++;
-            }
-            if (currentPos >= query.length()) {
-                break;
-            }
-
-            // Проверяем строковые литералы
+            // Проверяем строки в кавычках
             Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
-            if (quotedStringMatcher.lookingAt()) {
-                currentPos = quotedStringMatcher.end();
-                continue;
-            }
-
             // Проверяем открывающую скобку
             Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
-            if (openParenMatcher.lookingAt()) {
-                if (!inQuotes) {
-                    bracketDepth++;
-                    if (bracketDepth == 1 && currentPos + 7 < query.length() &&
-                            query.substring(currentPos, currentPos + 7).toUpperCase().startsWith("(SELECT")) {
-                        inSubQuery = true;
-                    }
-                }
-                currentPos = openParenMatcher.end();
-                continue;
-            }
-
             // Проверяем закрывающую скобку
             Matcher closeParenMatcher = closeParenPattern.matcher(query).region(currentPos, query.length());
-            if (closeParenMatcher.lookingAt()) {
-                if (!inQuotes) {
-                    bracketDepth--;
-                    if (bracketDepth < 0) {
-                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                                new Object[]{currentPos, query});
-                        return -1;
-                    }
-                    if (bracketDepth == 0 && inSubQuery) {
-                        inSubQuery = false;
-                    }
-                }
-                currentPos = closeParenMatcher.end();
+            // Проверяем FROM
+            Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем слово
+            Matcher wordMatcher = wordPattern.matcher(query).region(currentPos, query.length());
+
+            int nextPos = query.length();
+            String token = null;
+            String tokenType = null;
+            int start = currentPos;
+
+            // Находим ближайший токен
+            if (quotedStringMatcher.lookingAt()) {
+                token = quotedStringMatcher.group();
+                nextPos = quotedStringMatcher.end();
+                tokenType = "quotedString";
+            } else if (openParenMatcher.lookingAt()) {
+                token = openParenMatcher.group();
+                nextPos = openParenMatcher.end();
+                tokenType = "openParen";
+            } else if (closeParenMatcher.lookingAt()) {
+                token = closeParenMatcher.group();
+                nextPos = closeParenMatcher.end();
+                tokenType = "closeParen";
+            } else if (fromMatcher.lookingAt()) {
+                token = fromMatcher.group();
+                nextPos = fromMatcher.end();
+                tokenType = "from";
+            } else if (wordMatcher.lookingAt()) {
+                token = wordMatcher.group();
+                nextPos = wordMatcher.end();
+                tokenType = "word";
+            }
+
+            if (token == null) {
+                // Пропускаем пробелы или неизвестные символы
+                currentPos++;
                 continue;
             }
 
-            // Проверяем FROM
-            Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
-            if (fromMatcher.lookingAt() && !inQuotes && !inSubQuery && bracketDepth == 0) {
-                fromIndex = currentPos;
+            // Логируем токен
+            //LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, value={3}, bracketDepth={4}",
+            //        new Object[]{start, nextPos, tokenType, token, bracketDepth});
+
+            // Обрабатываем токен
+            if (tokenType.equals("quotedString")) {
+                currentToken.append(token);
+            } else if (tokenType.equals("openParen")) {
+                bracketDepth++;
+                currentToken.append(token);
+            } else if (tokenType.equals("closeParen")) {
+                bracketDepth--;
+                if (bracketDepth < 0) {
+                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
+                            new Object[]{start, query});
+                    return -1;
+                }
+                currentToken.append(token);
+            } else if (tokenType.equals("from") && bracketDepth == 0) {
+                fromIndex = start;
                 LOGGER.log(Level.FINEST, "Найден основной FROM на позиции {0} в запросе: {1}",
                         new Object[]{fromIndex, query});
                 return fromIndex;
+            } else if (tokenType.equals("word")) {
+                currentToken.append(token);
             }
 
-            // Проверяем SELECT для начала подзапроса
-            Matcher selectMatcher = selectPattern.matcher(query).region(currentPos, query.length());
-            if (selectMatcher.lookingAt() && !inQuotes && bracketDepth > 0) {
-                // Пропускаем SELECT внутри подзапроса
-                currentPos = selectMatcher.end();
-                continue;
-            }
-
-            // Пропускаем любой другой символ
-            currentPos++;
+            currentPos = nextPos;
         }
 
         if (bracketDepth != 0) {
@@ -1257,7 +1263,7 @@ class QueryParser {
 
             // Логируем токен для отладки
             //LOGGER.log(Level.FINEST, "Токен: start={0}, end={1}, type={2}, parenDepth={3}, inQuotes={4}",
-           //         new Object[]{currentPos, nextPos, tokenType != null ? tokenType : "none", parenDepth, inQuotes});
+            //         new Object[]{currentPos, nextPos, tokenType != null ? tokenType : "none", parenDepth, inQuotes});
 
             // Если токен не найден, переходим к следующему символу
             if (tokenType == null) {
@@ -1750,15 +1756,20 @@ class QueryParser {
                                             String originalQuery, boolean isJoinCondition,
                                             Map<String, Class<?>> combinedColumnTypes,
                                             Map<String, String> tableAliases, Map<String, String> columnAliases) {
-        if (conditionStr == null || conditionStr.trim().isEmpty()) {
-            return new ArrayList<>();
-        }
-
         LOGGER.log(Level.FINE, "Начало парсинга условий: conditionStr={0}, defaultTableName={1}, isJoinCondition={2}",
                 new Object[]{conditionStr, defaultTableName, isJoinCondition});
 
-        // Токенизируем условие
-        List<Token> tokens = tokenizeConditions(conditionStr);
+        if (conditionStr == null || conditionStr.trim().isEmpty()) {
+            LOGGER.log(Level.FINE, "Пустая строка условий, возвращается пустой список условий");
+            return new ArrayList<>();
+        }
+
+        // Обрезаем строку до ключевых слов
+        String trimmedConditionStr = trimToClause(conditionStr);
+        LOGGER.log(Level.FINE, "Условие обрезано до: {0}", trimmedConditionStr);
+
+        List<Condition> conditions = new ArrayList<>();
+        List<Token> tokens = tokenizeConditions(trimmedConditionStr);
         return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
                 combinedColumnTypes, tableAliases, columnAliases, null, false);
     }
@@ -1775,50 +1786,47 @@ class QueryParser {
 
     // Токенизирует строку условий с использованием регулярных выражений
     private List<Token> tokenizeConditions(String conditionStr) {
-        List<Token> tokens = new ArrayList<>();
-        if (conditionStr == null || conditionStr.trim().isEmpty()) {
-            return tokens;
-        }
-
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
-        // 1. Строковые литералы
-        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\'|[^'])*'")));
-        // 2. Подзапросы
-        patterns.add(Map.entry("SubQuery Condition", Pattern.compile(
-                "\\(\\s*SELECT\\s+[^()]+(?:\\([^()]+\\))*[^()]*?(?:\\s+WHERE\\s+[^()]+(?:\\([^()]+\\))*[^()]*?)?(?:\\s+LIMIT\\s+\\d+)?\\s*\\)",
-                Pattern.CASE_INSENSITIVE | Pattern.DOTALL)));
-        patterns.add(Map.entry("In Subquery",
-                Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s+IN\\s*\\(\\s*\\(\\s*SELECT\\s+.*?\\)\\s*\\)", Pattern.DOTALL)));
-        // 3. Условия с LIKE
-        patterns.add(Map.entry("Like Condition", Pattern.compile(
-                "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\'|[^'])*'")));
-        // 4. Условия с IS NULL
-        patterns.add(Map.entry("Is Null Condition", Pattern.compile(
-                "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b")));
-        // 5. Условия IN
-        patterns.add(Map.entry("In Condition", Pattern.compile(
-                "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\([^)]+\\)")));
-        // 6. Условия сравнения со строкой
+
+        // 1. Строковые литералы (в кавычках)
+        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
+
+        // 2. Условия LIKE и NOT LIKE
+        patterns.add(Map.entry("Like Condition",
+                Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?LIKE\\s*'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'")));
+
+        // 3. Подзапросы
+        patterns.add(Map.entry("SubQuery",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\(\\s*SELECT\\s+[^)]+\\)")));
+
+        // 4. Условия IN
+        patterns.add(Map.entry("In Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\([^)]+\\)")));
+
+        // 5. Условия NULL
+        patterns.add(Map.entry("Null Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IS\\s*(NOT\\s+)?NULL\\b")));
+
+        // 6. Условия сравнения (строки, числа, столбцы)
         patterns.add(Map.entry("Comparison String Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*'(?:\\\\.|[^'\\\\])*'")));
-        // 7. Условия сравнения с числом
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:\\\\.|[^'\\\\])*')")));
         patterns.add(Map.entry("Comparison Number Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
-        // 8. Условия сравнения столбцов
         patterns.add(Map.entry("Comparison Column Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
-        // 9. Операторы сравнения (новый паттерн)
-        patterns.add(Map.entry("Comparison Operator", Pattern.compile("(?i)(?:=|>|<|>=|<=|!=|<>)")));
-        patterns.add(Map.entry("Identifier", Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")));
-        // 10. Логические операторы
+
+        // 7. Логические операторы
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
-        // 11. Некорректные токены (оставляем последним)
+
+        // 8. Некорректные токены (исключая строковые литералы)
         patterns.add(Map.entry("Invalid Token",
                 Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!'(?:\\\\.|[^'\\\\])*')[^\\s()']+")));
 
+        List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
         int stringLength = conditionStr.length();
         boolean inQuotes = false;
+        StringBuilder currentToken = new StringBuilder();
 
         while (currentPos < stringLength) {
             // Пропускаем пробелы
@@ -1837,8 +1845,24 @@ class QueryParser {
             String matchedToken = null;
             String matchedPatternName = null;
 
-            // Проверяем все паттерны
-            for (Map.Entry<String, Pattern> entry : patterns) {
+            // Проверяем строковые литералы первыми
+            if (conditionStr.charAt(currentPos) == '\'') {
+                Pattern quotedStringPattern = patterns.get(0).getValue(); // Quoted String
+                Matcher matcher = quotedStringPattern.matcher(conditionStr).region(currentPos, stringLength);
+                if (matcher.lookingAt()) {
+                    matchedToken = matcher.group();
+                    matchedPatternName = "Quoted String";
+                    nextPos = matcher.end();
+                    matched = true;
+                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
+                    LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
+                    currentPos = nextPos;
+                    continue;
+                }
+            }
+
+            // Проверяем остальные паттерны, исключая содержимое строк
+            for (Map.Entry<String, Pattern> entry : patterns.subList(1, patterns.size())) {
                 String patternName = entry.getKey();
                 Pattern pattern = entry.getValue();
                 Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
@@ -1858,51 +1882,24 @@ class QueryParser {
             }
 
             if (matched) {
-                if (matchedPatternName.equals("Identifier")) {
-                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                    LOGGER.log(Level.FINEST, "Добавлен токен Identifier: {0}", matchedToken);
-                } else if (matchedPatternName.equals("Comparison Operator")) {
-                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                    LOGGER.log(Level.FINEST, "Добавлен токен Comparison Operator: {0}", matchedToken);
-                } else if (matchedPatternName.equals("Quoted String")) {
+                if (matchedPatternName.equals("Quoted String")) {
+                    // Строковые литералы обрабатываются как неделимые токены
                     tokens.add(new Token(TokenType.CONDITION, matchedToken));
                     LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
-                } else if (matchedPatternName.equals("SubQuery Condition")) {
-                    // Проверяем сбалансированность скобок в подзапросе
-                    int parenDepth = 0;
-                    boolean inSubQuotes = false;
-                    boolean valid = true;
-                    for (int i = 0; i < matchedToken.length(); i++) {
-                        char c = matchedToken.charAt(i);
-                        if (c == '\'') {
-                            inSubQuotes = !inSubQuotes;
-                        } else if (!inSubQuotes) {
-                            if (c == '(') {
-                                parenDepth++;
-                            } else if (c == ')') {
-                                parenDepth--;
-                                if (parenDepth < 0) {
-                                    valid = false;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if (valid && parenDepth == 0) {
-                        tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                        LOGGER.log(Level.FINEST, "Добавлен токен SubQuery Condition: {0}", matchedToken);
-                    } else {
-                        LOGGER.log(Level.WARNING, "Некорректный подзапрос на позиции {0}: {1}",
-                                new Object[]{currentPos, matchedToken});
-                        throw new IllegalArgumentException("Некорректный подзапрос на позиции " + currentPos + ": " + matchedToken);
-                    }
                 } else if (matchedPatternName.equals("Like Condition")) {
                     Matcher likeMatcher = Pattern.compile(
-                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\'|[^'])*'")
+                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|[^'])*')")
                             .matcher(matchedToken);
                     if (likeMatcher.matches()) {
+                        String column = likeMatcher.group(1);
                         String pattern = likeMatcher.group(3);
-                        validateLikePattern(pattern.substring(1, pattern.length() - 1), currentPos);
+                        if (!pattern.endsWith("'")) {
+                            LOGGER.log(Level.WARNING, "Незакрытая кавычка в LIKE шаблоне на позиции {0}: {1}",
+                                    new Object[]{currentPos, matchedToken});
+                            throw new IllegalArgumentException("Незакрытая кавычка в LIKE шаблоне на позиции " + currentPos + ": " + matchedToken);
+                        }
+                        pattern = pattern.substring(1, pattern.length() - 1);
+                        validateLikePattern(pattern, currentPos);
                         tokens.add(new Token(TokenType.CONDITION, matchedToken));
                         LOGGER.log(Level.FINEST, "Добавлен токен Like Condition: {0}", matchedToken);
                     } else {
@@ -1923,6 +1920,7 @@ class QueryParser {
                 }
                 currentPos = nextPos;
             } else {
+                // Пропускаем пробелы или неизвестные символы
                 currentPos++;
             }
         }
@@ -1957,6 +1955,7 @@ class QueryParser {
         for (int i = 0; i < tokens.size(); i++) {
             Token token = tokens.get(i);
             if (token.type == TokenType.LOGICAL_OPERATOR) {
+                // Logical operators set the conjunction for the next condition
                 conjunction = token.value.toUpperCase();
                 LOGGER.log(Level.FINEST, "Processing logical operator: {0}, setting conjunction to {1}",
                         new Object[]{token.value, conjunction});
@@ -1965,52 +1964,16 @@ class QueryParser {
             if (token.type == TokenType.CONDITION) {
                 String condStr = token.value;
                 if (condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'")) {
+                    // Skip quoted strings, as they are handled within LIKE or comparison conditions
                     LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
                     continue;
                 }
-                // Новая проверка на условие IN
                 if (condStr.toUpperCase().contains(" IN ")) {
                     Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
                             combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
-                    conjunction = null;
-                    continue;
-                }
-                // Проверка на оператор сравнения
-                if (condStr.matches("(?i)(?:=|>|<|>=|<=|!=|<>)")) {
-                    // Оператор сравнения, ожидаем идентификатор перед ним и подзапрос/значение после
-                    if (i == 0 || i >= tokens.size() - 1) {
-                        LOGGER.log(Level.SEVERE, "Некорректное положение оператора: {0}", condStr);
-                        throw new IllegalArgumentException("Некорректное положение оператора: " + condStr);
-                    }
-                    Token prevToken = tokens.get(i - 1);
-                    Token nextToken = tokens.get(i + 1);
-                    // Проверяем, что предыдущий токен — идентификатор столбца
-                    if (prevToken.type != TokenType.CONDITION || !prevToken.value.matches("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
-                        LOGGER.log(Level.SEVERE, "Ожидался идентификатор перед оператором: {0}, предыдущий токен: {1}",
-                                new Object[]{condStr, prevToken});
-                        throw new IllegalArgumentException("Ожидался идентификатор перед оператором: " + condStr);
-                    }
-                    // Проверяем, что следующий токен — значение, подзапрос или другой идентификатор
-                    if (nextToken.type != TokenType.CONDITION) {
-                        LOGGER.log(Level.SEVERE, "Ожидался подзапрос, значение или идентификатор после оператора: {0}, следующий токен: {1}",
-                                new Object[]{condStr, nextToken});
-                        throw new IllegalArgumentException("Ожидался подзапрос или значение после оператора: " + condStr);
-                    }
-                    // Объединяем токены в одно условие
-                    String combinedCond = prevToken.value + " " + condStr + " " + nextToken.value;
-                    Condition condition = parseSingleCondition(combinedCond, defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, combinedCond);
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено условие с оператором: {0}", condition);
-                    i += 2; // Пропускаем следующие два токена (идентификатор и значение/подзапрос)
-                    conjunction = null;
-                    continue;
-                }
-                // Проверка на группированное условие
-                if (condStr.startsWith("(") && condStr.endsWith(")")) {
-                    // Проверка на группированное условие
+                } else if (condStr.startsWith("(") && condStr.endsWith(")")) {
                     int endParen = findMatchingParenthesis(condStr, 0);
                     if (endParen == condStr.length() - 1) {
                         String subCondStr = condStr.substring(1, endParen).trim();
@@ -2019,53 +1982,35 @@ class QueryParser {
                                 originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
                         conditions.add(new Condition(subConditions, conjunction, not));
                         LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
-                        conjunction = null;
                     } else {
-                        LOGGER.log(Level.SEVERE, "Некорректная структура группированного условия: {0}", condStr);
                         throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
                     }
-                } else if (i + 2 < tokens.size() && tokens.get(i + 1).type == TokenType.CONDITION &&
-                        tokens.get(i + 1).value.matches("(?i)(?:=|>|<|>=|<=|!=|<>)")) {
-                    // Проверяем, является ли текущий токен началом условия вида [идентификатор, оператор, значение/подзапрос]
-                    Token nextToken = tokens.get(i + 1);
-                    Token valueToken = tokens.get(i + 2);
-                    if (valueToken.type == TokenType.CONDITION &&
-                            condStr.matches("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*")) {
-                        String combinedCond = condStr + " " + nextToken.value + " " + valueToken.value;
-                        Condition condition = parseSingleCondition(combinedCond, defaultTableName, database, originalQuery,
-                                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, combinedCond);
-                        conditions.add(condition);
-                        LOGGER.log(Level.FINE, "Добавлено составное условие: {0}", condition);
-                        i += 2; // Пропускаем следующие два токена
-                        conjunction = null;
-                        continue;
-                    }
                 } else {
-                    // Одиночное условие (например, LIKE, IS NULL или сравнение столбцов)
                     Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, condStr);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
-                    conjunction = null;
                 }
+                // Reset conjunction after adding a condition
+                conjunction = null;
             }
         }
         return conditions;
     }
+
     private void validateSubquery(String subquery) {
-        String normalizedSubquery = subquery.trim();
-        // Если подзапрос не в скобках, добавляем их для проверки
-        if (!normalizedSubquery.startsWith("(") || !normalizedSubquery.endsWith(")")) {
-            normalizedSubquery = "(" + normalizedSubquery + ")";
+        if (!subquery.startsWith("(") || !subquery.endsWith(")")) {
+            LOGGER.log(Level.SEVERE, "Subquery does not start with '(' or end with ')': {0}", subquery);
+            throw new IllegalArgumentException("Invalid subquery syntax: " + subquery);
         }
-        long openParen = normalizedSubquery.chars().filter(c -> c == '(').count();
-        long closeParen = normalizedSubquery.chars().filter(c -> c == ')').count();
+        long openParen = subquery.chars().filter(c -> c == '(').count();
+        long closeParen = subquery.chars().filter(c -> c == ')').count();
         if (openParen != closeParen) {
             LOGGER.log(Level.SEVERE, "Unbalanced parentheses in subquery: {0}, open={1}, close={2}",
                     new Object[]{subquery, openParen, closeParen});
             throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subquery);
         }
-        String upperSubquery = normalizedSubquery.toUpperCase();
+        String upperSubquery = subquery.toUpperCase();
         if (!upperSubquery.contains("SELECT ") || !upperSubquery.contains("FROM ")) {
             LOGGER.log(Level.SEVERE, "Subquery missing SELECT or FROM clause: {0}", subquery);
             throw new IllegalArgumentException("Subquery must contain SELECT and FROM clauses: " + subquery);
@@ -2165,40 +2110,8 @@ class QueryParser {
                     tableAliases, columnAliases, conjunction, not);
         }
 
-        // Новая проверка для подзапросов, захваченных как единый токен
-        Pattern subQueryComparisonPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*(\\(\\s*SELECT\\s+.*?\\))",
-                Pattern.DOTALL
-        );
-        Matcher subQueryMatcher = subQueryComparisonPattern.matcher(normalizedCondStr);
-        if (subQueryMatcher.matches()) {
-            String column = subQueryMatcher.group(1).trim();
-            String operatorStr = subQueryMatcher.group(2).trim();
-            String subQueryStr = subQueryMatcher.group(3).trim();
-
-            // Удаляем внешние скобки
-            int subQueryEnd = findMatchingParenthesis(subQueryStr, 0);
-            if (subQueryEnd != subQueryStr.length() - 1) {
-                throw new IllegalArgumentException("Invalid subquery syntax: " + subQueryStr);
-            }
-            subQueryStr = subQueryStr.substring(1, subQueryEnd).trim();
-
-            validateSubquery("(" + subQueryStr + ")");
-            Query<?> subQuery = parse(subQueryStr, database);
-            SubQuery newSubQuery = new SubQuery(subQuery, null);
-
-            Operator operator = parseOperator(operatorStr);
-            String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
-            validateColumn(normalizedColumn, combinedColumnTypes);
-
-            LOGGER.log(Level.FINE, "Parsed subquery comparison condition: column={0}, operator={1}, subQuery={2}",
-                    new Object[]{normalizedColumn, operator, subQueryStr});
-            return new Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
-        }
-
         // Проверка на корректность шаблона LIKE
-        Pattern likePattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:[^']|)*')");
+        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:[^']|)*')");
         Matcher likeMatcher = likePattern.matcher(normalizedCondStr);
         if (likeMatcher.matches()) {
             String column = likeMatcher.group(1).trim();
@@ -2209,8 +2122,7 @@ class QueryParser {
             validateColumn(normalizedColumn, combinedColumnTypes);
 
             Operator operator = operatorStr.equals("LIKE") ? Operator.LIKE : Operator.NOT_LIKE;
-            Object parsedValue = parseConditionValue(actualColumn, "'" + value + "'",
-                    getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
+            Object parsedValue = parseConditionValue(actualColumn, "'" + value + "'", getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
 
             return new Condition(actualColumn, parsedValue, operator, conjunction, not);
         }
@@ -2248,53 +2160,49 @@ class QueryParser {
     private Condition parseInCondition(String condStr, String defaultTableName, Database database, String originalQuery,
                                        Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                        Map<String, String> columnAliases, String conjunction, boolean not) {
-        Pattern inPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\(\\s*\\((SELECT\\s+.*?)\\)\\s*\\)$",
-                Pattern.DOTALL
-        );
+        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
-            // Fallback для списков значений
-            Pattern valueListPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
-            Matcher valueListMatcher = valueListPattern.matcher(condStr);
-            if (!valueListMatcher.matches()) {
-                throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
-            }
-
-            String column = valueListMatcher.group(1).trim();
-            boolean inNot = valueListMatcher.group(2) != null;
-            String valuesStr = valueListMatcher.group(3).trim();
-            String actualColumn = resolveColumnAlias(column, columnAliases);
-            String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
-            Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
-
-            List<String> valueParts = splitInValues(valuesStr);
-            List<Object> inValues = new ArrayList<>();
-            for (String val : valueParts) {
-                String trimmedVal = val.trim();
-                if (trimmedVal.isEmpty()) continue;
-                Object value = parseConditionValue(actualColumn, trimmedVal, columnType);
-                inValues.add(value);
-            }
-            if (inValues.isEmpty()) {
-                throw new IllegalArgumentException("Empty IN list in: " + condStr);
-            }
-
-            LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}", new Object[]{actualColumn, inValues});
-            return new Condition(actualColumn, inValues, conjunction, inNot);
+            throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
         }
 
         String column = inMatcher.group(1).trim();
         boolean inNot = inMatcher.group(2) != null;
-        String subQueryStr = inMatcher.group(3).trim();
+        String valuesStr = inMatcher.group(3).trim();
         String actualColumn = resolveColumnAlias(column, columnAliases);
         String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
         Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
 
-        validateSubquery("(" + subQueryStr + ")");
-        Query<?> subQuery = parse(subQueryStr, database);
-        LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
-        return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
+        if (valuesStr.trim().toUpperCase().startsWith("SELECT ")) {
+            String subQueryStr = valuesStr.trim();
+            if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
+                int subQueryEnd = findMatchingParenthesis(subQueryStr, 0);
+                if (subQueryEnd != subQueryStr.length() - 1) {
+                    throw new IllegalArgumentException("Invalid subquery syntax in IN condition: " + subQueryStr);
+                }
+                subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
+            }
+            validateSubquery(subQueryStr);
+            Query<?> subQuery = parse(subQueryStr, database);
+            LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
+            return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
+        }
+
+        // Разделение списка значений с учётом кавычек
+        List<String> valueParts = splitInValues(valuesStr);
+        List<Object> inValues = new ArrayList<>();
+        for (String val : valueParts) {
+            String trimmedVal = val.trim();
+            if (trimmedVal.isEmpty()) continue;
+            Object value = parseConditionValue(actualColumn, trimmedVal, columnType);
+            inValues.add(value);
+        }
+        if (inValues.isEmpty()) {
+            throw new IllegalArgumentException("Empty IN list in: " + condStr);
+        }
+
+        LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}", new Object[]{actualColumn, inValues});
+        return new Condition(actualColumn, inValues, conjunction, inNot);
     }
 
     private List<String> splitInValues(String input) {
@@ -2755,15 +2663,21 @@ class QueryParser {
 
     private int findMatchingParenthesis(String str, int startIndex) {
         if (str == null || startIndex < 0 || startIndex >= str.length() || str.charAt(startIndex) != '(') {
-            LOGGER.log(Level.SEVERE, "Недопустимый вход для findMatchingParenthesis: str={0}, startIndex={1}",
-                    new Object[]{str, startIndex});
-            throw new IllegalArgumentException("Недопустимый вход для findMatchingParenthesis");
+            LOGGER.log(Level.SEVERE, "Недопустимый вход для findMatchingParenthesis: str={0}, startIndex={1}", new Object[]{str, startIndex});
+            throw new IllegalArgumentException("Недопустимый вход для findMatchingParenthesis: startIndex должен указывать на открывающую скобку");
         }
 
-        int parenDepth = 1; // Начинаем с 1, так как startIndex указывает на '('
+        // Проверка, что строка, начиная с startIndex, похожа на подзапрос
+        Pattern subQueryPattern = Pattern.compile("\\s*\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
+        String fromStart = startIndex + 7 < str.length() ? str.substring(startIndex, startIndex + 7) : "";
+        if (!subQueryPattern.matcher(fromStart).lookingAt()) {
+            LOGGER.log(Level.FINE, "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
+        }
+
+        int parenDepth = 0;
         boolean inQuotes = false;
 
-        for (int i = startIndex + 1; i < str.length(); i++) {
+        for (int i = startIndex; i < str.length(); i++) {
             char c = str.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
@@ -2775,6 +2689,17 @@ class QueryParser {
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth == 0) {
+                        String subQueryStr = str.substring(startIndex, i + 1);
+                        // Проверка структуры подзапроса с использованием регулярного выражения
+                        Pattern selectPattern = Pattern.compile(
+                                "\\s*\\(\\s*SELECT\\s+.*?\\s+FROM\\s+.*?\\s*\\)",
+                                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+                        );
+                        if (!selectPattern.matcher(subQueryStr).matches()) {
+                            LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
+                        }
+                        LOGGER.log(Level.FINE, "Найдена парная закрывающая скобка на индексе {0} для подзапроса: {1}",
+                                new Object[]{i, subQueryStr});
                         return i;
                     }
                 }
