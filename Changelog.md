@@ -225,3 +225,4 @@
 2.2.5 fix subqueries
 2.2.6 fix subqueries
 2.2.7 fix subqueries
+2.2.8 fix subqueries

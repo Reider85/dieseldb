@@ -8,7 +8,6 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 public class SubqueryParser {
     private static final Logger LOGGER = Logger.getLogger(SubqueryParser.class.getName());
@@ -19,56 +18,59 @@ public class SubqueryParser {
     }
 
     public Query<?> parse(String query, Database database) {
-        LOGGER.log(Level.INFO, "Попытка парсинга запроса: {0}", query);
+        LOGGER.log(Level.INFO, "Parsing query: {0}", query);
         String normalizedQuery = normalizeQueryString(query).trim();
 
-        // Проверка на наличие подзапросов
         if (!containsSubquery(normalizedQuery)) {
-            LOGGER.log(Level.FINE, "Подзапросы не найдены, используется QueryParser: {0}", query);
+            LOGGER.log(Level.FINE, "No subqueries found, delegating to QueryParser: {0}", query);
             return queryParser.parse(query, database);
         }
 
-        LOGGER.log(Level.FINE, "Обнаружены подзапросы, парсинг через SubqueryParser: {0}", query);
+        LOGGER.log(Level.FINE, "Subqueries detected, parsing with SubqueryParser: {0}", query);
         try {
-            if (normalizedQuery.startsWith("SELECT")) {
+            if (normalizedQuery.toUpperCase().startsWith("SELECT")) {
                 return parseSelectQuery(query, normalizedQuery, database);
             } else {
-                // Для других типов запросов (INSERT, UPDATE, DELETE и т.д.) используем QueryParser
-                LOGGER.log(Level.FINE, "Не SELECT запрос, делегируем QueryParser: {0}", query);
+                LOGGER.log(Level.FINE, "Non-SELECT query, delegating to QueryParser: {0}", query);
                 return queryParser.parse(query, database);
             }
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.SEVERE, "Ошибка парсинга запроса: {0}, Ошибка: {1}", new Object[]{query, e.getMessage()});
+            LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
             throw e;
         }
     }
 
     public boolean containsSubquery(String query) {
-        // Проверяем наличие подзапросов вида (SELECT ...)
         Pattern subqueryPattern = Pattern.compile("(?i)\\(\\s*SELECT\\b", Pattern.DOTALL);
         Matcher matcher = subqueryPattern.matcher(query);
         return matcher.find();
     }
 
+    private String normalizeQueryString(String query) {
+        if (query == null || query.isEmpty()) {
+            return "";
+        }
+        return query.trim()
+                .replaceAll("\\s+", " ")
+                .replaceAll("\\s*([=><!(),])\\s*", "$1")
+                .replaceAll("\\s*;", "");
+    }
+
     private Query<List<Map<String, Object>>> parseSelectQuery(String originalQuery, String normalizedQuery, Database database) {
-        // Находим индекс основного FROM
         int fromIndex = findMainFromClause(originalQuery);
         if (fromIndex == -1) {
-            throw new IllegalArgumentException("Недопустимый формат SELECT-запроса: отсутствует FROM");
+            throw new IllegalArgumentException("Invalid SELECT query: missing FROM clause");
         }
 
-        // Извлекаем части запроса
         String selectPartOriginal = originalQuery.substring(originalQuery.toUpperCase().indexOf("SELECT") + 6, fromIndex).trim();
         String tableAndJoinsOriginal = originalQuery.substring(fromIndex + 4).trim();
 
-        // Парсим элементы SELECT
         QueryParser.SelectItems selectItems = parseSelectItems(selectPartOriginal, database);
         List<String> columns = selectItems.columns;
         List<QueryParser.AggregateFunction> aggregates = selectItems.aggregates;
         List<QueryParser.SubQuery> subQueries = selectItems.subQueries;
         Map<String, String> columnAliases = selectItems.columnAliases;
 
-        // Парсим таблицы и соединения
         QueryParser.TableJoins tableJoins = parseTableAndJoins(tableAndJoinsOriginal, database);
         String tableName = tableJoins.tableName;
         String tableAlias = tableJoins.tableAlias;
@@ -76,7 +78,6 @@ public class SubqueryParser {
         Map<String, String> tableAliases = tableJoins.tableAliases;
         Map<String, Class<?>> combinedColumnTypes = tableJoins.combinedColumnTypes;
 
-        // Парсим дополнительные клаузы
         QueryParser.AdditionalClauses clauses = parseAdditionalClauses(tableAndJoinsOriginal, tableName, database, originalQuery,
                 aggregates, combinedColumnTypes, tableAliases, columnAliases, subQueries);
         List<QueryParser.Condition> conditions = clauses.conditions;
@@ -86,7 +87,7 @@ public class SubqueryParser {
         Integer limit = clauses.limit;
         Integer offset = clauses.offset;
 
-        LOGGER.log(Level.INFO, "Разобран SELECT-запрос с подзапросами: таблица={0}, столбцы={1}, агрегации={2}, соединения={3}, условия={4}",
+        LOGGER.log(Level.INFO, "Parsed SELECT query: table={0}, columns={1}, aggregates={2}, joins={3}, conditions={4}",
                 new Object[]{tableName, columns, aggregates, joins, conditions});
 
         return new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions,
@@ -102,7 +103,6 @@ public class SubqueryParser {
         boolean inQuotes = false;
 
         while (currentPos < query.length()) {
-            // Пропускаем строки в кавычках
             Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
             if (quotedStringMatcher.lookingAt()) {
                 currentPos = quotedStringMatcher.end();
@@ -117,60 +117,38 @@ public class SubqueryParser {
             }
 
             if (!inQuotes) {
-                // Проверяем начало подзапроса
                 Matcher subqueryMatcher = subqueryPattern.matcher(query).region(currentPos, query.length());
                 if (subqueryMatcher.lookingAt()) {
-                    int subqueryStart = currentPos;
                     currentPos = findMatchingClosingParen(query, currentPos + 1);
                     if (currentPos == -1) {
-                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в подзапросе на позиции {0}: {1}",
-                                new Object[]{subqueryStart, query});
                         return -1;
                     }
-                    currentPos++; // Пропускаем закрывающую скобку
+                    currentPos++;
                     continue;
                 }
 
                 if (c == '(') {
                     bracketDepth++;
-                    currentPos++;
-                    continue;
                 } else if (c == ')') {
                     bracketDepth--;
                     if (bracketDepth < 0) {
-                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                                new Object[]{currentPos, query});
                         return -1;
                     }
-                    currentPos++;
-                    continue;
-                }
-
-                // Проверяем FROM на верхнем уровне
-                Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
-                if (fromMatcher.lookingAt() && bracketDepth == 0) {
-                    LOGGER.log(Level.FINE, "Найден основной FROM на позиции {0}", currentPos);
-                    return currentPos;
+                } else if (bracketDepth == 0) {
+                    Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
+                    if (fromMatcher.lookingAt()) {
+                        return currentPos;
+                    }
                 }
             }
             currentPos++;
         }
-
-        if (bracketDepth != 0) {
-            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: bracketDepth={0}, query={1}",
-                    new Object[]{bracketDepth, query});
-            return -1;
-        }
-
-        LOGGER.log(Level.FINE, "Основной FROM не найден в запросе: {0}", query);
         return -1;
     }
 
-    // Вспомогательный метод для поиска закрывающей скобки
     private int findMatchingClosingParen(String query, int startPos) {
         int depth = 1;
         boolean inQuotes = false;
-
         for (int i = startPos; i < query.length(); i++) {
             char c = query.charAt(i);
             if (c == '\'') {
@@ -190,60 +168,48 @@ public class SubqueryParser {
         }
         return -1;
     }
-    private QueryParser.SelectItems parseSelectItems(String selectPartOriginal, Database database) {
-        List<String> selectItems = splitSelectItems(selectPartOriginal);
+
+    private QueryParser.SelectItems parseSelectItems(String selectPart, Database database) {
+        List<String> selectItems = splitCommaSeparatedItems(selectPart);
         List<String> columns = new ArrayList<>();
         List<QueryParser.AggregateFunction> aggregates = new ArrayList<>();
         List<QueryParser.SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.+?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
-        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.+?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
-        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.+?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
-        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.+?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
-        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.+?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
         Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\s*$", Pattern.DOTALL);
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\*|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
-            Matcher countMatcher = countPattern.matcher(trimmedItem);
-            Matcher minMatcher = minPattern.matcher(trimmedItem);
-            Matcher maxMatcher = maxPattern.matcher(trimmedItem);
-            Matcher avgMatcher = avgPattern.matcher(trimmedItem);
-            Matcher sumMatcher = sumPattern.matcher(trimmedItem);
             Matcher columnMatcher = columnPattern.matcher(trimmedItem);
             Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
+            Matcher aggMatcher = aggPattern.matcher(trimmedItem);
 
-            if (countMatcher.matches()) {
-                String countArg = countMatcher.group(1);
-                String alias = countMatcher.group(2);
-                handleAggregateFunction("COUNT", countArg, alias, aggregates, subQueries, database);
-            } else if (minMatcher.matches()) {
-                String column = minMatcher.group(1);
-                String alias = minMatcher.group(2);
-                handleAggregateFunction("MIN", column, alias, aggregates, subQueries, database);
-            } else if (maxMatcher.matches()) {
-                String column = maxMatcher.group(1);
-                String alias = maxMatcher.group(2);
-                handleAggregateFunction("MAX", column, alias, aggregates, subQueries, database);
-            } else if (avgMatcher.matches()) {
-                String column = avgMatcher.group(1);
-                String alias = avgMatcher.group(2);
-                handleAggregateFunction("AVG", column, alias, aggregates, subQueries, database);
-            } else if (sumMatcher.matches()) {
-                String column = sumMatcher.group(1);
-                String alias = sumMatcher.group(2);
-                handleAggregateFunction("SUM", column, alias, aggregates, subQueries, database);
-            } else if (subQueryMatcher.matches()) {
+            if (subQueryMatcher.matches()) {
                 String subQueryStr = trimmedItem.substring(1, trimmedItem.lastIndexOf(")")).trim();
                 String alias = subQueryMatcher.group(1);
-                Query<?> subQuery = parse(subQueryStr, database);
+                validateSubQuery(subQueryStr);
+                Query<?> subQuery = queryParser.parse(subQueryStr, database);
                 subQueries.add(new QueryParser.SubQuery(subQuery, alias));
                 if (alias != null) {
                     columnAliases.put("SUBQUERY_" + subQueries.size(), alias);
                 }
-                LOGGER.log(Level.FINE, "Разобран подзапрос в SELECT: {0}{1}", new Object[]{subQueryStr, alias != null ? " AS " + alias : ""});
+                LOGGER.log(Level.FINE, "Parsed subquery in SELECT: {0}{1}", new Object[]{subQueryStr, alias != null ? " AS " + alias : ""});
+            } else if (aggMatcher.matches()) {
+                String funcName = aggMatcher.group(1);
+                String arg = aggMatcher.group(2);
+                String alias = aggMatcher.group(3);
+                if (arg.toUpperCase().startsWith("(") && arg.toUpperCase().contains("SELECT")) {
+                    String subQueryStr = arg.substring(1, arg.length() - 1).trim();
+                    validateSubQuery(subQueryStr);
+                    Query<?> subQuery = queryParser.parse(subQueryStr, database);
+                    aggregates.add(new QueryParser.AggregateFunction(funcName, new QueryParser.SubQuery(subQuery, null), alias));
+                } else {
+                    String column = arg.equals("*") ? null : arg;
+                    aggregates.add(new QueryParser.AggregateFunction(funcName, column, alias));
+                }
+                LOGGER.log(Level.FINE, "Parsed aggregate: {0}({1}){2}", new Object[]{funcName, arg, alias != null ? " AS " + alias : ""});
             } else if (columnMatcher.matches()) {
                 String column = columnMatcher.group(1);
                 String alias = columnMatcher.group(2);
@@ -251,101 +217,38 @@ public class SubqueryParser {
                 if (alias != null) {
                     columnAliases.put(column, alias);
                 }
-                LOGGER.log(Level.FINE, "Разобран столбец: {0}{1}", new Object[]{column, alias != null ? " AS " + alias : ""});
+                LOGGER.log(Level.FINE, "Parsed column: {0}{1}", new Object[]{column, alias != null ? " AS " + alias : ""});
             } else {
-                throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
+                throw new IllegalArgumentException("Invalid SELECT item: " + trimmedItem);
             }
         }
 
         return new QueryParser.SelectItems(columns, aggregates, subQueries, columnAliases);
     }
 
-    private void handleAggregateFunction(String functionName, String arg, String alias,
-                                         List<QueryParser.AggregateFunction> aggregates,
-                                         List<QueryParser.SubQuery> subQueries, Database database) {
-        if (arg.startsWith("(") && arg.endsWith(")")) {
-            String subQueryStr = arg.substring(1, arg.length() - 1).trim();
-            Query<?> subQuery = parse(subQueryStr, database);
-            aggregates.add(new QueryParser.AggregateFunction(functionName, new QueryParser.SubQuery(subQuery, null), alias));
-            LOGGER.log(Level.FINE, "Разобранная агрегатная функция: {0}(подзапрос){1}",
-                    new Object[]{functionName, alias != null ? " AS " + alias : ""});
-        } else {
-            String column = arg.equals("*") ? null : arg;
-            aggregates.add(new QueryParser.AggregateFunction(functionName, column, alias));
-            LOGGER.log(Level.FINE, "Разобранная агрегатная функция: {0}({1}){2}",
-                    new Object[]{functionName, column == null ? "*" : column, alias != null ? " AS " + alias : ""});
-        }
-    }
-
-    private List<String> splitSelectItems(String selectPart) {
-        List<String> items = new ArrayList<>();
-        StringBuilder currentItem = new StringBuilder();
-        int parenDepth = 0;
-        boolean inQuotes = false;
-
-        for (int i = 0; i < selectPart.length(); i++) {
-            char c = selectPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentItem.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ',' && parenDepth == 0) {
-                    String item = currentItem.toString().trim();
-                    if (!item.isEmpty()) {
-                        items.add(item);
-                    }
-                    currentItem = new StringBuilder();
-                    continue;
-                }
-            }
-            currentItem.append(c);
-        }
-
-        String lastItem = currentItem.toString().trim();
-        if (!lastItem.isEmpty()) {
-            items.add(lastItem);
-        }
-
-        return items;
-    }
-
-    private QueryParser.TableJoins parseTableAndJoins(String tableAndJoinsOriginal, Database database) {
-        String tableAndJoins = normalizeQueryString(tableAndJoinsOriginal).trim();
+    private QueryParser.TableJoins parseTableAndJoins(String tableAndJoins, Database database) {
+        String normalized = normalizeQueryString(tableAndJoins).trim();
         List<QueryParser.JoinInfo> joins = new ArrayList<>();
         String tableName;
         String tableAlias = null;
         Map<String, String> tableAliases = new HashMap<>();
 
-        Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|LEFT INNER JOIN|RIGHT INNER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL OUTER JOIN)\\s+");
-        Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
+        Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN)\\s+");
+        Matcher joinMatcher = joinPattern.matcher(normalized);
         List<String> joinParts = new ArrayList<>();
         int lastEnd = 0;
         while (joinMatcher.find()) {
-            joinParts.add(tableAndJoins.substring(lastEnd, joinMatcher.start()).trim());
+            joinParts.add(normalized.substring(lastEnd, joinMatcher.start()).trim());
             joinParts.add(joinMatcher.group(1).trim());
             lastEnd = joinMatcher.end();
         }
-        joinParts.add(tableAndJoins.substring(lastEnd).trim());
+        joinParts.add(normalized.substring(lastEnd).trim());
 
         String mainTablePart = joinParts.get(0).trim();
         String[] mainTableTokens = mainTablePart.split("\\s+");
         tableName = mainTableTokens[0].trim();
         if (mainTableTokens.length > 1) {
-            if (mainTableTokens.length == 3 && mainTableTokens[1].equalsIgnoreCase("AS")) {
-                tableAlias = mainTableTokens[2].trim();
-            } else if (mainTableTokens.length == 2) {
-                tableAlias = mainTableTokens[1].trim();
-            }
+            tableAlias = mainTableTokens[mainTableTokens.length - 1].trim();
         }
         if (tableAlias != null) {
             tableAliases.put(tableAlias, tableName);
@@ -353,7 +256,7 @@ public class SubqueryParser {
 
         Table mainTable = database.getTable(tableName);
         if (mainTable == null) {
-            throw new IllegalArgumentException("Таблица не найдена: " + tableName);
+            throw new IllegalArgumentException("Table not found: " + tableName);
         }
 
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
@@ -367,35 +270,14 @@ public class SubqueryParser {
             String joinTableAlias = null;
             List<QueryParser.Condition> onConditions = new ArrayList<>();
 
-            Pattern clausePattern = Pattern.compile("(?i)\\s+(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|$)\\b");
-            Matcher clauseMatcher = clausePattern.matcher(joinPart);
-            String onClausePart = joinPart;
-            if (clauseMatcher.find()) {
-                onClausePart = joinPart.substring(0, clauseMatcher.start()).trim();
-            }
+            int onIndex = findOnClausePosition(joinPart);
+            String joinTablePart = onIndex == -1 ? joinPart : joinPart.substring(0, onIndex).trim();
+            String onClause = onIndex == -1 ? "" : joinPart.substring(onIndex + 2).trim();
 
-            String[] joinTableTokens;
-            if (joinType == QueryParser.JoinType.CROSS) {
-                joinTableTokens = new String[]{joinPart.trim()};
-            } else {
-                int onIndex = findOnClausePosition(joinPart);
-                if (onIndex == -1) {
-                    throw new IllegalArgumentException("Недопустимый формат " + joinTypeStr + ": отсутствует ON");
-                }
-                String joinTablePart = joinPart.substring(0, onIndex).trim();
-                String onClause = joinPart.substring(onIndex + 2).trim();
-                joinTableTokens = new String[]{joinTablePart, onClause};
-            }
-
-            String joinTablePart = joinTableTokens[0].trim();
-            String[] joinTableParts = joinTablePart.split("\\s+");
-            joinTableName = joinTableParts[0].trim();
-            if (joinTableParts.length > 1) {
-                if (joinTableParts.length == 3 && joinTableParts[1].equalsIgnoreCase("AS")) {
-                    joinTableAlias = joinTableParts[2].trim();
-                } else if (joinTableParts.length == 2) {
-                    joinTableAlias = joinTableParts[1].trim();
-                }
+            String[] joinTableTokens = joinTablePart.split("\\s+");
+            joinTableName = joinTableTokens[0].trim();
+            if (joinTableTokens.length > 1) {
+                joinTableAlias = joinTableTokens[joinTableTokens.length - 1].trim();
             }
             if (joinTableAlias != null) {
                 tableAliases.put(joinTableAlias, joinTableName);
@@ -403,14 +285,13 @@ public class SubqueryParser {
 
             Table joinTable = database.getTable(joinTableName);
             if (joinTable == null) {
-                throw new IllegalArgumentException("Таблица соединения не найдена: " + joinTableName);
+                throw new IllegalArgumentException("Join table not found: " + joinTableName);
             }
             combinedColumnTypes.putAll(joinTable.getColumnTypes());
             tableAliases.put(joinTableName, joinTableName);
 
-            if (joinType != QueryParser.JoinType.CROSS) {
-                String onClause = joinTableTokens[1].trim();
-                onConditions = parseConditions(onClause, tableName, database, tableAndJoinsOriginal, true,
+            if (joinType != QueryParser.JoinType.CROSS && !onClause.isEmpty()) {
+                onConditions = parseConditions(onClause, tableName, database, joinPart, true,
                         combinedColumnTypes, tableAliases, new HashMap<>());
                 for (QueryParser.Condition cond : onConditions) {
                     validateJoinCondition(cond, tableName, joinTableName, tableAliases);
@@ -427,13 +308,11 @@ public class SubqueryParser {
     private QueryParser.JoinType parseJoinType(String joinTypeStr) {
         return switch (joinTypeStr.toUpperCase()) {
             case "JOIN", "INNER JOIN" -> QueryParser.JoinType.INNER;
-            case "LEFT JOIN", "LEFT OUTER JOIN" -> QueryParser.JoinType.LEFT_OUTER;
-            case "RIGHT JOIN", "RIGHT OUTER JOIN" -> QueryParser.JoinType.RIGHT_OUTER;
-            case "FULL JOIN", "FULL OUTER JOIN" -> QueryParser.JoinType.FULL_OUTER;
-            case "LEFT INNER JOIN" -> QueryParser.JoinType.LEFT_INNER;
-            case "RIGHT INNER JOIN" -> QueryParser.JoinType.RIGHT_INNER;
+            case "LEFT JOIN" -> QueryParser.JoinType.LEFT_OUTER;
+            case "RIGHT JOIN" -> QueryParser.JoinType.RIGHT_OUTER;
+            case "FULL JOIN" -> QueryParser.JoinType.FULL_OUTER;
             case "CROSS JOIN" -> QueryParser.JoinType.CROSS;
-            default -> throw new IllegalArgumentException("Неподдерживаемый тип соединения: " + joinTypeStr);
+            default -> throw new IllegalArgumentException("Unsupported join type: " + joinTypeStr);
         };
     }
 
@@ -482,12 +361,11 @@ public class SubqueryParser {
         }
     }
 
-    private QueryParser.AdditionalClauses parseAdditionalClauses(String tableAndJoinsOriginal, String tableName, Database database,
+    private QueryParser.AdditionalClauses parseAdditionalClauses(String tableAndJoins, String tableName, Database database,
                                                                  String originalQuery, List<QueryParser.AggregateFunction> aggregates,
                                                                  Map<String, Class<?>> combinedColumnTypes,
                                                                  Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                                  List<QueryParser.SubQuery> subQueries) {
-        String conditionStr = null;
         List<QueryParser.Condition> conditions = new ArrayList<>();
         List<String> groupBy = new ArrayList<>();
         List<QueryParser.HavingCondition> havingConditions = new ArrayList<>();
@@ -495,18 +373,18 @@ public class SubqueryParser {
         Integer limit = null;
         Integer offset = null;
 
-        int orderByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "ORDER BY");
+        int orderByIndex = findClauseOutsideSubquery(tableAndJoins, "ORDER BY");
         if (orderByIndex != -1) {
-            String beforeOrderBy = tableAndJoinsOriginal.substring(0, orderByIndex).trim();
-            String orderByClause = tableAndJoinsOriginal.substring(orderByIndex + 8).trim();
+            String beforeOrderBy = tableAndJoins.substring(0, orderByIndex).trim();
+            String orderByClause = tableAndJoins.substring(orderByIndex + 8).trim();
             orderBy = parseOrderByClause(orderByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases, subQueries);
-            tableAndJoinsOriginal = beforeOrderBy;
+            tableAndJoins = beforeOrderBy;
         }
 
-        int limitIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "LIMIT");
+        int limitIndex = findClauseOutsideSubquery(tableAndJoins, "LIMIT");
         if (limitIndex != -1) {
-            String beforeLimit = tableAndJoinsOriginal.substring(0, limitIndex).trim();
-            String afterLimit = tableAndJoinsOriginal.substring(limitIndex + 5).trim();
+            String beforeLimit = tableAndJoins.substring(0, limitIndex).trim();
+            String afterLimit = tableAndJoins.substring(limitIndex + 5).trim();
             Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
             Matcher limitMatcher = limitPattern.matcher(afterLimit);
             if (limitMatcher.find()) {
@@ -518,13 +396,13 @@ public class SubqueryParser {
                     offset = Integer.parseInt(offsetMatcher.group(1));
                 }
             }
-            tableAndJoinsOriginal = beforeLimit;
+            tableAndJoins = beforeLimit;
         }
 
-        int groupByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "GROUP BY");
+        int groupByIndex = findClauseOutsideSubquery(tableAndJoins, "GROUP BY");
         if (groupByIndex != -1) {
-            String beforeGroupBy = tableAndJoinsOriginal.substring(0, groupByIndex).trim();
-            String groupByClause = tableAndJoinsOriginal.substring(groupByIndex + 8).trim();
+            String beforeGroupBy = tableAndJoins.substring(0, groupByIndex).trim();
+            String groupByClause = tableAndJoins.substring(groupByIndex + 8).trim();
             int havingIndex = findClauseOutsideSubquery(groupByClause, "HAVING");
             String havingClause = null;
             if (havingIndex != -1) {
@@ -536,12 +414,12 @@ public class SubqueryParser {
                 havingConditions = parseHavingConditions(havingClause, tableName, database, originalQuery,
                         aggregates, combinedColumnTypes, tableAliases, columnAliases);
             }
-            tableAndJoinsOriginal = beforeGroupBy;
+            tableAndJoins = beforeGroupBy;
         }
 
-        int whereIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "WHERE");
+        int whereIndex = findClauseOutsideSubquery(tableAndJoins, "WHERE");
         if (whereIndex != -1) {
-            conditionStr = tableAndJoinsOriginal.substring(whereIndex + 5).trim();
+            String conditionStr = tableAndJoins.substring(whereIndex + 5).trim();
             conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
                     combinedColumnTypes, tableAliases, columnAliases);
         }
@@ -556,7 +434,6 @@ public class SubqueryParser {
         Matcher matcher = clausePattern.matcher(query);
         while (matcher.find()) {
             int start = matcher.start();
-            boolean insideSubquery = false;
             for (int i = 0; i < start; i++) {
                 char c = query.charAt(i);
                 if (c == '\'') {
@@ -594,18 +471,17 @@ public class SubqueryParser {
 
                 if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
+                    validateSubQuery(subQueryStr);
+                    Query<?> subQuery = queryParser.parse(subQueryStr, database);
                     subQueries.add(new QueryParser.SubQuery(subQuery, null));
                     orderBy.add(new QueryParser.OrderByInfo("SUBQUERY_" + subQueries.size(), ascending));
-                    LOGGER.log(Level.FINE, "Разобран подзапрос в ORDER BY: {0}", subQueryStr);
                 } else {
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, tableName, tableAliases);
                     validateColumn(normalizedColumn, combinedColumnTypes);
                     orderBy.add(new QueryParser.OrderByInfo(normalizedColumn, ascending));
-                    LOGGER.log(Level.FINE, "Разобран столбец в ORDER BY: {0} {1}", new Object[]{normalizedColumn, direction});
                 }
             } else {
-                throw new IllegalArgumentException("Недопустимый элемент ORDER BY: " + trimmedItem);
+                throw new IllegalArgumentException("Invalid ORDER BY item: " + trimmedItem);
             }
         }
         return orderBy;
@@ -625,17 +501,16 @@ public class SubqueryParser {
                 String columnOrSubQuery = columnMatcher.group(1);
                 if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
-                    groupBy.add("SUBQUERY_" + System.currentTimeMillis()); // Уникальный идентификатор для подзапроса
-                    LOGGER.log(Level.FINE, "Разобран подзапрос в GROUP BY: {0}", subQueryStr);
+                    validateSubQuery(subQueryStr);
+                    Query<?> subQuery = queryParser.parse(subQueryStr, database);
+                    groupBy.add("SUBQUERY_" + System.currentTimeMillis());
                 } else {
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, tableName, tableAliases);
                     validateColumn(normalizedColumn, combinedColumnTypes);
                     groupBy.add(normalizedColumn);
-                    LOGGER.log(Level.FINE, "Разобран столбец в GROUP BY: {0}", normalizedColumn);
                 }
             } else {
-                throw new IllegalArgumentException("Недопустимый элемент GROUP BY: " + trimmedItem);
+                throw new IllegalArgumentException("Invalid GROUP BY item: " + trimmedItem);
             }
         }
         return groupBy;
@@ -679,7 +554,6 @@ public class SubqueryParser {
         if (!lastItem.isEmpty()) {
             items.add(lastItem);
         }
-
         return items;
     }
 
@@ -690,32 +564,42 @@ public class SubqueryParser {
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
             return new ArrayList<>();
         }
-        List<QueryParser.Token> tokens = tokenizeConditions(conditionStr);
+        List<Token> tokens = tokenizeConditions(conditionStr);
         return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
                 combinedColumnTypes, tableAliases, columnAliases, null, false);
     }
 
-    private List<QueryParser.Token> tokenizeConditions(String conditionStr) {
+    private static class Token {
+        final TokenType type;
+        final String value;
+
+        Token(TokenType type, String value) {
+            this.type = type;
+            this.value = value;
+        }
+
+        enum TokenType {
+            CONDITION, LOGICAL_OPERATOR
+        }
+    }
+
+    private List<Token> tokenizeConditions(String conditionStr) {
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
-        patterns.add(Map.entry("Quoted String", Pattern.compile("(?i)'(?:\\\\.|[^'\\\\])*'")));
-        patterns.add(Map.entry("Grouped Condition", Pattern.compile("(?i)\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
+        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
+        patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
+        patterns.add(Map.entry("In Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)")));
+        patterns.add(Map.entry("Subquery Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)", Pattern.DOTALL)));
         patterns.add(Map.entry("Like Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
-        patterns.add(Map.entry("In Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
         patterns.add(Map.entry("Null Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IS\\s*(NOT\\s+)?NULL\\b")));
-        patterns.add(Map.entry("Comparison String Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*'(?:\\\\.|[^'\\\\])*'")));
-        patterns.add(Map.entry("Comparison Number Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
-        patterns.add(Map.entry("Comparison Column Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
-        patterns.add(Map.entry("Subquery Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)", Pattern.DOTALL)));
+        patterns.add(Map.entry("Comparison Condition",
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|'[^']*'|[0-9]+(?:\\.[0-9]+)?)")));
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
 
-        List<QueryParser.Token> tokens = new ArrayList<>();
+        List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
         int stringLength = conditionStr.length();
 
@@ -728,21 +612,19 @@ public class SubqueryParser {
             }
 
             boolean matched = false;
-            int nextPos = stringLength;
             String matchedToken = null;
             String matchedPatternName = null;
+            int nextPos = stringLength;
 
             for (Map.Entry<String, Pattern> entry : patterns) {
-                String patternName = entry.getKey();
                 Pattern pattern = entry.getValue();
                 Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
-
                 if (matcher.lookingAt()) {
                     String tokenValue = matcher.group().trim();
                     if (!tokenValue.isEmpty()) {
-                        nextPos = matcher.end();
                         matchedToken = tokenValue;
-                        matchedPatternName = patternName;
+                        matchedPatternName = entry.getKey();
+                        nextPos = matcher.end();
                         matched = true;
                         break;
                     }
@@ -750,59 +632,58 @@ public class SubqueryParser {
             }
 
             if (matched) {
-                QueryParser.TokenType type = matchedPatternName.equals("Logical Operator") ?
-                        QueryParser.TokenType.LOGICAL_OPERATOR : QueryParser.TokenType.CONDITION;
-                tokens.add(new QueryParser.Token(type, matchedToken));
-                LOGGER.log(Level.FINE, "Добавлен токен: {0}, тип: {1}", new Object[]{matchedToken, type});
+                Token.TokenType type = matchedPatternName.equals("Logical Operator") ?
+                        Token.TokenType.LOGICAL_OPERATOR : Token.TokenType.CONDITION;
+                tokens.add(new Token(type, matchedToken));
+                LOGGER.log(Level.FINEST, "Tokenized: {0}, type: {1}", new Object[]{matchedToken, type});
                 currentPos = nextPos;
             } else {
-                currentPos++;
+                throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + conditionStr.substring(currentPos));
             }
         }
 
         if (tokens.isEmpty()) {
-            throw new IllegalArgumentException("Невалидное условие: не удалось выделить токенов из '" + conditionStr + "'");
+            throw new IllegalArgumentException("No valid tokens found in condition: " + conditionStr);
         }
         return tokens;
     }
 
-    private List<QueryParser.Condition> parseTokenizedConditions(List<QueryParser.Token> tokens, String defaultTableName, Database database,
+    private List<QueryParser.Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
                                                                  String originalQuery, boolean isJoinCondition,
                                                                  Map<String, Class<?>> combinedColumnTypes,
                                                                  Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                                  String conjunction, boolean not) {
         List<QueryParser.Condition> conditions = new ArrayList<>();
         for (int i = 0; i < tokens.size(); i++) {
-            QueryParser.Token token = tokens.get(i);
-            if (token.type == QueryParser.TokenType.LOGICAL_OPERATOR) {
+            Token token = tokens.get(i);
+            if (token.type == Token.TokenType.LOGICAL_OPERATOR) {
                 conjunction = token.value.toUpperCase();
                 continue;
             }
-            if (token.type == QueryParser.TokenType.CONDITION) {
-                String condStr = token.value;
-                if (condStr.toUpperCase().startsWith("(") && condStr.toUpperCase().endsWith(")")) {
-                    String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
-                    if (subCondStr.toUpperCase().startsWith("SELECT")) {
-                        Query<?> subQuery = parse(subCondStr, database);
-                        conditions.add(new QueryParser.Condition(defaultTableName + ".unknown", new QueryParser.SubQuery(subQuery, null), conjunction, not));
-                    } else {
-                        List<QueryParser.Token> subTokens = tokenizeConditions(subCondStr);
-                        List<QueryParser.Condition> subConditions = parseTokenizedConditions(subTokens, defaultTableName, database,
-                                originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
-                        conditions.add(new QueryParser.Condition(subConditions, conjunction, not));
-                    }
-                } else if (condStr.toUpperCase().contains(" IN ")) {
-                    conditions.add(parseInCondition(condStr, defaultTableName, database, originalQuery,
-                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
-                } else if (condStr.toUpperCase().contains("SELECT")) {
-                    conditions.add(parseSubQueryCondition(condStr, defaultTableName, database, originalQuery,
-                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
+            String condStr = token.value;
+            if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
+                if (subCondStr.toUpperCase().startsWith("SELECT")) {
+                    validateSubQuery(subCondStr);
+                    Query<?> subQuery = queryParser.parse(subCondStr, database);
+                    conditions.add(new QueryParser.Condition(defaultTableName + ".unknown", new QueryParser.SubQuery(subQuery, null), conjunction, not));
                 } else {
-                    conditions.add(parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
+                    List<Token> subTokens = tokenizeConditions(subCondStr);
+                    List<QueryParser.Condition> subConditions = parseTokenizedConditions(subTokens, defaultTableName, database,
+                            originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    conditions.add(new QueryParser.Condition(subConditions, conjunction, not));
                 }
-                conjunction = null;
+            } else if (condStr.toUpperCase().contains(" IN ")) {
+                conditions.add(parseInCondition(condStr, defaultTableName, database, originalQuery,
+                        combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
+            } else if (condStr.toUpperCase().contains("SELECT")) {
+                conditions.add(parseSubQueryCondition(condStr, defaultTableName, database, originalQuery,
+                        combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
+            } else {
+                conditions.add(parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
             }
+            conjunction = null;
         }
         return conditions;
     }
@@ -829,10 +710,10 @@ public class SubqueryParser {
             if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
                 subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
             }
-            LOGGER.log(Level.FINEST, "Parsing subquery for IN condition: {0}", subQueryStr);
-            Query<?> subQuery = parse(subQueryStr, database);
+            validateSubQuery(subQueryStr);
+            Query<?> subQuery = queryParser.parse(subQueryStr, database);
             QueryParser.SubQuery subQueryObj = new QueryParser.SubQuery(subQuery, null);
-            LOGGER.log(Level.FINE, "Parsed IN subquery condition: {0} {1}IN (subquery)", new Object[]{normalizedColumn, inNot ? "NOT " : ""});
+            LOGGER.log(Level.FINE, "Parsed IN subquery condition: {0} {1}IN (subquery: {2})", new Object[]{normalizedColumn, inNot ? "NOT " : "", subQueryStr});
             return new QueryParser.Condition(normalizedColumn, subQueryObj, conjunction, inNot);
         }
 
@@ -850,6 +731,7 @@ public class SubqueryParser {
         LOGGER.log(Level.FINE, "Parsed IN values condition: {0} {1}IN {2}", new Object[]{normalizedColumn, inNot ? "NOT " : "", inValues});
         return new QueryParser.Condition(normalizedColumn, inValues, conjunction, inNot);
     }
+
     private List<String> splitInValues(String input) {
         List<String> values = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -895,9 +777,8 @@ public class SubqueryParser {
                                                          Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                                          Map<String, String> columnAliases, String conjunction, boolean not) {
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
-                Pattern.DOTALL
-        );
+                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
+                Pattern.DOTALL);
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
         if (!subQueryMatcher.matches()) {
             throw new IllegalArgumentException("Invalid subquery condition format: " + condStr);
@@ -906,23 +787,52 @@ public class SubqueryParser {
         String column = subQueryMatcher.group(1).trim();
         String operatorStr = subQueryMatcher.group(2).trim();
         String subQueryStr = subQueryMatcher.group(3).trim();
-        Query<?> subQuery = parse(subQueryStr, database);
+        validateSubQuery(subQueryStr);
+        Query<?> subQuery = queryParser.parse(subQueryStr, database);
         QueryParser.SubQuery newSubQuery = new QueryParser.SubQuery(subQuery, null);
         QueryParser.Operator operator = parseOperator(operatorStr);
         String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
         validateColumn(normalizedColumn, combinedColumnTypes);
+        LOGGER.log(Level.FINE, "Parsed subquery condition: {0} {1} (subquery: {2})", new Object[]{normalizedColumn, operatorStr, subQueryStr});
         return new QueryParser.Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
     }
 
-    // Обновленный parseSingleCondition
+    private void validateSubQuery(String subQueryStr) {
+        if (!subQueryStr.toUpperCase().startsWith("SELECT")) {
+            throw new IllegalArgumentException("Invalid subquery: must start with SELECT: " + subQueryStr);
+        }
+        if (!subQueryStr.toUpperCase().contains(" FROM ")) {
+            throw new IllegalArgumentException("Invalid subquery: missing FROM clause: " + subQueryStr);
+        }
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        for (int i = 0; i < subQueryStr.length(); i++) {
+            char c = subQueryStr.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                    if (parenDepth < 0) {
+                        throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subQueryStr);
+                    }
+                }
+            }
+        }
+        if (parenDepth != 0) {
+            throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subQueryStr);
+        }
+    }
+
     private QueryParser.Condition parseSingleCondition(String condStr, String defaultTableName, Database database, String originalQuery,
                                                        boolean isJoinCondition, Map<String, Class<?>> combinedColumnTypes,
                                                        Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                        String conjunction, boolean not) {
-        LOGGER.log(Level.FINEST, "Parsing single condition: {0}", condStr);
-
-        // Проверка на LIKE
-        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:[^']|)*')");
+        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:[^']|)*')");
         Matcher likeMatcher = likePattern.matcher(condStr);
         if (likeMatcher.matches()) {
             String column = likeMatcher.group(1).trim();
@@ -932,11 +842,9 @@ public class SubqueryParser {
             validateColumn(normalizedColumn, combinedColumnTypes);
             QueryParser.Operator operator = operatorStr.equals("LIKE") ? QueryParser.Operator.LIKE : QueryParser.Operator.NOT_LIKE;
             Object parsedValue = parseConditionValue(normalizedColumn, "'" + value + "'", getColumnType(normalizedColumn, combinedColumnTypes));
-            LOGGER.log(Level.FINE, "Parsed LIKE condition: {0} {1} '{2}'", new Object[]{normalizedColumn, operatorStr, value});
             return new QueryParser.Condition(normalizedColumn, parsedValue, operator, conjunction, not);
         }
 
-        // Проверка на IS NULL
         Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(condStr);
         if (isNullMatcher.matches()) {
@@ -945,12 +853,10 @@ public class SubqueryParser {
             String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
             validateColumn(normalizedColumn, combinedColumnTypes);
             QueryParser.Operator operator = isNotNull ? QueryParser.Operator.IS_NOT_NULL : QueryParser.Operator.IS_NULL;
-            LOGGER.log(Level.FINE, "Parsed NULL condition: {0} {1}", new Object[]{normalizedColumn, operator});
             return new QueryParser.Condition(normalizedColumn, operator, conjunction, not);
         }
 
-        // Проверка на сравнение
-        String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
+        String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">"};
         QueryParser.OperatorInfo operatorInfo = findOperator(condStr, operators);
         if (operatorInfo == null) {
             throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + condStr + "'");
@@ -973,7 +879,6 @@ public class SubqueryParser {
         }
 
         QueryParser.Operator operator = parseOperator(operatorInfo.operator);
-        LOGGER.log(Level.FINEST, "Operator parsed: {0}, string representation: {1}", new Object[]{operator, operatorInfo.operator});
 
         if (isJoinCondition && !rightColumnIsFromDifferentTable(normalizedColumn, rightColumn, tableAliases)) {
             throw new IllegalArgumentException("Join condition must compare columns from different tables: " + condStr);
@@ -982,15 +887,12 @@ public class SubqueryParser {
         if (rightColumn != null) {
             String normalizedRightColumn = normalizeColumnName(rightColumn, defaultTableName, tableAliases);
             validateColumn(normalizedRightColumn, combinedColumnTypes);
-            LOGGER.log(Level.FINE, "Parsed column comparison: {0} {1} {2}", new Object[]{normalizedColumn, operatorInfo.operator, normalizedRightColumn});
             return new QueryParser.Condition(normalizedColumn, normalizedRightColumn, operator, conjunction, not);
         } else {
-            LOGGER.log(Level.FINE, "Parsed value comparison: {0} {1} {2}", new Object[]{normalizedColumn, operatorInfo.operator, value});
             return new QueryParser.Condition(normalizedColumn, value, operator, conjunction, not);
         }
     }
 
-    // Переопределяем parseOperator для возврата Operator
     private QueryParser.Operator parseOperator(String operatorStr) {
         return switch (operatorStr.toUpperCase().trim()) {
             case "=" -> QueryParser.Operator.EQUALS;
@@ -1002,23 +904,6 @@ public class SubqueryParser {
             case "LIKE" -> QueryParser.Operator.LIKE;
             case "NOT LIKE" -> QueryParser.Operator.NOT_LIKE;
             default -> throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
-        };
-    }
-
-    // Новый метод для получения строкового представления оператора
-    private String getOperatorString(QueryParser.Operator operator) {
-        return switch (operator) {
-            case EQUALS -> "=";
-            case NOT_EQUALS -> "!=";
-            case LESS_THAN -> "<";
-            case GREATER_THAN -> ">"; // Возвращаем ">" вместо "GREATER_THAN"
-            case LESS_THAN_OR_EQUALS -> "<=";
-            case GREATER_THAN_OR_EQUALS -> ">=";
-            case LIKE -> "LIKE";
-            case NOT_LIKE -> "NOT LIKE";
-            case IS_NULL -> "IS NULL";
-            case IS_NOT_NULL -> "IS NOT NULL";
-            default -> throw new IllegalArgumentException("Unsupported operator: " + operator);
         };
     }
 
@@ -1040,11 +925,13 @@ public class SubqueryParser {
                     continue;
                 } else if (parenDepth == 0) {
                     for (String op : operators) {
-                        String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
-                        Pattern opPattern = Pattern.compile("(?i)" + patternStr);
-                        Matcher opMatcher = opPattern.matcher(condStr).region(i, condStr.length());
-                        if (opMatcher.lookingAt()) {
-                            return new QueryParser.OperatorInfo(opMatcher.group().trim(), i, i + opMatcher.group().length());
+                        Pattern opPattern = Pattern.compile("(?i)\\s+" + Pattern.quote(op) + "\\s+");
+                        Matcher opMatcher = opPattern.matcher(" " + condStr + " ").region(0, condStr.length() + 2);
+                        if (opMatcher.find() && opMatcher.start() <= i + 1 && opMatcher.end() >= i + 1) {
+                            String matchedOp = opMatcher.group().trim();
+                            int actualIndex = opMatcher.start() - 1;
+                            int actualEndIndex = opMatcher.end() - 1;
+                            return new QueryParser.OperatorInfo(matchedOp, actualIndex, actualEndIndex);
                         }
                     }
                 }
@@ -1223,13 +1110,6 @@ public class SubqueryParser {
                                                                    Map<String, Class<?>> combinedColumnTypes,
                                                                    Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                                    String conjunction, boolean not) {
-        if (condStr.toUpperCase().startsWith("(") && condStr.toUpperCase().endsWith(")")) {
-            String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
-            List<QueryParser.HavingCondition> subConditions = parseHavingConditions(subCondStr, defaultTableName, database, originalQuery,
-                    aggregates, combinedColumnTypes, tableAliases, columnAliases);
-            return new QueryParser.HavingCondition(subConditions, conjunction, not);
-        }
-
         String[] operators = {"=", "!=", "<>", ">=", "<=", "<", ">"};
         String selectedOperator = null;
         int operatorIndex = -1;
@@ -1238,7 +1118,7 @@ public class SubqueryParser {
             Matcher opMatcher = opPattern.matcher(" " + condStr + " ");
             if (opMatcher.find()) {
                 selectedOperator = op;
-                operatorIndex = opMatcher.start();
+                operatorIndex = opMatcher.start() - 1;
                 break;
             }
         }
@@ -1268,7 +1148,8 @@ public class SubqueryParser {
                 String alias = aggMatcher.group(3);
                 if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
+                    validateSubQuery(subQueryStr);
+                    Query<?> subQuery = queryParser.parse(subQueryStr, database);
                     aggregate = new QueryParser.AggregateFunction(funcName, new QueryParser.SubQuery(subQuery, null), alias);
                 } else {
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, defaultTableName, tableAliases);
@@ -1284,15 +1165,7 @@ public class SubqueryParser {
                 (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes) : Double.class);
         Object value = parseConditionValue(aggregate.toString(), rightPart, valueType);
 
-        QueryParser.Operator operator = switch (selectedOperator) {
-            case "=" -> QueryParser.Operator.EQUALS;
-            case "!=", "<>" -> QueryParser.Operator.NOT_EQUALS;
-            case "<" -> QueryParser.Operator.LESS_THAN;
-            case ">" -> QueryParser.Operator.GREATER_THAN;
-            case "<=" -> QueryParser.Operator.LESS_THAN_OR_EQUALS;
-            case ">=" -> QueryParser.Operator.GREATER_THAN_OR_EQUALS;
-            default -> throw new IllegalArgumentException("Unsupported operator in HAVING: " + selectedOperator);
-        };
+        QueryParser.Operator operator = parseOperator(selectedOperator);
 
         return new QueryParser.HavingCondition(aggregate, operator, value, conjunction, not);
     }
@@ -1302,46 +1175,6 @@ public class SubqueryParser {
         Matcher matcher = tokenPattern.matcher(str).region(startIndex, str.length());
         if (matcher.find()) {
             return matcher.group().trim();
-        }
-        return "";
-    }
-    protected String normalizeQueryString(String query) {
-        if (query == null || query.isEmpty()) {
-            return "";
-        }
-        return query.trim()
-                .replaceAll("\\s+", " ")
-                .replaceAll("\\s*([=><!(),])\\s*", "$1")
-                .replaceAll("\\s*;", "")
-                .replaceAll("(?i)\\bLIMIT\\s*(\\d+)\\b", " LIMIT $1 ")
-                .replaceAll("(?i)\\bWHERE\\b", " WHERE ")
-                .replaceAll("(?i)\\bFROM\\b", " FROM ")
-                .replaceAll("(?i)\\bSELECT\\b", " SELECT ")
-                .replaceAll("(?i)\\bAS\\b", " AS ")
-                .replaceAll("\\(\\s+", "(")
-                .replaceAll("\\s+\\)", ")")
-                .toUpperCase();
-        // Убраны замены EQUALS, NOT_EQUALS, GREATER_THAN, чтобы сохранить >, <, =
-    }
-
-    // Вспомогательный метод для проверки, является ли подстрока оператором сравнения
-    private boolean isComparisonOperator(String substring) {
-        String[] operators = {"=", ">", "<", ">=", "<=", "!=", "<>"};
-        for (String op : operators) {
-            if (substring.startsWith(op)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // Вспомогательный метод для извлечения оператора сравнения
-    private String extractOperator(String substring) {
-        String[] operators = {"!=", "<>", ">=", "<=", "=", ">", "<"}; // Порядок важен: сначала двухсимвольные операторы
-        for (String op : operators) {
-            if (substring.startsWith(op)) {
-                return op;
-            }
         }
         return "";
     }
