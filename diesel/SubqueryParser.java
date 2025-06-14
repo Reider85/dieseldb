@@ -822,13 +822,18 @@ public class SubqueryParser {
         String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
         Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes);
 
+        LOGGER.log(Level.FINEST, "Parsing IN condition: column={0}, values={1}, not={2}", new Object[]{normalizedColumn, valuesStr, inNot});
+
         if (valuesStr.toUpperCase().startsWith("SELECT")) {
             String subQueryStr = valuesStr;
             if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
                 subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
             }
+            LOGGER.log(Level.FINEST, "Parsing subquery for IN condition: {0}", subQueryStr);
             Query<?> subQuery = parse(subQueryStr, database);
-            return new QueryParser.Condition(normalizedColumn, new QueryParser.SubQuery(subQuery, null), conjunction, inNot);
+            QueryParser.SubQuery subQueryObj = new QueryParser.SubQuery(subQuery, null);
+            LOGGER.log(Level.FINE, "Parsed IN subquery condition: {0} {1}IN (subquery)", new Object[]{normalizedColumn, inNot ? "NOT " : ""});
+            return new QueryParser.Condition(normalizedColumn, subQueryObj, conjunction, inNot);
         }
 
         List<String> valueParts = splitInValues(valuesStr);
@@ -842,9 +847,9 @@ public class SubqueryParser {
         if (inValues.isEmpty()) {
             throw new IllegalArgumentException("Empty IN list in: " + condStr);
         }
+        LOGGER.log(Level.FINE, "Parsed IN values condition: {0} {1}IN {2}", new Object[]{normalizedColumn, inNot ? "NOT " : "", inValues});
         return new QueryParser.Condition(normalizedColumn, inValues, conjunction, inNot);
     }
-
     private List<String> splitInValues(String input) {
         List<String> values = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -968,6 +973,8 @@ public class SubqueryParser {
         }
 
         QueryParser.Operator operator = parseOperator(operatorInfo.operator);
+        LOGGER.log(Level.FINEST, "Operator parsed: {0}, string representation: {1}", new Object[]{operator, operatorInfo.operator});
+
         if (isJoinCondition && !rightColumnIsFromDifferentTable(normalizedColumn, rightColumn, tableAliases)) {
             throw new IllegalArgumentException("Join condition must compare columns from different tables: " + condStr);
         }
@@ -975,10 +982,10 @@ public class SubqueryParser {
         if (rightColumn != null) {
             String normalizedRightColumn = normalizeColumnName(rightColumn, defaultTableName, tableAliases);
             validateColumn(normalizedRightColumn, combinedColumnTypes);
-            LOGGER.log(Level.FINE, "Parsed column comparison: {0} {1} {2}", new Object[]{normalizedColumn, getOperatorString(operator), normalizedRightColumn});
+            LOGGER.log(Level.FINE, "Parsed column comparison: {0} {1} {2}", new Object[]{normalizedColumn, operatorInfo.operator, normalizedRightColumn});
             return new QueryParser.Condition(normalizedColumn, normalizedRightColumn, operator, conjunction, not);
         } else {
-            LOGGER.log(Level.FINE, "Parsed value comparison: {0} {1} {2}", new Object[]{normalizedColumn, getOperatorString(operator), value});
+            LOGGER.log(Level.FINE, "Parsed value comparison: {0} {1} {2}", new Object[]{normalizedColumn, operatorInfo.operator, value});
             return new QueryParser.Condition(normalizedColumn, value, operator, conjunction, not);
         }
     }
