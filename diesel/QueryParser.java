@@ -1787,6 +1787,8 @@ class QueryParser {
         patterns.add(Map.entry("SubQuery Condition", Pattern.compile(
                 "\\(\\s*SELECT\\s+[^()]+(?:\\([^()]+\\))*[^()]*?(?:\\s+WHERE\\s+[^()]+(?:\\([^()]+\\))*[^()]*?)?(?:\\s+LIMIT\\s+\\d+)?\\s*\\)",
                 Pattern.CASE_INSENSITIVE | Pattern.DOTALL)));
+        patterns.add(Map.entry("In Subquery",
+                Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s+IN\\s*\\(\\s*SELECT\\s+.*?\\)", Pattern.DOTALL)));
         // 3. Условия с LIKE
         patterns.add(Map.entry("Like Condition", Pattern.compile(
                 "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\'|[^'])*'")));
