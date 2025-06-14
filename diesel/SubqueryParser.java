@@ -94,72 +94,66 @@ public class SubqueryParser {
     }
 
     private int findMainFromClause(String query) {
-        // Используем метод из QueryParser через рефлексию или копируем логику
-        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'", Pattern.DOTALL);
-        Pattern openParenPattern = Pattern.compile("\\(");
-        Pattern closeParenPattern = Pattern.compile("\\)");
+        Pattern quotedStringPattern = Pattern.compile("'(?:\\\\.|[^'\\\\])*'");
+        Pattern subqueryPattern = Pattern.compile("\\(\\s*SELECT\\b", Pattern.DOTALL);
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
-        Pattern wordPattern = Pattern.compile("\\S+");
-
         int bracketDepth = 0;
-        int fromIndex = -1;
         int currentPos = 0;
+        boolean inQuotes = false;
 
         while (currentPos < query.length()) {
+            // Пропускаем строки в кавычках
             Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
-            Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
-            Matcher closeParenMatcher = closeParenPattern.matcher(query).region(currentPos, query.length());
-            Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
-            Matcher wordMatcher = wordPattern.matcher(query).region(currentPos, query.length());
-
-            int nextPos = query.length();
-            String token = null;
-            String tokenType = null;
-            int start = currentPos;
-
             if (quotedStringMatcher.lookingAt()) {
-                token = quotedStringMatcher.group();
-                nextPos = quotedStringMatcher.end();
-                tokenType = "quotedString";
-            } else if (openParenMatcher.lookingAt()) {
-                token = openParenMatcher.group();
-                nextPos = openParenMatcher.end();
-                tokenType = "openParen";
-            } else if (closeParenMatcher.lookingAt()) {
-                token = closeParenMatcher.group();
-                nextPos = closeParenMatcher.end();
-                tokenType = "closeParen";
-            } else if (fromMatcher.lookingAt()) {
-                token = fromMatcher.group();
-                nextPos = fromMatcher.end();
-                tokenType = "from";
-            } else if (wordMatcher.lookingAt()) {
-                token = wordMatcher.group();
-                nextPos = wordMatcher.end();
-                tokenType = "word";
+                currentPos = quotedStringMatcher.end();
+                continue;
             }
 
-            if (token == null) {
+            char c = query.charAt(currentPos);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
                 currentPos++;
                 continue;
             }
 
-            if (tokenType.equals("openParen")) {
-                bracketDepth++;
-            } else if (tokenType.equals("closeParen")) {
-                bracketDepth--;
-                if (bracketDepth < 0) {
-                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                            new Object[]{start, query});
-                    return -1;
+            if (!inQuotes) {
+                // Проверяем начало подзапроса
+                Matcher subqueryMatcher = subqueryPattern.matcher(query).region(currentPos, query.length());
+                if (subqueryMatcher.lookingAt()) {
+                    int subqueryStart = currentPos;
+                    currentPos = findMatchingClosingParen(query, currentPos + 1);
+                    if (currentPos == -1) {
+                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в подзапросе на позиции {0}: {1}",
+                                new Object[]{subqueryStart, query});
+                        return -1;
+                    }
+                    currentPos++; // Пропускаем закрывающую скобку
+                    continue;
                 }
-            } else if (tokenType.equals("from") && bracketDepth == 0) {
-                fromIndex = start;
-                LOGGER.log(Level.FINE, "Найден основной FROM на позиции {0}", fromIndex);
-                return fromIndex;
-            }
 
-            currentPos = nextPos;
+                if (c == '(') {
+                    bracketDepth++;
+                    currentPos++;
+                    continue;
+                } else if (c == ')') {
+                    bracketDepth--;
+                    if (bracketDepth < 0) {
+                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
+                                new Object[]{currentPos, query});
+                        return -1;
+                    }
+                    currentPos++;
+                    continue;
+                }
+
+                // Проверяем FROM на верхнем уровне
+                Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
+                if (fromMatcher.lookingAt() && bracketDepth == 0) {
+                    LOGGER.log(Level.FINE, "Найден основной FROM на позиции {0}", currentPos);
+                    return currentPos;
+                }
+            }
+            currentPos++;
         }
 
         if (bracketDepth != 0) {
@@ -172,6 +166,30 @@ public class SubqueryParser {
         return -1;
     }
 
+    // Вспомогательный метод для поиска закрывающей скобки
+    private int findMatchingClosingParen(String query, int startPos) {
+        int depth = 1;
+        boolean inQuotes = false;
+
+        for (int i = startPos; i < query.length(); i++) {
+            char c = query.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    depth++;
+                } else if (c == ')') {
+                    depth--;
+                    if (depth == 0) {
+                        return i;
+                    }
+                }
+            }
+        }
+        return -1;
+    }
     private QueryParser.SelectItems parseSelectItems(String selectPartOriginal, Database database) {
         List<String> selectItems = splitSelectItems(selectPartOriginal);
         List<String> columns = new ArrayList<>();
