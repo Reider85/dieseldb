@@ -389,10 +389,9 @@ public class SubqueryParser {
         int orderByIndex = findClauseOutsideSubquery(tableAndJoins, "ORDER BY");
         int limitIndex = findClauseOutsideSubquery(tableAndJoins, "LIMIT");
 
-        // Определить конец WHERE-условий
+        // Обработка WHERE
         int whereEndIndex = -1;
         if (whereIndex != -1) {
-            // Найти ближайшую следующую клаузу после WHERE
             int[] clauseIndices = {groupByIndex, orderByIndex, limitIndex};
             whereEndIndex = tableAndJoins.length();
             for (int idx : clauseIndices) {
@@ -407,8 +406,14 @@ public class SubqueryParser {
 
         // Обработка GROUP BY
         if (groupByIndex != -1 && groupByIndex > whereIndex) {
-            String beforeGroupBy = tableAndJoins.substring(0, groupByIndex).trim();
-            String groupByClause = tableAndJoins.substring(groupByIndex + 8).trim();
+            int groupByEndIndex = tableAndJoins.length();
+            int[] clauseIndices = {orderByIndex, limitIndex};
+            for (int idx : clauseIndices) {
+                if (idx != -1 && idx > groupByIndex && idx < groupByEndIndex) {
+                    groupByEndIndex = idx;
+                }
+            }
+            String groupByClause = tableAndJoins.substring(groupByIndex + 8, groupByEndIndex).trim();
             int havingIndex = findClauseOutsideSubquery(groupByClause, "HAVING");
             String havingClause = null;
             if (havingIndex != -1) {
@@ -420,20 +425,21 @@ public class SubqueryParser {
                 havingConditions = parseHavingConditions(havingClause, tableName, database, originalQuery,
                         aggregates, combinedColumnTypes, tableAliases, columnAliases);
             }
-            tableAndJoins = beforeGroupBy;
         }
 
         // Обработка ORDER BY
         if (orderByIndex != -1 && orderByIndex > whereIndex && orderByIndex > groupByIndex) {
-            String beforeOrderBy = tableAndJoins.substring(0, orderByIndex).trim();
-            String orderByClause = tableAndJoins.substring(orderByIndex + 8).trim();
+            int orderByEndIndex = limitIndex != -1 ? limitIndex : tableAndJoins.length();
+            // Дополнительная проверка, чтобы исключить LIMIT из ORDER BY
+            String orderByClause = tableAndJoins.substring(orderByIndex + 8, orderByEndIndex).trim();
+            // Удаляем LIMIT, если он остался в orderByClause
+            Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+            orderByClause = limitPattern.matcher(orderByClause).replaceAll("");
             orderBy = parseOrderByClause(orderByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases, subQueries);
-            tableAndJoins = beforeOrderBy;
         }
 
         // Обработка LIMIT
         if (limitIndex != -1 && limitIndex > whereIndex && limitIndex > groupByIndex && limitIndex > orderByIndex) {
-            String beforeLimit = tableAndJoins.substring(0, limitIndex).trim();
             String afterLimit = tableAndJoins.substring(limitIndex + 5).trim();
             Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
             Matcher limitMatcher = limitPattern.matcher(afterLimit);
@@ -446,7 +452,6 @@ public class SubqueryParser {
                     offset = Integer.parseInt(offsetMatcher.group(1));
                 }
             }
-            tableAndJoins = beforeLimit;
         }
 
         return new QueryParser.AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset);
@@ -455,10 +460,39 @@ public class SubqueryParser {
     private int findClauseOutsideSubquery(String query, String clause) {
         int parenDepth = 0;
         boolean inQuotes = false;
+        boolean inSubquery = false;
         Pattern clausePattern = Pattern.compile("(?i)\\b" + Pattern.quote(clause) + "\\b");
         Matcher matcher = clausePattern.matcher(query);
+
+        for (int i = 0; i < query.length(); i++) {
+            char c = query.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                    // Проверяем, начинается ли подзапрос
+                    if (i + 6 < query.length() && query.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                        inSubquery = true;
+                    }
+                } else if (c == ')') {
+                    parenDepth--;
+                    if (parenDepth == 0) {
+                        inSubquery = false; // Выходим из подзапроса
+                    }
+                }
+            }
+        }
+
+        // Сбрасываем matcher для повторного поиска
+        matcher.reset();
         while (matcher.find()) {
             int start = matcher.start();
+            parenDepth = 0;
+            inQuotes = false;
+            inSubquery = false;
             for (int i = 0; i < start; i++) {
                 char c = query.charAt(i);
                 if (c == '\'') {
@@ -466,12 +500,18 @@ public class SubqueryParser {
                 } else if (!inQuotes) {
                     if (c == '(') {
                         parenDepth++;
+                        if (i + 6 < query.length() && query.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                            inSubquery = true;
+                        }
                     } else if (c == ')') {
                         parenDepth--;
+                        if (parenDepth == 0) {
+                            inSubquery = false;
+                        }
                     }
                 }
             }
-            if (parenDepth == 0 && !inQuotes) {
+            if (parenDepth == 0 && !inQuotes && !inSubquery) {
                 return start;
             }
         }
@@ -484,7 +524,9 @@ public class SubqueryParser {
                                                              List<QueryParser.SubQuery> subQueries) {
         List<QueryParser.OrderByInfo> orderBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(orderByClause);
-        Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(\\s*SELECT\\s+.*?\\))\\s*(ASC|DESC)?$", Pattern.DOTALL);
+        Pattern columnPattern = Pattern.compile(
+                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(\\s*SELECT\\s+.*?\\))\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?\\s*(ASC|DESC)?$",
+                Pattern.DOTALL);
 
         for (String item : items) {
             String trimmedItem = item.trim();
