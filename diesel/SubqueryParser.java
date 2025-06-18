@@ -276,6 +276,7 @@ public class SubqueryParser {
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
             String joinPart = joinParts.get(i + 1).trim();
+            LOGGER.log(Level.FINEST, "Processing join part: {0}", joinPart);
             QueryParser.JoinType joinType = parseJoinType(joinTypeStr);
             String joinTableName;
             String joinTableAlias = null;
@@ -283,7 +284,18 @@ public class SubqueryParser {
 
             int onIndex = findOnClausePosition(joinPart);
             String joinTablePart = onIndex == -1 ? joinPart : joinPart.substring(0, onIndex).trim();
-            String onClause = onIndex == -1 ? "" : joinPart.substring(onIndex + 2).trim();
+            String onClause = "";
+            if (onIndex != -1) {
+                // Найти конец ON до следующей клаузы
+                int endIndex = joinPart.length();
+                Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT)\\b");
+                Matcher clauseMatcher = clausePattern.matcher(joinPart).region(onIndex + 2, joinPart.length());
+                if (clauseMatcher.find()) {
+                    endIndex = clauseMatcher.start();
+                }
+                onClause = joinPart.substring(onIndex + 2, endIndex).trim();
+            }
+            LOGGER.log(Level.FINEST, "Extracted onClause: {0}", onClause);
 
             String[] joinTableTokens = joinTablePart.split("\\s+");
             joinTableName = joinTableTokens[0].trim();
@@ -330,6 +342,9 @@ public class SubqueryParser {
     private int findOnClausePosition(String joinPart) {
         int parenDepth = 0;
         boolean inQuotes = false;
+        int onIndex = -1;
+        Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT)\\b");
+
         for (int i = 0; i < joinPart.length(); i++) {
             char c = joinPart.charAt(i);
             if (c == '\'') {
@@ -343,11 +358,17 @@ public class SubqueryParser {
                     parenDepth--;
                 } else if (parenDepth == 0 && i + 2 < joinPart.length() &&
                         joinPart.substring(i, i + 2).toUpperCase().equals("ON")) {
-                    return i;
+                    onIndex = i;
+                    i += 2;
+                } else if (onIndex != -1 && parenDepth == 0) {
+                    Matcher clauseMatcher = clausePattern.matcher(joinPart).region(i, joinPart.length());
+                    if (clauseMatcher.lookingAt()) {
+                        return onIndex;
+                    }
                 }
             }
         }
-        return -1;
+        return onIndex;
     }
 
     private void validateJoinCondition(QueryParser.Condition cond, String leftTable, String rightTable, Map<String, String> tableAliases) {
@@ -399,19 +420,28 @@ public class SubqueryParser {
                     whereEndIndex = idx;
                 }
             }
-            String conditionStr = tableAndJoins.substring(whereIndex + 5, whereEndIndex).trim();
-            LOGGER.log(Level.FINEST, "Raw extracted conditionStr: {0}", conditionStr);
-            // Удаляем LIMIT из conditionStr
-            Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
-            conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
-            LOGGER.log(Level.FINEST, "After removing LIMIT: {0}", conditionStr);
-            // Удаляем WHERE, если оно присутствует
-            conditionStr = conditionStr.replaceFirst("(?i)^\\s*WHERE\\s+", "").trim();
-            LOGGER.log(Level.FINEST, "After removing WHERE: {0}", conditionStr);
-            if (!conditionStr.isEmpty()) {
-                LOGGER.log(Level.FINEST, "Extracted WHERE condition: {0}", conditionStr);
-                conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
-                        combinedColumnTypes, tableAliases, columnAliases);
+            // Находим позицию после WHERE и пробелов
+            int startPos = whereIndex;
+            String whereClause = tableAndJoins.substring(whereIndex, whereEndIndex).trim();
+            Pattern wherePattern = Pattern.compile("(?i)^WHERE\\s+");
+            Matcher whereMatcher = wherePattern.matcher(whereClause);
+            if (whereMatcher.find()) {
+                String conditionStr = whereClause.substring(whereMatcher.end()).trim();
+                LOGGER.log(Level.FINEST, "Raw extracted conditionStr: {0}", conditionStr);
+                // Удаляем LIMIT из conditionStr
+                Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+                conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
+                LOGGER.log(Level.FINEST, "After removing LIMIT: {0}", conditionStr);
+                // Дополнительная очистка WHERE, если оно осталось
+                conditionStr = conditionStr.replaceFirst("(?i)^\\s*WHERE\\s+", "").trim();
+                LOGGER.log(Level.FINEST, "After removing WHERE: {0}", conditionStr);
+                if (!conditionStr.isEmpty()) {
+                    LOGGER.log(Level.FINEST, "Extracted WHERE condition: {0}", conditionStr);
+                    conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
+                            combinedColumnTypes, tableAliases, columnAliases);
+                }
+            } else {
+                LOGGER.log(Level.WARNING, "WHERE clause not found in substring: {0}", whereClause);
             }
         }
 
@@ -536,6 +566,7 @@ public class SubqueryParser {
                     return -1;
                 }
             } else if (tokenType.equals("clause") && parenDepth == 0 && !inSubQuery) {
+                LOGGER.log(Level.FINEST, "Considering clause {0} at position {1}, query: {2}", new Object[]{token, start, query});
                 clauseIndex = start;
             }
 
@@ -668,7 +699,7 @@ public class SubqueryParser {
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
             return new ArrayList<>();
         }
-        LOGGER.log(Level.FINEST, "Raw conditionStr in parseConditions: {0}", conditionStr);
+        LOGGER.log(Level.FINEST, "Original conditionStr in parseConditions: {0}", conditionStr);
         // Удаляем WHERE, если присутствует
         conditionStr = conditionStr.replaceFirst("(?i)^\\s*WHERE\\s+", "").trim();
         LOGGER.log(Level.FINEST, "After removing WHERE in parseConditions: {0}", conditionStr);
@@ -680,9 +711,14 @@ public class SubqueryParser {
             return new ArrayList<>();
         }
         LOGGER.log(Level.FINEST, "Cleaned condition string: {0}", conditionStr);
-        List<Token> tokens = tokenizeConditions(conditionStr);
-        return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
-                combinedColumnTypes, tableAliases, columnAliases, null, false);
+        try {
+            List<Token> tokens = tokenizeConditions(conditionStr);
+            return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
+                    combinedColumnTypes, tableAliases, columnAliases, null, false);
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.SEVERE, "Failed to tokenize condition: {0}, Error: {1}", new Object[]{conditionStr, e.getMessage()});
+            throw e;
+        }
     }
 
     private static class Token {
