@@ -288,16 +288,7 @@ public class SubqueryParser {
 
             int onIndex = findOnClausePosition(joinPart);
             String joinTablePart = onIndex == -1 ? joinPart : joinPart.substring(0, onIndex).trim();
-            String onClause = "";
-            if (onIndex != -1) {
-                int endIndex = joinPart.length();
-                Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT)\\b");
-                Matcher clauseMatcher = clausePattern.matcher(joinPart).region(onIndex + 2, joinPart.length());
-                if (clauseMatcher.find()) {
-                    endIndex = clauseMatcher.start();
-                }
-                onClause = joinPart.substring(onIndex + 2, endIndex).trim();
-            }
+            String onClause = extractOnClause(joinPart);
             LOGGER.log(Level.FINEST, "Extracted onClause: {0}", onClause);
 
             String[] joinTableTokens = joinTablePart.split("\\s+");
@@ -347,7 +338,6 @@ public class SubqueryParser {
         int parenDepth = 0;
         boolean inQuotes = false;
         int onIndex = -1;
-        Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT)\\b");
 
         for (int i = 0; i < joinPart.length(); i++) {
             char c = joinPart.charAt(i);
@@ -364,15 +354,43 @@ public class SubqueryParser {
                         joinPart.substring(i, i + 2).toUpperCase().equals("ON")) {
                     onIndex = i;
                     i += 2;
-                } else if (onIndex != -1 && parenDepth == 0) {
-                    Matcher clauseMatcher = clausePattern.matcher(joinPart).region(i, joinPart.length());
-                    if (clauseMatcher.lookingAt()) {
-                        return onIndex;
-                    }
                 }
             }
         }
         return onIndex;
+    }
+
+    private String extractOnClause(String joinPart) {
+        int onIndex = findOnClausePosition(joinPart);
+        if (onIndex == -1) {
+            return "";
+        }
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        int endIndex = joinPart.length();
+
+        Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT)\\b");
+        for (int i = onIndex + 2; i < joinPart.length(); i++) {
+            char c = joinPart.charAt(i);
+            if (c == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')') {
+                    parenDepth--;
+                } else if (parenDepth == 0) {
+                    Matcher clauseMatcher = clausePattern.matcher(joinPart).region(i, joinPart.length());
+                    if (clauseMatcher.lookingAt()) {
+                        endIndex = i;
+                        break;
+                    }
+                }
+            }
+        }
+        return joinPart.substring(onIndex + 2, endIndex).trim();
     }
 
     private void validateJoinCondition(QueryParser.Condition cond, String leftTable, String rightTable, Map<String, String> tableAliases) {
@@ -742,7 +760,7 @@ public class SubqueryParser {
         }
 
         enum TokenType {
-            CONDITION, LOGICAL_OPERATOR
+            CONDITION, LOGICAL_OPERATOR, TABLE_ALIAS
         }
     }
 
@@ -755,10 +773,9 @@ public class SubqueryParser {
         patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
         patterns.add(Map.entry("In Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)")));
-        // Обновленное регулярное выражение для подзапросов
         patterns.add(Map.entry("Subquery Condition",
                 Pattern.compile(
-                        "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\s*\\)(?:\\s+LIMIT\\s*\\d+(?:\\s+OFFSET\\s*\\d+)?)?",
+                        "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)\\s*\\)(?:\\s+LIMIT\\s*\\d+(?:\\s+OFFSET\\s*\\d+)?)?",
                         Pattern.DOTALL)
         ));
         patterns.add(Map.entry("Like Condition",
@@ -766,7 +783,8 @@ public class SubqueryParser {
         patterns.add(Map.entry("Null Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IS\\s*(NOT\\s+)?NULL\\b")));
         patterns.add(Map.entry("Comparison Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|'[^']*'|[0-9]+(?:\\.[0-9]+)?)")));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)?\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|'[^']*'|[-]?[0-9]+(?:\\.[0-9]*)?)")));
+        patterns.add(Map.entry("Table Alias", Pattern.compile("(?i)\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*\\.[a-zA-Z_][a-zA-Z0-9_]*\\b)")));
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
 
         List<Token> tokens = new ArrayList<>();
@@ -803,14 +821,19 @@ public class SubqueryParser {
             }
 
             if (matched) {
-                Token.TokenType type = matchedPatternName.equals("Logical Operator") ?
-                        Token.TokenType.LOGICAL_OPERATOR : Token.TokenType.CONDITION;
+                Token.TokenType type = switch (matchedPatternName) {
+                    case "Logical Operator" -> Token.TokenType.LOGICAL_OPERATOR;
+                    case "Table Alias" -> Token.TokenType.TABLE_ALIAS;
+                    default -> Token.TokenType.CONDITION;
+                };
                 tokens.add(new Token(type, matchedToken));
                 LOGGER.log(Level.FINEST, "Tokenized: {0}, type: {1}, position: {2}", new Object[]{matchedToken, type, currentPos});
                 currentPos = nextPos;
             } else {
-                LOGGER.log(Level.SEVERE, "Failed to match token at position {0}: {1}", new Object[]{currentPos, processedStr.substring(currentPos)});
-                throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + processedStr.substring(currentPos));
+                // Логируем оставшуюся строку для диагностики
+                String remaining = currentPos < stringLength ? processedStr.substring(currentPos) : "<end>";
+                LOGGER.log(Level.SEVERE, "Failed to match token at position {0}: {1}", new Object[]{currentPos, remaining});
+                throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + remaining);
             }
         }
 
@@ -827,41 +850,55 @@ public class SubqueryParser {
                                                                  String conjunction, boolean not) {
         List<QueryParser.Condition> conditions = new ArrayList<>();
         String currentConjunction = conjunction;
+        String lastAlias = null;
+
         for (int i = 0; i < tokens.size(); i++) {
             Token token = tokens.get(i);
             LOGGER.log(Level.FINEST, "Processing token: {0}, type: {1}", new Object[]{token.value, token.type});
+
             if (token.type == Token.TokenType.LOGICAL_OPERATOR) {
                 currentConjunction = token.value.toUpperCase();
                 LOGGER.log(Level.FINEST, "Set conjunction: {0}", currentConjunction);
                 continue;
+            } else if (token.type == Token.TokenType.TABLE_ALIAS) {
+                lastAlias = token.value;
+                LOGGER.log(Level.FINEST, "Captured table alias: {0}", lastAlias);
+                continue;
             }
+
             String condStr = token.value;
+            String effectiveTableName = lastAlias != null ? tableAliases.getOrDefault(lastAlias, lastAlias) : defaultTableName;
+
             if (condStr.startsWith("(") && condStr.endsWith(")")) {
                 String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
                 if (subCondStr.toUpperCase().startsWith("SELECT")) {
                     validateSubQuery(subCondStr);
                     Query<?> subQuery = queryParser.parse(subCondStr, database);
-                    conditions.add(new QueryParser.Condition(defaultTableName + ".unknown", new QueryParser.SubQuery(subQuery, null), currentConjunction, not));
+                    String columnName = effectiveTableName + ".unknown";
+                    conditions.add(new QueryParser.Condition(columnName, new QueryParser.SubQuery(subQuery, null), currentConjunction, not));
                 } else {
                     List<Token> subTokens = tokenizeConditions(subCondStr);
-                    List<QueryParser.Condition> subConditions = parseTokenizedConditions(subTokens, defaultTableName, database,
+                    List<QueryParser.Condition> subConditions = parseTokenizedConditions(subTokens, effectiveTableName, database,
                             originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not);
                     conditions.add(new QueryParser.Condition(subConditions, currentConjunction, not));
                 }
             } else if (condStr.toUpperCase().contains(" IN ")) {
-                conditions.add(parseInCondition(condStr, defaultTableName, database, originalQuery,
+                conditions.add(parseInCondition(condStr, effectiveTableName, database, originalQuery,
                         combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
             } else if (condStr.toUpperCase().contains("SELECT")) {
                 LOGGER.log(Level.FINEST, "Attempting to parse subquery condition: {0}", condStr);
-                conditions.add(parseSubQueryCondition(condStr, defaultTableName, database, originalQuery,
+                conditions.add(parseSubQueryCondition(condStr, effectiveTableName, database, originalQuery,
                         combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
             } else {
                 LOGGER.log(Level.FINEST, "Parsing single condition: {0}", condStr);
-                conditions.add(parseSingleCondition(condStr, defaultTableName, database, originalQuery,
+                conditions.add(parseSingleCondition(condStr, effectiveTableName, database, originalQuery,
                         isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
             }
+
+            lastAlias = null;
             currentConjunction = null;
         }
+
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
         return conditions;
     }

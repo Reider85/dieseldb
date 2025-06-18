@@ -237,3 +237,4 @@
 2.3.7 fix subqueries in ON
 2.3.8 fix subqueries in ON
 2.3.9 fix subqueries in ON
+2.4.0 fix subqueries in ON
