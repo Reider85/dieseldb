@@ -63,6 +63,7 @@ public class SubqueryParser {
         return query.trim()
                 .replaceAll("\\s+", " ")
                 .replaceAll("\\s*([=><!(),])\\s*", "$1")
+                .replaceAll("(?i)(\\))\\s*(LIMIT|WHERE|ORDER\\s+BY|GROUP\\s+BY|HAVING|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN)", "$1 $2")
                 .replaceAll("\\s*;", "");
     }
 
@@ -390,18 +391,22 @@ public class SubqueryParser {
         int limitIndex = findClauseOutsideSubquery(tableAndJoins, "LIMIT");
 
         // Обработка WHERE
-        int whereEndIndex = -1;
         if (whereIndex != -1) {
             int[] clauseIndices = {groupByIndex, orderByIndex, limitIndex};
-            whereEndIndex = tableAndJoins.length();
+            int whereEndIndex = tableAndJoins.length();
             for (int idx : clauseIndices) {
                 if (idx != -1 && idx > whereIndex && idx < whereEndIndex) {
                     whereEndIndex = idx;
                 }
             }
             String conditionStr = tableAndJoins.substring(whereIndex + 5, whereEndIndex).trim();
-            conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
-                    combinedColumnTypes, tableAliases, columnAliases);
+            // Удаляем LIMIT из conditionStr, если он присутствует
+            Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+            conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
+            if (!conditionStr.isEmpty()) {
+                conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
+                        combinedColumnTypes, tableAliases, columnAliases);
+            }
         }
 
         // Обработка GROUP BY
@@ -631,6 +636,12 @@ public class SubqueryParser {
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
             return new ArrayList<>();
         }
+        // Очищаем строку от LIMIT
+        Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+        conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
+        if (conditionStr.isEmpty()) {
+            return new ArrayList<>();
+        }
         List<Token> tokens = tokenizeConditions(conditionStr);
         return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
                 combinedColumnTypes, tableAliases, columnAliases, null, false);
@@ -651,13 +662,15 @@ public class SubqueryParser {
     }
 
     private List<Token> tokenizeConditions(String conditionStr) {
+        // Предварительная обработка: добавляем пробелы перед LIMIT
+        String processedStr = conditionStr.replaceAll("(?i)(\\))\\s*(LIMIT\\s+\\d+)", "$1 $2");
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
         patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
         patterns.add(Map.entry("In Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)")));
         patterns.add(Map.entry("Subquery Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?", Pattern.DOTALL)));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:LIMIT\\s*\\d+(?:\\s+OFFSET\\s+\\d+)?)?", Pattern.DOTALL)));
         patterns.add(Map.entry("Like Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Null Condition",
@@ -668,10 +681,10 @@ public class SubqueryParser {
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
-        int stringLength = conditionStr.length();
+        int stringLength = processedStr.length();
 
         while (currentPos < stringLength) {
-            while (currentPos < stringLength && Character.isWhitespace(conditionStr.charAt(currentPos))) {
+            while (currentPos < stringLength && Character.isWhitespace(processedStr.charAt(currentPos))) {
                 currentPos++;
             }
             if (currentPos >= stringLength) {
@@ -685,7 +698,7 @@ public class SubqueryParser {
 
             for (Map.Entry<String, Pattern> entry : patterns) {
                 Pattern pattern = entry.getValue();
-                Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
+                Matcher matcher = pattern.matcher(processedStr).region(currentPos, stringLength);
                 if (matcher.lookingAt()) {
                     String tokenValue = matcher.group().trim();
                     if (!tokenValue.isEmpty()) {
@@ -705,12 +718,12 @@ public class SubqueryParser {
                 LOGGER.log(Level.FINEST, "Tokenized: {0}, type: {1}", new Object[]{matchedToken, type});
                 currentPos = nextPos;
             } else {
-                throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + conditionStr.substring(currentPos));
+                throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + processedStr.substring(currentPos));
             }
         }
 
         if (tokens.isEmpty()) {
-            throw new IllegalArgumentException("No valid tokens found in condition: " + conditionStr);
+            throw new IllegalArgumentException("No valid tokens found in condition: " + processedStr);
         }
         return tokens;
     }
