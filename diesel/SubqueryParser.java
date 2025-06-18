@@ -738,7 +738,6 @@ public class SubqueryParser {
 
     private List<Token> tokenizeConditions(String conditionStr) {
         LOGGER.log(Level.FINEST, "Starting tokenization of conditionStr: {0}", conditionStr);
-        // Предварительная обработка: добавляем пробелы перед LIMIT
         String processedStr = conditionStr.replaceAll("(?i)(\\))\\s*(LIMIT\\s+\\d+)", "$1 $2");
         LOGGER.log(Level.FINEST, "After preprocessing for LIMIT: {0}", processedStr);
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
@@ -747,7 +746,7 @@ public class SubqueryParser {
         patterns.add(Map.entry("In Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)")));
         patterns.add(Map.entry("Subquery Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+LIMIT\\s*\\d+(?:\\s+OFFSET\\s*\\d+)?)?(?=\\s*(?:$|\\)|AND|OR|LIMIT|WHERE|GROUP\\s+BY|ORDER\\s+BY|HAVING))", Pattern.DOTALL)));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?\\s*\\)(?:\\s+LIMIT\\s*\\d+(?:\\s+OFFSET\\s*\\d+)?)?", Pattern.DOTALL)));
         patterns.add(Map.entry("Like Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Null Condition",
@@ -773,17 +772,33 @@ public class SubqueryParser {
             String matchedPatternName = null;
             int nextPos = stringLength;
 
-            for (Map.Entry<String, Pattern> entry : patterns) {
-                Pattern pattern = entry.getValue();
-                Matcher matcher = pattern.matcher(processedStr).region(currentPos, stringLength);
-                if (matcher.lookingAt()) {
-                    String tokenValue = matcher.group().trim();
-                    if (!tokenValue.isEmpty()) {
-                        matchedToken = tokenValue;
-                        matchedPatternName = entry.getKey();
-                        nextPos = matcher.end();
-                        matched = true;
-                        break;
+            // Сначала проверяем логические операторы
+            Pattern logicalOpPattern = patterns.stream()
+                    .filter(e -> e.getKey().equals("Logical Operator"))
+                    .findFirst()
+                    .get()
+                    .getValue();
+            Matcher logicalOpMatcher = logicalOpPattern.matcher(processedStr).region(currentPos, stringLength);
+            if (logicalOpMatcher.lookingAt()) {
+                matchedToken = logicalOpMatcher.group().trim();
+                matchedPatternName = "Logical Operator";
+                nextPos = logicalOpMatcher.end();
+                matched = true;
+            } else {
+                // Проверяем остальные шаблоны
+                for (Map.Entry<String, Pattern> entry : patterns) {
+                    if (entry.getKey().equals("Logical Operator")) continue;
+                    Pattern pattern = entry.getValue();
+                    Matcher matcher = pattern.matcher(processedStr).region(currentPos, stringLength);
+                    if (matcher.lookingAt()) {
+                        String tokenValue = matcher.group().trim();
+                        if (!tokenValue.isEmpty()) {
+                            matchedToken = tokenValue;
+                            matchedPatternName = entry.getKey();
+                            nextPos = matcher.end();
+                            matched = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -792,9 +807,10 @@ public class SubqueryParser {
                 Token.TokenType type = matchedPatternName.equals("Logical Operator") ?
                         Token.TokenType.LOGICAL_OPERATOR : Token.TokenType.CONDITION;
                 tokens.add(new Token(type, matchedToken));
-                LOGGER.log(Level.FINEST, "Tokenized: {0}, type: {1}", new Object[]{matchedToken, type});
+                LOGGER.log(Level.FINEST, "Tokenized: {0}, type: {1}, position: {2}", new Object[]{matchedToken, type, currentPos});
                 currentPos = nextPos;
             } else {
+                LOGGER.log(Level.SEVERE, "Failed to match token at position {0}: {1}", new Object[]{currentPos, processedStr.substring(currentPos)});
                 throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + processedStr.substring(currentPos));
             }
         }
@@ -811,10 +827,13 @@ public class SubqueryParser {
                                                                  Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                                  String conjunction, boolean not) {
         List<QueryParser.Condition> conditions = new ArrayList<>();
+        String currentConjunction = conjunction;
         for (int i = 0; i < tokens.size(); i++) {
             Token token = tokens.get(i);
+            LOGGER.log(Level.FINEST, "Processing token: {0}, type: {1}", new Object[]{token.value, token.type});
             if (token.type == Token.TokenType.LOGICAL_OPERATOR) {
-                conjunction = token.value.toUpperCase();
+                currentConjunction = token.value.toUpperCase();
+                LOGGER.log(Level.FINEST, "Set conjunction: {0}", currentConjunction);
                 continue;
             }
             String condStr = token.value;
@@ -823,25 +842,26 @@ public class SubqueryParser {
                 if (subCondStr.toUpperCase().startsWith("SELECT")) {
                     validateSubQuery(subCondStr);
                     Query<?> subQuery = queryParser.parse(subCondStr, database);
-                    conditions.add(new QueryParser.Condition(defaultTableName + ".unknown", new QueryParser.SubQuery(subQuery, null), conjunction, not));
+                    conditions.add(new QueryParser.Condition(defaultTableName + ".unknown", new QueryParser.SubQuery(subQuery, null), currentConjunction, not));
                 } else {
                     List<Token> subTokens = tokenizeConditions(subCondStr);
                     List<QueryParser.Condition> subConditions = parseTokenizedConditions(subTokens, defaultTableName, database,
-                            originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
-                    conditions.add(new QueryParser.Condition(subConditions, conjunction, not));
+                            originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not);
+                    conditions.add(new QueryParser.Condition(subConditions, currentConjunction, not));
                 }
             } else if (condStr.toUpperCase().contains(" IN ")) {
                 conditions.add(parseInCondition(condStr, defaultTableName, database, originalQuery,
-                        combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
+                        combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
             } else if (condStr.toUpperCase().contains("SELECT")) {
                 conditions.add(parseSubQueryCondition(condStr, defaultTableName, database, originalQuery,
-                        combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
+                        combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
             } else {
                 conditions.add(parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not));
+                        isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
             }
-            conjunction = null;
+            currentConjunction = null;
         }
+        LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
         return conditions;
     }
 

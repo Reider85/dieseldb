@@ -234,3 +234,4 @@
 2.3.4 fix subqueries in JOIN
 2.3.5 fix subqueries in JOIN
 2.3.6 fix subqueries in JOIN
+2.3.7 fix subqueries in ON
