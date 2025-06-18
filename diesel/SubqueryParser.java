@@ -290,7 +290,6 @@ public class SubqueryParser {
             String joinTablePart = onIndex == -1 ? joinPart : joinPart.substring(0, onIndex).trim();
             String onClause = "";
             if (onIndex != -1) {
-                // Найти конец ON до следующей клаузы
                 int endIndex = joinPart.length();
                 Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT)\\b");
                 Matcher clauseMatcher = clausePattern.matcher(joinPart).region(onIndex + 2, joinPart.length());
@@ -318,6 +317,7 @@ public class SubqueryParser {
             tableAliases.put(joinTableName, joinTableName);
 
             if (joinType != QueryParser.JoinType.CROSS && !onClause.isEmpty()) {
+                // Передаём ON-клаузу целиком
                 onConditions = parseConditions(onClause, tableName, database, joinPart, true,
                         combinedColumnTypes, tableAliases, new HashMap<>());
                 for (QueryParser.Condition cond : onConditions) {
@@ -392,8 +392,15 @@ public class SubqueryParser {
                     !(leftTableName.equals(rightTable) && rightTableName.equals(leftTable))) {
                 throw new IllegalArgumentException("Join condition must compare columns from " + leftTable + " and " + rightTable + ": " + cond);
             }
+        } else if (cond.subQuery != null) {
+            // Разрешаем подзапросы в ON-условиях
+            String leftPrefix = cond.column.contains(".") ? cond.column.split("\\.")[0] : null;
+            String leftTableName = tableAliases.getOrDefault(leftPrefix, leftPrefix);
+            if (!leftTableName.equals(leftTable) && !leftTableName.equals(rightTable)) {
+                throw new IllegalArgumentException("Subquery condition must reference column from " + leftTable + " or " + rightTable + ": " + cond);
+            }
         } else {
-            throw new IllegalArgumentException("Join condition must be a column comparison: " + cond);
+            // Разрешаем другие типы условий (например, сравнение с константой)
         }
     }
 
@@ -748,9 +755,10 @@ public class SubqueryParser {
         patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
         patterns.add(Map.entry("In Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)")));
+        // Обновленное регулярное выражение для подзапросов
         patterns.add(Map.entry("Subquery Condition",
                 Pattern.compile(
-                        "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\)(?:\\s+LIMIT\\s*\\d+(?:\\s+OFFSET\\s*\\d+)?)?(?=\\s*(?:$|\\)|AND|OR|LIMIT|WHERE|GROUP\\s+BY|ORDER\\s+BY|HAVING|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN))",
+                        "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\s*\\)(?:\\s+LIMIT\\s*\\d+(?:\\s+OFFSET\\s*\\d+)?)?",
                         Pattern.DOTALL)
         ));
         patterns.add(Map.entry("Like Condition",
@@ -778,42 +786,18 @@ public class SubqueryParser {
             String matchedPatternName = null;
             int nextPos = stringLength;
 
-            // Сначала проверяем логические операторы
-            // Сначала проверяем логические операторы
-            Pattern logicalOpPattern = patterns.stream()
-                    .filter(e -> e.getKey().equals("Logical Operator"))
-                    .findFirst()
-                    .get()
-                    .getValue();
-            Matcher logicalOpMatcher = logicalOpPattern.matcher(processedStr).region(currentPos, stringLength);
-            if (logicalOpMatcher.lookingAt()) {
-                matchedToken = logicalOpMatcher.group().trim();
-                matchedPatternName = "Logical Operator";
-                nextPos = logicalOpMatcher.end();
-                matched = true;
-            } else {
-                // Проверяем шаблоны в порядке: Subquery Condition, In Condition, Like Condition, Null Condition, Comparison Condition, Grouped Condition, Quoted String
-                List<String> patternOrder = List.of("Subquery Condition", "In Condition", "Like Condition", "Null Condition",
-                        "Comparison Condition", "Grouped Condition", "Quoted String");
-                for (String patternName : patternOrder) {
-                    LOGGER.log(Level.FINEST, "Checking pattern: {0} at position {1}", new Object[]{patternName, currentPos});
-                    Pattern pattern = patterns.stream()
-                            .filter(e -> e.getKey().equals(patternName))
-                            .findFirst()
-                            .map(Map.Entry::getValue)
-                            .orElse(null);
-                    if (pattern == null) continue;
-                    Matcher matcher = pattern.matcher(processedStr).region(currentPos, stringLength);
-                    if (matcher.lookingAt()) {
-                        String tokenValue = matcher.group().trim();
-                        if (!tokenValue.isEmpty()) {
-                            matchedToken = tokenValue;
-                            matchedPatternName = patternName;
-                            nextPos = matcher.end();
-                            matched = true;
-                            LOGGER.log(Level.FINEST, "Matched pattern {0} with token: {1}", new Object[]{patternName, tokenValue});
-                            break;
-                        }
+            // Проверяем все шаблоны
+            for (Map.Entry<String, Pattern> entry : patterns) {
+                Matcher matcher = entry.getValue().matcher(processedStr).region(currentPos, stringLength);
+                if (matcher.lookingAt()) {
+                    String tokenValue = matcher.group().trim();
+                    if (!tokenValue.isEmpty()) {
+                        matchedToken = tokenValue;
+                        matchedPatternName = entry.getKey();
+                        nextPos = matcher.end();
+                        matched = true;
+                        LOGGER.log(Level.FINEST, "Matched pattern {0} with token: {1}", new Object[]{matchedPatternName, tokenValue});
+                        break;
                     }
                 }
             }
@@ -826,12 +810,6 @@ public class SubqueryParser {
                 currentPos = nextPos;
             } else {
                 LOGGER.log(Level.SEVERE, "Failed to match token at position {0}: {1}", new Object[]{currentPos, processedStr.substring(currentPos)});
-                for (Map.Entry<String, Pattern> entry : patterns) {
-                    Matcher matcher = entry.getValue().matcher(processedStr).region(currentPos, stringLength);
-                    String snippet = processedStr.substring(currentPos, Math.min(currentPos + 50, stringLength));
-                    LOGGER.log(Level.FINEST, "Pattern {0} did not match at position {1}, snippet: {2}, lookingAt: {3}",
-                            new Object[]{entry.getKey(), currentPos, snippet, matcher.lookingAt()});
-                }
                 throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + processedStr.substring(currentPos));
             }
         }
