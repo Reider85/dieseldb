@@ -400,10 +400,16 @@ public class SubqueryParser {
                 }
             }
             String conditionStr = tableAndJoins.substring(whereIndex + 5, whereEndIndex).trim();
-            // Удаляем LIMIT из conditionStr, если он присутствует
+            LOGGER.log(Level.FINEST, "Raw extracted conditionStr: {0}", conditionStr);
+            // Удаляем LIMIT из conditionStr
             Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
             conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
+            LOGGER.log(Level.FINEST, "After removing LIMIT: {0}", conditionStr);
+            // Удаляем WHERE, если оно присутствует
+            conditionStr = conditionStr.replaceFirst("(?i)^\\s*WHERE\\s+", "").trim();
+            LOGGER.log(Level.FINEST, "After removing WHERE: {0}", conditionStr);
             if (!conditionStr.isEmpty()) {
+                LOGGER.log(Level.FINEST, "Extracted WHERE condition: {0}", conditionStr);
                 conditions = parseConditions(conditionStr, tableName, database, originalQuery, false,
                         combinedColumnTypes, tableAliases, columnAliases);
             }
@@ -463,64 +469,90 @@ public class SubqueryParser {
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        boolean inSubquery = false;
+        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
+        Pattern openParenPattern = Pattern.compile("\\(");
+        Pattern closeParenPattern = Pattern.compile("\\)");
         Pattern clausePattern = Pattern.compile("(?i)\\b" + Pattern.quote(clause) + "\\b");
-        Matcher matcher = clausePattern.matcher(query);
+        Pattern wordPattern = Pattern.compile("\\S+");
 
-        for (int i = 0; i < query.length(); i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
+        int parenDepth = 0;
+        int clauseIndex = -1;
+        int currentPos = 0;
+        boolean inSubQuery = false;
+
+        while (currentPos < query.length()) {
+            Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
+            Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
+            Matcher closeParenMatcher = closeParenPattern.matcher(query).region(currentPos, query.length());
+            Matcher clauseMatcher = clausePattern.matcher(query).region(currentPos, query.length());
+            Matcher wordMatcher = wordPattern.matcher(query).region(currentPos, query.length());
+
+            int nextPos = query.length();
+            String token = null;
+            String tokenType = null;
+            int start = currentPos;
+
+            if (quotedStringMatcher.lookingAt()) {
+                token = quotedStringMatcher.group();
+                nextPos = quotedStringMatcher.end();
+                tokenType = "quotedString";
+            } else if (openParenMatcher.lookingAt()) {
+                token = openParenMatcher.group();
+                nextPos = openParenMatcher.end();
+                tokenType = "openParen";
+            } else if (closeParenMatcher.lookingAt()) {
+                token = closeParenMatcher.group();
+                nextPos = closeParenMatcher.end();
+                tokenType = "closeParen";
+            } else if (clauseMatcher.lookingAt()) {
+                token = clauseMatcher.group();
+                nextPos = clauseMatcher.end();
+                tokenType = "clause";
+            } else if (wordMatcher.lookingAt()) {
+                token = wordMatcher.group();
+                nextPos = wordMatcher.end();
+                tokenType = "word";
+            }
+
+            if (token == null) {
+                currentPos++;
                 continue;
             }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    // Проверяем, начинается ли подзапрос
-                    if (i + 6 < query.length() && query.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                        inSubquery = true;
-                    }
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth == 0) {
-                        inSubquery = false; // Выходим из подзапроса
-                    }
+
+            if (tokenType.equals("quotedString")) {
+                // Пропускаем строки в кавычках
+            } else if (tokenType.equals("openParen")) {
+                parenDepth++;
+                if (parenDepth == 1 && currentPos + 7 < query.length() && query.substring(currentPos, currentPos + 7).toUpperCase().startsWith("(SELECT")) {
+                    inSubQuery = true;
                 }
+            } else if (tokenType.equals("closeParen")) {
+                parenDepth--;
+                if (parenDepth == 0 && inSubQuery) {
+                    inSubQuery = false;
+                }
+                if (parenDepth < 0) {
+                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}", new Object[]{start, query});
+                    return -1;
+                }
+            } else if (tokenType.equals("clause") && parenDepth == 0 && !inSubQuery) {
+                clauseIndex = start;
             }
+
+            currentPos = nextPos;
         }
 
-        // Сбрасываем matcher для повторного поиска
-        matcher.reset();
-        while (matcher.find()) {
-            int start = matcher.start();
-            parenDepth = 0;
-            inQuotes = false;
-            inSubquery = false;
-            for (int i = 0; i < start; i++) {
-                char c = query.charAt(i);
-                if (c == '\'') {
-                    inQuotes = !inQuotes;
-                } else if (!inQuotes) {
-                    if (c == '(') {
-                        parenDepth++;
-                        if (i + 6 < query.length() && query.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                            inSubquery = true;
-                        }
-                    } else if (c == ')') {
-                        parenDepth--;
-                        if (parenDepth == 0) {
-                            inSubquery = false;
-                        }
-                    }
-                }
-            }
-            if (parenDepth == 0 && !inQuotes && !inSubquery) {
-                return start;
-            }
+        if (parenDepth != 0) {
+            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: parenDepth={0}, query={1}", new Object[]{parenDepth, query});
+            return -1;
         }
-        return -1;
+
+        if (clauseIndex == -1) {
+            LOGGER.log(Level.FINEST, "Клауза {0} не найдена вне подзапросов в запросе: {1}", new Object[]{clause, query});
+        } else {
+            LOGGER.log(Level.FINEST, "Найдена клауза {0} на индексе {1} в запросе: {2}", new Object[]{clause, clauseIndex, query});
+        }
+        return clauseIndex;
     }
 
     private List<QueryParser.OrderByInfo> parseOrderByClause(String orderByClause, String tableName, Database database,
@@ -636,12 +668,18 @@ public class SubqueryParser {
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
             return new ArrayList<>();
         }
+        LOGGER.log(Level.FINEST, "Raw conditionStr in parseConditions: {0}", conditionStr);
+        // Удаляем WHERE, если присутствует
+        conditionStr = conditionStr.replaceFirst("(?i)^\\s*WHERE\\s+", "").trim();
+        LOGGER.log(Level.FINEST, "After removing WHERE in parseConditions: {0}", conditionStr);
         // Очищаем строку от LIMIT
         Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
         conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
+        LOGGER.log(Level.FINEST, "After removing LIMIT in parseConditions: {0}", conditionStr);
         if (conditionStr.isEmpty()) {
             return new ArrayList<>();
         }
+        LOGGER.log(Level.FINEST, "Cleaned condition string: {0}", conditionStr);
         List<Token> tokens = tokenizeConditions(conditionStr);
         return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
                 combinedColumnTypes, tableAliases, columnAliases, null, false);
@@ -670,7 +708,7 @@ public class SubqueryParser {
         patterns.add(Map.entry("In Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)")));
         patterns.add(Map.entry("Subquery Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:LIMIT\\s*\\d+(?:\\s+OFFSET\\s+\\d+)?)?", Pattern.DOTALL)));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+LIMIT\\s*\\d+(?:\\s+OFFSET\\s*\\d+)?)?(?=\\s*(?:$|\\)|AND|OR|LIMIT|WHERE|GROUP\\s+BY|ORDER\\s+BY|HAVING))", Pattern.DOTALL)));
         patterns.add(Map.entry("Like Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Null Condition",

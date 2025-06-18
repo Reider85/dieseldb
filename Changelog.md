@@ -231,3 +231,4 @@
 2.3.1 fix subqueries in IN
 2.3.2 fix subqueries in ORDER BY
 2.3.3 fix subqueries in JOIN
+2.3.4 fix subqueries in JOIN
