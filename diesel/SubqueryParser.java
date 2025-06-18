@@ -790,8 +790,9 @@ public class SubqueryParser {
     private QueryParser.Condition parseSubQueryCondition(String condStr, String defaultTableName, Database database, String originalQuery,
                                                          Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                                          Map<String, String> columnAliases, String conjunction, boolean not) {
+        // Обновленное регулярное выражение для подзапросов
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
+                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
                 Pattern.DOTALL);
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
         if (!subQueryMatcher.matches()) {

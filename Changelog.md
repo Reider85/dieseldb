@@ -227,3 +227,4 @@
 2.2.7 fix subqueries
 2.2.8 fix subqueries
 2.2.9 fix subqueries
+2.3.0 fix subqueries in WHERE
