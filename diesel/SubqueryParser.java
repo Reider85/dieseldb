@@ -61,10 +61,11 @@ public class SubqueryParser {
             return "";
         }
         return query.trim()
-                .replaceAll("\\s+", " ")
-                .replaceAll("\\s*([=><!(),])\\s*", "$1")
-                .replaceAll("(?i)(\\))\\s*(LIMIT|WHERE|ORDER\\s+BY|GROUP\\s+BY|HAVING|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN)", "$1 $2")
-                .replaceAll("\\s*;", "");
+                .replaceAll("\\s+", " ") // Удаляем лишние пробелы
+                .replaceAll("([=><!(),])", " $1 ") // Добавляем пробелы вокруг операторов и скобок
+                .replaceAll("(?i)(\\))\\s*(LIMIT|WHERE|ORDER\\s+BY|GROUP\\s+BY|HAVING|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN)", "$1 $2") // Восстанавливаем пробелы после закрывающей скобки
+                .replaceAll("\\s*;", "") // Удаляем точку с запятой
+                .replaceAll("\\s+", " "); // Удаляем лишние пробелы после обработки
     }
 
     private Query<List<Map<String, Object>>> parseSelectQuery(String originalQuery, String normalizedQuery, Database database) {
@@ -736,8 +737,10 @@ public class SubqueryParser {
     }
 
     private List<Token> tokenizeConditions(String conditionStr) {
+        LOGGER.log(Level.FINEST, "Starting tokenization of conditionStr: {0}", conditionStr);
         // Предварительная обработка: добавляем пробелы перед LIMIT
         String processedStr = conditionStr.replaceAll("(?i)(\\))\\s*(LIMIT\\s+\\d+)", "$1 $2");
+        LOGGER.log(Level.FINEST, "After preprocessing for LIMIT: {0}", processedStr);
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
         patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
@@ -799,6 +802,7 @@ public class SubqueryParser {
         if (tokens.isEmpty()) {
             throw new IllegalArgumentException("No valid tokens found in condition: " + processedStr);
         }
+        LOGGER.log(Level.FINE, "Tokenization completed, tokens: {0}", tokens);
         return tokens;
     }
     private List<QueryParser.Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
@@ -1010,6 +1014,11 @@ public class SubqueryParser {
                                                        boolean isJoinCondition, Map<String, Class<?>> combinedColumnTypes,
                                                        Map<String, String> tableAliases, Map<String, String> columnAliases,
                                                        String conjunction, boolean not) {
+        LOGGER.log(Level.FINEST, "Parsing single condition: {0}, full condition={1}", new Object[]{condStr, condStr});
+        // Нормализуем строку для добавления пробелов вокруг операторов
+        condStr = condStr.replaceAll("([=><!])", " $1 ").replaceAll("\\s+", " ").trim();
+        LOGGER.log(Level.FINEST, "Normalized condition: {0}", condStr);
+
         Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:[^']|)*')");
         Matcher likeMatcher = likePattern.matcher(condStr);
         if (likeMatcher.matches()) {
@@ -1103,12 +1112,12 @@ public class SubqueryParser {
                     continue;
                 } else if (parenDepth == 0) {
                     for (String op : operators) {
-                        Pattern opPattern = Pattern.compile("(?i)\\s+" + Pattern.quote(op) + "\\s+");
-                        Matcher opMatcher = opPattern.matcher(" " + condStr + " ").region(0, condStr.length() + 2);
-                        if (opMatcher.find() && opMatcher.start() <= i + 1 && opMatcher.end() >= i + 1) {
-                            String matchedOp = opMatcher.group().trim();
-                            int actualIndex = opMatcher.start() - 1;
-                            int actualEndIndex = opMatcher.end() - 1;
+                        Pattern opPattern = Pattern.compile("(?i)" + Pattern.quote(op));
+                        Matcher opMatcher = opPattern.matcher(condStr);
+                        if (opMatcher.find(i) && opMatcher.start() == i) {
+                            String matchedOp = opMatcher.group();
+                            int actualIndex = opMatcher.start();
+                            int actualEndIndex = opMatcher.end();
                             return new QueryParser.OperatorInfo(matchedOp, actualIndex, actualEndIndex);
                         }
                     }
