@@ -228,3 +228,4 @@
 2.2.8 fix subqueries
 2.2.9 fix subqueries
 2.3.0 fix subqueries in WHERE
+2.3.1 fix subqueries in IN

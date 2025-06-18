@@ -17,6 +17,7 @@ public class SubqueryParser {
         this.queryParser = new QueryParser();
     }
 
+    // Модифицируем метод parse для обработки всех подзапросов
     public Query<?> parse(String query, Database database) {
         LOGGER.log(Level.INFO, "Parsing query: {0}", query);
         String normalizedQuery = normalizeQueryString(query).trim();
@@ -29,6 +30,15 @@ public class SubqueryParser {
         LOGGER.log(Level.FINE, "Subqueries detected, parsing with SubqueryParser: {0}", query);
         try {
             if (normalizedQuery.toUpperCase().startsWith("SELECT")) {
+                // Проверяем, является ли весь запрос подзапросом в IN
+                Pattern inSubqueryPattern = Pattern.compile(
+                        "(?i)^SELECT\\s+.*?\\s+WHERE\\s+.*?\\s+IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                        Pattern.DOTALL);
+                Matcher inMatcher = inSubqueryPattern.matcher(normalizedQuery);
+                if (inMatcher.matches()) {
+                    LOGGER.log(Level.FINE, "Detected IN-subquery pattern, using custom parsing");
+                    return parseSelectQuery(query, normalizedQuery, database);
+                }
                 return parseSelectQuery(query, normalizedQuery, database);
             } else {
                 LOGGER.log(Level.FINE, "Non-SELECT query, delegating to QueryParser: {0}", query);
@@ -702,48 +712,72 @@ public class SubqueryParser {
         return conditions;
     }
 
+    // Модифицируем метод parseInCondition
+// Удаляем createCustomSubQuery, так как он несовместим с Query<T>
+// Вместо этого модифицируем parseInCondition для хранения подзапроса как строки
+
     private QueryParser.Condition parseInCondition(String condStr, String defaultTableName, Database database, String originalQuery,
                                                    Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                                    Map<String, String> columnAliases, String conjunction, boolean not) {
-        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$", Pattern.DOTALL);
+        Pattern inPattern = Pattern.compile(
+                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                Pattern.DOTALL);
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
-            throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
+            Pattern valuesInPattern = Pattern.compile(
+                    "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$",
+                    Pattern.DOTALL);
+            Matcher valuesMatcher = valuesInPattern.matcher(condStr);
+            if (!valuesMatcher.matches()) {
+                throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
+            }
+
+            String column = valuesMatcher.group(1).trim();
+            boolean inNot = valuesMatcher.group(2) != null;
+            String valuesStr = valuesMatcher.group(3).trim();
+            String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
+            Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes);
+
+            LOGGER.log(Level.FINEST, "Parsing IN condition: column={0}, values={1}, not={2}", new Object[]{normalizedColumn, valuesStr, inNot});
+
+            List<String> valueParts = splitInValues(valuesStr);
+            List<Object> inValues = new ArrayList<>();
+            for (String val : valueParts) {
+                String trimmedVal = val.trim();
+                if (trimmedVal.isEmpty()) continue;
+                Object value = parseConditionValue(normalizedColumn, trimmedVal, columnType);
+                inValues.add(value);
+            }
+            if (inValues.isEmpty()) {
+                throw new IllegalArgumentException("Empty IN list in: " + condStr);
+            }
+            LOGGER.log(Level.FINE, "Parsed IN values condition: {0} {1}IN {2}", new Object[]{normalizedColumn, inNot ? "NOT " : "", inValues});
+            return new QueryParser.Condition(normalizedColumn, inValues, conjunction, inNot);
         }
 
         String column = inMatcher.group(1).trim();
         boolean inNot = inMatcher.group(2) != null;
-        String valuesStr = inMatcher.group(3).trim();
+        String subQueryStr = inMatcher.group(3).trim();
         String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
-        Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes);
 
-        LOGGER.log(Level.FINEST, "Parsing IN condition: column={0}, values={1}, not={2}", new Object[]{normalizedColumn, valuesStr, inNot});
+        LOGGER.log(Level.FINEST, "Parsing IN subquery condition: column={0}, subquery={1}, not={2}", new Object[]{normalizedColumn, subQueryStr, inNot});
 
-        if (valuesStr.toUpperCase().startsWith("SELECT")) {
-            String subQueryStr = valuesStr;
-            if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
-                subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
+        validateSubQuery(subQueryStr);
+        // Создаём заглушку Query<?>, которая хранит строку подзапроса
+        Query<?> subQuery = new Query<List<?>>() {
+            @Override
+            public List<?> execute(Table table) {
+                // Это не должно вызываться, так как подзапрос должен обрабатываться в SelectQuery
+                throw new UnsupportedOperationException("Subquery execution should be handled by SelectQuery: " + subQueryStr);
             }
-            validateSubQuery(subQueryStr);
-            Query<?> subQuery = queryParser.parse(subQueryStr, database);
-            QueryParser.SubQuery subQueryObj = new QueryParser.SubQuery(subQuery, null);
-            LOGGER.log(Level.FINE, "Parsed IN subquery condition: {0} {1}IN (subquery: {2})", new Object[]{normalizedColumn, inNot ? "NOT " : "", subQueryStr});
-            return new QueryParser.Condition(normalizedColumn, subQueryObj, conjunction, inNot);
-        }
-
-        List<String> valueParts = splitInValues(valuesStr);
-        List<Object> inValues = new ArrayList<>();
-        for (String val : valueParts) {
-            String trimmedVal = val.trim();
-            if (trimmedVal.isEmpty()) continue;
-            Object value = parseConditionValue(normalizedColumn, trimmedVal, columnType);
-            inValues.add(value);
-        }
-        if (inValues.isEmpty()) {
-            throw new IllegalArgumentException("Empty IN list in: " + condStr);
-        }
-        LOGGER.log(Level.FINE, "Parsed IN values condition: {0} {1}IN {2}", new Object[]{normalizedColumn, inNot ? "NOT " : "", inValues});
-        return new QueryParser.Condition(normalizedColumn, inValues, conjunction, inNot);
+            @Override
+            public String toString() {
+                return subQueryStr;
+            }
+        };
+        QueryParser.SubQuery subQueryObj = new QueryParser.SubQuery(subQuery, null);
+        LOGGER.log(Level.FINE, "Parsed IN subquery condition: {0} {1}IN (subquery: {2})", new Object[]{normalizedColumn, inNot ? "NOT " : "", subQueryStr});
+        return new QueryParser.Condition(normalizedColumn, subQueryObj, conjunction, inNot);
     }
 
     private List<String> splitInValues(String input) {
