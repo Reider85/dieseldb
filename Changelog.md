@@ -241,3 +241,4 @@
 2.4.1 fix subqueries in ON
 2.4.2 fix subqueries in ON
 2.4.3 fix subqueries with aliases
+2.4.4 multilanguage readme

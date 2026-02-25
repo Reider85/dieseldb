@@ -1,53 +1,37 @@
-DieselDBServer - Простая многопоточная файловая база данных
-DieselDBServer представляет собой сервер базы данных, написанный на Java, который поддерживает базовые операции CRUD (Create, Read, Update, Delete) с сохранением данных в файлы и многопоточным чтением/записью. Сервер работает по сетевому протоколу TCP и обрабатывает команды от клиентов в многопоточном режиме.
+DieselDB - An experimental database built on Java 17, developed by Reider85 using AI tools.
+Supports simple SELECT, UPDATE, INSERT, DELETE queries,
+queries with IN, LIKE, LEFT, RIGHT, INNER, OUTER, CROSS JOIN, queries with LIKE, queries with aliases, queries with subqueries,
+GROUP BY, ORDER BY, BTREE and HASH indexes, clustered indexes, transactions with isolation levels:
+READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE.
+Future plans include implementing mathematical functions in queries, a visual interface similar to PG_ADMIN, and advanced DDL queries
 
-Основные особенности:
-Сетевой сервер:
-Слушает подключения на порту 9090.
-Обрабатывает подключения клиентов в отдельных потоках с использованием пула потоков (ExecutorService).
-Хранение данных:
-Данные хранятся в памяти в структуре ConcurrentHashMap<String, List<Map<String, String>>>, где ключ - имя таблицы, а значение - список строк (каждая строка - это Map с парами ключ-значение).
-Для обеспечения потокобезопасности используется CopyOnWriteArrayList для списков строк.
-Поддерживаемые команды:
-PING - проверка связи (возвращает "PONG").
-CREATE§§§<tableName> - создание новой таблицы.
-INSERT§§§<tableName>§§§key1:::value1:::key2:::value2 - вставка строки в таблицу.
-SELECT§§§<tableName>§§§key=value - выбор строк по условию (или всех строк, если условие отсутствует).
-UPDATE§§§<tableName>§§§condition;;;key1:::value1 - обновление строк по условию.
-DELETE§§§<tableName>§§§key=value - удаление строк по условию (или всей таблицы, если условие не указано).
-Сохранение и загрузка данных:
-Данные сохраняются в файлы в директории dieseldb_data с расширением .ddb.
-При запуске сервера все существующие таблицы загружаются из файлов многопоточно с использованием пула потоков, размер которого зависит от количества доступных процессоров.
-После каждой операции модификации (CREATE, INSERT, UPDATE, DELETE) изменённая таблица асинхронно сохраняется в файл.
-При завершении работы сервера все таблицы сохраняются в файлы также в многопоточном режиме.
-Многопоточность:
-Используется ExecutorService с кэшированным пулом потоков для обработки клиентских запросов.
-Загрузка таблиц при старте и сохранение при завершении работы выполняются параллельно с использованием пула потоков фиксированного размера.
-Структура работы:
-Запуск: Сервер создаёт директорию для данных, загружает существующие таблицы из файлов и начинает слушать подключения.
-Обработка запросов: Каждый клиент обрабатывается в отдельном потоке. Команды парсятся и выполняются с немедленным сохранением изменений в файл (асинхронно).
-Завершение: При получении сигнала завершения (Ctrl+C или программный shutdown) все таблицы сохраняются в файлы, а пул потоков закрывается.
-Формат хранения:
-Каждая таблица сохраняется в отдельный файл <tableName>.ddb с использованием сериализации Java (ObjectOutputStream/ObjectInputStream).
-Формат данных в файле соответствует внутренней структуре таблицы (список словарей).
-Пример использования:
-text
+DieselDB - Р­РєСЃРїРµСЂРёРјРµРЅС‚Р°Р»СЊРЅР°СЏ Р±Р°Р·Р° РґР°РЅРЅС‹С… РЅР° Java 17, СЂР°Р·СЂР°Р±РѕС‚Р°РЅРЅР°СЏ Reider85 СЃ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµРј РР СЃСЂРµРґСЃС‚РІ.
+РџРѕРґРґРµСЂР¶РёРІР°РµС‚ РїСЂРѕСЃС‚С‹Рµ SELECT, UPDATE, INSERT, DELETE Р·Р°РїСЂРѕСЃС‹,
+Р·Р°РїСЂРѕСЃС‹ СЃ IN, LIKE, LEFT,RIGHT,INNER,OUTER,CROSS JOIN,Р·Р°РїСЂРѕСЃС‹ СЃ LIKE,Р·Р°РїСЂРѕСЃС‹ СЃ Р°Р»РёР°СЃР°РјРё, Р·Р°РїСЂРѕСЃС‹ СЃ РїРѕРґР·Р°РїСЂРѕСЃР°РјРё
+GROUP BY,ORDER BY, BTREE Рё HASH РёРЅРґРµРєСЃС‹, РєР»Р°СЃС‚РµСЂРЅС‹Рµ РёРЅРґРµРєСЃС‹, С‚СЂР°РЅР·Р°РєС†РёРё СЃ СѓСЂРѕРІРЅСЏРјРё РёР·РѕР»СЏС†РёРё
+READ_UNCOMMITTED,READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE
+Р’ РїР»Р°РЅР°С… СЂРµР°Р»РёР·Р°С†РёСЏ РјР°С‚РµРјР°С‚РёС‡РµСЃРєРёС… С„СѓРЅРєС†РёР№ РІ Р·Р°РїСЂРѕСЃР°С…,РІРёР·СѓР°Р»СЊРЅРѕРіРѕ РёРЅС‚РµСЂС„РµР№СЃР° Р°РЅР°Р»РѕРіРёС‡РЅРѕРіРѕ PG_ADMIN, РїСЂРѕРґРІРёРЅСѓС‚С‹[ DDL Р·Р°РїСЂРѕСЃРѕРІ
 
-Свернуть
+DieselDB вЂ“ Eine experimentelle Datenbank auf Basis von Java 17, entwickelt von Reider85 unter Einsatz von KI-Tools.
 
-Перенос
+UnterstГјtzt werden einfache SELECT-, UPDATE-, INSERT- und DELETE-Abfragen,
+Abfragen mit IN, LIKE, LEFT, RIGHT, INNER, OUTER und CROSS JOIN,
+Abfragen mit LIKE, Abfragen mit Aliasen, Abfragen mit Unterabfragen,
+GROUP BY, ORDER BY, BTREE- und HASH-Indizes, geclusterte Indizes sowie Transaktionen mit den Isolationsleveln
+READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ und SERIALIZABLE.
+Geplant sind die Implementierung mathematischer Funktionen in Abfragen, eine grafische BenutzeroberflГ¤che Г¤hnlich wie pgAdmin sowie erweiterte DDL-Abfragen.
 
-Копировать
-PING ? OK: PONG
-CREATE§§§users ? OK: Table 'users' created
-INSERT§§§users§§§name:::John:::age:::30 ? OK: 1 row inserted
-SELECT§§§users§§§age=30 ? OK: name:::age;;;John:::30
-UPDATE§§§users§§§name=John;;;age:::31 ? OK: 1
-DELETE§§§users§§§age=31 ? OK: 1
-Ограничения и возможные улучшения:
-Используется простая сериализация Java, что может быть заменено на JSON или бинарный формат для большей гибкости.
-Отсутствует журналирование операций (write-ahead logging) для восстановления после сбоев.
-Нет сжатия данных или версионирования.
-Условия в SELECT/UPDATE/DELETE поддерживают только простое равенство (key=value).
-Этот код представляет собой базовую реализацию файловой базы данных с многопоточностью и может служить основой для более сложных систем.
+DieselDB: una base de datos experimental en Java 17, desarrollada por Reider85 con la ayuda de herramientas de IA.
+Soporta consultas simples SELECT, UPDATE, INSERT, DELETE; consultas con IN, LIKE; JOIN (LEFT, RIGHT, INNER, OUTER, CROSS); consultas con LIKE, alias y subconsultas; GROUP BY, ORDER BY; Г­ndices BTREE y HASH, Г­ndices clusterizados; transacciones con niveles de aislamiento READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE.
+Entre los planes futuros se incluye la implementaciГіn de funciones matemГЎticas en consultas, una interfaz visual similar a PG_ADMIN y consultas DDL avanzadas.
 
+DieselDB - е®ћйЄЊжЂ§ж•°жЌ®еє“пјЊеџєдєЋ Java 17 ејЂеЏ‘пјЊз”± Reider85 еЂџеЉ© AI е·Ґе…·е€›е»єгЂ‚
+
+ж”ЇжЊЃз®ЂеЌ•зљ„ SELECTгЂЃUPDATEгЂЃINSERTгЂЃDELETE жџҐиЇўпјЊ
+ж”ЇжЊЃеё¦жњ‰ INгЂЃLIKE зљ„жџҐиЇўпјЊж”ЇжЊЃ LEFTгЂЃRIGHTгЂЃINNERгЂЃOUTERгЂЃCROSS JOINпјЊ
+ж”ЇжЊЃеё¦жњ‰ LIKE зљ„жџҐиЇўпјЊж”ЇжЊЃе€«еђЌжџҐиЇўпјЊж”ЇжЊЃе­ђжџҐиЇўпјЊ
+ж”ЇжЊЃ GROUP BYгЂЃORDER BYпјЊж”ЇжЊЃ BTREE е’Њ HASH зґўеј•пјЊж”ЇжЊЃиЃљз°‡зґўеј•пјЊ
+ж”ЇжЊЃдє‹еЉЎеЏЉйљ”з¦»зє§е€«пјљ
+READ_UNCOMMITTEDгЂЃREAD_COMMITTEDгЂЃREPEATABLE_READгЂЃSERIALIZABLE
+
+жњЄжќҐи®Ўе€’е®ћзЋ°жџҐиЇўдё­зљ„ж•°е­¦е‡Ѕж•°гЂЃз±»дјјдєЋ PG_ADMIN зљ„еЏЇи§†еЊ–з•ЊйќўпјЊд»ҐеЏЉй«зє§ DDL жџҐиЇўгЂ‚
