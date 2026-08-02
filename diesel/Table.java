@@ -27,6 +27,7 @@ class Table implements Serializable {
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
     private transient Map<String, Index> indexes;
     private transient Map<String, Sequence> sequences;
+    private final Map<String, String> indexDefinitions = new ConcurrentHashMap<>();
     private boolean isFileInitialized;
     private boolean hasClusteredIndex;
     private String clusteredIndexColumn;
@@ -119,6 +120,7 @@ class Table implements Serializable {
             }
         }
         indexes.put(columnName, index);
+        indexDefinitions.put(columnName, "BTREE");
         LOGGER.log(Level.INFO, "Created B-tree index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
@@ -135,6 +137,7 @@ class Table implements Serializable {
             }
         }
         indexes.put(columnName, index);
+        indexDefinitions.put(columnName, "HASH");
         LOGGER.log(Level.INFO, "Created hash index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
@@ -155,6 +158,7 @@ class Table implements Serializable {
             }
         }
         indexes.put(columnName, index);
+        indexDefinitions.put(columnName, "UNIQUE");
         LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
@@ -270,6 +274,33 @@ class Table implements Serializable {
                 if (key != null) {
                     clusteredIndex.insert(key, i);
                 }
+            }
+        }
+        if (indexDefinitions != null) {
+            for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
+                String column = entry.getKey();
+                Class<?> keyType = columnTypes.get(column);
+                Index index;
+                switch (entry.getValue()) {
+                    case "BTREE":
+                        index = new BTreeIndex(keyType);
+                        break;
+                    case "HASH":
+                        index = new HashIndex(keyType);
+                        break;
+                    case "UNIQUE":
+                        index = new UniqueIndex(keyType);
+                        break;
+                    default:
+                        continue;
+                }
+                for (int i = 0; i < rows.size(); i++) {
+                    Object key = rows.get(i).get(column);
+                    if (key != null) {
+                        index.insert(key, i);
+                    }
+                }
+                indexes.put(column, index);
             }
         }
         this.database = null;
@@ -506,6 +537,20 @@ class Table implements Serializable {
             return ((BigDecimal) value).toPlainString();
         }
         return value.toString();
+    }
+
+    public void saveToSerializedFile(String tableName) {
+        String fileName = tableName + ".table";
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
+            oos.writeObject(this);
+            oos.flush();
+            isFileInitialized = true;
+            LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
+                    new Object[]{tableName, fileName, rows.size()});
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
+            throw new RuntimeException("Failed to save table to file: " + fileName, e);
+        }
     }
 
     public static Table loadFromFile(Database database, String tableName) {

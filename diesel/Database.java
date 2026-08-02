@@ -1,5 +1,6 @@
 package diesel;
 
+import java.io.File;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -62,8 +63,10 @@ class Database {
                     if (entry.getValue() != null) {
                         tables.put(entry.getKey(), entry.getValue());
                         entry.getValue().saveToFile(entry.getKey());
+                        entry.getValue().saveToSerializedFile(entry.getKey());
                     } else {
                         tables.remove(entry.getKey());
+                        deleteTableFiles(entry.getKey());
                     }
                 }
                 currentTransaction.setInactive();
@@ -264,11 +267,41 @@ class Database {
         if (tables.remove(tableName) == null) {
             throw new IllegalArgumentException("Table " + tableName + " does not exist");
         }
+        deleteTableFiles(tableName);
         for (Transaction transaction : activeTransactions.values()) {
             if (transaction.isActive()) {
                 transaction.updateTable(tableName, null);
             }
         }
+    }
+
+    public void saveTablesToDisk() {
+        for (Map.Entry<String, Table> entry : tables.entrySet()) {
+            entry.getValue().saveToSerializedFile(entry.getKey());
+        }
+        LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
+    }
+
+    public void loadTablesFromDisk() {
+        File dir = new File(".");
+        File[] files = dir.listFiles((d, name) -> name.endsWith(".table"));
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            String tableName = file.getName().substring(0, file.getName().length() - ".table".length());
+            Table table = Table.loadFromFile(this, tableName);
+            if (table != null) {
+                tables.put(tableName, table);
+                LOGGER.log(Level.INFO, "Loaded table {0} from disk with {1} rows",
+                        new Object[]{tableName, table.getRows().size()});
+            }
+        }
+    }
+
+    private void deleteTableFiles(String tableName) {
+        new File(tableName + ".csv").delete();
+        new File(tableName + ".table").delete();
     }
 
     public boolean isInTransaction(UUID transactionId) {

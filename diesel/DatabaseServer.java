@@ -65,6 +65,7 @@ public class DatabaseServer {
         LOGGER.log(Level.INFO, "Server configured with transaction isolation level: {0}", isolationLevel);
 
         running = true;
+        database.loadTablesFromDisk();
         try {
             serverSocket = new ServerSocket(port);
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
