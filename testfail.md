@@ -1,0 +1,54 @@
+# Failed test runs
+
+This file records each failed test run and the analysis of why it happened.
+Fixes are applied in `QueryParser` / `SubqueryParser` until the whole test
+suite in `test/diesel/` passes.
+
+## Run 1 (before fixes)
+
+Date: 2026-08-02
+
+Failing test: `diesel.PerformanceTest`
+
+Failing query:
+`SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE`
+
+Error:
+```
+SEVERE: Unknown column: USERS.TRUE, available columns: [USERSCORE, SCORE, ACTIVE, INITIAL, RANK, BIRTHDATE, LEVEL, BALANCE, NAME, PRECISION, LASTACTION, USER_CODE, ID, SESSION_ID, LASTLOGIN, AGE]
+SEVERE: Failed to parse query: SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE, Error: Unknown column: USERS.TRUE
+Exception in thread "main" java.lang.IllegalArgumentException: Unknown column: USERS.TRUE
+```
+
+### Analysis
+
+The SQL boolean literals `TRUE` / `FALSE` are not recognized as literals in
+`WHERE` conditions. In `QueryParser.parseComparisonCondition`
+(`diesel/QueryParser.java`) the right-hand side of a comparison such as
+`ACTIVE = TRUE` was matched by the generic "column name" pattern first, so
+`TRUE` was treated as a column reference (`USERS.TRUE`) instead of a boolean
+literal value, and column validation failed with `Unknown column: USERS.TRUE`.
+
+The same defect exists in `SubqueryParser.parseSingleCondition`
+(`diesel/SubqueryParser.java`).
+
+This is a regression against prompt 4 from `prompt.md` (support `TRUE`,
+`FALSE`, `NULL` literals; the identifier on the left must not be confused with
+the literal on the right).
+
+Additionally, `PerformanceTest` uses the `NOT` prefix (`NOT AGE = 30`,
+`NOT ACTIVE = FALSE`). `NOT` was not handled by the condition tokenizer, so
+those queries would fail as well once the literal issue was fixed.
+
+### Fix
+
+- `QueryParser.parseComparisonCondition`: recognize `TRUE`, `FALSE`, `NULL`
+  as literals before falling back to column-name parsing. `TRUE`/`FALSE` are
+  parsed as `Boolean` (validated against the column type); `NULL` becomes a
+  `null` value.
+- `QueryParser.tokenizeConditions` / `QueryParser.parseTokenizedConditions`:
+  add `NOT` keyword token support that sets the negation flag for the next
+  condition.
+- `SubqueryParser.parseSingleCondition`: same literal handling as above.
+- `SubqueryParser.tokenizeConditions` / `parseTokenizedConditions`: same `NOT`
+  keyword support.

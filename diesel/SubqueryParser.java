@@ -787,6 +787,7 @@ public class SubqueryParser {
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|'[^']*'|[-]?[0-9]+(?:\\.[0-9]*)?)")));
         patterns.add(Map.entry("Table Alias", Pattern.compile("(?i)\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*\\.[a-zA-Z_][a-zA-Z0-9_]*\\b)")));
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
+        patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
         patterns.add(Map.entry("Alias", Pattern.compile("(?i)\\bAS\\s+[a-zA-Z_][a-zA-Z0-9_]*\\b")));
 
         List<Token> tokens = new ArrayList<>();
@@ -873,6 +874,12 @@ public class SubqueryParser {
             String condStr = token.value;
             String effectiveTableName = lastAlias != null ? tableAliases.getOrDefault(lastAlias, lastAlias) : defaultTableName;
 
+            if (condStr.equalsIgnoreCase("NOT")) {
+                not = true;
+                LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
+                continue;
+            }
+
             if (condStr.startsWith("(") && condStr.endsWith(")")) {
                 String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
                 if (subCondStr.toUpperCase().startsWith("SELECT")) {
@@ -901,6 +908,7 @@ public class SubqueryParser {
 
             lastAlias = null;
             currentConjunction = null;
+            not = false;
         }
 
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
@@ -1148,7 +1156,17 @@ public class SubqueryParser {
         String rightColumn = null;
         Object value = null;
 
-        if (columnPattern.matcher(rightPart).matches()) {
+        String upperRightPart = rightPart.toUpperCase();
+        if (upperRightPart.equals("TRUE") || upperRightPart.equals("FALSE") || upperRightPart.equals("NULL")) {
+            Class<?> literalColumnType = getColumnType(normalizedColumn, combinedColumnTypes);
+            if (upperRightPart.equals("NULL")) {
+                value = null;
+            } else if (literalColumnType == Boolean.class) {
+                value = Boolean.parseBoolean(rightPart);
+            } else {
+                throw new IllegalArgumentException("Boolean value '" + rightPart + "' does not match column type: " + literalColumnType.getSimpleName());
+            }
+        } else if (columnPattern.matcher(rightPart).matches()) {
             rightColumn = rightPart;
         } else {
             value = parseConditionValue(normalizedColumn, rightPart, getColumnType(normalizedColumn, combinedColumnTypes));

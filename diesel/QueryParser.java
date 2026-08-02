@@ -1818,7 +1818,10 @@ class QueryParser {
         // 7. Логические операторы
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
 
-        // 8. Некорректные токены (исключая строковые литералы)
+        // 8. Ключевое слово NOT (отрицание условия)
+        patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
+
+        // 9. Некорректные токены (исключая строковые литералы)
         patterns.add(Map.entry("Invalid Token",
                 Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!'(?:\\\\.|[^'\\\\])*')[^\\s()']+")));
 
@@ -1963,6 +1966,11 @@ class QueryParser {
             }
             if (token.type == TokenType.CONDITION) {
                 String condStr = token.value;
+                if (condStr.equalsIgnoreCase("NOT")) {
+                    not = true;
+                    LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
+                    continue;
+                }
                 if (condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'")) {
                     // Skip quoted strings, as they are handled within LIKE or comparison conditions
                     LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
@@ -1991,8 +1999,9 @@ class QueryParser {
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
                 }
-                // Reset conjunction after adding a condition
+                // Reset conjunction and negation after adding a condition
                 conjunction = null;
+                not = false;
             }
         }
         return conditions;
@@ -2314,7 +2323,17 @@ class QueryParser {
         String rightColumn = null;
         Object value = null;
 
-        if (columnPattern.matcher(actualRightPart).matches()) {
+        String upperRightPart = actualRightPart.toUpperCase();
+        if (upperRightPart.equals("TRUE") || upperRightPart.equals("FALSE") || upperRightPart.equals("NULL")) {
+            Class<?> literalColumnType = getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
+            if (upperRightPart.equals("NULL")) {
+                value = null;
+            } else if (literalColumnType == Boolean.class) {
+                value = Boolean.parseBoolean(actualRightPart);
+            } else {
+                throw new IllegalArgumentException("Boolean value '" + actualRightPart + "' does not match column type: " + literalColumnType.getSimpleName());
+            }
+        } else if (columnPattern.matcher(actualRightPart).matches()) {
             rightColumn = actualRightPart;
         } else {
             try {
