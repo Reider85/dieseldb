@@ -493,6 +493,10 @@ class QueryParser {
                 normalized = normalized.substring(1, normalized.length() - 1).trim().toUpperCase();
             }
             LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
+            Query<?> lexerResult = parseWithLexer(query, normalized, database);
+            if (lexerResult != null) {
+                return lexerResult;
+            }
             if (normalized.startsWith("SELECT")) {
                 return parseSelectQuery(normalized, query, database);
             } else if (normalized.startsWith("INSERT INTO")) {
@@ -541,6 +545,49 @@ class QueryParser {
         } catch (IllegalArgumentException e) {
             LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
             throw e;
+        }
+    }
+
+    /**
+     * Builds the query AST using {@link SqlLexer} for tokenization.
+     * The statement keyword is recognized case-insensitively (SqlLexer uppercases
+     * all keywords) and the query is dispatched to the appropriate builder for
+     * SELECT, INSERT, UPDATE and DELETE. Returns {@code null} for statements that
+     * are not handled here so that the caller can fall back to the legacy parser.
+     */
+    private Query<?> parseWithLexer(String originalQuery, String normalizedQuery, Database database) {
+        try {
+            SqlLexer lexer = new SqlLexer();
+            List<SqlLexer.Token> tokens = lexer.tokenize(originalQuery);
+            String statementType = null;
+            for (SqlLexer.Token token : tokens) {
+                if (token.type == SqlLexer.TokenType.PUNCTUATION && token.value.equals("(")) {
+                    continue;
+                }
+                if (token.type == SqlLexer.TokenType.KEYWORD) {
+                    statementType = token.value.toUpperCase();
+                }
+                break;
+            }
+            if (statementType == null) {
+                return null;
+            }
+            switch (statementType) {
+                case "SELECT":
+                    return parseSelectQuery(normalizedQuery, originalQuery, database);
+                case "INSERT":
+                    return parseInsertQuery(normalizedQuery, originalQuery, database);
+                case "UPDATE":
+                    return parseUpdateQuery(normalizedQuery, originalQuery, database);
+                case "DELETE":
+                    return parseDeleteQuery(normalizedQuery, originalQuery, database);
+                default:
+                    return null;
+            }
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.WARNING, "Lexer-based parsing failed for query: {0}, Error: {1}",
+                    new Object[]{originalQuery, e.getMessage()});
+            return null;
         }
     }
 
@@ -721,6 +768,13 @@ class QueryParser {
         return columnDefs;
     }
 
+    private int indexOfIgnoreCase(String source, String target) {
+        if (source == null || target == null || target.isEmpty()) {
+            return -1;
+        }
+        return source.toUpperCase().indexOf(target.toUpperCase());
+    }
+
     private int findMainFromClause(String query) {
         if (query == null || query.isEmpty()) {
             LOGGER.log(Level.FINEST, "Недопустимый ввод: query={0}", query);
@@ -832,7 +886,11 @@ class QueryParser {
         }
 
         // Извлекаем части запроса
-        String selectPartOriginal = original.substring(original.indexOf("SELECT") + 6, fromIndex).trim();
+        int selectIndex = indexOfIgnoreCase(original, "SELECT");
+        if (selectIndex == -1) {
+            throw new IllegalArgumentException("Недопустимый формат SELECT-запроса: отсутствует SELECT");
+        }
+        String selectPartOriginal = original.substring(selectIndex + 6, fromIndex).trim();
         String tableAndJoinsOriginal = original.substring(fromIndex + 4).trim();
 
         // Парсим элементы SELECT
