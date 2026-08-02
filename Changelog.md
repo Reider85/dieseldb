@@ -245,3 +245,5 @@
 2.4.5 save and load database to file
 2.4.6 test
 2.4.7 test
+2.4.8 QueryParser
+2.4.9 SqlLexer
