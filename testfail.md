@@ -52,3 +52,60 @@ those queries would fail as well once the literal issue was fixed.
 - `SubqueryParser.parseSingleCondition`: same literal handling as above.
 - `SubqueryParser.tokenizeConditions` / `parseTokenizedConditions`: same `NOT`
   keyword support.
+
+## Run 2 (after fixes + prompt 4 implementation)
+
+Date: 2026-08-02
+
+All tests in `test/diesel/` passed on the first attempt after implementing
+prompt 4.
+
+### Prompt 4 implementation summary
+
+Prompt 4 from `prompt.md`: "Добавь поддержку литералов `TRUE`, `FALSE`, `NULL`
+в лексер и парсер. В AST они должны представляться как специальные константы.
+Проверь, что в условии `WHERE flag = TRUE` идентификатор `flag` не
+интерпретируется как литерал."
+
+Changes made:
+
+- `SqlLexer` (`diesel/SqlLexer.java`):
+  - Added `LITERAL` token type to `TokenType` enum.
+  - Added `LITERALS` set containing `TRUE`, `FALSE`, `NULL`.
+  - Removed `TRUE`, `FALSE`, `NULL` from `KEYWORDS` set.
+  - Updated `tokenize()` to emit `LITERAL` tokens for `TRUE`/`FALSE`/`NULL`
+    (case-insensitive), keeping them distinct from `KEYWORD` tokens so the
+    statement-type detection in `parseWithLexer` is unaffected.
+
+- `QueryParser` (`diesel/QueryParser.java`):
+  - `parseComparisonCondition`: recognizes `TRUE`, `FALSE`, `NULL` as literal
+    values before falling back to column-name parsing. `TRUE`/`FALSE` are
+    parsed as `Boolean` (validated against the column type); `NULL` becomes a
+    `null` value. The left-hand identifier (e.g. `flag` in `flag = TRUE`) is
+    correctly treated as a column reference, not a literal.
+  - `parseConditionValue`: handles `NULL` literal (returns `null`) and
+    `TRUE`/`FALSE` (returns `Boolean`, validated against column type).
+  - `tokenizeConditions` / `parseTokenizedConditions`: `NOT` keyword token
+    support sets the negation flag for the next condition.
+
+- `SubqueryParser` (`diesel/SubqueryParser.java`):
+  - `parseSingleCondition`: same literal handling as `QueryParser`.
+  - `tokenizeConditions` / `parseTokenizedConditions`: same `NOT` keyword
+    support.
+
+### Test results
+
+| Test                  | Result |
+|-----------------------|--------|
+| PerformanceTest       | PASS   |
+| AdvancedTest          | PASS   |
+| AliasesTest           | PASS   |
+| GroupByTest           | PASS   |
+| InTest                | PASS   |
+| JoinTest              | PASS   |
+| LikeTest              | PASS   |
+| OrderByTest           | PASS   |
+| PersistenceTest       | PASS   |
+| SubqueriesTest        | PASS   |
+
+All 10 tests passed. No further attempts needed.

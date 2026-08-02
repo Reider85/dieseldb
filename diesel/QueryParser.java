@@ -1737,6 +1737,9 @@ class QueryParser {
 
     private Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {
         try {
+            if (valueStr.equalsIgnoreCase("NULL")) {
+                return null;
+            }
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
                 String strippedValue = valueStr.substring(1, valueStr.length() - 1);
                 if (columnType == String.class) {

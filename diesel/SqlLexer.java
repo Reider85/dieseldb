@@ -14,6 +14,7 @@ public class SqlLexer {
         INTEGER,
         DECIMAL,
         STRING_LITERAL,
+        LITERAL,
         COMPARISON_OPERATOR,
         PUNCTUATION
     }
@@ -36,10 +37,12 @@ public class SqlLexer {
     private static final Set<String> KEYWORDS = new HashSet<>(Set.of(
             "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
             "CREATE", "TABLE", "INDEX", "HASH", "UNIQUE", "CLUSTERED", "PRIMARY", "KEY", "SEQUENCE",
-            "AND", "OR", "NOT", "LIKE", "IN", "IS", "NULL", "TRUE", "FALSE", "AS", "JOIN",
+            "AND", "OR", "NOT", "LIKE", "IN", "IS", "AS", "JOIN",
             "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON", "GROUP", "BY", "ORDER",
             "HAVING", "LIMIT", "ASC", "DESC", "DISTINCT", "BEGIN", "TRANSACTION", "COMMIT",
             "ROLLBACK", "ISOLATION", "LEVEL", "AUTOCOMMIT", "SAVEPOINT"));
+
+    private static final Set<String> LITERALS = new HashSet<>(Set.of("TRUE", "FALSE", "NULL"));
 
     private static final String[] OPERATORS = {">=", "<=", "!=", "<>", "=", "<", ">"};
     private static final String PUNCTUATION_CHARS = "(),;.*+-/%[]?:" + "'";
@@ -136,7 +139,9 @@ public class SqlLexer {
                 }
                 String word = sb.toString();
                 String upper = word.toUpperCase();
-                if (KEYWORDS.contains(upper)) {
+                if (LITERALS.contains(upper)) {
+                    tokens.add(new Token(TokenType.LITERAL, upper));
+                } else if (KEYWORDS.contains(upper)) {
                     tokens.add(new Token(TokenType.KEYWORD, upper));
                 } else {
                     tokens.add(new Token(TokenType.IDENTIFIER, word));

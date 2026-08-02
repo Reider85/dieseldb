@@ -247,4 +247,4 @@
 2.4.7 test
 2.4.8 QueryParser
 2.4.9 SqlLexer
-2.5.0 Lexer implementation
+2.5.0 Lexer fix
