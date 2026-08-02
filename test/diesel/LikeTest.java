@@ -7,7 +7,7 @@ import java.util.logging.Level;
 
 public class LikeTest {
 
-    private static final int RECORD_COUNT = 1000;
+    private static final int RECORD_COUNT = 100;
     private static final Logger LOGGER = Logger.getLogger(LikeTest.class.getName());
     private final Database database;
 

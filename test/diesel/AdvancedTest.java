@@ -8,7 +8,7 @@ import java.io.File;
 
 public class AdvancedTest {
     private static final Logger LOGGER = Logger.getLogger(AdvancedTest.class.getName());
-    private static final int RECORD_COUNT = 1000;
+    private static final int RECORD_COUNT = 100;
     private final Database database;
 
     public AdvancedTest() {

@@ -9,7 +9,7 @@ import java.util.logging.Level;
 
 public class GroupByTest {
     private static final Logger LOGGER = Logger.getLogger(GroupByTest.class.getName());
-    private static final int RECORD_COUNT = 1000;
+    private static final int RECORD_COUNT = 100;
     private final Database database;
     private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
 

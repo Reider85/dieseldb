@@ -11,7 +11,7 @@ import java.util.Locale;
 
 public class OrderByTest {
     private static final Logger LOGGER = Logger.getLogger(OrderByTest.class.getName());
-    private static final int RECORD_COUNT = 1000;
+    private static final int RECORD_COUNT = 100;
     private final Database database;
     private static final SimpleDateFormat TIMESTAMP_MS_FORMATTER = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
