@@ -56,6 +56,10 @@ class QueryParser {
     static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+    private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
+    private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_][a-zA-Z0-9_]*";
+    private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
+    private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*";
     private String originalQuery;
     private static final String[] OPERATORS = {"!=", "<>", ">=", "<=", "=", "<", ">", "LIKE", "NOT LIKE"};
 
@@ -488,9 +492,9 @@ class QueryParser {
     public Query<?> parse(String query, Database database) {
         try {
             // Normalize and remove surrounding parentheses
-            String normalized = query.trim().toUpperCase();
+            String normalized = toUpperCasePreservingQuotedIdentifiers(query.trim());
             while (normalized.startsWith("(") && normalized.endsWith(")")) {
-                normalized = normalized.substring(1, normalized.length() - 1).trim().toUpperCase();
+                normalized = toUpperCasePreservingQuotedIdentifiers(normalized.substring(1, normalized.length() - 1).trim());
             }
             LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
             Query<?> lexerResult = parseWithLexer(query, normalized, database);
@@ -646,7 +650,7 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid CREATE TABLE query format: missing or mismatched parentheses");
         }
 
-        String tableName = original.substring(0, firstParen).replace("CREATE TABLE", "").trim();
+        String tableName = unquoteIdentifier(original.substring(0, firstParen).replace("CREATE TABLE", "").trim());
         String columnsPart = original.substring(firstParen + 1, lastParen).trim();
 
         List<String> columnDefs = splitColumnDefinitions(columnsPart);
@@ -660,7 +664,7 @@ class QueryParser {
             if (colParts.length < 2) {
                 throw new IllegalArgumentException("Invalid column definition: " + colDef);
             }
-            String colName = colParts[0];
+            String colName = unquoteIdentifier(colParts[0]);
             String type = colParts[1].toUpperCase();
             String constraints = colParts.length > 2 ? colParts[2].toUpperCase() : "";
             boolean isPrimaryKey = constraints.contains("PRIMARY KEY");
@@ -783,6 +787,7 @@ class QueryParser {
 
         // Регулярные выражения для разных типов токенов
         Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'", Pattern.DOTALL);
+        Pattern quotedIdentifierPattern = Pattern.compile("\"[^\"]*\"");
         Pattern openParenPattern = Pattern.compile("\\(");
         Pattern closeParenPattern = Pattern.compile("\\)");
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
@@ -796,6 +801,8 @@ class QueryParser {
         while (currentPos < query.length()) {
             // Проверяем строки в кавычках
             Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
+            // Проверяем quoted-идентификаторы
+            Matcher quotedIdentifierMatcher = quotedIdentifierPattern.matcher(query).region(currentPos, query.length());
             // Проверяем открывающую скобку
             Matcher openParenMatcher = openParenPattern.matcher(query).region(currentPos, query.length());
             // Проверяем закрывающую скобку
@@ -815,6 +822,10 @@ class QueryParser {
                 token = quotedStringMatcher.group();
                 nextPos = quotedStringMatcher.end();
                 tokenType = "quotedString";
+            } else if (quotedIdentifierMatcher.lookingAt()) {
+                token = quotedIdentifierMatcher.group();
+                nextPos = quotedIdentifierMatcher.end();
+                tokenType = "quotedIdentifier";
             } else if (openParenMatcher.lookingAt()) {
                 token = openParenMatcher.group();
                 nextPos = openParenMatcher.end();
@@ -845,6 +856,8 @@ class QueryParser {
 
             // Обрабатываем токен
             if (tokenType.equals("quotedString")) {
+                currentToken.append(token);
+            } else if (tokenType.equals("quotedIdentifier")) {
                 currentToken.append(token);
             } else if (tokenType.equals("openParen")) {
                 bracketDepth++;
@@ -934,13 +947,13 @@ class QueryParser {
         List<SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\s*$");
+        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
         Pattern starPattern = Pattern.compile("^\\*$");
 
         for (String item : selectItems) {
@@ -955,66 +968,70 @@ class QueryParser {
 
             if (countMatcher.matches()) {
                 String countArg = countMatcher.group(1);
-                String alias = countMatcher.group(2);
+                String alias = unquoteIdentifier(countMatcher.group(2));
                 if (countArg.startsWith("(") && countArg.endsWith(")")) {
                     String subQueryStr = countArg.substring(1, countArg.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
                     aggregates.add(new AggregateFunction("COUNT", new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: COUNT(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
-                    String column = countArg.equals("*") ? null : countArg;
+                    String column = countArg.equals("*") ? null : unquoteQualifiedIdentifier(countArg);
                     aggregates.add(new AggregateFunction("COUNT", column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: COUNT({0}){1}",
                             new Object[]{column == null ? "*" : column, alias != null ? " AS " + alias : ""});
                 }
             } else if (minMatcher.matches()) {
                 String column = minMatcher.group(1);
-                String alias = minMatcher.group(2);
+                String alias = unquoteIdentifier(minMatcher.group(2));
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
                     aggregates.add(new AggregateFunction("MIN", new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MIN(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
+                    column = unquoteQualifiedIdentifier(column);
                     aggregates.add(new AggregateFunction("MIN", column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MIN({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
             } else if (maxMatcher.matches()) {
                 String column = maxMatcher.group(1);
-                String alias = maxMatcher.group(2);
+                String alias = unquoteIdentifier(maxMatcher.group(2));
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
                     aggregates.add(new AggregateFunction("MAX", new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MAX(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
+                    column = unquoteQualifiedIdentifier(column);
                     aggregates.add(new AggregateFunction("MAX", column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MAX({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
             } else if (avgMatcher.matches()) {
                 String column = avgMatcher.group(1);
-                String alias = avgMatcher.group(2);
+                String alias = unquoteIdentifier(avgMatcher.group(2));
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
                     aggregates.add(new AggregateFunction("AVG", new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: AVG(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
+                    column = unquoteQualifiedIdentifier(column);
                     aggregates.add(new AggregateFunction("AVG", column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: AVG({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
             } else if (sumMatcher.matches()) {
                 String column = sumMatcher.group(1);
-                String alias = sumMatcher.group(2);
+                String alias = unquoteIdentifier(sumMatcher.group(2));
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
                     aggregates.add(new AggregateFunction("SUM", new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: SUM(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
+                    column = unquoteQualifiedIdentifier(column);
                     aggregates.add(new AggregateFunction("SUM", column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: SUM({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
@@ -1030,7 +1047,7 @@ class QueryParser {
                     LOGGER.log(Level.SEVERE, "Обнаружен пустой подзапрос в SELECT: {0}", trimmedItem);
                     throw new IllegalArgumentException("Пустой подзапрос в SELECT: " + trimmedItem);
                 }
-                String alias = subQueryMatcher.group(1);
+                String alias = unquoteIdentifier(subQueryMatcher.group(1));
                 Query<?> subQuery = parse(subQueryStr, database);
                 SubQuery newSubQuery = new SubQuery(subQuery, alias);
                 subQueries.add(newSubQuery);
@@ -1042,8 +1059,8 @@ class QueryParser {
                 LOGGER.log(Level.FINE, "Разобран подзапрос в SELECT: {0}{1}, размер subQueries: {2}, подзапрос: {3}",
                         new Object[]{subQueryStr, alias != null ? " AS " + alias : "", subQueries.size(), newSubQuery});
             } else if (columnMatcher.matches()) {
-                String column = columnMatcher.group(1);
-                String alias = columnMatcher.group(2);
+                String column = unquoteQualifiedIdentifier(columnMatcher.group(1));
+                String alias = unquoteIdentifier(columnMatcher.group(2));
                 columns.add(column);
                 if (alias != null) {
                     columnAliases.put(column, alias);
@@ -1083,12 +1100,12 @@ class QueryParser {
 
         String mainTablePart = joinParts.get(0).trim();
         String[] mainTableTokens = mainTablePart.split("\\s+");
-        tableName = mainTableTokens[0].trim();
+        tableName = unquoteIdentifier(mainTableTokens[0].trim());
         if (mainTableTokens.length > 1) {
             if (mainTableTokens.length == 3 && mainTableTokens[1].equalsIgnoreCase("AS")) {
-                tableAlias = mainTableTokens[2].trim();
+                tableAlias = unquoteIdentifier(mainTableTokens[2].trim());
             } else if (mainTableTokens.length == 2) {
-                tableAlias = mainTableTokens[1].trim();
+                tableAlias = unquoteIdentifier(mainTableTokens[1].trim());
             }
         }
         if (tableAlias != null) {
@@ -1139,12 +1156,12 @@ class QueryParser {
 
             String joinTablePart = joinTableTokens[0].trim();
             String[] joinTableParts = joinTablePart.split("\\s+");
-            joinTableName = joinTableParts[0].trim();
+            joinTableName = unquoteIdentifier(joinTableParts[0].trim());
             if (joinTableParts.length > 1) {
                 if (joinTableParts.length == 3 && joinTableParts[1].equalsIgnoreCase("AS")) {
-                    joinTableAlias = joinTableParts[2].trim();
+                    joinTableAlias = unquoteIdentifier(joinTableParts[2].trim());
                 } else if (joinTableParts.length == 2) {
-                    joinTableAlias = joinTableParts[1].trim();
+                    joinTableAlias = unquoteIdentifier(joinTableParts[1].trim());
                 }
             }
             if (joinTableAlias != null) {
@@ -1405,7 +1422,7 @@ class QueryParser {
                                                  List<SubQuery> subQueries) {
         List<OrderByInfo> orderBy = new ArrayList<>();
         String[] orderItems = orderByClause.split(",");
-        Pattern orderPattern = Pattern.compile("(?i)^\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|[a-zA-Z_][a-zA-Z0-9_]*)\\s*(ASC|DESC)?\\s*$");
+        Pattern orderPattern = Pattern.compile("(?i)^\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(ASC|DESC)?\\s*$");
 
         for (String item : orderItems) {
             String trimmedItem = item.trim();
@@ -1414,7 +1431,7 @@ class QueryParser {
                 LOGGER.log(Level.SEVERE, "Invalid ORDER BY item: {0}", trimmedItem);
                 throw new IllegalArgumentException("Invalid ORDER BY item: " + trimmedItem);
             }
-            String column = orderMatcher.group(1).trim();
+            String column = unquoteQualifiedIdentifier(orderMatcher.group(1).trim());
             String direction = orderMatcher.group(2) != null ? orderMatcher.group(2).toUpperCase() : "ASC";
             boolean ascending = direction.equals("ASC");
 
@@ -1591,10 +1608,11 @@ class QueryParser {
         }
 
         String tableAndColumns = parts[0].replace("INSERT INTO", "").trim();
-        String tableName = tableAndColumns.substring(0, tableAndColumns.indexOf("(")).trim();
+        String tableName = unquoteIdentifier(tableAndColumns.substring(0, tableAndColumns.indexOf("(")).trim());
         String columnsPart = original.substring(original.indexOf("(") + 1, original.indexOf(")")).trim();
         List<String> columns = Arrays.stream(columnsPart.split(","))
                 .map(String::trim)
+                .map(QueryParser::unquoteIdentifier)
                 .collect(Collectors.toList());
 
         Table table = database.getTable(tableName);
@@ -1642,13 +1660,13 @@ class QueryParser {
 
         String tablePart = parts[0].replace("UPDATE", "").trim();
         String[] tableTokens = tablePart.split("\\s+");
-        String tableName = tableTokens[0].trim();
+        String tableName = unquoteIdentifier(tableTokens[0].trim());
         String tableAlias = null;
         if (tableTokens.length > 1) {
             if (tableTokens.length == 3 && tableTokens[1].equalsIgnoreCase("AS")) {
-                tableAlias = tableTokens[2].trim();
+                tableAlias = unquoteIdentifier(tableTokens[2].trim());
             } else if (tableTokens.length == 2) {
-                tableAlias = tableTokens[1].trim();
+                tableAlias = unquoteIdentifier(tableTokens[1].trim());
             }
         }
 
@@ -1684,7 +1702,7 @@ class QueryParser {
             if (kv.length != 2) {
                 throw new IllegalArgumentException("Invalid SET clause");
             }
-            String column = kv[0].trim();
+            String column = unquoteIdentifier(kv[0].trim());
             String valueStr = kv[1].trim();
             Class<?> columnType = columnTypes.get(column);
             if (columnType == null) {
@@ -1714,7 +1732,7 @@ class QueryParser {
         String tableAndCondition = fromParts[1].trim();
         LOGGER.log(Level.FINE, "Table and condition: {0}", tableAndCondition);
         String[] whereParts = tableAndCondition.split("(?i)WHERE\\s+", 2);
-        String tableName = whereParts[0].trim();
+        String tableName = unquoteIdentifier(whereParts[0].trim());
         List<Condition> conditions = new ArrayList<>();
 
         if (whereParts.length == 2) {
@@ -1858,27 +1876,27 @@ class QueryParser {
 
         // 2. Условия LIKE и NOT LIKE
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*'")));
+                Pattern.compile("(?i)" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*'")));
 
         // 3. Подзапросы
         patterns.add(Map.entry("SubQuery",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\(\\s*SELECT\\s+[^)]+\\)")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\(\\s*SELECT\\s+[^)]+\\)")));
 
         // 4. Условия IN
         patterns.add(Map.entry("In Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\([^)]+\\)")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\([^)]+\\)")));
 
         // 5. Условия NULL
         patterns.add(Map.entry("Null Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IS\\s*(NOT\\s+)?NULL\\b")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
 
         // 6. Условия сравнения (строки, числа, столбцы)
         patterns.add(Map.entry("Comparison String Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*')")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*')")));
         patterns.add(Map.entry("Comparison Number Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
         patterns.add(Map.entry("Comparison Column Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + ")")));
 
         // 7. Логические операторы
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
@@ -1886,9 +1904,9 @@ class QueryParser {
         // 8. Ключевое слово NOT (отрицание условия)
         patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
 
-        // 9. Некорректные токены (исключая строковые литералы)
+        // 9. Некорректные токены (исключая строковые литералы и quoted-идентификаторы)
         patterns.add(Map.entry("Invalid Token",
-                Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!'(?:''|\\\\.|[^'\\\\])*')[^\\s()']+")));
+                Pattern.compile("(?i)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?(?:LIKE|IN|IS)\\b)(?!'(?:''|\\\\.|[^'\\\\])*')(?!" + QUOTED_IDENTIFIER_PATTERN + ")[^\\s()'\"]+")));
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
@@ -1956,7 +1974,7 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
                 } else if (matchedPatternName.equals("Like Condition")) {
                     Matcher likeMatcher = Pattern.compile(
-                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|''|[^'])*')")
+                                    "(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|''|[^'])*')")
                             .matcher(matchedToken);
                     if (likeMatcher.matches()) {
                         String column = likeMatcher.group(1);
@@ -2185,10 +2203,10 @@ class QueryParser {
         }
 
         // Проверка на корректность шаблона LIKE
-        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:''|[^'])*')");
+        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT LIKE)\\s*('(?:''|[^'])*')");
         Matcher likeMatcher = likePattern.matcher(normalizedCondStr);
         if (likeMatcher.matches()) {
-            String column = likeMatcher.group(1).trim();
+            String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());
             String operatorStr = likeMatcher.group(2).toUpperCase();
             String value = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1); // Удаляем кавычки
             String actualColumn = resolveColumnAlias(column, columnAliases);
@@ -2227,20 +2245,20 @@ class QueryParser {
     }
 
     private boolean isInCondition(String condStr) {
-        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
+        Pattern inPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
         return inPattern.matcher(condStr).matches();
     }
 
     private Condition parseInCondition(String condStr, String defaultTableName, Database database, String originalQuery,
                                        Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                        Map<String, String> columnAliases, String conjunction, boolean not) {
-        Pattern inPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
+        Pattern inPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
             throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
         }
 
-        String column = inMatcher.group(1).trim();
+        String column = unquoteQualifiedIdentifier(inMatcher.group(1).trim());
         boolean inNot = inMatcher.group(2) != null;
         String valuesStr = inMatcher.group(3).trim();
         String actualColumn = resolveColumnAlias(column, columnAliases);
@@ -2312,17 +2330,17 @@ class QueryParser {
     }
 
     private boolean isNullCondition(String condStr) {
-        Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
+        Pattern isNullPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
         return isNullPattern.matcher(condStr).matches();
     }
 
     private Condition parseNullCondition(String condStr, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
                                          Map<String, String> tableAliases, Map<String, String> columnAliases,
                                          String conjunction, boolean not) {
-        Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
+        Pattern isNullPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(condStr);
         isNullMatcher.matches();
-        String column = isNullMatcher.group(1).trim();
+        String column = unquoteQualifiedIdentifier(isNullMatcher.group(1).trim());
         boolean isNotNull = isNullMatcher.group(2) != null;
         String actualColumn = resolveColumnAlias(column, columnAliases);
         String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
@@ -2332,7 +2350,7 @@ class QueryParser {
 
     private boolean isSubQueryCondition(String condStr) {
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
                 Pattern.DOTALL
         );
         return subQueryPattern.matcher(condStr).matches();
@@ -2342,12 +2360,12 @@ class QueryParser {
                                              Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                              Map<String, String> columnAliases, String conjunction, boolean not) {
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
                 Pattern.DOTALL
         );
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
         subQueryMatcher.matches();
-        String column = subQueryMatcher.group(1).trim();
+        String column = unquoteQualifiedIdentifier(subQueryMatcher.group(1).trim());
         String operatorStr = subQueryMatcher.group(2).trim();
         String subQueryStr = subQueryMatcher.group(3).trim();
 
@@ -2379,12 +2397,12 @@ class QueryParser {
         String rightPart = condStr.substring(operatorInfo.endIndex).trim();
         String actualRightPart = trimRightPart(rightPart);
 
-        String column = leftPart;
+        String column = unquoteQualifiedIdentifier(leftPart);
         String actualColumn = resolveColumnAlias(column, columnAliases);
         String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
         validateColumn(normalizedColumn, combinedColumnTypes);
 
-        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
+        Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
         String rightColumn = null;
         Object value = null;
 
@@ -2399,7 +2417,7 @@ class QueryParser {
                 throw new IllegalArgumentException("Boolean value '" + actualRightPart + "' does not match column type: " + literalColumnType.getSimpleName());
             }
         } else if (columnPattern.matcher(actualRightPart).matches()) {
-            rightColumn = actualRightPart;
+            rightColumn = unquoteQualifiedIdentifier(actualRightPart);
         } else {
             try {
                 value = parseConditionValue(actualColumn, actualRightPart,
@@ -2408,7 +2426,7 @@ class QueryParser {
                 LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
                         new Object[]{actualRightPart, e.getMessage()});
                 if (columnPattern.matcher(actualRightPart).matches()) {
-                    rightColumn = actualRightPart;
+                    rightColumn = unquoteQualifiedIdentifier(actualRightPart);
                 } else {
                     throw e;
                 }
@@ -2527,14 +2545,15 @@ class QueryParser {
     }
 
     private String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {
-        if (column.contains(".")) {
-            String[] parts = column.split("\\.");
+        String unquoted = unquoteQualifiedIdentifier(column);
+        if (unquoted.contains(".")) {
+            String[] parts = unquoted.split("\\.");
             String tableOrAlias = parts[0].trim();
             String colName = parts[1].trim();
             String tableName = tableAliases.getOrDefault(tableOrAlias, tableOrAlias);
             return tableName + "." + colName;
         }
-        return defaultTableName + "." + column.trim();
+        return defaultTableName + "." + unquoted.trim();
     }
 
     private List<HavingCondition> parseHavingConditions(String havingClause, String defaultTableName, Database database,
@@ -2682,17 +2701,18 @@ class QueryParser {
         }
 
         if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$");
+            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
             Matcher aggMatcher = aggPattern.matcher(leftPart);
             if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);
                 String columnOrSubQuery = aggMatcher.group(2);
-                String alias = aggMatcher.group(3);
+                String alias = unquoteIdentifier(aggMatcher.group(3));
                 if (columnOrSubQuery.startsWith("(") && columnOrSubQuery.endsWith(")")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
                     aggregate = new AggregateFunction(funcName, new SubQuery(subQuery, null), alias);
                 } else {
+                    columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, defaultTableName, tableAliases);
                     String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
                     boolean found = false;
@@ -2924,7 +2944,7 @@ class QueryParser {
     }
 
     private String normalizeQueryString(String query) {
-        return query.trim()
+        String normalized = query.trim()
                 .replaceAll("\\s+", " ")
                 .replaceAll("\\s*([=><!(),])\\s*", "$1")
                 .replaceAll("(?i)\\bEQUALS\\b", "=")
@@ -2941,9 +2961,66 @@ class QueryParser {
                 .replaceAll("\\(\\s+", "(")
                 .replaceAll("\\s+\\)", ")")
                 .replaceAll("(?i)\\bID\\s*=\\s*U\\.ID\\b", "ID=U.ID")
-                .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID")
-                .toUpperCase()
+                .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID");
+        normalized = toUpperCasePreservingQuotedIdentifiers(normalized);
+        return normalized
                 .replaceAll("\\s*=", "=")
                 .replaceAll("=\\s*", "=");
+    }
+
+    /**
+     * Uppercases every character of the input except the contents of
+     * double-quoted identifiers, which keep their original case.
+     */
+    private String toUpperCasePreservingQuotedIdentifiers(String input) {
+        if (input == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder(input.length());
+        boolean inQuotedIdentifier = false;
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == '"') {
+                inQuotedIdentifier = !inQuotedIdentifier;
+                sb.append(c);
+            } else {
+                sb.append(inQuotedIdentifier ? c : Character.toUpperCase(c));
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Removes the surrounding double quotes from a quoted identifier.
+     * Identifiers that are not quoted are returned unchanged.
+     */
+    private static String unquoteIdentifier(String identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        String trimmed = identifier.trim();
+        if (trimmed.length() >= 2 && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"') {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        return trimmed;
+    }
+
+    /**
+     * Removes the surrounding double quotes from each part of a possibly
+     * qualified (table.column) identifier.
+     */
+    private static String unquoteQualifiedIdentifier(String identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        String[] parts = identifier.split("\\.", -1);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) {
+                sb.append('.');
+            }
+            sb.append(unquoteIdentifier(parts[i]));
+        }
+        return sb.toString();
     }
 }

@@ -11,10 +11,40 @@ import java.util.regex.Pattern;
 
 public class SubqueryParser {
     private static final Logger LOGGER = Logger.getLogger(SubqueryParser.class.getName());
+    private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
+    private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_][a-zA-Z0-9_]*";
+    private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
+    private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*";
     private final QueryParser queryParser;
 
     public SubqueryParser() {
         this.queryParser = new QueryParser();
+    }
+
+    private static String unquoteIdentifier(String identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        String trimmed = identifier.trim();
+        if (trimmed.length() >= 2 && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"') {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        return trimmed;
+    }
+
+    private static String unquoteQualifiedIdentifier(String identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        String[] parts = identifier.split("\\.", -1);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) {
+                sb.append('.');
+            }
+            sb.append(unquoteIdentifier(parts[i]));
+        }
+        return sb.toString();
     }
 
     // Модифицируем метод parse для обработки всех подзапросов
@@ -111,6 +141,7 @@ public class SubqueryParser {
 
     private int findMainFromClause(String query) {
         Pattern quotedStringPattern = Pattern.compile("'(?:\\\\.|[^'\\\\])*'");
+        Pattern quotedIdentifierPattern = Pattern.compile("\"[^\"]*\"");
         Pattern subqueryPattern = Pattern.compile("\\(\\s*SELECT\\b", Pattern.DOTALL);
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
         int bracketDepth = 0;
@@ -121,6 +152,11 @@ public class SubqueryParser {
             Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
             if (quotedStringMatcher.lookingAt()) {
                 currentPos = quotedStringMatcher.end();
+                continue;
+            }
+            Matcher quotedIdentifierMatcher = quotedIdentifierPattern.matcher(query).region(currentPos, query.length());
+            if (quotedIdentifierMatcher.lookingAt()) {
+                currentPos = quotedIdentifierMatcher.end();
                 continue;
             }
 
@@ -191,9 +227,9 @@ public class SubqueryParser {
         List<QueryParser.SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\*|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
+        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
         Pattern starPattern = Pattern.compile("^\\*$");
 
         for (String item : selectItems) {
@@ -204,7 +240,7 @@ public class SubqueryParser {
 
             if (subQueryMatcher.matches()) {
                 String subQueryStr = trimmedItem.substring(1, trimmedItem.lastIndexOf(")")).trim();
-                String alias = subQueryMatcher.group(1);
+                String alias = unquoteIdentifier(subQueryMatcher.group(1));
                 validateSubQuery(subQueryStr);
                 Query<?> subQuery = queryParser.parse(subQueryStr, database);
                 subQueries.add(new QueryParser.SubQuery(subQuery, alias));
@@ -215,20 +251,20 @@ public class SubqueryParser {
             } else if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);
                 String arg = aggMatcher.group(2);
-                String alias = aggMatcher.group(3);
+                String alias = unquoteIdentifier(aggMatcher.group(3));
                 if (arg.toUpperCase().startsWith("(") && arg.toUpperCase().contains("SELECT")) {
                     String subQueryStr = arg.substring(1, arg.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);
                     aggregates.add(new QueryParser.AggregateFunction(funcName, new QueryParser.SubQuery(subQuery, null), alias));
                 } else {
-                    String column = arg.equals("*") ? null : arg;
+                    String column = arg.equals("*") ? null : unquoteQualifiedIdentifier(arg);
                     aggregates.add(new QueryParser.AggregateFunction(funcName, column, alias));
                 }
                 LOGGER.log(Level.FINE, "Parsed aggregate: {0}({1}){2}", new Object[]{funcName, arg, alias != null ? " AS " + alias : ""});
             } else if (columnMatcher.matches()) {
-                String column = columnMatcher.group(1);
-                String alias = columnMatcher.group(2);
+                String column = unquoteQualifiedIdentifier(columnMatcher.group(1));
+                String alias = unquoteIdentifier(columnMatcher.group(2));
                 columns.add(column);
                 if (alias != null) {
                     columnAliases.put(column, alias);
@@ -265,9 +301,9 @@ public class SubqueryParser {
 
         String mainTablePart = joinParts.get(0).trim();
         String[] mainTableTokens = mainTablePart.split("\\s+");
-        tableName = mainTableTokens[0].trim();
+        tableName = unquoteIdentifier(mainTableTokens[0].trim());
         if (mainTableTokens.length > 1) {
-            tableAlias = mainTableTokens[mainTableTokens.length - 1].trim();
+            tableAlias = unquoteIdentifier(mainTableTokens[mainTableTokens.length - 1].trim());
         }
         if (tableAlias != null) {
             tableAliases.put(tableAlias, tableName);
@@ -296,9 +332,9 @@ public class SubqueryParser {
             LOGGER.log(Level.FINEST, "Extracted onClause: {0}", onClause);
 
             String[] joinTableTokens = joinTablePart.split("\\s+");
-            joinTableName = joinTableTokens[0].trim();
+            joinTableName = unquoteIdentifier(joinTableTokens[0].trim());
             if (joinTableTokens.length > 1) {
-                joinTableAlias = joinTableTokens[joinTableTokens.length - 1].trim();
+                joinTableAlias = unquoteIdentifier(joinTableTokens[joinTableTokens.length - 1].trim());
             }
             if (joinTableAlias != null) {
                 tableAliases.put(joinTableAlias, joinTableName);
@@ -626,7 +662,7 @@ public class SubqueryParser {
         List<QueryParser.OrderByInfo> orderBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(orderByClause);
         Pattern columnPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(\\s*SELECT\\s+.*?\\))\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?\\s*(ASC|DESC)?$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?\\s*(ASC|DESC)?$",
                 Pattern.DOTALL);
 
         for (String item : items) {
@@ -644,6 +680,7 @@ public class SubqueryParser {
                     subQueries.add(new QueryParser.SubQuery(subQuery, null));
                     orderBy.add(new QueryParser.OrderByInfo("SUBQUERY_" + subQueries.size(), ascending));
                 } else {
+                    columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, tableName, tableAliases);
                     validateColumn(normalizedColumn, combinedColumnTypes);
                     orderBy.add(new QueryParser.OrderByInfo(normalizedColumn, ascending));
@@ -660,7 +697,7 @@ public class SubqueryParser {
                                             Map<String, String> columnAliases) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(groupByClause);
-        Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(\\s*SELECT\\s+.*?\\))$", Pattern.DOTALL);
+        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))$", Pattern.DOTALL);
 
         for (String item : items) {
             String trimmedItem = item.trim();
@@ -673,6 +710,7 @@ public class SubqueryParser {
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);
                     groupBy.add("SUBQUERY_" + System.currentTimeMillis());
                 } else {
+                    columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, tableName, tableAliases);
                     validateColumn(normalizedColumn, combinedColumnTypes);
                     groupBy.add(normalizedColumn);
@@ -689,6 +727,7 @@ public class SubqueryParser {
         StringBuilder currentItem = new StringBuilder();
         int parenDepth = 0;
         boolean inQuotes = false;
+        boolean inQuotedIdentifier = false;
 
         for (int i = 0; i < input.length(); i++) {
             char c = input.charAt(i);
@@ -697,7 +736,12 @@ public class SubqueryParser {
                 currentItem.append(c);
                 continue;
             }
-            if (!inQuotes) {
+            if (c == '"' && !inQuotes) {
+                inQuotedIdentifier = !inQuotedIdentifier;
+                currentItem.append(c);
+                continue;
+            }
+            if (!inQuotes && !inQuotedIdentifier) {
                 if (c == '(') {
                     parenDepth++;
                     currentItem.append(c);
@@ -778,21 +822,21 @@ public class SubqueryParser {
         patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
         patterns.add(Map.entry("In Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+[a-zA-Z_][a-zA-Z0-9_]*)?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Comparison",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+[a-zA-Z_][a-zA-Z0-9_]*)?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Like",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+[a-zA-Z_][a-zA-Z0-9_]*)?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Null Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*IS\\s*(NOT\\s+)?NULL\\b")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
         patterns.add(Map.entry("Comparison Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|'[^']*'|[-]?[0-9]+(?:\\.[0-9]*)?)")));
-        patterns.add(Map.entry("Table Alias", Pattern.compile("(?i)\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*\\.[a-zA-Z_][a-zA-Z0-9_]*\\b)")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|'[^']*'|[-]?[0-9]+(?:\\.[0-9]*)?)")));
+        patterns.add(Map.entry("Table Alias", Pattern.compile("(?i)\\b" + SIMPLE_IDENTIFIER_PATTERN + "(?=\\s*\\." + SIMPLE_IDENTIFIER_PATTERN + "\\b)")));
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
         patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
-        patterns.add(Map.entry("Alias", Pattern.compile("(?i)\\bAS\\s+[a-zA-Z_][a-zA-Z0-9_]*\\b")));
+        patterns.add(Map.entry("Alias", Pattern.compile("(?i)\\bAS\\s+" + IDENTIFIER_PATTERN + "\\b")));
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
@@ -927,19 +971,19 @@ public class SubqueryParser {
                                                    Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                                    Map<String, String> columnAliases, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
                 Pattern.DOTALL);
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
             Pattern valuesInPattern = Pattern.compile(
-                    "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$",
+                    "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$",
                     Pattern.DOTALL);
             Matcher valuesMatcher = valuesInPattern.matcher(condStr);
             if (!valuesMatcher.matches()) {
                 throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
             }
 
-            String column = valuesMatcher.group(1).trim();
+            String column = unquoteQualifiedIdentifier(valuesMatcher.group(1).trim());
             boolean inNot = valuesMatcher.group(2) != null;
             String valuesStr = valuesMatcher.group(3).trim();
             String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
@@ -962,7 +1006,7 @@ public class SubqueryParser {
             return new QueryParser.Condition(normalizedColumn, inValues, conjunction, inNot);
         }
 
-        String column = inMatcher.group(1).trim();
+        String column = unquoteQualifiedIdentifier(inMatcher.group(1).trim());
         boolean inNot = inMatcher.group(2) != null;
         String subQueryStr = inMatcher.group(3).trim();
         String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
@@ -1032,14 +1076,14 @@ public class SubqueryParser {
                                                          Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                                          Map<String, String> columnAliases, String conjunction, boolean not) {
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*(SELECT\\b.*)$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*(SELECT\\b.*)$",
                 Pattern.DOTALL);
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
         if (!subQueryMatcher.matches()) {
             throw new IllegalArgumentException("Invalid subquery condition format: " + condStr);
         }
 
-        String column = subQueryMatcher.group(1).trim();
+        String column = unquoteQualifiedIdentifier(subQueryMatcher.group(1).trim());
         String operatorStr = subQueryMatcher.group(2).trim();
         String subQueryContent = subQueryMatcher.group(3).trim();
 
@@ -1120,10 +1164,10 @@ public class SubqueryParser {
         condStr = condStr.replaceAll("([=><!])", " $1 ").replaceAll("\\s+", " ").trim();
         LOGGER.log(Level.FINEST, "Normalized condition: {0}", condStr);
 
-        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:[^']|)*')");
+        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:[^']|)*')");
         Matcher likeMatcher = likePattern.matcher(condStr);
         if (likeMatcher.matches()) {
-            String column = likeMatcher.group(1).trim();
+            String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());
             String operatorStr = likeMatcher.group(2).toUpperCase();
             String value = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1);
             String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
@@ -1133,10 +1177,10 @@ public class SubqueryParser {
             return new QueryParser.Condition(normalizedColumn, parsedValue, operator, conjunction, not);
         }
 
-        Pattern isNullPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s+IS\\s+(NOT\\s+)?NULL\\b");
+        Pattern isNullPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(condStr);
         if (isNullMatcher.matches()) {
-            String column = isNullMatcher.group(1).trim();
+            String column = unquoteQualifiedIdentifier(isNullMatcher.group(1).trim());
             boolean isNotNull = isNullMatcher.group(2) != null;
             String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
             validateColumn(normalizedColumn, combinedColumnTypes);
@@ -1152,11 +1196,11 @@ public class SubqueryParser {
 
         String leftPart = condStr.substring(0, operatorInfo.index).trim();
         String rightPart = condStr.substring(operatorInfo.endIndex).trim();
-        String column = leftPart;
+        String column = unquoteQualifiedIdentifier(leftPart);
         String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
         validateColumn(normalizedColumn, combinedColumnTypes);
 
-        Pattern columnPattern = Pattern.compile("(?i)^[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
+        Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
         String rightColumn = null;
         Object value = null;
 
@@ -1171,7 +1215,7 @@ public class SubqueryParser {
                 throw new IllegalArgumentException("Boolean value '" + rightPart + "' does not match column type: " + literalColumnType.getSimpleName());
             }
         } else if (columnPattern.matcher(rightPart).matches()) {
-            rightColumn = rightPart;
+            rightColumn = unquoteQualifiedIdentifier(rightPart);
         } else {
             value = parseConditionValue(normalizedColumn, rightPart, getColumnType(normalizedColumn, combinedColumnTypes));
         }
@@ -1317,14 +1361,15 @@ public class SubqueryParser {
     }
 
     private String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {
-        if (column.contains(".")) {
-            String[] parts = column.split("\\.");
+        String unquoted = unquoteQualifiedIdentifier(column);
+        if (unquoted.contains(".")) {
+            String[] parts = unquoted.split("\\.");
             String tableOrAlias = parts[0].trim();
             String colName = parts[1].trim();
             String tableName = tableAliases.getOrDefault(tableOrAlias, tableOrAlias);
             return tableName + "." + colName;
         }
-        return defaultTableName + "." + column.trim();
+        return defaultTableName + "." + unquoted.trim();
     }
 
     private List<QueryParser.HavingCondition> parseHavingConditions(String havingClause, String defaultTableName, Database database,
@@ -1438,18 +1483,19 @@ public class SubqueryParser {
         }
 
         if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
+            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
             Matcher aggMatcher = aggPattern.matcher(leftPart);
             if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);
                 String columnOrSubQuery = aggMatcher.group(2);
-                String alias = aggMatcher.group(3);
+                String alias = unquoteIdentifier(aggMatcher.group(3));
                 if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);
                     aggregate = new QueryParser.AggregateFunction(funcName, new QueryParser.SubQuery(subQuery, null), alias);
                 } else {
+                    columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, defaultTableName, tableAliases);
                     validateColumn(normalizedColumn, combinedColumnTypes);
                     aggregate = new QueryParser.AggregateFunction(funcName, columnOrSubQuery, alias);
