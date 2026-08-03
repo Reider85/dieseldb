@@ -87,6 +87,7 @@ class DeleteQuery implements Query<Void> {
                         }
                     }
                     rows.remove(rowIndex);
+                    table.removeRow(rowIndex);
                     LOGGER.log(Level.INFO, "Deleted row at index {0} from table {1}", new Object[]{rowIndex, table.getName()});
                 }
             }
@@ -120,23 +121,20 @@ class DeleteQuery implements Query<Void> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        boolean result = true;
-        String lastConjunction = null;
-
-        for (QueryParser.Condition condition : conditions) {
+        if (conditions.isEmpty()) {
+            return true;
+        }
+        boolean result = evaluateCondition(row, conditions.get(0), columnTypes);
+        for (int i = 1; i < conditions.size(); i++) {
+            QueryParser.Condition condition = conditions.get(i);
             boolean conditionResult = evaluateCondition(row, condition, columnTypes);
-
-            if (lastConjunction == null) {
-                result = conditionResult;
-            } else if (lastConjunction.equalsIgnoreCase("AND")) {
+            String conjunction = condition.conjunction;
+            if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
                 result = result && conditionResult;
-            } else if (lastConjunction.equalsIgnoreCase("OR")) {
+            } else if (conjunction.equalsIgnoreCase("OR")) {
                 result = result || conditionResult;
             }
-
-            lastConjunction = condition.conjunction;
         }
-
         return result;
     }
 
@@ -210,14 +208,16 @@ class DeleteQuery implements Query<Void> {
             result = condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
         } else {
             if (!(rowValue instanceof Comparable) || !(conditionValue instanceof Comparable)) {
-                throw new IllegalArgumentException("Comparison operators < or > only supported for numeric types or dates");
+                throw new IllegalArgumentException("Comparison operators <, >, <=, >= only supported for comparable types");
             }
-            @SuppressWarnings("unchecked")
-            Comparable<Object> rowComparable = (Comparable<Object>) rowValue;
-            @SuppressWarnings("unchecked")
-            Comparable<Object> conditionComparable = (Comparable<Object>) conditionValue;
-            int comparison = rowComparable.compareTo(conditionValue);
-            result = condition.operator == QueryParser.Operator.LESS_THAN ? comparison < 0 : comparison > 0;
+            int comparison = compareValues(rowValue, conditionValue);
+            result = switch (condition.operator) {
+                case LESS_THAN -> comparison < 0;
+                case LESS_THAN_OR_EQUALS -> comparison <= 0;
+                case GREATER_THAN -> comparison > 0;
+                case GREATER_THAN_OR_EQUALS -> comparison >= 0;
+                default -> throw new IllegalStateException("Unsupported operator: " + condition.operator);
+            };
         }
 
         result = condition.not ? !result : result;
@@ -270,5 +270,28 @@ class DeleteQuery implements Query<Void> {
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Cannot convert value '" + stringValue + "' to type " + targetType.getSimpleName() + " for column " + column, e);
         }
+    }
+
+    private int compareValues(Object left, Object right) {
+        if (left == null || right == null) {
+            return left == right ? 0 : (left == null ? -1 : 1);
+        }
+        if (left instanceof Number && right instanceof Number) {
+            if (left instanceof BigDecimal || right instanceof BigDecimal) {
+                BigDecimal leftBD = left instanceof BigDecimal ? (BigDecimal) left : new BigDecimal(left.toString());
+                BigDecimal rightBD = right instanceof BigDecimal ? (BigDecimal) right : new BigDecimal(right.toString());
+                return leftBD.compareTo(rightBD);
+            }
+            if (left instanceof Float && right instanceof Float) {
+                return Float.compare((Float) left, (Float) right);
+            }
+            if (left instanceof Double && right instanceof Double) {
+                return Double.compare((Double) left, (Double) right);
+            }
+            return new BigDecimal(left.toString()).compareTo(new BigDecimal(right.toString()));
+        }
+        @SuppressWarnings("unchecked")
+        Comparable<Object> leftComparable = (Comparable<Object>) left;
+        return leftComparable.compareTo(right);
     }
 }

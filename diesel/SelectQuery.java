@@ -520,45 +520,48 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private boolean evaluateHavingConditions(Map<String, Object> row, List<QueryParser.HavingCondition> havingConditions) {
-        boolean result = true;
-        String lastConjunction = null;
-
-        for (QueryParser.HavingCondition condition : havingConditions) {
-            boolean conditionResult;
-            if (condition.isGrouped()) {
-                conditionResult = evaluateHavingConditions(row, condition.subConditions);
-                conditionResult = condition.not ? !conditionResult : conditionResult;
-            } else {
-                String key = condition.aggregate.alias != null ? condition.aggregate.alias : condition.aggregate.toString();
-                Object actualValue = row.get(key);
-                if (actualValue == null) {
-                    conditionResult = condition.not;
-                } else {
-                    int comparison = compareValues(actualValue, condition.value);
-                    conditionResult = switch (condition.operator) {
-                        case EQUALS -> comparison == 0;
-                        case NOT_EQUALS -> comparison != 0;
-                        case LESS_THAN -> comparison < 0;
-                        case GREATER_THAN -> comparison > 0;
-                        case LESS_THAN_OR_EQUALS -> comparison <= 0;
-                        case GREATER_THAN_OR_EQUALS -> comparison >= 0;
-                        default -> throw new IllegalStateException("Unsupported operator in HAVING: " + condition.operator);
-                    };
-                    conditionResult = condition.not ? !conditionResult : conditionResult;
-                }
-            }
-
-            if (lastConjunction == null) {
-                result = conditionResult;
-            } else if (lastConjunction.equals("AND")) {
+        if (havingConditions.isEmpty()) {
+            return true;
+        }
+        boolean result = evaluateHavingCondition(row, havingConditions.get(0));
+        for (int i = 1; i < havingConditions.size(); i++) {
+            QueryParser.HavingCondition condition = havingConditions.get(i);
+            boolean conditionResult = evaluateHavingCondition(row, condition);
+            String conjunction = condition.conjunction;
+            if (conjunction == null || conjunction.equals("AND")) {
                 result = result && conditionResult;
-            } else if (lastConjunction.equals("OR")) {
+            } else if (conjunction.equals("OR")) {
                 result = result || conditionResult;
             }
-            lastConjunction = condition.conjunction;
         }
-
         return result;
+    }
+
+    private boolean evaluateHavingCondition(Map<String, Object> row, QueryParser.HavingCondition condition) {
+        boolean conditionResult;
+        if (condition.isGrouped()) {
+            conditionResult = evaluateHavingConditions(row, condition.subConditions);
+            conditionResult = condition.not ? !conditionResult : conditionResult;
+        } else {
+            String key = condition.aggregate.alias != null ? condition.aggregate.alias : condition.aggregate.toString();
+            Object actualValue = row.get(key);
+            if (actualValue == null) {
+                conditionResult = condition.not;
+            } else {
+                int comparison = compareValues(actualValue, condition.value);
+                conditionResult = switch (condition.operator) {
+                    case EQUALS -> comparison == 0;
+                    case NOT_EQUALS -> comparison != 0;
+                    case LESS_THAN -> comparison < 0;
+                    case GREATER_THAN -> comparison > 0;
+                    case LESS_THAN_OR_EQUALS -> comparison <= 0;
+                    case GREATER_THAN_OR_EQUALS -> comparison >= 0;
+                    default -> throw new IllegalStateException("Unsupported operator in HAVING: " + condition.operator);
+                };
+                conditionResult = condition.not ? !conditionResult : conditionResult;
+            }
+        }
+        return conditionResult;
     }
 
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
@@ -702,21 +705,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
-        boolean result = true;
-        String lastConjunction = null;
-
-        for (QueryParser.Condition condition : conditions) {
+        if (conditions.isEmpty()) {
+            return true;
+        }
+        boolean result = evaluateCondition(row, conditions.get(0), combinedColumnTypes, tables);
+        for (int i = 1; i < conditions.size(); i++) {
+            QueryParser.Condition condition = conditions.get(i);
             boolean conditionResult = evaluateCondition(row, condition, combinedColumnTypes, tables);
-            if (lastConjunction == null) {
-                result = conditionResult;
-            } else if (lastConjunction.equals("AND")) {
+            String conjunction = condition.conjunction;
+            if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
                 result = result && conditionResult;
-            } else if (lastConjunction.equals("OR")) {
+            } else if (conjunction.equalsIgnoreCase("OR")) {
                 result = result || conditionResult;
             }
-            lastConjunction = condition.conjunction;
         }
-
         return result;
     }
 

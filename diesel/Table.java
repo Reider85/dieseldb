@@ -249,6 +249,17 @@ class Table implements Serializable {
         return new ArrayList<>(rows);
     }
 
+    public void removeRow(int rowIndex) {
+        if (rowIndex < 0 || rowIndex >= rows.size()) {
+            throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
+        }
+        rows.remove(rowIndex);
+        rowLocks.remove(rowIndex);
+        for (int i = rowIndex; i < rows.size(); i++) {
+            rowLocks.remove(i);
+        }
+    }
+
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
         oos.writeObject(hasClusteredIndex);
