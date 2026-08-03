@@ -248,3 +248,5 @@
 2.4.8 QueryParser
 2.4.9 SqlLexer
 2.5.0 Lexer fix
+2.5.1 Lexer fix
+2.5.2 String literals parsing (prompt 5)

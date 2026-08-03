@@ -941,6 +941,7 @@ class QueryParser {
         Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\s*$");
+        Pattern starPattern = Pattern.compile("^\\*$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -1050,6 +1051,9 @@ class QueryParser {
                 } else {
                     LOGGER.log(Level.FINE, "Разобран столбец: {0}", new Object[]{column});
                 }
+            } else if (starPattern.matcher(trimmedItem).matches()) {
+                columns.add("*");
+                LOGGER.log(Level.FINE, "Разобран столбец: *");
             } else {
                 throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
             }
@@ -1741,7 +1745,7 @@ class QueryParser {
                 return null;
             }
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                String strippedValue = valueStr.substring(1, valueStr.length() - 1);
+                String strippedValue = SqlLexer.extractStringLiteral(valueStr);
                 if (columnType == String.class) {
                     return strippedValue;
                 } else if (columnType == LocalDate.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
@@ -1850,11 +1854,11 @@ class QueryParser {
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
 
         // 1. Строковые литералы (в кавычках)
-        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
+        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:''|\\\\.|[^'\\\\])*'")));
 
         // 2. Условия LIKE и NOT LIKE
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?LIKE\\s*'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'")));
+                Pattern.compile("(?i)[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*'")));
 
         // 3. Подзапросы
         patterns.add(Map.entry("SubQuery",
@@ -1870,7 +1874,7 @@ class QueryParser {
 
         // 6. Условия сравнения (строки, числа, столбцы)
         patterns.add(Map.entry("Comparison String Condition",
-                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:\\\\.|[^'\\\\])*')")));
+                Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*')")));
         patterns.add(Map.entry("Comparison Number Condition",
                 Pattern.compile("(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
         patterns.add(Map.entry("Comparison Column Condition",
@@ -1884,7 +1888,7 @@ class QueryParser {
 
         // 9. Некорректные токены (исключая строковые литералы)
         patterns.add(Map.entry("Invalid Token",
-                Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!'(?:\\\\.|[^'\\\\])*')[^\\s()']+")));
+                Pattern.compile("(?i)(?![a-zA-Z_][a-zA-Z0-9_]*\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!'(?:''|\\\\.|[^'\\\\])*')[^\\s()']+")));
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
@@ -1952,7 +1956,7 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
                 } else if (matchedPatternName.equals("Like Condition")) {
                     Matcher likeMatcher = Pattern.compile(
-                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|[^'])*')")
+                                    "(?i)([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|''|[^'])*')")
                             .matcher(matchedToken);
                     if (likeMatcher.matches()) {
                         String column = likeMatcher.group(1);
@@ -2134,8 +2138,8 @@ class QueryParser {
 
         // Improved regex pattern to better handle nested parentheses and subqueries
         Pattern tokenPattern = Pattern.compile(
-                "(?s)(?:'(?:\\\\.|[^'])*'|" +               // Match quoted strings
-                        "\\((?:[^()']+|'(?:\\\\.|[^'])*')*\\)|" +   // Match balanced parentheses (including nested ones)
+                "(?s)(?:'(?:''|\\\\.|[^'])*'|" +               // Match quoted strings
+                        "\\((?:[^()']+|'(?:''|\\\\.|[^'])*')*\\)|" +   // Match balanced parentheses (including nested ones)
                         "[^\\s()']+)"                                // Match other tokens
         );
 
@@ -2181,7 +2185,7 @@ class QueryParser {
         }
 
         // Проверка на корректность шаблона LIKE
-        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:[^']|)*')");
+        Pattern likePattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(LIKE|NOT LIKE)\\s*('(?:''|[^'])*')");
         Matcher likeMatcher = likePattern.matcher(normalizedCondStr);
         if (likeMatcher.matches()) {
             String column = likeMatcher.group(1).trim();

@@ -47,6 +47,35 @@ public class SqlLexer {
     private static final String[] OPERATORS = {">=", "<=", "!=", "<>", "=", "<", ">"};
     private static final String PUNCTUATION_CHARS = "(),;.*+-/%[]?:" + "'";
 
+    /**
+     * Extracts the content of a single-quoted string literal, removing the
+     * surrounding quotes and resolving SQL escapes (doubled quotes {@code ''}
+     * and backslash escapes such as {@code \'}). For example the token
+     * {@code 'John'} yields {@code John} and {@code 'it''s'} yields
+     * {@code it's}. Input that is not a single-quoted literal is returned
+     * unchanged.
+     */
+    public static String extractStringLiteral(String token) {
+        if (token == null || token.length() < 2
+                || token.charAt(0) != '\'' || token.charAt(token.length() - 1) != '\'') {
+            return token;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i < token.length() - 1; i++) {
+            char c = token.charAt(i);
+            if (c == '\'' && i + 1 < token.length() - 1 && token.charAt(i + 1) == '\'') {
+                sb.append('\'');
+                i++;
+            } else if (c == '\\' && i + 1 < token.length() - 1) {
+                sb.append(token.charAt(i + 1));
+                i++;
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
     public List<Token> tokenize(String sql) {
         if (sql == null) {
             throw new IllegalArgumentException("SQL query cannot be null");

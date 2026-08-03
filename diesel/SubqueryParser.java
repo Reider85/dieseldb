@@ -194,6 +194,7 @@ public class SubqueryParser {
         Pattern columnPattern = Pattern.compile("(?i)^([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$");
         Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
         Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*|\\*|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?$", Pattern.DOTALL);
+        Pattern starPattern = Pattern.compile("^\\*$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -233,6 +234,9 @@ public class SubqueryParser {
                     columnAliases.put(column, alias);
                 }
                 LOGGER.log(Level.FINE, "Parsed column: {0}{1}", new Object[]{column, alias != null ? " AS " + alias : ""});
+            } else if (starPattern.matcher(trimmedItem).matches()) {
+                columns.add("*");
+                LOGGER.log(Level.FINE, "Parsed column: *");
             } else {
                 throw new IllegalArgumentException("Invalid SELECT item: " + trimmedItem);
             }
@@ -1249,7 +1253,7 @@ public class SubqueryParser {
     private Object parseConditionValue(String column, String value, Class<?> columnType) {
         try {
             if (value.startsWith("'") && value.endsWith("'")) {
-                String strValue = value.substring(1, value.length() - 1);
+                String strValue = SqlLexer.extractStringLiteral(value);
                 if (columnType == String.class) {
                     return strValue;
                 } else if (columnType == UUID.class) {

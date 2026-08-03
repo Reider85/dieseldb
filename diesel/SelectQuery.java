@@ -888,6 +888,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
         Map<String, Object> filtered = new HashMap<>();
         for (String column : columns) {
+            if (column.trim().equals("*")) {
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    String key = entry.getKey();
+                    String unqualifiedKey = key.contains(".") ? key.split("\\.", 2)[1].trim() : key.trim();
+                    filtered.put(unqualifiedKey, entry.getValue());
+                }
+                continue;
+            }
             String normalizedColumn = normalizeColumnName(column, mainTableName);
             String columnAlias = normalizeColumnKey(column, mainTableName);
             String[] parts = column.trim().split("\\s+AS\\s+|\\s+", 2);
