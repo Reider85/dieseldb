@@ -253,3 +253,4 @@
 2.5.3 Sample test with simple and complex queries from all tests
 2.5.4 Quoted identifiers preserve case (prompt 6)
 2.5.5 WHERE comparison operators for all types, AND/OR conjunction fix, DELETE row removal fix (prompt 7)
+2.5.6 PerformanceTest measures TRUE condition query performance with slowness warning (prompt 8)

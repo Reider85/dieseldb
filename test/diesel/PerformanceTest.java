@@ -15,6 +15,7 @@ public class PerformanceTest {
     private static final int RECORD_COUNT = 100;
     private static final int WARMUP_RUNS = 1;
     private static final int TEST_RUNS = 10;
+    private static final long TRUE_CONDITION_WARNING_THRESHOLD_MS = 500;
     private final Database database;
 
     public PerformanceTest() {
@@ -27,6 +28,7 @@ public class PerformanceTest {
         runUpdatePerformanceTest();
         runTransactionPerformanceTest();
         runReadUncommittedPerformanceTest();
+        runTrueConditionPerformanceTest();
         List<String> queries = prepareQueries();
         for (String query : queries) {
             runPerformanceTest(query);
@@ -433,6 +435,43 @@ public class PerformanceTest {
                 .mapToDouble(time -> Math.pow(time - meanNs, 2))
                 .sum();
         return Math.sqrt(sumSquaredDiff / times.size());
+    }
+
+    private void runTrueConditionPerformanceTest() {
+        String query = "SELECT NAME, AGE FROM USERS WHERE ACTIVE = TRUE";
+        LOGGER.log(Level.INFO, "Testing TRUE condition query performance: {0}", query);
+
+        for (int i = 0; i < WARMUP_RUNS; i++) {
+            database.executeQuery(query, null);
+        }
+
+        List<Long> executionTimes = new ArrayList<>();
+        for (int i = 0; i < TEST_RUNS; i++) {
+            long startTime = System.nanoTime();
+            database.executeQuery(query, null);
+            long endTime = System.nanoTime();
+            executionTimes.add(endTime - startTime);
+        }
+
+        double averageTimeMs = executionTimes.stream()
+                .mapToLong(Long::longValue)
+                .average()
+                .orElse(0.0) / 1_000_000.0;
+        long minTimeNs = executionTimes.stream().min(Long::compareTo).orElse(0L);
+        long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
+        double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
+
+        LOGGER.log(Level.INFO, "TRUE condition query: {0}", query);
+        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
+        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
+        LOGGER.log(Level.INFO, "--------------------------------");
+
+        if (averageTimeMs > TRUE_CONDITION_WARNING_THRESHOLD_MS) {
+            LOGGER.log(Level.WARNING, "TRUE condition query is too slow: {0} ms (threshold {1} ms)",
+                    new Object[]{String.format("%.3f", averageTimeMs), TRUE_CONDITION_WARNING_THRESHOLD_MS});
+        }
     }
 
     public static void main(String[] args) {
