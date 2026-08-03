@@ -250,3 +250,4 @@
 2.5.0 Lexer fix
 2.5.1 Lexer fix
 2.5.2 String literals parsing (prompt 5)
+2.5.3 Sample test with simple and complex queries from all tests
