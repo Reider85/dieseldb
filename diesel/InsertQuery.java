@@ -32,6 +32,10 @@ class InsertQuery implements Query<Void> {
             if (expectedType == null) {
                 throw new IllegalArgumentException("Unknown column: " + column);
             }
+            if (value == null) {
+                row.put(column, null);
+                continue;
+            }
             if (expectedType == Integer.class && !(value instanceof Integer)) {
                 try {
                     value = Integer.parseInt(value.toString());

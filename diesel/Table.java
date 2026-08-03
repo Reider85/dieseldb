@@ -345,8 +345,12 @@ class Table implements Serializable {
                 }
             }
             Class<?> expectedType = columnTypes.get(col);
-            if (value == null || expectedType == null) {
+            if (expectedType == null) {
                 throw new IllegalArgumentException("Invalid value or type for column: " + col);
+            }
+            if (value == null) {
+                validatedRow.put(col, null);
+                continue;
             }
             if (expectedType == Integer.class && !(value instanceof Integer)) {
                 throw new IllegalArgumentException(

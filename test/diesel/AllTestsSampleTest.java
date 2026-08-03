@@ -34,6 +34,7 @@ public class AllTestsSampleTest {
             runPerformanceTestQueries();
             runPersistenceTestQueries();
             runSubqueriesTestQueries();
+            runTrueFalseNullTestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "AllTestsSampleTest FAILED: {0}", e.getMessage());
@@ -271,6 +272,34 @@ public class AllTestsSampleTest {
         runSelect("SubqueriesTest", "complex subquery in column inner join on",
                 "SELECT u.ID, (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) AS user_name " +
                         "FROM USERS u INNER JOIN USERS u2 ON u.ID = u2.ID AND u.AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10");
+    }
+
+    private void runTrueFalseNullTestQueries() {
+        dropTable("NULL_TEST");
+        runExec("TrueFalseNullTest", "create table",
+                "CREATE TABLE NULL_TEST (ID LONG PRIMARY KEY SEQUENCE(null_test_seq 1 1), FLAG BOOLEAN, COL STRING, AGE INTEGER)");
+        runExec("TrueFalseNullTest", "insert flag true",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (TRUE, 'A', 25)");
+        runExec("TrueFalseNullTest", "insert flag false",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (FALSE, 'B', 30)");
+        runExec("TrueFalseNullTest", "insert null in insert",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (NULL, NULL, NULL)");
+        runSelectCount("TrueFalseNullTest", "where flag = true",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE FLAG = TRUE", 1);
+        runSelectCount("TrueFalseNullTest", "where flag = false",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE FLAG = FALSE", 1);
+        runSelectCount("TrueFalseNullTest", "where col is null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NULL", 1);
+        runSelectCount("TrueFalseNullTest", "where col is not null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NOT NULL", 2);
+        runSelectCount("TrueFalseNullTest", "where age is null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE IS NULL", 1);
+        runExec("TrueFalseNullTest", "update set null in update",
+                "UPDATE NULL_TEST SET COL = NULL WHERE ID = 1");
+        runSelectCount("TrueFalseNullTest", "where col is null after update",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NULL", 2);
+        runSelectCount("TrueFalseNullTest", "where col = null returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL", 0);
     }
 
     public static void main(String[] args) {
