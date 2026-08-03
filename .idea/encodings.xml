@@ -19,5 +19,6 @@
     <file url="file://$PROJECT_DIR$/diesel/Table.java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/diesel/TableStorage.java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/diesel/UpdateQuery.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/test/diesel/AllTestsSampleTest.java" charset="UTF-8" />
   </component>
 </project>

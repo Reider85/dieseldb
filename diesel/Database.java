@@ -165,7 +165,7 @@ class Database {
 
     private String extractTableName(String query) {
         LOGGER.log(Level.FINE, "Raw query for table name extraction: {0}", query);
-        String normalized = query.trim().toUpperCase();
+        String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
         LOGGER.log(Level.FINE, "Extracting table name from normalized query: {0}", normalized);
         if (normalized.startsWith("SELECT")) {
             LOGGER.log(Level.FINE, "Processing SELECT query");
@@ -178,7 +178,7 @@ class Database {
             String tablePart = parts[1].split("(?i)(INNER JOIN|WHERE)\\s")[0].trim();
             LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
             // Handle alias by taking the first word
-            String tableName = tablePart.split("\\s+")[0].trim();
+            String tableName = QueryParser.unquoteIdentifier(tablePart.split("\\s+")[0].trim());
             LOGGER.log(Level.FINE, "Extracted table name: {0}", tableName);
             if (tableName.isEmpty()) {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in SELECT");
@@ -193,10 +193,11 @@ class Database {
             LOGGER.log(Level.FINE, "INSERT query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
             String tablePart = parts[1].split("\\s+|\\(")[0].trim();
             LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            if (tablePart.isEmpty()) {
+            String tableName = QueryParser.unquoteIdentifier(tablePart);
+            if (tableName.isEmpty()) {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in INSERT");
             }
-            return tablePart;
+            return tableName;
         } else if (normalized.startsWith("UPDATE")) {
             LOGGER.log(Level.FINE, "Processing UPDATE query");
             String[] parts = normalized.split("(?i)UPDATE\\s+", 2);
@@ -206,10 +207,11 @@ class Database {
             LOGGER.log(Level.FINE, "UPDATE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
             String tablePart = parts[1].split("\\s+")[0].trim();
             LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            if (tablePart.isEmpty()) {
+            String tableName = QueryParser.unquoteIdentifier(tablePart);
+            if (tableName.isEmpty()) {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in UPDATE");
             }
-            return tablePart;
+            return tableName;
         } else if (normalized.startsWith("DELETE FROM")) {
             LOGGER.log(Level.FINE, "Processing DELETE query");
             String[] parts = normalized.split("(?i)FROM\\s+", 2);
@@ -218,12 +220,12 @@ class Database {
             }
             LOGGER.log(Level.FINE, "DELETE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
             String[] whereParts = parts[1].split("(?i)WHERE\\s*", 2);
-            String tablePart = whereParts[0].trim();
-            LOGGER.log(Level.FINE, "Table part after WHERE split: {0}", tablePart);
-            if (tablePart.isEmpty()) {
+            String tableName = QueryParser.unquoteIdentifier(whereParts[0].trim());
+            LOGGER.log(Level.FINE, "Table part after WHERE split: {0}", tableName);
+            if (tableName.isEmpty()) {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in DELETE");
             }
-            return tablePart;
+            return tableName;
         } else if (normalized.startsWith("CREATE TABLE")) {
             LOGGER.log(Level.FINE, "Processing CREATE TABLE query");
             String[] parts = normalized.split("(?i)CREATE TABLE\\s+", 2);
@@ -233,10 +235,11 @@ class Database {
             LOGGER.log(Level.FINE, "CREATE TABLE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
             String tablePart = parts[1].split("\\s+")[0].trim();
             LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            if (tablePart.isEmpty()) {
+            String tableName = QueryParser.unquoteIdentifier(tablePart);
+            if (tableName.isEmpty()) {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE TABLE");
             }
-            return tablePart;
+            return tableName;
         } else if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX") ||
                 normalized.startsWith("CREATE UNIQUE INDEX") || normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
             LOGGER.log(Level.FINE, "Processing CREATE INDEX query");
@@ -247,10 +250,11 @@ class Database {
             LOGGER.log(Level.FINE, "CREATE INDEX query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
             String tablePart = parts[1].split("\\s+")[0].trim();
             LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            if (tablePart.isEmpty()) {
+            String tableName = QueryParser.unquoteIdentifier(tablePart);
+            if (tableName.isEmpty()) {
                 throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE INDEX");
             }
-            return tablePart;
+            return tableName;
         }
         throw new IllegalArgumentException("Cannot extract table name from query: unsupported query type");
     }

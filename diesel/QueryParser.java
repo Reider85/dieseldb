@@ -1627,7 +1627,7 @@ class QueryParser {
             throw new IllegalArgumentException("Cannot specify value for sequence-based primary key column: " + primaryKeyColumn);
         }
 
-        String valuesPart = parts[1].trim();
+        String valuesPart = original.substring(parts[0].length() + "VALUES".length()).trim();
         if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
             throw new IllegalArgumentException("Invalid VALUES syntax");
         }
@@ -1682,12 +1682,12 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Parsed UPDATE table alias: {0} -> {1}", new Object[]{tableAlias, tableName});
         }
 
-        String setAndWhere = parts[1].trim();
+        String setAndWhere = original.substring(parts[0].length() + "SET".length()).trim();
         String setPart;
         List<Condition> conditions = new ArrayList<>();
 
-        if (setAndWhere.contains("WHERE")) {
-            String[] setWhereParts = setAndWhere.split("WHERE");
+        if (setAndWhere.toUpperCase().contains("WHERE")) {
+            String[] setWhereParts = setAndWhere.split("(?i)WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
             conditions = parseConditions(conditionStr, tableName, database, original, false, columnTypes, tableAliases, new HashMap<>());
@@ -2972,7 +2972,7 @@ class QueryParser {
      * Uppercases every character of the input except the contents of
      * double-quoted identifiers, which keep their original case.
      */
-    private String toUpperCasePreservingQuotedIdentifiers(String input) {
+    static String toUpperCasePreservingQuotedIdentifiers(String input) {
         if (input == null) {
             return null;
         }
@@ -2994,7 +2994,7 @@ class QueryParser {
      * Removes the surrounding double quotes from a quoted identifier.
      * Identifiers that are not quoted are returned unchanged.
      */
-    private static String unquoteIdentifier(String identifier) {
+    static String unquoteIdentifier(String identifier) {
         if (identifier == null) {
             return null;
         }

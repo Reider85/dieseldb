@@ -115,7 +115,7 @@ public class PersistenceTest {
 
         Map<String, Object> row = table.getRows().get(0);
         check(row.get("ID").equals(1L), "Value ID round-tripped (1)");
-        check("ALICE".equals(row.get("NAME")), "Value NAME round-tripped (parser stores string literals uppercase)");
+        check("Alice".equals(row.get("NAME")), "Value NAME round-tripped preserving string literal case");
         check(Integer.valueOf(25).equals(row.get("AGE")), "Value AGE round-tripped (25)");
         check(Boolean.TRUE.equals(row.get("ACTIVE")), "Value ACTIVE round-tripped (TRUE)");
         check(LocalDate.of(1998, 5, 20).equals(row.get("BIRTHDATE")), "Value BIRTHDATE round-tripped");
@@ -175,7 +175,7 @@ public class PersistenceTest {
                 "SELECT ID, NAME FROM " + TABLE + " WHERE AGE = 60", null);
         check(result.size() == 1 && "ID40".equals(result.get(0).get("ID")), "B-tree index lookup works after load");
         result = (List<Map<String, Object>>) reloaded.executeQuery(
-                "SELECT ID, NAME FROM " + TABLE + " WHERE NAME = 'NAME30'", null);
+                "SELECT ID, NAME FROM " + TABLE + " WHERE NAME = 'Name30'", null);
         check(result.size() == 1 && "ID30".equals(result.get(0).get("ID")), "Hash index lookup works after load");
         int expectedRow = -1;
         List<Map<String, Object>> rows = table.getRows();
@@ -186,7 +186,7 @@ public class PersistenceTest {
             }
         }
         check(expectedRow >= 0, "Located row index for ID30 after clustered load");
-        check(table.getIndex("NAME").search("NAME30").equals(List.of(expectedRow)), "Rebuilt hash index search returns correct row index");
+        check(table.getIndex("NAME").search("Name30").equals(List.of(expectedRow)), "Rebuilt hash index search returns correct row index");
         int ageRow = -1;
         for (int i = 0; i < rows.size(); i++) {
             if ("ID40".equals(rows.get(i).get("ID"))) {

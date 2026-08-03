@@ -35,6 +35,7 @@ public class AllTestsSampleTest {
             runPersistenceTestQueries();
             runSubqueriesTestQueries();
             runTrueFalseNullTestQueries();
+            runCaseSensitivityTestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "AllTestsSampleTest FAILED: {0}", e.getMessage());
@@ -149,7 +150,7 @@ public class AllTestsSampleTest {
 
     private void runAdvancedTestQueries() {
         runSelectCount("AdvancedTest", "simple select by primary key", "SELECT ID, NAME FROM USERS WHERE ID = 500", 1);
-        runSelectCount("AdvancedTest", "simple select by name", "SELECT ID, NAME FROM USERS WHERE NAME = 'USER500'", 1);
+        runSelectCount("AdvancedTest", "simple select by name", "SELECT ID, NAME FROM USERS WHERE NAME = 'User500'", 1);
         runSelect("AdvancedTest", "complex select with multi-column and conditions",
                 "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')");
         runSelect("AdvancedTest", "complex select with or limit offset",
@@ -190,7 +191,7 @@ public class AllTestsSampleTest {
         runSelect("InTest", "simple in on btree index", "SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)");
         runSelectCount("InTest", "simple in on primary key", "SELECT ID, NAME FROM USERS WHERE ID IN (500, 501, 502)", 3);
         runSelect("InTest", "complex in with and",
-                "SELECT ID, NAME FROM USERS WHERE NAME IN ('USER500', 'USER501', 'USER502') AND BALANCE > 5000");
+                "SELECT ID, NAME FROM USERS WHERE NAME IN ('User500', 'User501', 'User502') AND BALANCE > 5000");
         runSelect("InTest", "complex in with or",
                 "SELECT ID, NAME FROM USERS WHERE USER_CODE IN ('CODE500', 'CODE501', 'CODE502') OR BALANCE > 5000");
     }
@@ -216,11 +217,11 @@ public class AllTestsSampleTest {
 
     private void runLikeTestQueries() {
         runSelect("LikeTest", "simple like on name",
-                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%SER500' AND NAME LIKE '%USER500%' AND NAME LIKE 'USER500%'");
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%'");
         runSelect("LikeTest", "simple like on user code",
                 "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%'");
         runSelect("LikeTest", "complex like with and",
-                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%SER500' AND NAME LIKE '%USER500%' AND NAME LIKE 'USER500%' AND BALANCE > 5000");
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%' AND BALANCE > 5000");
         runSelect("LikeTest", "complex like with or",
                 "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%' OR BALANCE > 5000");
     }
@@ -300,6 +301,29 @@ public class AllTestsSampleTest {
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NULL", 2);
         runSelectCount("TrueFalseNullTest", "where col = null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL", 0);
+    }
+
+    private void runCaseSensitivityTestQueries() {
+        dropTable("CASE_TEST");
+        dropTable("MyTable");
+        runExec("CaseSensitivityTest", "create table",
+                "CREATE TABLE CASE_TEST (ID LONG PRIMARY KEY SEQUENCE(case_test_seq 1 1), NAME STRING, myColumn STRING)");
+        runExec("CaseSensitivityTest", "insert john",
+                "INSERT INTO CASE_TEST (NAME, myColumn) VALUES ('John', 'value')");
+        runSelectCount("CaseSensitivityTest", "where name = 'John' finds row",
+                "SELECT ID, NAME FROM CASE_TEST WHERE NAME = 'John'", 1);
+        runSelectCount("CaseSensitivityTest", "where name = 'JOHN' returns no rows",
+                "SELECT ID, NAME FROM CASE_TEST WHERE NAME = 'JOHN'", 0);
+        runSelectCount("CaseSensitivityTest", "quoted column identifier myColumn",
+                "SELECT \"myColumn\" FROM CASE_TEST", 1);
+        runExec("CaseSensitivityTest", "create quoted table",
+                "CREATE TABLE \"MyTable\" (ID LONG PRIMARY KEY SEQUENCE(mytable_seq 1 1), NAME STRING)");
+        runExec("CaseSensitivityTest", "insert into quoted table",
+                "INSERT INTO \"MyTable\" (NAME) VALUES ('test')");
+        runSelectCount("CaseSensitivityTest", "select from quoted table",
+                "SELECT * FROM \"MyTable\"", 1);
+        dropTable("CASE_TEST");
+        dropTable("MyTable");
     }
 
     public static void main(String[] args) {
