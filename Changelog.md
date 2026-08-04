@@ -263,3 +263,4 @@
 2.6.0 Fix subqueries with aliases in WHERE/IN/ON clauses - added space normalization for AS keyword after closing parenthesis to properly parse subquery aliases like ') AS alias' in tokenization
 2.6.1 Add serialVersionUID to Table for serialization (prompt 11)
 2.6.2 Add serialVersionUID to BTreeIndex and its Node class for serialization (prompt 12)
+2.6.3 Add serialVersionUID to BTreeClusteredIndex and its Node class for serialization (prompt 13)

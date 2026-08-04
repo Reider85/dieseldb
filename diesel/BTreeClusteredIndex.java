@@ -6,9 +6,11 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 class BTreeClusteredIndex implements Index, Serializable {
+    private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = Logger.getLogger(BTreeClusteredIndex.class.getName());
 
     private static class Node implements Serializable {
+        private static final long serialVersionUID = 1L;
         List<Object> keys;
         List<Integer> rowIndices; // For leaf nodes
         List<Node> children; // For internal nodes
