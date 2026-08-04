@@ -277,3 +277,4 @@
 2.6.14 src/test/java structure created with JUnit 5 test class DatabaseSmokeTest using @Test/@BeforeEach, no main method; pom.xml sourceDirectory set to diesel (prompt 24)
 2.6.15 .github/workflows/ci.yml created with workflow name CI (prompt 25)
 2.6.16 ci.yml triggers on push to main and pull requests to main (prompt 26)
+2.6.17 DatabaseSmokeTest.setUp tolerates missing SMOKE table when dropping it before each test (fix mvn test failure)

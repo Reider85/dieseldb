@@ -16,7 +16,11 @@ class DatabaseSmokeTest {
     @BeforeEach
     void setUp() {
         database = new Database();
-        database.dropTable("SMOKE");
+        try {
+            database.dropTable("SMOKE");
+        } catch (IllegalArgumentException ignored) {
+            // table does not exist yet, nothing to drop
+        }
         database.executeQuery("CREATE TABLE SMOKE (ID LONG PRIMARY KEY SEQUENCE(smoke_seq 1 1), NAME STRING, AGE INTEGER)", null);
         database.executeQuery("INSERT INTO SMOKE (NAME, AGE) VALUES ('Alice', 25)", null);
         database.executeQuery("INSERT INTO SMOKE (NAME, AGE) VALUES ('Bob', 30)", null);
