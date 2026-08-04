@@ -273,3 +273,4 @@
 2.6.10 Add serialVersionUID to all Serializable classes missing it (QueryMessage; Sequence and indexes already had it) (prompt 20)
 2.6.11 pom.xml base structure created: com.dieseldb/dieseldb 0.5.0-SNAPSHOT, Java 17 (prompt 21)
 2.6.12 pom.xml adds org.junit.jupiter:junit-jupiter:5.10.0 test dependency (prompt 22)
+2.6.13 pom.xml adds maven-surefire-plugin for running tests on JUnit Platform (prompt 23)
