@@ -268,3 +268,4 @@
 2.6.5 Add serialVersionUID to UniqueIndex for serialization (prompt 15)
 2.6.6 Add formatVersion field with initial value 1 to Table (prompt 16)
 2.6.7 Table.loadFromFile checks formatVersion and throws if it does not match current version 1 (prompt 17)
+2.6.8 Tables use .table extension; Table.loadFromFile creates a new table with base structure, formatVersion=1 and serialVersionUID when the file is missing (prompt 18)

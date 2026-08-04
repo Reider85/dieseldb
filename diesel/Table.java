@@ -573,6 +573,15 @@ class Table implements Serializable {
 
     public static Table loadFromFile(Database database, String tableName) {
         String fileName = tableName + ".table";
+        File file = new File(fileName);
+        if (!file.exists()) {
+            LOGGER.log(Level.INFO, "Serialized file {0} not found, creating new table {1} with base structure",
+                    new Object[]{fileName, tableName});
+            Table table = new Table(database, tableName, new ArrayList<>(), new HashMap<>(), null, new HashMap<String, Sequence>());
+            table.formatVersion = CURRENT_FORMAT_VERSION;
+            table.setFileInitialized(false);
+            return table;
+        }
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
             Table table = (Table) ois.readObject();
             if (table.formatVersion != CURRENT_FORMAT_VERSION) {
