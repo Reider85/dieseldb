@@ -25,6 +25,7 @@
     </dependencies>
 
     <build>
+        <sourceDirectory>diesel</sourceDirectory>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

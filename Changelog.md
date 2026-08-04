@@ -274,3 +274,4 @@
 2.6.11 pom.xml base structure created: com.dieseldb/dieseldb 0.5.0-SNAPSHOT, Java 17 (prompt 21)
 2.6.12 pom.xml adds org.junit.jupiter:junit-jupiter:5.10.0 test dependency (prompt 22)
 2.6.13 pom.xml adds maven-surefire-plugin for running tests on JUnit Platform (prompt 23)
+2.6.14 src/test/java structure created with JUnit 5 test class DatabaseSmokeTest using @Test/@BeforeEach, no main method; pom.xml sourceDirectory set to diesel (prompt 24)
