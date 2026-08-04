@@ -1,5 +1,7 @@
 package diesel;
 
+import diesel.Database;
+
 import org.junit.jupiter.api.Test;
 
 import java.io.File;

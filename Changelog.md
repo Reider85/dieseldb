@@ -280,3 +280,4 @@
 2.6.17 DatabaseSmokeTest.setUp tolerates missing SMOKE table when dropping it before each test (fix mvn test failure)
 2.7.0 All 12 test classes migrated from main()-based harness to JUnit 5 (JUnit Jupiter) and moved from test/diesel to src/test/java/diesel: smoke classes use @BeforeEach scaffold + @Test per check with assertDoesNotThrow; Duplicate-insert tests assert expected exceptions (self-contained); PersistenceTest uses @Test + @BeforeEach/@AfterEach cleanup with JUnit assertions; QuantitativeTest and AllTestsSampleTest keep their pass/fail counters and main() as gate; PerformanceTest runs as a single @Test; 346 tests pass under mvn test
 2.7.1 Maven profile 'test' added to pom.xml: by default mvn test runs only AllTestsSampleTest and QuantitativeTest; all other tests run only with -Ptest
+2.7.2 Explicit import diesel.Database added to all test classes for consistency (same package, redundant but explicit)

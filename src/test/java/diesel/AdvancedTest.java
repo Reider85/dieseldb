@@ -1,5 +1,7 @@
 package diesel;
 
+import diesel.Database;
+
 import java.math.BigDecimal;
 import java.util.Random;
 
