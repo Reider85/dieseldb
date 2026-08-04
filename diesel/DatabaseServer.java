@@ -109,6 +109,11 @@ public class DatabaseServer {
             this.clientSocket = socket;
             this.database = database;
             this.transactionId = null;
+            try {
+                clientSocket.setSoTimeout(30000);
+            } catch (SocketException e) {
+                LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
+            }
         }
 
         @Override
