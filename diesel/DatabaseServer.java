@@ -141,7 +141,14 @@ public class DatabaseServer {
                 in = new ObjectInputStream(clientSocket.getInputStream());
 
                 while (true) {
-                    Object input = in.readObject();
+                    Object input;
+                    try {
+                        input = in.readObject();
+                    } catch (SocketTimeoutException e) {
+                        LOGGER.log(Level.WARNING, "Socket timeout while waiting for query from client {0}: {1}",
+                                new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                        break;
+                    }
                     if (input == null || input.equals("EXIT")) {
                         break;
                     }

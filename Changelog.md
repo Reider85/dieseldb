@@ -284,3 +284,4 @@
 2.7.3 README.md build section added with Maven requirements (JDK 17, Maven 3.9+) and commands: mvn test, mvn -Ptest test, mvn package, mvn install (prompt 30)
 2.7.4 DatabaseServer.ClientHandler sets socket.setSoTimeout(30000) (30 s) after accepting the connection (prompt 31)
 2.7.5 Socket timeout moved to config: config.properties gains server.socket.timeout=30000; DatabaseServer reads it via getSocketTimeout(Properties) and passes it to ClientHandler
+2.7.6 ClientHandler.run() wraps in.readObject() in try-catch for SocketTimeoutException: logs a warning and breaks the loop so the connection is closed cleanly (prompt 32)
