@@ -194,7 +194,19 @@ public class DatabaseServer {
     }
 
     public static void main(String[] args) {
-        DatabaseServer server = new DatabaseServer(3306);
+        int port = 3306;
+        if (args.length > 0) {
+            try {
+                port = Integer.parseInt(args[0]);
+            } catch (NumberFormatException e) {
+                LOGGER.log(Level.SEVERE, "Invalid port {0}, using default {1}", new Object[]{args[0], port});
+            }
+        }
+        DatabaseServer server = new DatabaseServer(port);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
+            server.stop();
+        }, "shutdown-hook"));
         server.start();
     }
 }
