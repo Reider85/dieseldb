@@ -1,5 +1,7 @@
 package diesel;
 
+import org.junit.jupiter.api.Test;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -22,6 +24,7 @@ public class PerformanceTest {
         this.database = new Database();
     }
 
+    @Test
     public void runTests() {
         runInsertPerformanceTest();
         setupTable();
@@ -472,10 +475,5 @@ public class PerformanceTest {
             LOGGER.log(Level.WARNING, "TRUE condition query is too slow: {0} ms (threshold {1} ms)",
                     new Object[]{String.format("%.3f", averageTimeMs), TRUE_CONDITION_WARNING_THRESHOLD_MS});
         }
-    }
-
-    public static void main(String[] args) {
-        PerformanceTest test = new PerformanceTest();
-        test.runTests();
     }
 }

@@ -1,5 +1,7 @@
 package diesel;
 
+import org.junit.jupiter.api.Test;
+
 import java.io.File;
 import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
@@ -21,6 +23,7 @@ public class AllTestsSampleTest {
         this.database = new Database();
     }
 
+    @Test
     public void runTests() {
         try {
             setup();
