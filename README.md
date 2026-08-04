@@ -35,3 +35,53 @@ DieselDB - 实验性数据库，基于 Java 17 开发，由 Reider85 借助 AI �
 READ_UNCOMMITTED、READ_COMMITTED、REPEATABLE_READ、SERIALIZABLE
 
 未来计划实现查询中的数学函数、类似于 PG_ADMIN 的可视化界面，以及高级 DDL 查询。
+
+## Build / Сборка
+
+Requirements:
+- JDK 17 or newer
+- Maven 3.9+ (or use the Maven bundled with IntelliJ IDEA)
+
+Quick checks (runs only AllTestsSampleTest and QuantitativeTest):
+```
+mvn test
+```
+
+Full test suite (all test classes):
+```
+mvn -Ptest test
+```
+
+Build the jar:
+```
+mvn package
+```
+
+Install to the local Maven repository:
+```
+mvn install
+```
+
+Требования:
+- JDK 17 или новее
+- Maven 3.9+ (или встроенный Maven из IntelliJ IDEA)
+
+Быстрая проверка (запускает только AllTestsSampleTest и QuantitativeTest):
+```
+mvn test
+```
+
+Полный набор тестов (все тест-классы):
+```
+mvn -Ptest test
+```
+
+Сборка jar:
+```
+mvn package
+```
+
+Установка в локальный Maven-репозиторий:
+```
+mvn install
+```
