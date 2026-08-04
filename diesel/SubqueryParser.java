@@ -94,7 +94,7 @@ public class SubqueryParser {
                 .replaceAll("\\s+", " ")
                 .replaceAll("([=><!])", " $1 ")
                 .replaceAll("(?i)\\s*\\(\\s*SELECT\\b", " (SELECT")
-                .replaceAll("(?i)(\\))\\s*(LIMIT|WHERE|ORDER\\s+BY|GROUP\\s+BY|HAVING|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN)", "$1 $2")
+                .replaceAll("(?i)(\\))\\s*(LIMIT|WHERE|ORDER\\s+BY|GROUP\\s+BY|HAVING|AS|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN)", "$1 $2")
                 .replaceAll("\\s*;", "")
                 .replaceAll("\\s+", " ");
         LOGGER.log(Level.FINEST, "Normalized query: {0}", normalized);
@@ -136,7 +136,8 @@ public class SubqueryParser {
                 new Object[]{tableName, columns, aggregates, joins, conditions});
 
         return new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions,
-                groupBy, havingConditions, orderBy, limit, offset, subQueries, columnAliases, tableAliases, combinedColumnTypes);
+                groupBy, havingConditions, orderBy, limit, offset, subQueries, columnAliases, tableAliases,
+                combinedColumnTypes, clauses.groupBySubQueries);
     }
 
     private int findMainFromClause(String query) {
@@ -473,6 +474,7 @@ public class SubqueryParser {
         List<QueryParser.OrderByInfo> orderBy = new ArrayList<>();
         Integer limit = null;
         Integer offset = null;
+        Map<String, String> groupBySubQueries = new HashMap<>();
 
         // Найти индексы всех клауз
         int whereIndex = findClauseOutsideSubquery(tableAndJoins, "WHERE");
@@ -530,7 +532,7 @@ public class SubqueryParser {
                 havingClause = groupByClause.substring(havingIndex + 6).trim();
                 groupByClause = groupByClause.substring(0, havingIndex).trim();
             }
-            groupBy = parseGroupByClause(groupByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases);
+            groupBy = parseGroupByClause(groupByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases, groupBySubQueries);
             if (havingClause != null) {
                 havingConditions = parseHavingConditions(havingClause, tableName, database, originalQuery,
                         aggregates, combinedColumnTypes, tableAliases, columnAliases);
@@ -564,7 +566,7 @@ public class SubqueryParser {
             }
         }
 
-        return new QueryParser.AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset);
+        return new QueryParser.AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset, groupBySubQueries);
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
@@ -572,7 +574,7 @@ public class SubqueryParser {
         Pattern openParenPattern = Pattern.compile("\\(");
         Pattern closeParenPattern = Pattern.compile("\\)");
         Pattern clausePattern = Pattern.compile("(?i)\\b" + Pattern.quote(clause) + "\\b");
-        Pattern wordPattern = Pattern.compile("\\S+");
+        Pattern wordPattern = Pattern.compile("[^\\s()']+");
 
         int parenDepth = 0;
         int clauseIndex = -1;
@@ -694,7 +696,7 @@ public class SubqueryParser {
 
     private List<String> parseGroupByClause(String groupByClause, String tableName, Database database,
                                             Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
-                                            Map<String, String> columnAliases) {
+                                            Map<String, String> columnAliases, Map<String, String> groupBySubQueries) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(groupByClause);
         Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))$", Pattern.DOTALL);
@@ -707,8 +709,12 @@ public class SubqueryParser {
                 if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     validateSubQuery(subQueryStr);
-                    Query<?> subQuery = queryParser.parse(subQueryStr, database);
-                    groupBy.add("SUBQUERY_" + System.currentTimeMillis());
+                    queryParser.parse(subQueryStr, database);
+                    String marker = "SUBQUERY_" + System.currentTimeMillis();
+                    groupBy.add(marker);
+                    if (groupBySubQueries != null) {
+                        groupBySubQueries.put(marker, subQueryStr);
+                    }
                 } else {
                     columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, tableName, tableAliases);
@@ -824,9 +830,9 @@ public class SubqueryParser {
         patterns.add(Map.entry("In Condition",
                 Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Comparison",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Like",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Like Condition",
                 Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
         patterns.add(Map.entry("Null Condition",
@@ -971,7 +977,7 @@ public class SubqueryParser {
                                                    Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                                    Map<String, String> columnAliases, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
                 Pattern.DOTALL);
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
@@ -1407,10 +1413,10 @@ public class SubqueryParser {
                                         database, originalQuery, aggregates, combinedColumnTypes, tableAliases, columnAliases);
                                 conditions.add(new QueryParser.HavingCondition(subConditions, conjunction, not));
                             }
+                            currentCondition = new StringBuilder();
+                            conjunction = null;
+                            not = false;
                         }
-                        currentCondition = new StringBuilder();
-                        conjunction = null;
-                        not = false;
                     }
                     continue;
                 } else if (parenDepth == 0 && c == ' ') {
@@ -1456,12 +1462,40 @@ public class SubqueryParser {
         String[] operators = {"=", "!=", "<>", ">=", "<=", "<", ">"};
         String selectedOperator = null;
         int operatorIndex = -1;
-        for (String op : operators) {
-            Pattern opPattern = Pattern.compile("(?i)\\s+" + Pattern.quote(op) + "\\s+");
-            Matcher opMatcher = opPattern.matcher(" " + condStr + " ");
-            if (opMatcher.find()) {
-                selectedOperator = op;
-                operatorIndex = opMatcher.start() - 1;
+        int parenDepth = 0;
+        boolean inQuotes = false;
+        for (int i = 0; i < condStr.length(); i++) {
+            char ch = condStr.charAt(i);
+            if (ch == '\'') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (inQuotes) {
+                continue;
+            }
+            if (ch == '(') {
+                parenDepth++;
+                continue;
+            }
+            if (ch == ')') {
+                parenDepth--;
+                continue;
+            }
+            if (parenDepth > 0) {
+                continue;
+            }
+            for (String op : operators) {
+                if (condStr.regionMatches(true, i, op, 0, op.length())) {
+                    char prevChar = i > 0 ? condStr.charAt(i - 1) : ' ';
+                    char nextChar = i + op.length() < condStr.length() ? condStr.charAt(i + op.length()) : ' ';
+                    if (Character.isWhitespace(prevChar) && Character.isWhitespace(nextChar)) {
+                        selectedOperator = op;
+                        operatorIndex = i;
+                        break;
+                    }
+                }
+            }
+            if (selectedOperator != null) {
                 break;
             }
         }
@@ -1476,14 +1510,17 @@ public class SubqueryParser {
         QueryParser.AggregateFunction aggregate = null;
         for (QueryParser.AggregateFunction agg : aggregates) {
             String aggStr = agg.toString();
-            if (aggStr.equalsIgnoreCase(leftPart) || (agg.alias != null && agg.alias.equalsIgnoreCase(leftPart))) {
+            String aggBase = agg.alias != null
+                    ? aggStr.replaceFirst("(?i)\\s+AS\\s+" + Pattern.quote(agg.alias) + "$", "")
+                    : aggStr;
+            if (aggBase.equalsIgnoreCase(leftPart) || (agg.alias != null && agg.alias.equalsIgnoreCase(leftPart))) {
                 aggregate = agg;
                 break;
             }
         }
 
         if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
+            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*SELECT\\s+.*?\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
             Matcher aggMatcher = aggPattern.matcher(leftPart);
             if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);
@@ -1507,7 +1544,23 @@ public class SubqueryParser {
 
         Class<?> valueType = aggregate.functionName.equals("COUNT") ? Long.class :
                 (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes) : Double.class);
-        Object value = parseConditionValue(aggregate.toString(), rightPart, valueType);
+        Object value;
+        if (rightPart.startsWith("(") && rightPart.toUpperCase().contains("SELECT")) {
+            String subQueryStr = rightPart.substring(1, rightPart.length() - 1).trim();
+            validateSubQuery(subQueryStr);
+            Object subQueryResult = database.executeQuery(subQueryStr, null);
+            if (!(subQueryResult instanceof List)) {
+                throw new IllegalArgumentException("HAVING subquery must return a list of rows: " + rightPart);
+            }
+            List<?> subRows = (List<?>) subQueryResult;
+            if (subRows.isEmpty() || !(subRows.get(0) instanceof Map) || ((Map<?, ?>) subRows.get(0)).isEmpty()) {
+                value = null;
+            } else {
+                value = ((Map<?, ?>) subRows.get(0)).values().iterator().next();
+            }
+        } else {
+            value = parseConditionValue(aggregate.toString(), rightPart, valueType);
+        }
 
         QueryParser.Operator operator = parseOperator(selectedOperator);
 

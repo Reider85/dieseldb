@@ -260,3 +260,4 @@
 2.5.10 JOIN fixed: main table stays the first table instead of the last joined one, hash join disabled for ON conditions containing OR so cross-product semantics hold (prompt 81)
 2.5.11 GROUP BY fixed: GROUP BY/HAVING now parsed, one group per distinct key, HAVING supports COUNT(*), hash join resolves aliased columns (prompt 82)
 2.5.12 IN with a value list fixed: B-tree index no longer loses duplicate-key row indices on node splits, insert merges duplicate keys, delete no longer corrupts the tree; WHERE AGE IN (50, 51, 52) now returns 21 rows (prompt 83)
+2.6.0 Fix subqueries with aliases in WHERE/IN/ON clauses - added space normalization for AS keyword after closing parenthesis to properly parse subquery aliases like ') AS alias' in tokenization
