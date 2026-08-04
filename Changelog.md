@@ -286,3 +286,4 @@
 2.7.5 Socket timeout moved to config: config.properties gains server.socket.timeout=30000; DatabaseServer reads it via getSocketTimeout(Properties) and passes it to ClientHandler
 2.7.6 ClientHandler.run() wraps in.readObject() in try-catch for SocketTimeoutException: logs a warning and breaks the loop so the connection is closed cleanly (prompt 32)
 2.7.7 DatabaseServer.main registers Runtime.addShutdownHook that calls stop() for graceful shutdown; main also accepts an optional port argument (default 3306) (prompt 33)
+2.7.8 Shutdown hook explicitly closes the ServerSocket to unblock accept() so no new connections are accepted during shutdown (prompt 34)

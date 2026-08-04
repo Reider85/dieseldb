@@ -205,6 +205,14 @@ public class DatabaseServer {
         DatabaseServer server = new DatabaseServer(port);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
+            try {
+                if (server.serverSocket != null && !server.serverSocket.isClosed()) {
+                    server.serverSocket.close();
+                    LOGGER.log(Level.INFO, "ServerSocket closed, no longer accepting new connections");
+                }
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "Error closing ServerSocket in shutdown hook: {0}", e.getMessage());
+            }
             server.stop();
         }, "shutdown-hook"));
         server.start();
