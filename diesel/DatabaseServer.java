@@ -11,6 +11,7 @@ public class DatabaseServer {
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
     private static final String CONFIG_FILE = "config.properties";
     private static final int POOL_SIZE = 100;
+    private static final int QUEUE_CAPACITY = 100;
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
@@ -22,7 +23,7 @@ public class DatabaseServer {
         this.database = new Database();
         this.executor = new ThreadPoolExecutor(
                 POOL_SIZE, POOL_SIZE, 0L, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(),
+                new ArrayBlockingQueue<>(QUEUE_CAPACITY),
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
@@ -97,7 +98,17 @@ public class DatabaseServer {
                 try {
                     Socket clientSocket = serverSocket.accept();
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
-                    executor.execute(new ClientHandler(clientSocket, database, socketTimeout));
+                    try {
+                        executor.execute(new ClientHandler(clientSocket, database, socketTimeout));
+                    } catch (RejectedExecutionException e) {
+                        LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
+                                new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                        try {
+                            clientSocket.close();
+                        } catch (IOException io) {
+                            LOGGER.log(Level.SEVERE, "Error closing rejected client socket: {0}", io.getMessage());
+                        }
+                    }
                 } catch (IOException e) {
                     if (running) {
                         LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
