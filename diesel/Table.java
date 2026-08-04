@@ -34,6 +34,7 @@ class Table implements Serializable {
     private String clusteredIndexColumn;
     private transient BTreeClusteredIndex clusteredIndex;
     private transient Database database;
+    private int formatVersion = 1;
 
     public Table(Database database, String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
         this.database = database;

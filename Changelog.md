@@ -266,3 +266,4 @@
 2.6.3 Add serialVersionUID to BTreeClusteredIndex and its Node class for serialization (prompt 13)
 2.6.4 Add serialVersionUID to HashIndex for serialization (prompt 14)
 2.6.5 Add serialVersionUID to UniqueIndex for serialization (prompt 15)
+2.6.6 Add formatVersion field with initial value 1 to Table (prompt 16)
