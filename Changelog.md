@@ -262,3 +262,4 @@
 2.5.12 IN with a value list fixed: B-tree index no longer loses duplicate-key row indices on node splits, insert merges duplicate keys, delete no longer corrupts the tree; WHERE AGE IN (50, 51, 52) now returns 21 rows (prompt 83)
 2.6.0 Fix subqueries with aliases in WHERE/IN/ON clauses - added space normalization for AS keyword after closing parenthesis to properly parse subquery aliases like ') AS alias' in tokenization
 2.6.1 Add serialVersionUID to Table for serialization (prompt 11)
+2.6.2 Add serialVersionUID to BTreeIndex and its Node class for serialization (prompt 12)
