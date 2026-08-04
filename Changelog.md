@@ -256,3 +256,4 @@
 2.5.6 PerformanceTest measures TRUE condition query performance with slowness warning (prompt 8)
 2.5.7 TRUE/FALSE/NULL conditions support, NULL in INSERT and UPDATE, null value tests (prompt 9)
 2.5.8 Case-sensitive string literals on INSERT/UPDATE, quoted table names, case sensitivity tests (prompt 10)
+2.5.9 QuantitativeTest checks expected row counts for every query from AllTestsSampleTest; prompts 81-85 added for engine fixes (JOIN, GROUP BY, IN, LIMIT/OFFSET)

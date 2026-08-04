@@ -1,0 +1,317 @@
+package diesel;
+
+import java.math.BigDecimal;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public class QuantitativeTest {
+    private static final Logger LOGGER = Logger.getLogger(QuantitativeTest.class.getName());
+    private static final int RECORD_COUNT = 600;
+    private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
+    private final Database database;
+    private int passed = 0;
+    private int failed = 0;
+
+    public QuantitativeTest() {
+        this.database = new Database();
+    }
+
+    public void runTests() {
+        try {
+            setup();
+            runAdvancedTestQueries();
+            runAliasesTestQueries();
+            runGroupByTestQueries();
+            runInTestQueries();
+            runJoinTestQueries();
+            runLikeTestQueries();
+            runOrderByTestQueries();
+            runPerformanceTestQueries();
+            runPersistenceTestQueries();
+            runSubqueriesTestQueries();
+            runTrueFalseNullTestQueries();
+            runCaseSensitivityTestQueries();
+        } catch (Exception e) {
+            failed++;
+            LOGGER.log(Level.SEVERE, "QuantitativeTest FAILED: {0}", e.getMessage());
+            e.printStackTrace();
+        }
+        LOGGER.log(Level.INFO, "==========================================");
+        LOGGER.log(Level.INFO, "QuantitativeTest results: {0} passed, {1} failed", new Object[]{passed, failed});
+        if (failed > 0) {
+            throw new RuntimeException("QuantitativeTest failed: " + failed + " checks");
+        }
+    }
+
+    private void check(boolean condition, String message) {
+        if (condition) {
+            passed++;
+            LOGGER.log(Level.INFO, "PASS: {0}", message);
+        } else {
+            failed++;
+            LOGGER.log(Level.SEVERE, "FAIL: {0}", message);
+        }
+    }
+
+    private void runSelectCount(String group, String name, String query, int expected) {
+        try {
+            Object result = database.executeQuery(query, null);
+            if (result instanceof List) {
+                int actual = ((List<?>) result).size();
+                check(actual == expected, group + " / " + name + " returned " + actual + " rows, expected " + expected);
+            } else {
+                check(false, group + " / " + name + " did not return a result set");
+            }
+        } catch (Exception e) {
+            check(false, group + " / " + name + " failed: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+        }
+    }
+
+    private void runExec(String group, String name, String query) {
+        try {
+            database.executeQuery(query, null);
+            check(true, group + " / " + name + " executed");
+        } catch (Exception e) {
+            check(false, group + " / " + name + " failed: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+        }
+    }
+
+    private void dropTable(String name) {
+        try {
+            database.dropTable(name);
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.WARNING, "Table {0} not found for dropping", name);
+        }
+    }
+
+    private void setup() {
+        dropTable("USERS");
+        dropTable("PROFILES");
+        dropTable("TRANSACTIONS");
+        dropTable("USER_DETAILS");
+        dropTable("PERSIST_TEST");
+
+        database.executeQuery("CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL, DATE_FIELD DATE, ACTIVE BOOLEAN, PRECISION DOUBLE)", null);
+        database.executeQuery("CREATE UNIQUE INDEX ON USERS (ID)", null);
+        database.executeQuery("CREATE INDEX ON USERS (AGE)", null);
+        database.executeQuery("CREATE HASH INDEX ON USERS (NAME)", null);
+        database.executeQuery("CREATE UNIQUE INDEX ON USERS (USER_CODE)", null);
+
+        database.executeQuery("CREATE TABLE PROFILES (PROFILE_ID LONG PRIMARY KEY SEQUENCE(profile_seq 1 1), USER_ID LONG, PROFILE_AGE INTEGER, PROFILE_NAME STRING, PROFILE_CODE STRING, NON_INDEXED STRING, PROFILE_DATE DATE)", null);
+        database.executeQuery("CREATE TABLE TRANSACTIONS (TRANS_ID LONG PRIMARY KEY SEQUENCE(trans_seq 1 1), USER_ID LONG, TRANS_DATE DATE, AMOUNT BIGDECIMAL)", null);
+        database.executeQuery("CREATE TABLE USER_DETAILS (DETAIL_ID LONG PRIMARY KEY SEQUENCE(detail_seq 1 1), USER_ID LONG, USER_CODE STRING, NAME STRING, AGE INTEGER, INFO STRING, BALANCE BIGDECIMAL)", null);
+
+        for (int i = 1; i <= RECORD_COUNT; i++) {
+            String date = DATE_FORMATTER.format(new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)));
+            BigDecimal balance = new BigDecimal(100 + (i % 9000)).setScale(2, BigDecimal.ROUND_HALF_UP);
+
+            String userQuery = String.format(Locale.US,
+                    "INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE, DATE_FIELD, ACTIVE, PRECISION) VALUES ('CODE%d', 'User%d', %d, %s, '%s', %s, %f)",
+                    i, i, 18 + (i % 82), balance, date, (i % 2 == 0) ? "TRUE" : "FALSE", (i % 100) / 10.0);
+            database.executeQuery(userQuery, null);
+
+            String profileQuery = String.format(Locale.US,
+                    "INSERT INTO PROFILES (USER_ID, PROFILE_AGE, PROFILE_NAME, PROFILE_CODE, NON_INDEXED, PROFILE_DATE) VALUES (%d, %d, 'Profile%d', 'PCODE%d', 'Non%d', '%s')",
+                    i, 18 + (i % 82), i, i, i, date);
+            database.executeQuery(profileQuery, null);
+
+            String transQuery = String.format(Locale.US,
+                    "INSERT INTO TRANSACTIONS (USER_ID, TRANS_DATE, AMOUNT) VALUES (%d, '%s', %s)",
+                    i, date, new BigDecimal(50 + (i % 500)).setScale(2, BigDecimal.ROUND_HALF_UP));
+            database.executeQuery(transQuery, null);
+
+            String detailQuery = String.format(Locale.US,
+                    "INSERT INTO USER_DETAILS (USER_ID, USER_CODE, NAME, AGE, INFO, BALANCE) VALUES (%d, 'CODE%d', 'User%d', %d, 'Info%d', %s)",
+                    i, i, i, 18 + (i % 82), i, balance);
+            database.executeQuery(detailQuery, null);
+        }
+        LOGGER.log(Level.INFO, "Setup completed: {0} records inserted into USERS, PROFILES, TRANSACTIONS, USER_DETAILS", RECORD_COUNT);
+    }
+
+    private void runAdvancedTestQueries() {
+        runSelectCount("AdvancedTest", "simple select by primary key", "SELECT ID, NAME FROM USERS WHERE ID = 500", 1);
+        runSelectCount("AdvancedTest", "simple select by name", "SELECT ID, NAME FROM USERS WHERE NAME = 'User500'", 1);
+        runSelectCount("AdvancedTest", "complex select with multi-column and conditions",
+                "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')", 0);
+        runSelectCount("AdvancedTest", "complex select with or limit offset",
+                "SELECT ID, NAME FROM USERS WHERE AGE = 50 OR BALANCE > 5000 LIMIT 10 OFFSET 5", 2);
+    }
+
+    private void runAliasesTestQueries() {
+        runSelectCount("AliasesTest", "simple select with alias order by",
+                "SELECT NAME userName, USER_CODE code FROM USERS u ORDER BY userName", RECORD_COUNT);
+        runSelectCount("AliasesTest", "simple select with as alias order by",
+                "SELECT NAME AS userName, USER_CODE AS code FROM USERS u ORDER BY userName", RECORD_COUNT);
+        runSelectCount("AliasesTest", "complex select min max avg with join and group by",
+                "SELECT u.NAME userName, t.TRANS_DATE transDate, MIN(u.AGE) minAge, MAX(u.AGE) maxAge, AVG(u.AGE) avgAge " +
+                        "FROM USERS u INNER JOIN TRANSACTIONS t ON u.ID = t.USER_ID " +
+                        "GROUP BY userName, transDate ORDER BY transDate DESC", RECORD_COUNT);
+        runSelectCount("AliasesTest", "complex select with multiple inner joins",
+                "SELECT u.NAME userName, t.AMOUNT transAmount, u2.NAME refName " +
+                        "FROM USERS u " +
+                        "INNER JOIN TRANSACTIONS t ON u.ID = t.USER_ID " +
+                        "INNER JOIN USERS u2 ON u.ID = u2.ID " +
+                        "LIMIT 10 OFFSET 5", 10);
+    }
+
+    private void runGroupByTestQueries() {
+        runSelectCount("GroupByTest", "simple group by min max avg",
+                "SELECT NAME, MIN(AGE), MAX(AGE), AVG(AGE) FROM USERS GROUP BY NAME", RECORD_COUNT);
+        runSelectCount("GroupByTest", "simple group by sum count",
+                "SELECT NAME, SUM(AGE), COUNT(AGE) FROM USERS GROUP BY NAME", RECORD_COUNT);
+        runSelectCount("GroupByTest", "complex group by date having",
+                "SELECT DATE_FIELD, SUM(BALANCE), COUNT(BALANCE) FROM USERS GROUP BY DATE_FIELD HAVING COUNT(*) > 0", RECORD_COUNT);
+        runSelectCount("GroupByTest", "complex group by join string date",
+                "SELECT USERS.NAME, PROFILES.PROFILE_DATE, SUM(USERS.BALANCE), COUNT(USERS.BALANCE) " +
+                        "FROM USERS INNER JOIN PROFILES ON USERS.ID = PROFILES.USER_ID " +
+                        "GROUP BY USERS.NAME, PROFILES.PROFILE_DATE ORDER BY PROFILES.PROFILE_DATE DESC", RECORD_COUNT);
+    }
+
+    private void runInTestQueries() {
+        runSelectCount("InTest", "simple in on btree index", "SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)", 21);
+        runSelectCount("InTest", "simple in on primary key", "SELECT ID, NAME FROM USERS WHERE ID IN (500, 501, 502)", 3);
+        runSelectCount("InTest", "complex in with and",
+                "SELECT ID, NAME FROM USERS WHERE NAME IN ('User500', 'User501', 'User502') AND BALANCE > 5000", 0);
+        runSelectCount("InTest", "complex in with or",
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE IN ('CODE500', 'CODE501', 'CODE502') OR BALANCE > 5000", 3);
+    }
+
+    private void runJoinTestQueries() {
+        runSelectCount("JoinTest", "simple inner join on primary key",
+                "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                        "FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID " +
+                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+        runSelectCount("JoinTest", "simple inner join on non indexed field",
+                "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                        "FROM USERS INNER JOIN USER_DETAILS ON USERS.BALANCE = USER_DETAILS.BALANCE " +
+                        "WHERE USERS.BALANCE = 5100.00", 0);
+        runSelectCount("JoinTest", "complex full join on primary key",
+                "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                        "FROM USERS FULL JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID " +
+                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+        runSelectCount("JoinTest", "complex inner join with and or in on",
+                "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
+                        "FROM USERS INNER JOIN USER_DETAILS ON (USERS.ID = USER_DETAILS.USER_ID AND USERS.NAME = USER_DETAILS.NAME) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) " +
+                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+    }
+
+    private void runLikeTestQueries() {
+        runSelectCount("LikeTest", "simple like on name",
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%'", 1);
+        runSelectCount("LikeTest", "simple like on user code",
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%'", 1);
+        runSelectCount("LikeTest", "complex like with and",
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%' AND BALANCE > 5000", 0);
+        runSelectCount("LikeTest", "complex like with or",
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%' OR BALANCE > 5000", 1);
+    }
+
+    private void runOrderByTestQueries() {
+        runSelectCount("OrderByTest", "simple order by name", "SELECT ID, NAME FROM USERS ORDER BY NAME", RECORD_COUNT);
+        runSelectCount("OrderByTest", "simple order by age desc", "SELECT ID, AGE FROM USERS ORDER BY AGE DESC", RECORD_COUNT);
+        runSelectCount("OrderByTest", "complex join order by primary key",
+                "SELECT USERS.ID, USERS.NAME, PROFILES.PROFILE_NAME FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.USER_ID > 0 OR PROFILES.USER_ID IS NOT NULL ORDER BY USERS.ID", RECORD_COUNT * RECORD_COUNT);
+        runSelectCount("OrderByTest", "complex join order by non indexed",
+                "SELECT USERS.ID, USERS.BALANCE, PROFILES.NON_INDEXED FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.NON_INDEXED LIKE 'Non%' OR PROFILES.NON_INDEXED IS NOT NULL ORDER BY USERS.BALANCE", RECORD_COUNT * RECORD_COUNT);
+    }
+
+    private void runPerformanceTestQueries() {
+        runSelectCount("PerformanceTest", "simple select where age",
+                "SELECT NAME, AGE FROM USERS WHERE AGE < 30", 95);
+        runSelectCount("PerformanceTest", "simple select clustered index",
+                "SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'CODE50'", 1);
+        runSelectCount("PerformanceTest", "complex select age and active",
+                "SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE", 47);
+        runSelectCount("PerformanceTest", "complex select parenthesized or",
+                "SELECT NAME, AGE, PRECISION FROM USERS WHERE (AGE < 35 AND ACTIVE = TRUE) OR BALANCE > 500", 244);
+    }
+
+    private void runPersistenceTestQueries() {
+        runExec("PersistenceTest", "create table",
+                "CREATE TABLE PERSIST_TEST (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, USER_SCORE LONG, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
+        runExec("PersistenceTest", "insert alice",
+                "INSERT INTO PERSIST_TEST (NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, USER_SCORE, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) " +
+                        "VALUES ('Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00', 1000000, 123.45, 99.75, 123456.789012, 'A', '123e4567-e89b-12d3-a456-426614174000')");
+        runExec("PersistenceTest", "insert bob full schema",
+                "INSERT INTO PERSIST_TEST (NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, USER_SCORE, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) " +
+                        "VALUES ('Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00', 2000000, 678.90, 88.50, 987654.321098, 'B', '550e8400-e29b-41d4-a716-446655440000')");
+        runSelectCount("PersistenceTest", "select from persisted table", "SELECT NAME, AGE FROM PERSIST_TEST WHERE AGE = 25", 1);
+    }
+
+    private void runSubqueriesTestQueries() {
+        runSelectCount("SubqueriesTest", "simple subquery in in clause",
+                "SELECT ID, NAME FROM USERS WHERE ID IN (SELECT ID FROM USERS WHERE AGE > 50) LIMIT 10", 10);
+        runSelectCount("SubqueriesTest", "simple subquery in where",
+                "SELECT ID, NAME FROM USERS WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10", 10);
+        runSelectCount("SubqueriesTest", "complex subquery in column where group by having",
+                "SELECT (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) AS user_name, COUNT(*) AS user_count " +
+                        "FROM USERS u WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) " +
+                        "GROUP BY (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) " +
+                        "HAVING COUNT(*) > (SELECT ID FROM USERS WHERE ID = 1 LIMIT 1) LIMIT 10", 0);
+        runSelectCount("SubqueriesTest", "complex subquery in column inner join on",
+                "SELECT u.ID, (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) AS user_name " +
+                        "FROM USERS u INNER JOIN USERS u2 ON u.ID = u2.ID AND u.AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10", 10);
+    }
+
+    private void runTrueFalseNullTestQueries() {
+        dropTable("NULL_TEST");
+        runExec("TrueFalseNullTest", "create table",
+                "CREATE TABLE NULL_TEST (ID LONG PRIMARY KEY SEQUENCE(null_test_seq 1 1), FLAG BOOLEAN, COL STRING, AGE INTEGER)");
+        runExec("TrueFalseNullTest", "insert flag true",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (TRUE, 'A', 25)");
+        runExec("TrueFalseNullTest", "insert flag false",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (FALSE, 'B', 30)");
+        runExec("TrueFalseNullTest", "insert null in insert",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (NULL, NULL, NULL)");
+        runSelectCount("TrueFalseNullTest", "where flag = true",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE FLAG = TRUE", 1);
+        runSelectCount("TrueFalseNullTest", "where flag = false",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE FLAG = FALSE", 1);
+        runSelectCount("TrueFalseNullTest", "where col is null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NULL", 1);
+        runSelectCount("TrueFalseNullTest", "where col is not null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NOT NULL", 2);
+        runSelectCount("TrueFalseNullTest", "where age is null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE IS NULL", 1);
+        runExec("TrueFalseNullTest", "update set null in update",
+                "UPDATE NULL_TEST SET COL = NULL WHERE ID = 1");
+        runSelectCount("TrueFalseNullTest", "where col is null after update",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NULL", 2);
+        runSelectCount("TrueFalseNullTest", "where col = null returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL", 0);
+    }
+
+    private void runCaseSensitivityTestQueries() {
+        dropTable("CASE_TEST");
+        dropTable("MyTable");
+        runExec("CaseSensitivityTest", "create table",
+                "CREATE TABLE CASE_TEST (ID LONG PRIMARY KEY SEQUENCE(case_test_seq 1 1), NAME STRING, myColumn STRING)");
+        runExec("CaseSensitivityTest", "insert john",
+                "INSERT INTO CASE_TEST (NAME, myColumn) VALUES ('John', 'value')");
+        runSelectCount("CaseSensitivityTest", "where name = 'John' finds row",
+                "SELECT ID, NAME FROM CASE_TEST WHERE NAME = 'John'", 1);
+        runSelectCount("CaseSensitivityTest", "where name = 'JOHN' returns no rows",
+                "SELECT ID, NAME FROM CASE_TEST WHERE NAME = 'JOHN'", 0);
+        runSelectCount("CaseSensitivityTest", "quoted column identifier myColumn",
+                "SELECT \"myColumn\" FROM CASE_TEST", 1);
+        runExec("CaseSensitivityTest", "create quoted table",
+                "CREATE TABLE \"MyTable\" (ID LONG PRIMARY KEY SEQUENCE(mytable_seq 1 1), NAME STRING)");
+        runExec("CaseSensitivityTest", "insert into quoted table",
+                "INSERT INTO \"MyTable\" (NAME) VALUES ('test')");
+        runSelectCount("CaseSensitivityTest", "select from quoted table",
+                "SELECT * FROM \"MyTable\"", 1);
+        dropTable("CASE_TEST");
+        dropTable("MyTable");
+    }
+
+    public static void main(String[] args) {
+        QuantitativeTest test = new QuantitativeTest();
+        test.runTests();
+    }
+}
