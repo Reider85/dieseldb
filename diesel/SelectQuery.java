@@ -620,8 +620,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 join.joinType != QueryParser.JoinType.RIGHT_INNER) {
             return false;
         }
-        return join.onConditions.stream()
-                .anyMatch(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison());
+        boolean hasEquality = false;
+        for (QueryParser.Condition condition : join.onConditions) {
+            if ("OR".equalsIgnoreCase(condition.conjunction)) {
+                return false;
+            }
+            if (condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison()) {
+                hasEquality = true;
+            }
+        }
+        return hasEquality;
     }
 
     private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {

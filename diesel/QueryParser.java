@@ -1121,6 +1121,7 @@ class QueryParser {
         Map<String, Class<?>> combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
         tableAliases.put(tableName, tableName);
 
+        String mainTableName = tableName;
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
             String joinPart = joinParts.get(i + 1).trim();
@@ -1210,7 +1211,7 @@ class QueryParser {
             tableName = joinTableName;
         }
 
-        return new TableJoins(tableName, tableAlias, joins, tableAliases, combinedColumnTypes);
+        return new TableJoins(mainTableName, tableAlias, joins, tableAliases, combinedColumnTypes);
     }
 
     // Парсит тип соединения
