@@ -57,11 +57,27 @@ public class DatabaseServer {
         }
     }
 
+    // Get socket timeout in milliseconds from Properties
+    private static int getSocketTimeout(Properties config) {
+        String timeoutStr = config.getProperty("server.socket.timeout", "30000");
+        try {
+            int timeout = Integer.parseInt(timeoutStr.trim());
+            if (timeout < 0) {
+                throw new NumberFormatException("negative timeout");
+            }
+            return timeout;
+        } catch (NumberFormatException e) {
+            LOGGER.log(Level.SEVERE, "Invalid socket timeout {0} in {1}, using default 30000", new Object[]{timeoutStr, CONFIG_FILE});
+            return 30000;
+        }
+    }
+
     public void start() {
         // Load and log configuration
         Properties config = loadConfig();
         logConfig(config);
         IsolationLevel isolationLevel = getIsolationLevel(config);
+        int socketTimeout = getSocketTimeout(config);
         LOGGER.log(Level.INFO, "Server configured with transaction isolation level: {0}", isolationLevel);
 
         running = true;
@@ -74,7 +90,7 @@ public class DatabaseServer {
                 try {
                     Socket clientSocket = serverSocket.accept();
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
-                    new Thread(new ClientHandler(clientSocket, database)).start();
+                    new Thread(new ClientHandler(clientSocket, database, socketTimeout)).start();
                 } catch (IOException e) {
                     if (running) {
                         LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
@@ -101,16 +117,18 @@ public class DatabaseServer {
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
         private final Database database;
+        private final int socketTimeout;
         private ObjectOutputStream out;
         private ObjectInputStream in;
         private UUID transactionId;
 
-        public ClientHandler(Socket socket, Database database) {
+        public ClientHandler(Socket socket, Database database, int socketTimeout) {
             this.clientSocket = socket;
             this.database = database;
+            this.socketTimeout = socketTimeout;
             this.transactionId = null;
             try {
-                clientSocket.setSoTimeout(30000);
+                clientSocket.setSoTimeout(socketTimeout);
             } catch (SocketException e) {
                 LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
             }

@@ -283,3 +283,4 @@
 2.7.2 Explicit import diesel.Database added to all test classes for consistency (same package, redundant but explicit)
 2.7.3 README.md build section added with Maven requirements (JDK 17, Maven 3.9+) and commands: mvn test, mvn -Ptest test, mvn package, mvn install (prompt 30)
 2.7.4 DatabaseServer.ClientHandler sets socket.setSoTimeout(30000) (30 s) after accepting the connection (prompt 31)
+2.7.5 Socket timeout moved to config: config.properties gains server.socket.timeout=30000; DatabaseServer reads it via getSocketTimeout(Properties) and passes it to ClientHandler
