@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.util.UUID;
 
 class QueryMessage implements Serializable {
+    private static final long serialVersionUID = 1L;
     private final String query;
     private final UUID transactionId;
 

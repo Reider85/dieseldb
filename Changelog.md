@@ -270,3 +270,4 @@
 2.6.7 Table.loadFromFile checks formatVersion and throws if it does not match current version 1 (prompt 17)
 2.6.8 Tables use .table extension; Table.loadFromFile creates a new table with base structure, formatVersion=1 and serialVersionUID when the file is missing (prompt 18)
 2.6.9 PERSISTENCE_README.md documents serialVersionUID requirement for all serializable classes and current table format version 1 (prompt 19)
+2.6.10 Add serialVersionUID to all Serializable classes missing it (QueryMessage; Sequence and indexes already had it) (prompt 20)
