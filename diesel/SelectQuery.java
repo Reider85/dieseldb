@@ -112,8 +112,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     if (equalityCondition == null) {
                         throw new IllegalStateException("No equality condition for hash join");
                     }
-                    String buildColumn = equalityCondition.rightColumn.contains(buildTableName) ? equalityCondition.rightColumn : equalityCondition.column;
-                    String probeColumn = equalityCondition.rightColumn.contains(probeTableName) ? equalityCondition.rightColumn : equalityCondition.column;
+                    String buildColumn = resolveJoinColumn(equalityCondition, buildTableName);
+                    String probeColumn = resolveJoinColumn(equalityCondition, probeTableName);
+                    if (buildColumn == null || probeColumn == null) {
+                        throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
+                    }
 
                     Map<Object, List<Map<String, Object>>> hashTable = new HashMap<>();
                     List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, combinedColumnTypes);
@@ -230,119 +233,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                     for (QueryParser.AggregateFunction agg : aggregates) {
                         String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                        if (agg.functionName.equals("COUNT")) {
-                            long count;
-                            if (agg.column == null) {
-                                count = group.size();
-                            } else {
-                                String columnKey = normalizeColumnName(agg.column, mainTableName);
-                                count = group.stream()
-                                        .filter(row -> row.get(columnKey) != null)
-                                        .count();
-                            }
-                            resultRow.put(resultKey, count);
-                        } else if (agg.functionName.equals("MIN")) {
-                            if (agg.column == null) {
-                                throw new IllegalArgumentException("MIN requires a column argument");
-                            }
-                            String columnKey = normalizeColumnName(agg.column, mainTableName);
-                            Object minValue = group.stream()
-                                    .map(row -> row.get(columnKey))
-                                    .filter(Objects::nonNull)
-                                    .min(this::compareValues)
-                                    .orElse(null);
-                            resultRow.put(resultKey, minValue);
-                        } else if (agg.functionName.equals("MAX")) {
-                            if (agg.column == null) {
-                                throw new IllegalArgumentException("MAX requires a column argument");
-                            }
-                            String columnKey = normalizeColumnName(agg.column, mainTableName);
-                            Object maxValue = group.stream()
-                                    .map(row -> row.get(columnKey))
-                                    .filter(Objects::nonNull)
-                                    .max(this::compareValues)
-                                    .orElse(null);
-                            resultRow.put(resultKey, maxValue);
-                        } else if (agg.functionName.equals("AVG")) {
-                            if (agg.column == null) {
-                                throw new IllegalArgumentException("AVG requires a column argument");
-                            }
-                            String columnKey = normalizeColumnName(agg.column, mainTableName);
-                            List<Object> values = group.stream()
-                                    .map(row -> row.get(columnKey))
-                                    .filter(Objects::nonNull)
-                                    .collect(Collectors.toList());
-                            if (values.isEmpty()) {
-                                resultRow.put(resultKey, null);
-                            } else {
-                                BigDecimal sum = BigDecimal.ZERO;
-                                long count = 0;
-                                for (Object value : values) {
-                                    if (value instanceof Number) {
-                                        sum = sum.add(new BigDecimal(value.toString()));
-                                        count++;
-                                    }
-                                }
-                                if (count > 0) {
-                                    BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, BigDecimal.ROUND_HALF_UP);
-                                    Class<?> columnType = combinedColumnTypes.get(columnKey);
-                                    if (columnType == Float.class) {
-                                        resultRow.put(resultKey, avg.floatValue());
-                                    } else if (columnType == Double.class) {
-                                        resultRow.put(resultKey, avg.doubleValue());
-                                    } else if (columnType == Integer.class) {
-                                        resultRow.put(resultKey, avg.intValue());
-                                    } else if (columnType == Long.class) {
-                                        resultRow.put(resultKey, avg.longValue());
-                                    } else if (columnType == Short.class) {
-                                        resultRow.put(resultKey, avg.shortValue());
-                                    } else if (columnType == Byte.class) {
-                                        resultRow.put(resultKey, avg.byteValue());
-                                    } else {
-                                        resultRow.put(resultKey, avg);
-                                    }
-                                } else {
-                                    resultRow.put(resultKey, null);
-                                }
-                            }
-                        } else if (agg.functionName.equals("SUM")) {
-                            if (agg.column == null) {
-                                throw new IllegalArgumentException("SUM requires a column argument");
-                            }
-                            String columnKey = normalizeColumnName(agg.column, mainTableName);
-                            List<Object> values = group.stream()
-                                    .map(row -> row.get(columnKey))
-                                    .filter(Objects::nonNull)
-                                    .collect(Collectors.toList());
-                            if (values.isEmpty()) {
-                                resultRow.put(resultKey, null);
-                            } else {
-                                BigDecimal sum = BigDecimal.ZERO;
-                                for (Object value : values) {
-                                    if (value instanceof Number) {
-                                        sum = sum.add(new BigDecimal(value.toString()));
-                                    }
-                                }
-                                Class<?> columnType = combinedColumnTypes.get(columnKey);
-                                if (columnType == Float.class) {
-                                    resultRow.put(resultKey, sum.floatValue());
-                                } else if (columnType == Double.class) {
-                                    resultRow.put(resultKey, sum.doubleValue());
-                                } else if (columnType == Integer.class) {
-                                    resultRow.put(resultKey, sum.intValue());
-                                } else if (columnType == Long.class) {
-                                    resultRow.put(resultKey, sum.longValue());
-                                } else if (columnType == Short.class) {
-                                    resultRow.put(resultKey, sum.shortValue());
-                                } else if (columnType == Byte.class) {
-                                    resultRow.put(resultKey, sum.byteValue());
-                                } else {
-                                    resultRow.put(resultKey, sum);
-                                }
-                            }
-                        } else {
-                            throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
-                        }
+                        resultRow.put(resultKey, computeAggregate(agg, group, combinedColumnTypes));
+                    }
+
+                    for (QueryParser.HavingCondition havingCondition : havingConditions) {
+                        addMissingHavingAggregates(havingCondition, resultRow, group, combinedColumnTypes);
                     }
 
                     for (String column : columns) {
@@ -388,119 +283,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 Map<String, Object> resultRow = new HashMap<>();
                 for (QueryParser.AggregateFunction agg : aggregates) {
                     String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                    if (agg.functionName.equals("COUNT")) {
-                        long count;
-                        if (agg.column == null) {
-                            count = selectedRows.size();
-                        } else {
-                            String columnKey = normalizeColumnName(agg.column, mainTableName);
-                            count = selectedRows.stream()
-                                    .filter(row -> row.get(columnKey) != null)
-                                    .count();
-                        }
-                        resultRow.put(resultKey, count);
-                    } else if (agg.functionName.equals("MIN")) {
-                        if (agg.column == null) {
-                            throw new IllegalArgumentException("MIN requires a column argument");
-                        }
-                        String columnKey = normalizeColumnName(agg.column, mainTableName);
-                        Object minValue = selectedRows.stream()
-                                .map(row -> row.get(columnKey))
-                                .filter(Objects::nonNull)
-                                .min(this::compareValues)
-                                .orElse(null);
-                        resultRow.put(resultKey, minValue);
-                    } else if (agg.functionName.equals("MAX")) {
-                        if (agg.column == null) {
-                            throw new IllegalArgumentException("MAX requires a column argument");
-                        }
-                        String columnKey = normalizeColumnName(agg.column, mainTableName);
-                        Object maxValue = selectedRows.stream()
-                                .map(row -> row.get(columnKey))
-                                .filter(Objects::nonNull)
-                                .max(this::compareValues)
-                                .orElse(null);
-                        resultRow.put(resultKey, maxValue);
-                    } else if (agg.functionName.equals("AVG")) {
-                        if (agg.column == null) {
-                            throw new IllegalArgumentException("AVG requires a column argument");
-                        }
-                        String columnKey = normalizeColumnName(agg.column, mainTableName);
-                        List<Object> values = selectedRows.stream()
-                                .map(row -> row.get(columnKey))
-                                .filter(Objects::nonNull)
-                                .collect(Collectors.toList());
-                        if (values.isEmpty()) {
-                            resultRow.put(resultKey, null);
-                        } else {
-                            BigDecimal sum = BigDecimal.ZERO;
-                            long count = 0;
-                            for (Object value : values) {
-                                if (value instanceof Number) {
-                                    sum = sum.add(new BigDecimal(value.toString()));
-                                    count++;
-                                }
-                            }
-                            if (count > 0) {
-                                BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, BigDecimal.ROUND_HALF_UP);
-                                Class<?> columnType = combinedColumnTypes.get(columnKey);
-                                if (columnType == Float.class) {
-                                    resultRow.put(resultKey, avg.floatValue());
-                                } else if (columnType == Double.class) {
-                                    resultRow.put(resultKey, avg.doubleValue());
-                                } else if (columnType == Integer.class) {
-                                    resultRow.put(resultKey, avg.intValue());
-                                } else if (columnType == Long.class) {
-                                    resultRow.put(resultKey, avg.longValue());
-                                } else if (columnType == Short.class) {
-                                    resultRow.put(resultKey, avg.shortValue());
-                                } else if (columnType == Byte.class) {
-                                    resultRow.put(resultKey, avg.byteValue());
-                                } else {
-                                    resultRow.put(resultKey, avg);
-                                }
-                            } else {
-                                resultRow.put(resultKey, null);
-                            }
-                        }
-                    } else if (agg.functionName.equals("SUM")) {
-                        if (agg.column == null) {
-                            throw new IllegalArgumentException("SUM requires a column argument");
-                        }
-                        String columnKey = normalizeColumnName(agg.column, mainTableName);
-                        List<Object> values = selectedRows.stream()
-                                .map(row -> row.get(columnKey))
-                                .filter(Objects::nonNull)
-                                .collect(Collectors.toList());
-                        if (values.isEmpty()) {
-                            resultRow.put(resultKey, null);
-                        } else {
-                            BigDecimal sum = BigDecimal.ZERO;
-                            for (Object value : values) {
-                                if (value instanceof Number) {
-                                    sum = sum.add(new BigDecimal(value.toString()));
-                                }
-                            }
-                            Class<?> columnType = combinedColumnTypes.get(columnKey);
-                            if (columnType == Float.class) {
-                                resultRow.put(resultKey, sum.floatValue());
-                            } else if (columnType == Double.class) {
-                                resultRow.put(resultKey, sum.doubleValue());
-                            } else if (columnType == Integer.class) {
-                                resultRow.put(resultKey, sum.intValue());
-                            } else if (columnType == Long.class) {
-                                resultRow.put(resultKey, sum.longValue());
-                            } else if (columnType == Short.class) {
-                                resultRow.put(resultKey, sum.shortValue());
-                            } else if (columnType == Byte.class) {
-                                resultRow.put(resultKey, sum.byteValue());
-                            } else {
-                                resultRow.put(resultKey, sum);
-                            }
-                        }
-                    } else {
-                        throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
-                    }
+                    resultRow.put(resultKey, computeAggregate(agg, selectedRows, combinedColumnTypes));
                 }
                 result.add(resultRow);
             } else {
@@ -562,6 +345,118 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         return conditionResult;
+    }
+
+    private void addMissingHavingAggregates(QueryParser.HavingCondition condition, Map<String, Object> resultRow,
+                                            List<Map<String, Object>> group, Map<String, Class<?>> combinedColumnTypes) {
+        if (condition.isGrouped()) {
+            for (QueryParser.HavingCondition subCondition : condition.subConditions) {
+                addMissingHavingAggregates(subCondition, resultRow, group, combinedColumnTypes);
+            }
+            return;
+        }
+        String key = condition.aggregate.alias != null ? condition.aggregate.alias : condition.aggregate.toString();
+        if (!resultRow.containsKey(key)) {
+            resultRow.put(key, computeAggregate(condition.aggregate, group, combinedColumnTypes));
+        }
+    }
+
+    private Object computeAggregate(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows,
+                                    Map<String, Class<?>> combinedColumnTypes) {
+        if (agg.functionName.equals("COUNT")) {
+            long count;
+            if (agg.column == null) {
+                count = rows.size();
+            } else {
+                String columnKey = normalizeColumnName(agg.column, mainTableName);
+                count = rows.stream().filter(row -> row.get(columnKey) != null).count();
+            }
+            return count;
+        } else if (agg.functionName.equals("MIN")) {
+            if (agg.column == null) {
+                throw new IllegalArgumentException("MIN requires a column argument");
+            }
+            String columnKey = normalizeColumnName(agg.column, mainTableName);
+            return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+                    .min(this::compareValues).orElse(null);
+        } else if (agg.functionName.equals("MAX")) {
+            if (agg.column == null) {
+                throw new IllegalArgumentException("MAX requires a column argument");
+            }
+            String columnKey = normalizeColumnName(agg.column, mainTableName);
+            return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+                    .max(this::compareValues).orElse(null);
+        } else if (agg.functionName.equals("AVG")) {
+            if (agg.column == null) {
+                throw new IllegalArgumentException("AVG requires a column argument");
+            }
+            String columnKey = normalizeColumnName(agg.column, mainTableName);
+            List<Object> values = rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            if (values.isEmpty()) {
+                return null;
+            }
+            BigDecimal sum = BigDecimal.ZERO;
+            long count = 0;
+            for (Object value : values) {
+                if (value instanceof Number) {
+                    sum = sum.add(new BigDecimal(value.toString()));
+                    count++;
+                }
+            }
+            if (count == 0) {
+                return null;
+            }
+            BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, BigDecimal.ROUND_HALF_UP);
+            Class<?> columnType = combinedColumnTypes.get(columnKey);
+            if (columnType == Float.class) {
+                return avg.floatValue();
+            } else if (columnType == Double.class) {
+                return avg.doubleValue();
+            } else if (columnType == Integer.class) {
+                return avg.intValue();
+            } else if (columnType == Long.class) {
+                return avg.longValue();
+            } else if (columnType == Short.class) {
+                return avg.shortValue();
+            } else if (columnType == Byte.class) {
+                return avg.byteValue();
+            }
+            return avg;
+        } else if (agg.functionName.equals("SUM")) {
+            if (agg.column == null) {
+                throw new IllegalArgumentException("SUM requires a column argument");
+            }
+            String columnKey = normalizeColumnName(agg.column, mainTableName);
+            List<Object> values = rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            if (values.isEmpty()) {
+                return null;
+            }
+            BigDecimal sum = BigDecimal.ZERO;
+            for (Object value : values) {
+                if (value instanceof Number) {
+                    sum = sum.add(new BigDecimal(value.toString()));
+                }
+            }
+            Class<?> columnType = combinedColumnTypes.get(columnKey);
+            if (columnType == Float.class) {
+                return sum.floatValue();
+            } else if (columnType == Double.class) {
+                return sum.doubleValue();
+            } else if (columnType == Integer.class) {
+                return sum.intValue();
+            } else if (columnType == Long.class) {
+                return sum.longValue();
+            } else if (columnType == Short.class) {
+                return sum.shortValue();
+            } else if (columnType == Byte.class) {
+                return sum.byteValue();
+            }
+            return sum;
+        } else {
+            throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
+        }
     }
 
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
@@ -630,6 +525,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         return hasEquality;
+    }
+
+    private String resolveJoinColumn(QueryParser.Condition condition, String tableName) {
+        String leftTable = normalizeColumnName(condition.column, mainTableName).split("\\.")[0];
+        String rightTable = normalizeColumnName(condition.rightColumn, mainTableName).split("\\.")[0];
+        if (leftTable.equals(tableName)) {
+            return condition.column;
+        }
+        if (rightTable.equals(tableName)) {
+            return condition.rightColumn;
+        }
+        return null;
     }
 
     private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {

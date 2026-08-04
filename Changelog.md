@@ -258,3 +258,4 @@
 2.5.8 Case-sensitive string literals on INSERT/UPDATE, quoted table names, case sensitivity tests (prompt 10)
 2.5.9 QuantitativeTest checks expected row counts for every query from AllTestsSampleTest; prompts 81-85 added for engine fixes (JOIN, GROUP BY, IN, LIMIT/OFFSET)
 2.5.10 JOIN fixed: main table stays the first table instead of the last joined one, hash join disabled for ON conditions containing OR so cross-product semantics hold (prompt 81)
+2.5.11 GROUP BY fixed: GROUP BY/HAVING now parsed, one group per distinct key, HAVING supports COUNT(*), hash join resolves aliased columns (prompt 82)

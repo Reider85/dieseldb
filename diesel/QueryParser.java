@@ -1243,6 +1243,34 @@ class QueryParser {
         Integer offset = null;
 
         // Проверяем наличие ключевых слов
+        int groupByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "GROUP BY");
+        if (groupByIndex != -1) {
+            int orderByIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, "ORDER BY");
+            int limitIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, "LIMIT");
+            int groupByEndIndex = tableAndJoinsOriginal.length();
+            for (int idx : new int[]{orderByIndexForEnd, limitIndexForEnd}) {
+                if (idx != -1 && idx > groupByIndex && idx < groupByEndIndex) {
+                    groupByEndIndex = idx;
+                }
+            }
+            String groupByClause = tableAndJoinsOriginal.substring(groupByIndex + 8, groupByEndIndex).trim();
+            int havingIndex = findClauseOutsideSubquery(groupByClause, "HAVING");
+            String havingClause = null;
+            if (havingIndex != -1) {
+                havingClause = groupByClause.substring(havingIndex + 6).trim();
+                groupByClause = groupByClause.substring(0, havingIndex).trim();
+            }
+            groupBy = parseGroupByClause(groupByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases);
+            if (havingClause != null) {
+                havingConditions = parseHavingConditions(havingClause, tableName, database, original,
+                        aggregates, combinedColumnTypes, tableAliases, columnAliases);
+            }
+            String beforeGroupBy = tableAndJoinsOriginal.substring(0, groupByIndex).trim();
+            String afterGroupBy = tableAndJoinsOriginal.substring(groupByEndIndex).trim();
+            tableAndJoinsOriginal = (beforeGroupBy + " " + afterGroupBy).trim();
+            LOGGER.log(Level.FINE, "Разобранная клауза GROUP BY: {0}, HAVING: {1}", new Object[]{groupBy, havingConditions});
+        }
+
         int orderByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "ORDER BY");
         if (orderByIndex != -1) {
             String beforeOrderBy = tableAndJoinsOriginal.substring(0, orderByIndex).trim();
@@ -1491,6 +1519,42 @@ class QueryParser {
         }
 
         return orderBy;
+    }
+
+    private List<String> parseGroupByClause(String groupByClause, String defaultTableName, Database database,
+                                            Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
+                                            Map<String, String> columnAliases) {
+        List<String> groupBy = new ArrayList<>();
+        List<String> items = splitSelectItems(groupByClause);
+        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))$", Pattern.DOTALL);
+
+        for (String item : items) {
+            String trimmedItem = item.trim();
+            Matcher columnMatcher = columnPattern.matcher(trimmedItem);
+            if (columnMatcher.matches()) {
+                String columnOrSubQuery = columnMatcher.group(1);
+                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
+                    String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
+                    parse(subQueryStr, database);
+                    groupBy.add("SUBQUERY_" + System.currentTimeMillis());
+                } else {
+                    columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
+                    for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
+                        if (aliasEntry.getValue().equalsIgnoreCase(columnOrSubQuery)) {
+                            columnOrSubQuery = aliasEntry.getKey();
+                            break;
+                        }
+                    }
+                    String normalizedColumn = normalizeColumnName(columnOrSubQuery, defaultTableName, tableAliases);
+                    validateColumn(normalizedColumn, combinedColumnTypes);
+                    groupBy.add(normalizedColumn);
+                }
+            } else {
+                LOGGER.log(Level.SEVERE, "Недопустимый элемент GROUP BY: {0}", trimmedItem);
+                throw new IllegalArgumentException("Недопустимый элемент GROUP BY: " + trimmedItem);
+            }
+        }
+        return groupBy;
     }
 
     private String[] splitOrderByClause(String orderByClause) {
@@ -2567,6 +2631,7 @@ class QueryParser {
         int parenDepth = 0;
         String conjunction = null;
         boolean not = false;
+        boolean inAggregateCall = false;
         int subQueryStart = -1; // Added declaration
 
         for (int i = 0; i < havingClause.length(); i++) {
@@ -2578,6 +2643,12 @@ class QueryParser {
             }
             if (!inQuotes) {
                 if (c == '(') {
+                    if (parenDepth == 0 && !inAggregateCall && i > 0
+                            && (Character.isLetterOrDigit(havingClause.charAt(i - 1)) || havingClause.charAt(i - 1) == '_')) {
+                        inAggregateCall = true;
+                        currentCondition.append(c);
+                        continue;
+                    }
                     parenDepth++;
                     if (parenDepth == 1 && i + 7 < havingClause.length() && havingClause.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
                         subQueryStart = i;
@@ -2585,6 +2656,11 @@ class QueryParser {
                     currentCondition.append(c);
                     continue;
                 } else if (c == ')') {
+                    if (parenDepth == 0 && inAggregateCall) {
+                        inAggregateCall = false;
+                        currentCondition.append(c);
+                        continue;
+                    }
                     parenDepth--;
                     currentCondition.append(c);
                     if (parenDepth == 0 && subQueryStart != -1) {
@@ -2702,13 +2778,15 @@ class QueryParser {
         }
 
         if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
+            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(.*\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
             Matcher aggMatcher = aggPattern.matcher(leftPart);
             if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);
                 String columnOrSubQuery = aggMatcher.group(2);
                 String alias = unquoteIdentifier(aggMatcher.group(3));
-                if (columnOrSubQuery.startsWith("(") && columnOrSubQuery.endsWith(")")) {
+                if (columnOrSubQuery.equals("*")) {
+                    aggregate = new AggregateFunction(funcName, (String) null, alias);
+                } else if (columnOrSubQuery.startsWith("(") && columnOrSubQuery.endsWith(")")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
                     aggregate = new AggregateFunction(funcName, new SubQuery(subQuery, null), alias);
