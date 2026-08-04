@@ -5,6 +5,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 class HashIndex implements Index, Serializable {
+    private static final long serialVersionUID = 1L;
     private final ConcurrentHashMap<Object, Set<Integer>> indexMap;
     private final Class<?> keyType;
 
