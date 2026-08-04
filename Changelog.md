@@ -267,3 +267,4 @@
 2.6.4 Add serialVersionUID to HashIndex for serialization (prompt 14)
 2.6.5 Add serialVersionUID to UniqueIndex for serialization (prompt 15)
 2.6.6 Add formatVersion field with initial value 1 to Table (prompt 16)
+2.6.7 Table.loadFromFile checks formatVersion and throws if it does not match current version 1 (prompt 17)

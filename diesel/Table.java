@@ -19,6 +19,7 @@ interface Index {
 
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
+    private static final int CURRENT_FORMAT_VERSION = 1;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final String name;
     private final List<String> columns;
@@ -34,7 +35,7 @@ class Table implements Serializable {
     private String clusteredIndexColumn;
     private transient BTreeClusteredIndex clusteredIndex;
     private transient Database database;
-    private int formatVersion = 1;
+    private int formatVersion = CURRENT_FORMAT_VERSION;
 
     public Table(Database database, String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
         this.database = database;
@@ -574,6 +575,10 @@ class Table implements Serializable {
         String fileName = tableName + ".table";
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
             Table table = (Table) ois.readObject();
+            if (table.formatVersion != CURRENT_FORMAT_VERSION) {
+                throw new IllegalArgumentException("Unsupported table format version: " + table.formatVersion
+                        + ", expected: " + CURRENT_FORMAT_VERSION);
+            }
             table.database = database;
             table.setFileInitialized(true);
             LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
