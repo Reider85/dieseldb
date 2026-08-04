@@ -13,6 +13,7 @@ public class DatabaseServer {
     private final Database database;
     private ServerSocket serverSocket;
     private boolean running;
+    private final List<Thread> workerThreads = Collections.synchronizedList(new ArrayList<>());
 
     public DatabaseServer(int port) {
         this.port = port;
@@ -90,7 +91,9 @@ public class DatabaseServer {
                 try {
                     Socket clientSocket = serverSocket.accept();
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
-                    new Thread(new ClientHandler(clientSocket, database, socketTimeout)).start();
+                    Thread worker = new Thread(new ClientHandler(clientSocket, database, socketTimeout));
+                    workerThreads.add(worker);
+                    worker.start();
                 } catch (IOException e) {
                     if (running) {
                         LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
@@ -111,6 +114,33 @@ public class DatabaseServer {
             LOGGER.log(Level.INFO, "Database server stopped");
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Error stopping server: {0}", e.getMessage());
+        }
+        // Interrupt all worker threads, give them up to 2 seconds to finish, then forcibly terminate
+        synchronized (workerThreads) {
+            LOGGER.log(Level.INFO, "Interrupting {0} worker thread(s)", workerThreads.size());
+            for (Thread worker : workerThreads) {
+                worker.interrupt();
+            }
+            long deadline = System.currentTimeMillis() + 2000;
+            for (Thread worker : workerThreads) {
+                try {
+                    long remaining = deadline - System.currentTimeMillis();
+                    if (remaining > 0) {
+                        worker.join(remaining);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            for (Thread worker : workerThreads) {
+                if (worker.isAlive()) {
+                    LOGGER.log(Level.WARNING, "Worker thread {0} did not finish within 2 seconds, terminating forcefully",
+                            worker.getName());
+                    worker.stop();
+                }
+            }
+            workerThreads.clear();
         }
     }
 
