@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.util.*;
 
 class UniqueIndex implements Index, Serializable {
+    private static final long serialVersionUID = 1L;
     private final Map<Object, Integer> indexMap;
     private final Class<?> keyType;
 
