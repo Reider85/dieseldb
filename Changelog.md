@@ -288,3 +288,4 @@
 2.7.7 DatabaseServer.main registers Runtime.addShutdownHook that calls stop() for graceful shutdown; main also accepts an optional port argument (default 3306) (prompt 33)
 2.7.8 Shutdown hook explicitly closes the ServerSocket to unblock accept() so no new connections are accepted during shutdown (prompt 34)
 2.7.9 DatabaseServer tracks worker threads; stop()/shutdown hook interrupts them, waits up to 2 seconds for graceful finish, then forcibly terminates stragglers via Thread.stop() (prompt 35)
+2.7.10 DatabaseServer uses ThreadPoolExecutor with pool size 100 (core=max) instead of a new Thread per connection; stop() shuts down the pool, waits up to 2 s, then shutdownNow() (prompt 36)

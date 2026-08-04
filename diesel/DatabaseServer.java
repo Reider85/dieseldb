@@ -3,21 +3,27 @@ package diesel;
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
 public class DatabaseServer {
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
     private static final String CONFIG_FILE = "config.properties";
+    private static final int POOL_SIZE = 100;
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
     private boolean running;
-    private final List<Thread> workerThreads = Collections.synchronizedList(new ArrayList<>());
+    private final ThreadPoolExecutor executor;
 
     public DatabaseServer(int port) {
         this.port = port;
         this.database = new Database();
+        this.executor = new ThreadPoolExecutor(
+                POOL_SIZE, POOL_SIZE, 0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(),
+                new ThreadPoolExecutor.AbortPolicy());
     }
 
     // Load configuration and return Properties object
@@ -91,9 +97,7 @@ public class DatabaseServer {
                 try {
                     Socket clientSocket = serverSocket.accept();
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
-                    Thread worker = new Thread(new ClientHandler(clientSocket, database, socketTimeout));
-                    workerThreads.add(worker);
-                    worker.start();
+                    executor.execute(new ClientHandler(clientSocket, database, socketTimeout));
                 } catch (IOException e) {
                     if (running) {
                         LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
@@ -115,32 +119,16 @@ public class DatabaseServer {
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Error stopping server: {0}", e.getMessage());
         }
-        // Interrupt all worker threads, give them up to 2 seconds to finish, then forcibly terminate
-        synchronized (workerThreads) {
-            LOGGER.log(Level.INFO, "Interrupting {0} worker thread(s)", workerThreads.size());
-            for (Thread worker : workerThreads) {
-                worker.interrupt();
+        // Shut down the worker pool: give workers up to 2 seconds to finish, then force terminate
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+                LOGGER.log(Level.WARNING, "Worker threads did not finish within 2 seconds, forcing shutdown");
+                executor.shutdownNow();
             }
-            long deadline = System.currentTimeMillis() + 2000;
-            for (Thread worker : workerThreads) {
-                try {
-                    long remaining = deadline - System.currentTimeMillis();
-                    if (remaining > 0) {
-                        worker.join(remaining);
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-            for (Thread worker : workerThreads) {
-                if (worker.isAlive()) {
-                    LOGGER.log(Level.WARNING, "Worker thread {0} did not finish within 2 seconds, terminating forcefully",
-                            worker.getName());
-                    worker.stop();
-                }
-            }
-            workerThreads.clear();
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 
