@@ -18,6 +18,7 @@ interface Index {
 }
 
 class Table implements Serializable {
+    private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final String name;
     private final List<String> columns;
