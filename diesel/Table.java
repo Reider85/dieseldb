@@ -70,6 +70,10 @@ class Table implements Serializable {
         return database;
     }
 
+    public void attachDatabase(Database database) {
+        this.database = database;
+    }
+
     private void validateSchema(List<String> columns, Map<String, Class<?>> columnTypes) {
         for (String column : columns) {
             if (!columnTypes.containsKey(column)) {

@@ -4,6 +4,98 @@ This file records each failed test run and the analysis of why it happened.
 Fixes are applied in `QueryParser` / `SubqueryParser` until the whole test
 suite in `test/diesel/` passes.
 
+## Run 3 (after prompt 42 implementation)
+
+Date: 2026-08-05
+
+Failing tests: `diesel.AllTestsSampleTest` (12 failed) and
+`diesel.QuantitativeTest` (12 failed).
+
+### Error
+
+```
+SEVERE: Query execution failed: Cannot invoke "diesel.Database.getTable(String)"
+because "database" is null
+FAIL: AliasesTest / complex select min max avg with join and group by ...
+FAIL: AliasesTest / complex select with multiple inner joins ...
+FAIL: GroupByTest / complex group by join string date ...
+FAIL: JoinTest / simple inner join on primary key ...
+FAIL: JoinTest / simple inner join on non indexed field ...
+FAIL: JoinTest / complex full join on primary key ...
+FAIL: JoinTest / complex inner join with and or in on ...
+FAIL: OrderByTest / complex join order by primary key ...
+FAIL: OrderByTest / complex join order by non indexed ...
+FAIL: SubqueriesTest / simple subquery in in clause ...
+FAIL: SubqueriesTest / complex subquery in column where group by having ...
+FAIL: SubqueriesTest / complex subquery in column inner join on ...
+```
+
+All 12 failures are SELECT queries with JOINs / subqueries, which call
+`table.getDatabase()` (`SelectQuery.java:77` and `:680`) to resolve other
+tables. The `database` reference was `null`.
+
+### Analysis
+
+Prompt 42 wraps auto-commit DML (INSERT / UPDATE / DELETE) in an implicit
+transaction: begin (snapshot), execute, commit. The snapshot and the commit
+rely on `Transaction.cloneTable` (`diesel/Transaction.java`), which deep-copies
+a `Table` by Java serialization.
+
+`Table.database` is declared `transient` (`Table.java:37`), so after
+serialization + deserialization the clone has `database = null`.
+`Table.readObject` (`Table.java:273`) rebuilds `indexes`, `sequences`,
+`clusteredIndex`, `rowLocks` from non-transient metadata, but it does NOT
+restore `database`. Only `Table.loadFromFile` re-attaches it afterwards
+(`Table.java:591`).
+
+The implicit-transaction commit put such a deserialized clone back into
+`Database.tables`, so the next JOIN/subquery on that table observed
+`getDatabase() == null` and threw the NPE.
+
+### Fix
+
+- `Table.java`: add `public void attachDatabase(Database database)` so the
+  reference can be restored after cloning.
+- `Transaction.cloneTable`: capture `table.getDatabase()` before serialization
+  and re-attach it to the clone after deserialization. This fixes both the
+  implicit auto-commit path (prompt 42) and the pre-existing latent bug for
+  explicit `BEGIN`/`COMMIT` transactions, which also commit cloned tables.
+
+## Run 4 (timing regression after prompt 42, fixed)
+
+Date: 2026-08-05
+
+Tests passed (`AllTestsSampleTest` 62/0, `QuantitativeTest` 60/0), but the
+per-query DML timings grew 2-6x vs the baseline (`timing7.md`/`timing2.md`) and
+the whole run slowed from ~20 s to ~125 s per test class:
+
+- `timing9.md` (after the NPE fix): `insert alice` 14.93 ms (baseline ~4-6 ms),
+  `update set null` 12.21 ms (baseline ~2 ms), full run 125.1 s / 121.5 s.
+
+### Analysis
+
+The implicit auto-commit transaction performed a full deep-clone of the table
+per DML statement (`Transaction.cloneTable`, Java serialization) and wrote the
+serialized `.table` file on every DML. With ~2400 setup INSERTs on growing
+tables this became O(n^2)-ish and dominated the run time.
+
+### Fix
+
+- `Transaction.java`: add `registerModifiedTable(String, Table)` that stores the
+  working table reference without deep-cloning.
+- `Database.executeQuery`: the implicit auto-commit path now executes the DML on
+  the live table, registers it, and persists only the CSV (`saveToFile`).
+  A single-statement implicit transaction needs no snapshot isolation, and the
+  serialized `.table` file is written by the explicit tests / `saveTablesToDisk`
+  as before.
+
+### Result (`timing11.md`)
+
+- `AllTestsSampleTest`: 18.05 s, `QuantitativeTest`: 14.79 s, total 42.7 s.
+- `insert alice` 5.06 ms (baseline 4.01), `insert flag true` 1.92 ms (baseline
+  1.55), `update set null` 2.40 ms (baseline 2.01). All values within normal
+  run-to-run variation vs `timing7.md`.
+
 ## Run 1 (before fixes)
 
 Date: 2026-08-02
@@ -62,10 +154,10 @@ prompt 4.
 
 ### Prompt 4 implementation summary
 
-Prompt 4 from `prompt.md`: "Добавь поддержку литералов `TRUE`, `FALSE`, `NULL`
-в лексер и парсер. В AST они должны представляться как специальные константы.
-Проверь, что в условии `WHERE flag = TRUE` идентификатор `flag` не
-интерпретируется как литерал."
+Prompt 4 from `prompt.md`: "пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ `TRUE`, `FALSE`, `NULL`
+пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ. пїЅ AST пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ `WHERE flag = TRUE` пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ `flag` пїЅпїЅ
+пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ."
 
 Changes made:
 

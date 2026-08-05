@@ -11,6 +11,7 @@ class Database {
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
+    private boolean autoCommit = true;
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         if (!tables.containsKey(tableName)) {
@@ -129,10 +130,24 @@ class Database {
                 throw new IllegalArgumentException("Table " + tableName + " does not exist");
             }
 
+            boolean isDml = parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery || parsedQuery instanceof DeleteQuery;
+            if (autoCommit && isDml && (currentTransaction == null || !currentTransaction.isActive())) {
+                Transaction implicitTransaction = new Transaction(defaultIsolationLevel);
+                Object implicitResult = parsedQuery.execute(table);
+                implicitTransaction.registerModifiedTable(tableName, table);
+                for (Map.Entry<String, Table> entry : implicitTransaction.getModifiedTables().entrySet()) {
+                    if (entry.getValue() != null) {
+                        tables.put(entry.getKey(), entry.getValue());
+                        entry.getValue().saveToFile(entry.getKey());
+                    }
+                }
+                return implicitResult;
+            }
+
             Object result = parsedQuery.execute(table);
             if (currentTransaction != null && currentTransaction.isActive()) {
                 currentTransaction.updateTable(tableName, table);
-            } else if (parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery || parsedQuery instanceof DeleteQuery) {
+            } else if (isDml) {
                 table.saveToFile(tableName);
             }
             return (parsedQuery instanceof DeleteQuery) ? result : result;
@@ -311,6 +326,14 @@ class Database {
     public boolean isInTransaction(UUID transactionId) {
         Transaction transaction = activeTransactions.get(transactionId);
         return transaction != null && transaction.isActive();
+    }
+
+    public boolean isAutoCommit() {
+        return autoCommit;
+    }
+
+    public void setAutoCommit(boolean autoCommit) {
+        this.autoCommit = autoCommit;
     }
 
     public UUID beginTransaction(IsolationLevel isolationLevel) {

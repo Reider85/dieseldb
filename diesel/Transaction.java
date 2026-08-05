@@ -61,6 +61,10 @@ class Transaction {
         }
     }
 
+    public void registerModifiedTable(String tableName, Table table) {
+        modifiedTables.put(tableName, table);
+    }
+
     public Map<String, Table> getOriginalTables() {
         return originalTables;
     }
@@ -71,6 +75,7 @@ class Transaction {
 
     private Table cloneTable(Table table) throws IOException, ClassNotFoundException {
         // Serialize and deserialize to create a deep copy
+        Database databaseRef = table.getDatabase();
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         ObjectOutputStream oos = new ObjectOutputStream(baos);
         oos.writeObject(table);
@@ -80,6 +85,10 @@ class Transaction {
         ObjectInputStream ois = new ObjectInputStream(bais);
         Table clonedTable = (Table) ois.readObject();
         ois.close();
+        // The database field is transient, so restore it on the clone
+        if (databaseRef != null) {
+            clonedTable.attachDatabase(databaseRef);
+        }
         return clonedTable;
     }
 }
