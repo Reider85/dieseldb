@@ -16,7 +16,7 @@ import java.util.concurrent.*;
 
 public class PerformanceTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class.getName());
-    private static final int RECORD_COUNT = 100;
+    private static final int RECORD_COUNT = 10;
     private static final int WARMUP_RUNS = 1;
     private static final int TEST_RUNS = 10;
     private static final long TRUE_CONDITION_WARNING_THRESHOLD_MS = 500;

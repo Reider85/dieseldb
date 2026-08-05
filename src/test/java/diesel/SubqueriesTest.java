@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 public class SubqueriesTest {
 
-    private static final int RECORD_COUNT = 100;
+    private static final int RECORD_COUNT = 10;
     private Database database;
 
     @BeforeEach

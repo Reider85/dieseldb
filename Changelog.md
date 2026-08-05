@@ -295,3 +295,5 @@
 2.7.14 GracefulShutdownTest (prompt 39): launches DatabaseServer in a separate process, connects a client, sends SIGTERM via Process.destroy() and verifies the process terminates cleanly (exit 0 and shutdown-hook log on POSIX); on Windows only termination is verified since destroy() is forceful there
 2.7.15 AllTestsSampleTest records the execution time of each query (in ms) and writes the timing report to timing.md
 2.7.16 AllTestsSampleTest writes each run to a new timing file: timing.md, then timing1.md, timing2.md, ... (next free index)
+2.7.17 autoCommit flag added to Database (default true); when true, DML statements outside an explicit transaction are auto-committed (prompt 41)
+2.7.18 test count

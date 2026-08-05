@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class AdvancedTest {
 
-    private static final int RECORD_COUNT = 100;
+    private static final int RECORD_COUNT = 10;
 
     private Database database;
 

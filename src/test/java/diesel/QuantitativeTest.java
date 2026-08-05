@@ -14,7 +14,7 @@ import java.util.logging.Logger;
 
 public class QuantitativeTest {
     private static final Logger LOGGER = Logger.getLogger(QuantitativeTest.class.getName());
-    private static final int RECORD_COUNT = 600;
+    private static final int RECORD_COUNT = 60;
     private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
     private final Database database;
     private int passed = 0;

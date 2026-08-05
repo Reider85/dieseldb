@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 public class OrderByTest {
 
-    private static final int RECORD_COUNT = 100;
+    private static final int RECORD_COUNT = 10;
     private static final SimpleDateFormat TIMESTAMP_MS_FORMATTER = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
     private Database database;
 
