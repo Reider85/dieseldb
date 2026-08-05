@@ -5,8 +5,11 @@ import diesel.Database;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -20,6 +23,7 @@ public class AllTestsSampleTest {
     private final Database database;
     private int passed = 0;
     private int failed = 0;
+    private final List<String> timingEntries = new ArrayList<>();
 
     public AllTestsSampleTest() {
         this.database = new Database();
@@ -48,8 +52,35 @@ public class AllTestsSampleTest {
         }
         LOGGER.log(Level.INFO, "==========================================");
         LOGGER.log(Level.INFO, "AllTestsSampleTest results: {0} passed, {1} failed", new Object[]{passed, failed});
+        writeTimingReport();
         if (failed > 0) {
             throw new RuntimeException("AllTestsSampleTest failed: " + failed + " tests");
+        }
+    }
+
+    private void recordTiming(String group, String name, String query, double durationMs, boolean ok) {
+        String flatQuery = query.replaceAll("[\\r\\n]+", " ").trim();
+        timingEntries.add(String.format(Locale.US, "%s | %s | %s | %.2f | %s",
+                group, name, ok ? "OK" : "FAIL", durationMs, flatQuery));
+    }
+
+    private void writeTimingReport() {
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("# AllTestsSampleTest query timings\n\n");
+            sb.append("Generated: ").append(new Date()).append("\n\n");
+            sb.append("| # | Group | Test | Result | Time (ms) | Query |\n");
+            sb.append("|---|-------|------|--------|-----------|-------|\n");
+            int index = 1;
+            for (String entry : timingEntries) {
+                sb.append("| ").append(index++).append(" | ").append(entry).append(" |\n");
+            }
+            try (FileWriter writer = new FileWriter("timing.md")) {
+                writer.write(sb.toString());
+            }
+            LOGGER.log(Level.INFO, "Timing report written to timing.md ({0} queries)", timingEntries.size());
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Failed to write timing.md: {0}", e.getMessage());
         }
     }
 
@@ -64,40 +95,55 @@ public class AllTestsSampleTest {
     }
 
     private void runSelect(String group, String name, String query) {
+        long start = System.nanoTime();
+        boolean ok = false;
         try {
             Object result = database.executeQuery(query, null);
-            check(result instanceof List, group + " / " + name + " returned a result set");
+            ok = result instanceof List;
+            check(ok, group + " / " + name + " returned a result set");
             if (result instanceof List) {
                 LOGGER.log(Level.INFO, "{0} / {1}: {2} rows", new Object[]{group, name, ((List<?>) result).size()});
             }
         } catch (Exception e) {
             check(false, group + " / " + name + " failed: " + e.getMessage());
             LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+        } finally {
+            recordTiming(group, name, query, (System.nanoTime() - start) / 1_000_000.0, ok);
         }
     }
 
     private void runSelectCount(String group, String name, String query, int expected) {
+        long start = System.nanoTime();
+        boolean ok = false;
         try {
             Object result = database.executeQuery(query, null);
             if (result instanceof List) {
                 int actual = ((List<?>) result).size();
-                check(actual == expected, group + " / " + name + " returned " + actual + " rows, expected " + expected);
+                ok = actual == expected;
+                check(ok, group + " / " + name + " returned " + actual + " rows, expected " + expected);
             } else {
                 check(false, group + " / " + name + " did not return a result set");
             }
         } catch (Exception e) {
             check(false, group + " / " + name + " failed: " + e.getMessage());
             LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+        } finally {
+            recordTiming(group, name, query, (System.nanoTime() - start) / 1_000_000.0, ok);
         }
     }
 
     private void runExec(String group, String name, String query) {
+        long start = System.nanoTime();
+        boolean ok = false;
         try {
             database.executeQuery(query, null);
+            ok = true;
             check(true, group + " / " + name + " executed");
         } catch (Exception e) {
             check(false, group + " / " + name + " failed: " + e.getMessage());
             LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+        } finally {
+            recordTiming(group, name, query, (System.nanoTime() - start) / 1_000_000.0, ok);
         }
     }
 
