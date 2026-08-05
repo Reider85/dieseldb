@@ -292,3 +292,4 @@
 2.7.11 Worker pool uses bounded queue (capacity 100) with AbortPolicy; when the pool is full, the new connection is rejected (logged) and its socket closed (prompt 37)
 2.7.12 group by fix
 2.7.13 SocketTimeoutTest (prompt 38): JUnit test starts server+client with a short socket timeout and verifies an idle connection is closed by the server after the timeout fires
+2.7.14 GracefulShutdownTest (prompt 39): launches DatabaseServer in a separate process, connects a client, sends SIGTERM via Process.destroy() and verifies the process terminates cleanly (exit 0 and shutdown-hook log on POSIX); on Windows only termination is verified since destroy() is forceful there
