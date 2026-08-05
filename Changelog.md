@@ -291,3 +291,4 @@
 2.7.10 DatabaseServer uses ThreadPoolExecutor with pool size 100 (core=max) instead of a new Thread per connection; stop() shuts down the pool, waits up to 2 s, then shutdownNow() (prompt 36)
 2.7.11 Worker pool uses bounded queue (capacity 100) with AbortPolicy; when the pool is full, the new connection is rejected (logged) and its socket closed (prompt 37)
 2.7.12 group by fix
+2.7.13 SocketTimeoutTest (prompt 38): JUnit test starts server+client with a short socket timeout and verifies an idle connection is closed by the server after the timeout fires
