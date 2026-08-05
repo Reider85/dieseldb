@@ -15,11 +15,17 @@ public class DatabaseServer {
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
-    private boolean running;
+    private volatile boolean running;
     private final ThreadPoolExecutor executor;
+    private final int socketTimeout;
 
     public DatabaseServer(int port) {
+        this(port, -1);
+    }
+
+    public DatabaseServer(int port, int socketTimeout) {
         this.port = port;
+        this.socketTimeout = socketTimeout;
         this.database = new Database();
         this.executor = new ThreadPoolExecutor(
                 POOL_SIZE, POOL_SIZE, 0L, TimeUnit.MILLISECONDS,
@@ -85,7 +91,7 @@ public class DatabaseServer {
         Properties config = loadConfig();
         logConfig(config);
         IsolationLevel isolationLevel = getIsolationLevel(config);
-        int socketTimeout = getSocketTimeout(config);
+        int effectiveSocketTimeout = socketTimeout >= 0 ? socketTimeout : getSocketTimeout(config);
         LOGGER.log(Level.INFO, "Server configured with transaction isolation level: {0}", isolationLevel);
 
         running = true;
@@ -99,7 +105,7 @@ public class DatabaseServer {
                     Socket clientSocket = serverSocket.accept();
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
                     try {
-                        executor.execute(new ClientHandler(clientSocket, database, socketTimeout));
+                        executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout));
                     } catch (RejectedExecutionException e) {
                         LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
                                 new Object[]{clientSocket.getInetAddress(), e.getMessage()});
