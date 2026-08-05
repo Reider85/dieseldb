@@ -294,3 +294,4 @@
 2.7.13 SocketTimeoutTest (prompt 38): JUnit test starts server+client with a short socket timeout and verifies an idle connection is closed by the server after the timeout fires
 2.7.14 GracefulShutdownTest (prompt 39): launches DatabaseServer in a separate process, connects a client, sends SIGTERM via Process.destroy() and verifies the process terminates cleanly (exit 0 and shutdown-hook log on POSIX); on Windows only termination is verified since destroy() is forceful there
 2.7.15 AllTestsSampleTest records the execution time of each query (in ms) and writes the timing report to timing.md
+2.7.16 AllTestsSampleTest writes each run to a new timing file: timing.md, then timing1.md, timing2.md, ... (next free index)

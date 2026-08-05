@@ -75,13 +75,25 @@ public class AllTestsSampleTest {
             for (String entry : timingEntries) {
                 sb.append("| ").append(index++).append(" | ").append(entry).append(" |\n");
             }
-            try (FileWriter writer = new FileWriter("timing.md")) {
+            String fileName = nextTimingFileName();
+            try (FileWriter writer = new FileWriter(fileName)) {
                 writer.write(sb.toString());
             }
-            LOGGER.log(Level.INFO, "Timing report written to timing.md ({0} queries)", timingEntries.size());
+            LOGGER.log(Level.INFO, "Timing report written to {0} ({1} queries)", new Object[]{fileName, timingEntries.size()});
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to write timing.md: {0}", e.getMessage());
         }
+    }
+
+    private String nextTimingFileName() {
+        if (!new File("timing.md").exists()) {
+            return "timing.md";
+        }
+        int counter = 1;
+        while (new File("timing" + counter + ".md").exists()) {
+            counter++;
+        }
+        return "timing" + counter + ".md";
     }
 
     private void check(boolean condition, String message) {
