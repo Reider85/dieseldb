@@ -7,6 +7,7 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -24,6 +25,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.HavingCondition> havingConditions;
     private final Map<String, String> tableAliases;
     private final List<QueryParser.SubQuery> subQueries;
+    private final Map<String, String> groupBySubQueries;
     private final UUID transactionId; // Changed from String to UUID
 
     public SelectQuery(String tableName, String tableAlias, List<String> columns,
@@ -33,6 +35,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                        Integer limit, Integer offset, List<QueryParser.SubQuery> subQueries,
                        Map<String, String> tableAliases, Map<String, String> extraTableAliases,
                        Map<String, Class<?>> columnTypes) {
+        this(tableName, tableAlias, columns, aggregates, joins, conditions, groupBy, havingConditions, orderBy,
+                limit, offset, subQueries, tableAliases, extraTableAliases, columnTypes, new HashMap<>());
+    }
+
+    public SelectQuery(String tableName, String tableAlias, List<String> columns,
+                       List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
+                       List<QueryParser.Condition> conditions, List<String> groupBy,
+                       List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
+                       Integer limit, Integer offset, List<QueryParser.SubQuery> subQueries,
+                       Map<String, String> tableAliases, Map<String, String> extraTableAliases,
+                       Map<String, Class<?>> columnTypes, Map<String, String> groupBySubQueries) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
         this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
         this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
@@ -45,6 +58,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
         this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
         this.subQueries = subQueries != null ? new ArrayList<>(subQueries) : new ArrayList<>();
+        this.groupBySubQueries = groupBySubQueries != null ? new HashMap<>(groupBySubQueries) : new HashMap<>();
         this.transactionId = UUID.randomUUID(); // Генерируем UUID, если он не передан
         // Добавляем tableAlias в tableAliases, если он не null
         if (tableAlias != null && !tableAlias.isEmpty()) {
@@ -217,7 +231,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (!groupBy.isEmpty()) {
                 Map<List<Object>, List<Map<String, Object>>> groupedRows = filteredRows.stream()
                         .collect(Collectors.groupingBy(row -> groupBy.stream()
-                                .map(col -> row.get(normalizeColumnName(col, mainTableName)))
+                                .map(col -> groupBySubQueries.containsKey(col)
+                                        ? evaluateGroupBySubQuery(groupBySubQueries.get(col), row, database)
+                                        : row.get(normalizeColumnName(col, mainTableName)))
                                 .collect(Collectors.toList())));
 
                 finalRows = new ArrayList<>();
@@ -858,6 +874,71 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private String normalizeColumnKey(String column, String defaultTable) {
         String normalized = normalizeColumnName(column, defaultTable);
         return normalized.contains(".") ? normalized.split("\\.")[1].trim() : normalized.trim();
+    }
+
+    private Object evaluateGroupBySubQuery(String subQueryString, Map<String, Object> outerRow, Database database) {
+        String s = subQueryString.trim();
+        if (s.startsWith("(") && s.endsWith(")")) {
+            s = s.substring(1, s.length() - 1).trim();
+        }
+        s = substituteOuterReferences(s, outerRow);
+        Object result = database.executeQuery(s, transactionId);
+        if (!(result instanceof List)) {
+            throw new IllegalStateException("GROUP BY subquery must return a list of rows");
+        }
+        List<?> rows = (List<?>) result;
+        if (rows.isEmpty()) {
+            return null;
+        }
+        Object firstRow = rows.get(0);
+        if (!(firstRow instanceof Map) || ((Map<?, ?>) firstRow).isEmpty()) {
+            return null;
+        }
+        return ((Map<?, ?>) firstRow).values().iterator().next();
+    }
+
+    private String substituteOuterReferences(String query, Map<String, Object> outerRow) {
+        Matcher matcher = Pattern.compile("(?i)\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\b").matcher(query);
+        StringBuilder result = new StringBuilder();
+        while (matcher.find()) {
+            String prefix = matcher.group(1);
+            String column = matcher.group(2);
+            String replacement = null;
+            String table = tableAliases.get(prefix);
+            if (table != null && outerRow.containsKey(table + "." + column)) {
+                replacement = formatLiteralValue(outerRow.get(table + "." + column));
+            } else {
+                for (Map.Entry<String, Object> entry : outerRow.entrySet()) {
+                    if (entry.getKey().endsWith("." + column)) {
+                        replacement = formatLiteralValue(entry.getValue());
+                        break;
+                    }
+                }
+            }
+            if (replacement != null) {
+                matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+            } else {
+                matcher.appendReplacement(result, Matcher.quoteReplacement(matcher.group(0)));
+            }
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
+    private String formatLiteralValue(Object value) {
+        if (value == null) {
+            return "NULL";
+        }
+        if (value instanceof String) {
+            return "'" + ((String) value).replace("'", "''") + "'";
+        }
+        if (value instanceof LocalDate || value instanceof LocalDateTime) {
+            return "'" + value + "'";
+        }
+        if (value instanceof Boolean) {
+            return value.toString().toUpperCase();
+        }
+        return value.toString();
     }
 
     public List<String> getColumns() {

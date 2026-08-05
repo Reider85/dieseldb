@@ -290,3 +290,4 @@
 2.7.9 DatabaseServer tracks worker threads; stop()/shutdown hook interrupts them, waits up to 2 seconds for graceful finish, then forcibly terminates stragglers via Thread.stop() (prompt 35)
 2.7.10 DatabaseServer uses ThreadPoolExecutor with pool size 100 (core=max) instead of a new Thread per connection; stop() shuts down the pool, waits up to 2 s, then shutdownNow() (prompt 36)
 2.7.11 Worker pool uses bounded queue (capacity 100) with AbortPolicy; when the pool is full, the new connection is rejected (logged) and its socket closed (prompt 37)
+2.7.12 group by fix

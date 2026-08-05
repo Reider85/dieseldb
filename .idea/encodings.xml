@@ -2,6 +2,7 @@
 <project version="4">
   <component name="Encoding">
     <file url="file://$PROJECT_DIR$/Changelog.md" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/diesel" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/diesel/AliasesTest.java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/diesel/CreateTableQuery.java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/diesel/Database.java" charset="UTF-8" />
@@ -19,6 +20,8 @@
     <file url="file://$PROJECT_DIR$/diesel/Table.java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/diesel/TableStorage.java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/diesel/UpdateQuery.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/test/diesel/AllTestsSampleTest.java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/test/diesel/QuantitativeTest.java" charset="UTF-8" />
   </component>
 </project>

@@ -1546,7 +1546,11 @@ public class SubqueryParser {
                 (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes) : Double.class);
         Object value;
         if (rightPart.startsWith("(") && rightPart.toUpperCase().contains("SELECT")) {
-            String subQueryStr = rightPart.substring(1, rightPart.length() - 1).trim();
+            String cleanRightPart = rightPart.replaceFirst("(?i)\\s+AS\\s+" + IDENTIFIER_PATTERN + "\\s*$", "").trim();
+            if (!(cleanRightPart.startsWith("(") && cleanRightPart.endsWith(")"))) {
+                throw new IllegalArgumentException("Invalid HAVING subquery on right side: " + rightPart);
+            }
+            String subQueryStr = cleanRightPart.substring(1, cleanRightPart.length() - 1).trim();
             validateSubQuery(subQueryStr);
             Object subQueryResult = database.executeQuery(subQueryStr, null);
             if (!(subQueryResult instanceof List)) {

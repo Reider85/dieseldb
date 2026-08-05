@@ -429,15 +429,22 @@ class QueryParser {
         List<OrderByInfo> orderBy;
         Integer limit;
         Integer offset;
+        Map<String, String> groupBySubQueries;
 
         AdditionalClauses(List<Condition> conditions, List<String> groupBy, List<HavingCondition> havingConditions,
                           List<OrderByInfo> orderBy, Integer limit, Integer offset) {
+            this(conditions, groupBy, havingConditions, orderBy, limit, offset, new HashMap<>());
+        }
+
+        AdditionalClauses(List<Condition> conditions, List<String> groupBy, List<HavingCondition> havingConditions,
+                          List<OrderByInfo> orderBy, Integer limit, Integer offset, Map<String, String> groupBySubQueries) {
             this.conditions = conditions;
             this.groupBy = groupBy;
             this.havingConditions = havingConditions;
             this.orderBy = orderBy;
             this.limit = limit;
             this.offset = offset;
+            this.groupBySubQueries = groupBySubQueries != null ? groupBySubQueries : new HashMap<>();
         }
     }
 
@@ -1243,6 +1250,7 @@ class QueryParser {
         Integer offset = null;
 
         // Проверяем наличие ключевых слов
+        Map<String, String> groupBySubQueries = new HashMap<>();
         int groupByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "GROUP BY");
         if (groupByIndex != -1) {
             int orderByIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, "ORDER BY");
@@ -1260,7 +1268,7 @@ class QueryParser {
                 havingClause = groupByClause.substring(havingIndex + 6).trim();
                 groupByClause = groupByClause.substring(0, havingIndex).trim();
             }
-            groupBy = parseGroupByClause(groupByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases);
+            groupBy = parseGroupByClause(groupByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases, groupBySubQueries);
             if (havingClause != null) {
                 havingConditions = parseHavingConditions(havingClause, tableName, database, original,
                         aggregates, combinedColumnTypes, tableAliases, columnAliases);
@@ -1313,7 +1321,7 @@ class QueryParser {
                     false, combinedColumnTypes, tableAliases, columnAliases);
         }
 
-        return new AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset);
+        return new AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset, groupBySubQueries);
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
@@ -1349,7 +1357,6 @@ class QueryParser {
             if (quotedStringMatcher.lookingAt()) {
                 tokenType = "quotedString";
                 nextPos = quotedStringMatcher.end();
-                inQuotes = !inQuotes;
             } else if (openParenMatcher.lookingAt() && !inQuotes) {
                 tokenType = "openParen";
                 nextPos = openParenMatcher.end();
@@ -1523,7 +1530,7 @@ class QueryParser {
 
     private List<String> parseGroupByClause(String groupByClause, String defaultTableName, Database database,
                                             Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
-                                            Map<String, String> columnAliases) {
+                                            Map<String, String> columnAliases, Map<String, String> groupBySubQueries) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitSelectItems(groupByClause);
         Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))$", Pattern.DOTALL);
@@ -1536,7 +1543,11 @@ class QueryParser {
                 if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     parse(subQueryStr, database);
-                    groupBy.add("SUBQUERY_" + System.currentTimeMillis());
+                    String marker = "SUBQUERY_" + System.currentTimeMillis();
+                    groupBy.add(marker);
+                    if (groupBySubQueries != null) {
+                        groupBySubQueries.put(marker, subQueryStr);
+                    }
                 } else {
                     columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
                     for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
