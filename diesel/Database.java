@@ -42,6 +42,10 @@ class Database {
                 SetIsolationLevelQuery isolationQuery = (SetIsolationLevelQuery) parsedQuery;
                 defaultIsolationLevel = isolationQuery.getIsolationLevel();
                 return "Isolation level set to " + defaultIsolationLevel;
+            } else if (parsedQuery instanceof SetAutoCommitQuery) {
+                SetAutoCommitQuery autoCommitQuery = (SetAutoCommitQuery) parsedQuery;
+                setAutoCommit(autoCommitQuery.isAutoCommit());
+                return "AUTOCOMMIT set to " + (autoCommitQuery.isAutoCommit() ? "ON" : "OFF");
             } else if (parsedQuery instanceof BeginTransactionQuery) {
                 if (currentTransaction != null && currentTransaction.isActive()) {
                     throw new IllegalStateException("Another transaction is already active for this client");

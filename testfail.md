@@ -4,6 +4,61 @@ This file records each failed test run and the analysis of why it happened.
 Fixes are applied in `QueryParser` / `SubqueryParser` until the whole test
 suite in `test/diesel/` passes.
 
+## Run 6 (after prompt 46 implementation)
+
+Date: 2026-08-06
+
+Failing tests: `diesel.AllTestsSampleTest` (1 failed) and
+`diesel.QuantitativeTest` (1 failed). `mvn test` run at 13:20 MSK.
+
+### Errors
+
+`AllTestsSampleTest` results: 77 passed, 1 failed (test aborted:
+"AllTestsSampleTest failed: 1 tests").
+
+`QuantitativeTest` results: 75 passed, 1 failed:
+
+```
+FAIL: TransactionTest / autoCommit is true before SET AUTOCOMMIT
+```
+
+### Analysis
+
+Prompt 46 adds the `SET AUTOCOMMIT = {ON|OFF}` / `SET SESSION AUTOCOMMIT ...`
+command. The new TransactionTest checks assert the auto-commit mode before and
+after each SET command. The first assertion after the COMMIT/ROLLBACK block was
+
+    check(database.isAutoCommit(), "... / autoCommit is true before SET AUTOCOMMIT")
+
+but prompt 45 (commit 2.7.22) intentionally keeps `autoCommit = false` after
+`COMMIT` and `ROLLBACK` (PostgreSQL-style: the next transaction requires an
+explicit `BEGIN`). The test just finished a `ROLLBACK`, so `autoCommit` was
+`false`, not `true`. The engine behaved correctly; the new test assertion was
+wrong.
+
+The SET commands themselves were already working: `SET AUTOCOMMIT = OFF`,
+`SET SESSION AUTOCOMMIT = ON`, `SET SESSION AUTOCOMMIT = OFF` and
+`SET AUTOCOMMIT = ON` all executed and flipped the flag as expected.
+
+### Fix
+
+- `src/test/java/diesel/AllTestsSampleTest.java`: the check before the SET
+  block now asserts `autoCommit` is `false` after `ROLLBACK`.
+- `src/test/java/diesel/QuantitativeTest.java`: same change.
+
+### Result
+
+Re-run at 13:22 MSK: `AllTestsSampleTest` 78/0 + `QuantitativeTest` 76/0
+BUILD SUCCESS. Final timing report written to `timing25.md` (the first clean
+run wrote `timing23.md`; `timing24.md` was a noisy run where the whole test
+class was ~20% slower, so the subquery queries measured 1.6-2.1x baseline - an
+environmental load spike, not an engine regression, since prompt 46 only adds a
+SET-command parser branch that is never reached by SELECT/JOIN/subquery
+queries). `timing25.md` is within baseline `timing.md`: the two 600x600
+cross-product joins 4070/5203 ms vs 5292/4477 ms baseline, subquery queries
+1337/364 ms vs 1250/328 ms, only small sub-10 ms queries fluctuate in the usual
+1.5-2.5x band. The new SET AUTOCOMMIT entries are < 1 ms each.
+
 ## Run 5 (after RECORD_COUNT reduction in 2.7.18)
 
 Date: 2026-08-06

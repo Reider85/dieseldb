@@ -546,14 +546,19 @@ class QueryParser {
                 return new CommitTransactionQuery();
             } else if (normalized.equals("ROLLBACK TRANSACTION") || normalized.equals("ROLLBACK")) {
                 return new RollbackTransactionQuery();
-            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
-                return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);
-            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")) {
-                return new SetIsolationLevelQuery(IsolationLevel.READ_COMMITTED);
-            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
-                return new SetIsolationLevelQuery(IsolationLevel.REPEATABLE_READ);
-            } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
-                return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
+            } else if (normalized.startsWith("SET")) {
+                Query<String> setAutoCommitQuery = parseSetAutoCommitQuery(normalized);
+                if (setAutoCommitQuery != null) {
+                    return setAutoCommitQuery;
+                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);
+                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.READ_COMMITTED);
+                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.REPEATABLE_READ);
+                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
+                }
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
@@ -603,6 +608,22 @@ class QueryParser {
                     new Object[]{originalQuery, e.getMessage()});
             return null;
         }
+    }
+
+    /**
+     * Parses the {@code SET AUTOCOMMIT = {ON|OFF}} command (optionally with the
+     * {@code SESSION} keyword, e.g. {@code SET SESSION AUTOCOMMIT = OFF}) and
+     * returns a {@link SetAutoCommitQuery} that changes the session's
+     * auto-commit mode. Returns {@code null} if the query is not a SET
+     * AUTOCOMMIT command.
+     */
+    private Query<String> parseSetAutoCommitQuery(String normalized) {
+        Matcher matcher = Pattern.compile("^SET\\s+(?:SESSION\\s+)?AUTOCOMMIT\\s*(?:=\\s*|\\s+)(ON|OFF|TRUE|FALSE|1|0)\\s*;?$").matcher(normalized);
+        if (!matcher.matches()) {
+            return null;
+        }
+        String value = matcher.group(1);
+        return new SetAutoCommitQuery(value.equals("ON") || value.equals("TRUE") || value.equals("1"));
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

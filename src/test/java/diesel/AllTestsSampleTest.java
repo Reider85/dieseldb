@@ -391,6 +391,16 @@ public class AllTestsSampleTest {
         check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'rolled'") == 0,
                 "TransactionTest / rolled back row is not visible after ROLLBACK");
 
+        check(!database.isAutoCommit(), "TransactionTest / autoCommit is false before SET AUTOCOMMIT (after ROLLBACK)");
+        runExec("TransactionTest", "set autocommit off", "SET AUTOCOMMIT = OFF");
+        check(!database.isAutoCommit(), "TransactionTest / autoCommit is false after SET AUTOCOMMIT = OFF");
+        runExec("TransactionTest", "set session autocommit on", "SET SESSION AUTOCOMMIT = ON");
+        check(database.isAutoCommit(), "TransactionTest / autoCommit is true after SET SESSION AUTOCOMMIT = ON");
+        runExec("TransactionTest", "set session autocommit off", "SET SESSION AUTOCOMMIT = OFF");
+        check(!database.isAutoCommit(), "TransactionTest / autoCommit is false after SET SESSION AUTOCOMMIT = OFF");
+        runExec("TransactionTest", "set autocommit on", "SET AUTOCOMMIT = ON");
+        check(database.isAutoCommit(), "TransactionTest / autoCommit is true after SET AUTOCOMMIT = ON");
+
         database.setAutoCommit(true);
     }
 
