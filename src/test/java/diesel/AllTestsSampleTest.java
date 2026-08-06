@@ -356,6 +356,23 @@ public class AllTestsSampleTest {
                 "CREATE TABLE TXN_TEST (ID LONG PRIMARY KEY SEQUENCE(txn_seq 1 1), NAME STRING)");
         check(database.isAutoCommit(), "TransactionTest / autoCommit is true by default");
 
+        runExec("TransactionTest", "insert without begin auto-commits",
+                "INSERT INTO TXN_TEST (NAME) VALUES ('auto48')");
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'auto48'") == 1,
+                "TransactionTest / INSERT without BEGIN is committed and visible via SELECT");
+
+        String beginResult48 = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID tx48Id = UUID.fromString(beginResult48.split(": ")[1]);
+        database.executeQuery("INSERT INTO TXN_TEST (NAME) VALUES ('only-in-tx48')", tx48Id);
+        Object inTx48 = database.executeQuery("SELECT NAME FROM TXN_TEST WHERE NAME = 'only-in-tx48'", tx48Id);
+        check(inTx48 instanceof List && ((List<?>) inTx48).size() == 1,
+                "TransactionTest / BEGIN+INSERT row is visible inside the current transaction");
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'only-in-tx48'") == 0,
+                "TransactionTest / BEGIN+INSERT row is not visible outside the transaction");
+        database.executeQuery("ROLLBACK", tx48Id);
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'only-in-tx48'") == 0,
+                "TransactionTest / BEGIN+INSERT row is discarded after ROLLBACK");
+
         String beginResult = (String) database.executeQuery("BEGIN TRANSACTION", null);
         UUID commitTxId = UUID.fromString(beginResult.split(": ")[1]);
         check(!database.isAutoCommit(), "TransactionTest / autoCommit is false after BEGIN");
