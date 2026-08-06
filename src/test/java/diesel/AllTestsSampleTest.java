@@ -379,6 +379,13 @@ public class AllTestsSampleTest {
         database.executeQuery("INSERT INTO TXN_TEST (NAME) VALUES ('committed')", commitTxId);
         database.executeQuery("COMMIT", commitTxId);
         check(!database.isAutoCommit(), "TransactionTest / autoCommit stays false after COMMIT");
+        check(!database.isInTransaction(commitTxId),
+                "TransactionTest / COMMIT ends the transaction (no automatic new BEGIN after COMMIT)");
+        database.executeQuery("INSERT INTO TXN_TEST (NAME) VALUES ('post-commit49')", null);
+        check(!database.isAutoCommit(),
+                "TransactionTest / INSERT without BEGIN after COMMIT does not auto-create a new transaction");
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'post-commit49'") == 1,
+                "TransactionTest / INSERT without BEGIN after COMMIT is written to the live table and visible");
         check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'committed'") == 1,
                 "TransactionTest / committed row is visible after COMMIT");
 
