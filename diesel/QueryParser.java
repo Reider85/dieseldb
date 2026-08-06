@@ -526,8 +526,11 @@ class QueryParser {
                 return parseCreateHashIndexQuery(normalized);
             } else if (normalized.startsWith("CREATE INDEX")) {
                 return parseCreateIndexQuery(normalized);
-            } else if (normalized.equals("BEGIN TRANSACTION") ||
-                    normalized.startsWith("BEGIN TRANSACTION ISOLATION LEVEL")) {
+            } else if (normalized.equals("BEGIN") ||
+                    normalized.equals("BEGIN TRANSACTION") ||
+                    normalized.equals("START TRANSACTION") ||
+                    normalized.startsWith("BEGIN TRANSACTION ISOLATION LEVEL") ||
+                    normalized.startsWith("START TRANSACTION ISOLATION LEVEL")) {
                 IsolationLevel isolationLevel = null;
                 if (normalized.contains("ISOLATION LEVEL READ UNCOMMITTED")) {
                     isolationLevel = IsolationLevel.READ_UNCOMMITTED;

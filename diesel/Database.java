@@ -55,6 +55,7 @@ class Database {
                 for (Map.Entry<String, Table> entry : tables.entrySet()) {
                     currentTransaction.snapshotTable(entry.getKey(), entry.getValue());
                 }
+                setAutoCommit(false);
                 return "Transaction started: " + transactionId;
             } else if (parsedQuery instanceof CommitTransactionQuery) {
                 if (currentTransaction == null || !currentTransaction.isActive()) {
