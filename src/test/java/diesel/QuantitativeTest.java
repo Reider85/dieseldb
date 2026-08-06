@@ -327,6 +327,22 @@ public class QuantitativeTest {
         runExec("TransactionTest", "set autocommit on", "SET AUTOCOMMIT = ON");
         check(database.isAutoCommit(), "TransactionTest / autoCommit is true after SET AUTOCOMMIT = ON");
 
+        database.executeQuery("SELECT NAME FROM TXN_TEST WHERE NAME = 'committed'", null);
+        check(database.isAutoCommit(), "TransactionTest / autoCommit stays true after SELECT (SELECT does not auto-commit)");
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'committed'") == 1,
+                "TransactionTest / SELECT does not affect committed data");
+
+        beginResult = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID selectTxId = UUID.fromString(beginResult.split(": ")[1]);
+        database.executeQuery("INSERT INTO TXN_TEST (NAME) VALUES ('select-visible')", selectTxId);
+        Object selectInTxn = database.executeQuery("SELECT NAME FROM TXN_TEST WHERE NAME = 'select-visible'", selectTxId);
+        check(selectInTxn instanceof List && ((List<?>) selectInTxn).size() == 1,
+                "TransactionTest / SELECT inside transaction sees uncommitted row");
+        database.executeQuery("ROLLBACK", selectTxId);
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'select-visible'") == 0,
+                "TransactionTest / SELECT inside transaction does not persist the row after ROLLBACK");
+        check(!database.isAutoCommit(), "TransactionTest / autoCommit stays false after ROLLBACK (SELECT does not change it)");
+
         database.setAutoCommit(true);
     }
 

@@ -4,6 +4,57 @@ This file records each failed test run and the analysis of why it happened.
 Fixes are applied in `QueryParser` / `SubqueryParser` until the whole test
 suite in `test/diesel/` passes.
 
+## Run 7 (after prompt 47 implementation, first attempt)
+
+Date: 2026-08-06
+
+Failing tests: `diesel.AllTestsSampleTest` (1 failed) and
+`diesel.QuantitativeTest` (1 failed). `mvn test` run at 14:09 MSK (JDK 17,
+`C:\opt\jdk-17.0.2`, because the default `JAVA_HOME` points to JDK 11 which
+cannot target release 17).
+
+### Errors
+
+Both test classes report exactly one failure:
+
+```
+FAIL: TransactionTest / SELECT inside transaction sees uncommitted row
+```
+
+### Analysis
+
+Prompt 47 makes `SELECT` read-only in `Database.executeQuery`: the final
+non-DML branch no longer calls `currentTransaction.updateTable(...)` after
+executing, so a `SELECT` cannot register the table as modified and cannot
+trigger an implicit commit. The engine behaved correctly in this run.
+
+The failing check was a bug in the new test itself. The check used the shared
+`countRows(...)` helper, which always calls `database.executeQuery(query, null)`.
+With a `null` transaction id no transaction context is attached, so it reads
+only committed data (the live table). An uncommitted row written by
+`INSERT ... ('select-visible')` inside the active transaction is therefore
+never visible to `countRows`, and the assertion expecting 1 row failed
+legitimately. The engine did not fail: the same query executed with the
+transaction id (`selectTxId`) returned 1 row, and after `ROLLBACK` the row was
+correctly not visible.
+
+This is a test assertion defect, not an engine regression.
+
+### Fix
+
+- `src/test/java/diesel/AllTestsSampleTest.java`: the in-transaction visibility
+  check now executes `SELECT ... WHERE NAME = 'select-visible'` directly with
+  `selectTxId` and asserts the returned `List` size is 1, instead of routing it
+  through `countRows` (which is intentionally commit-only).
+- `src/test/java/diesel/QuantitativeTest.java`: same change.
+
+### Result
+
+Clean re-run at 14:16 MSK: `AllTestsSampleTest` + `QuantitativeTest` BUILD
+SUCCESS, timing report `timing30.md` (heavy queries #27/#28 at or below the
+`timing.md` baseline, #37 +12%; test #1 and #39 within the machine-load noise
+documented in Run 6's `timing24.md` entry).
+
 ## Run 6 (after prompt 46 implementation)
 
 Date: 2026-08-06

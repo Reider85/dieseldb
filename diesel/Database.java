@@ -166,9 +166,6 @@ class Database {
             }
 
             Object result = parsedQuery.execute(table);
-            if (currentTransaction != null && currentTransaction.isActive()) {
-                currentTransaction.updateTable(tableName, table);
-            }
             return result;
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
