@@ -310,6 +310,16 @@ public class QuantitativeTest {
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL AND AGE = NULL", 0);
         runSelectCount("TrueFalseNullTest", "where not true and unknown keeps only false row",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE NOT (AGE = 25 AND COL = NULL)", 1);
+        runSelectCount("TrueFalseNullTest", "where true or unknown includes row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 25 OR COL = NULL", 1);
+        runSelectCount("TrueFalseNullTest", "where false or unknown excludes row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 99 OR COL = NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where unknown or unknown excludes row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL OR AGE = NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where false or true and unknown or true include rows",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 99 OR COL IS NULL", 2);
+        runSelectCount("TrueFalseNullTest", "where not true or unknown excludes all rows",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE NOT (AGE = 25 OR COL = NULL)", 0);
         runExec("TrueFalseNullTest", "update where col is null",
                 "UPDATE NULL_TEST SET AGE = 40 WHERE COL IS NULL");
         runSelectCount("TrueFalseNullTest", "select after update where col is null",
@@ -326,6 +336,20 @@ public class QuantitativeTest {
                 "DELETE FROM NULL_TEST WHERE COL IS NOT NULL");
         runSelectCount("TrueFalseNullTest", "select after delete where col is not null",
                 "SELECT ID, FLAG, COL FROM NULL_TEST", 0);
+        runExec("TrueFalseNullTest", "reinsert row a for or logic",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (TRUE, 'A', 25)");
+        runExec("TrueFalseNullTest", "reinsert row b for or logic",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (FALSE, 'B', 30)");
+        runExec("TrueFalseNullTest", "reinsert null row for or logic",
+                "INSERT INTO NULL_TEST (FLAG, COL, AGE) VALUES (NULL, NULL, NULL)");
+        runExec("TrueFalseNullTest", "update where false or unknown or true",
+                "UPDATE NULL_TEST SET AGE = 77 WHERE AGE = 99 OR COL IS NULL");
+        runSelectCount("TrueFalseNullTest", "select after update with or unknown",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 77", 1);
+        runExec("TrueFalseNullTest", "delete where true or unknown",
+                "DELETE FROM NULL_TEST WHERE AGE = 25 OR COL = NULL");
+        runSelectCount("TrueFalseNullTest", "select after delete with or unknown",
+                "SELECT ID, FLAG, COL FROM NULL_TEST", 2);
     }
 
     private void runTransactionTestQueries() {

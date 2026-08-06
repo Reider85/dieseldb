@@ -71,9 +71,14 @@ class UpdateQuery implements Query<Void> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        return Boolean.TRUE.equals(evaluateConditions3vl(row, conditions, columnTypes));
+        return ThreeValuedLogic.isTrue(evaluateConditions3vl(row, conditions, columnTypes));
     }
 
+    /**
+     * Вычисляет список условий по правилам трёхзначной логики SQL
+     * (см. {@link ThreeValuedLogic}). Правый операнд не вычисляется, если левый
+     * уже определяет результат: {@code TRUE OR X = TRUE}, {@code FALSE AND X = FALSE}.
+     */
     private Boolean evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
         if (conditions.isEmpty()) {
             return Boolean.TRUE;
@@ -81,48 +86,26 @@ class UpdateQuery implements Query<Void> {
         Boolean result = evaluateCondition3vl(row, conditions.get(0), columnTypes);
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
-            Boolean conditionResult = evaluateCondition3vl(row, condition, columnTypes);
             String conjunction = condition.conjunction;
-            if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
-                result = and3vl(result, conditionResult);
-            } else if (conjunction.equalsIgnoreCase("OR")) {
-                result = or3vl(result, conditionResult);
+            if (conjunction != null && conjunction.equalsIgnoreCase("OR")) {
+                if (ThreeValuedLogic.orIsDetermined(result)) {
+                    continue;
+                }
+                result = ThreeValuedLogic.or(result, evaluateCondition3vl(row, condition, columnTypes));
+            } else if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
+                if (ThreeValuedLogic.andIsDetermined(result)) {
+                    continue;
+                }
+                result = ThreeValuedLogic.and(result, evaluateCondition3vl(row, condition, columnTypes));
             }
         }
         return result;
     }
 
-    private Boolean and3vl(Boolean left, Boolean right) {
-        if (Boolean.FALSE.equals(left) || Boolean.FALSE.equals(right)) {
-            return Boolean.FALSE;
-        }
-        if (Boolean.TRUE.equals(left) && Boolean.TRUE.equals(right)) {
-            return Boolean.TRUE;
-        }
-        return null;
-    }
-
-    private Boolean or3vl(Boolean left, Boolean right) {
-        if (Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right)) {
-            return Boolean.TRUE;
-        }
-        if (Boolean.FALSE.equals(left) && Boolean.FALSE.equals(right)) {
-            return Boolean.FALSE;
-        }
-        return null;
-    }
-
-    private Boolean not3vl(Boolean value) {
-        if (value == null) {
-            return null;
-        }
-        return Boolean.valueOf(!value.booleanValue());
-    }
-
     private Boolean evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
         if (condition.isGrouped()) {
             Boolean subResult = evaluateConditions3vl(row, condition.subConditions, columnTypes);
-            return condition.not ? not3vl(subResult) : subResult;
+            return condition.not ? ThreeValuedLogic.not(subResult) : subResult;
         }
 
         if (condition.isNullOperator()) {

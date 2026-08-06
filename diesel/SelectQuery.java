@@ -27,6 +27,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<QueryParser.SubQuery> subQueries;
     private final Map<String, String> groupBySubQueries;
     private final Map<String, Object> scalarSubQueryCache = new HashMap<>();
+    private final Map<String, List<Object>> inSubQueryCache = new HashMap<>();
     private final UUID transactionId; // Changed from String to UUID
 
     public SelectQuery(String tableName, String tableAlias, List<String> columns,
@@ -637,9 +638,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
-        return Boolean.TRUE.equals(evaluateConditions3vl(row, conditions, combinedColumnTypes, tables));
+        return ThreeValuedLogic.isTrue(evaluateConditions3vl(row, conditions, combinedColumnTypes, tables));
     }
 
+    /**
+     * Вычисляет список условий по правилам трёхзначной логики SQL
+     * (см. {@link ThreeValuedLogic}). Правый операнд не вычисляется, если левый
+     * уже определяет результат: {@code TRUE OR X = TRUE}, {@code FALSE AND X = FALSE}.
+     */
     private Boolean evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions,
                                           Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
         if (conditions.isEmpty()) {
@@ -648,49 +654,27 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Boolean result = evaluateCondition3vl(row, conditions.get(0), combinedColumnTypes, tables);
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
-            Boolean conditionResult = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
             String conjunction = condition.conjunction;
-            if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
-                result = and3vl(result, conditionResult);
-            } else if (conjunction.equalsIgnoreCase("OR")) {
-                result = or3vl(result, conditionResult);
+            if (conjunction != null && conjunction.equalsIgnoreCase("OR")) {
+                if (ThreeValuedLogic.orIsDetermined(result)) {
+                    continue;
+                }
+                result = ThreeValuedLogic.or(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
+            } else if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
+                if (ThreeValuedLogic.andIsDetermined(result)) {
+                    continue;
+                }
+                result = ThreeValuedLogic.and(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
             }
         }
         return result;
-    }
-
-    private Boolean and3vl(Boolean left, Boolean right) {
-        if (Boolean.FALSE.equals(left) || Boolean.FALSE.equals(right)) {
-            return Boolean.FALSE;
-        }
-        if (Boolean.TRUE.equals(left) && Boolean.TRUE.equals(right)) {
-            return Boolean.TRUE;
-        }
-        return null;
-    }
-
-    private Boolean or3vl(Boolean left, Boolean right) {
-        if (Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right)) {
-            return Boolean.TRUE;
-        }
-        if (Boolean.FALSE.equals(left) && Boolean.FALSE.equals(right)) {
-            return Boolean.FALSE;
-        }
-        return null;
-    }
-
-    private Boolean not3vl(Boolean value) {
-        if (value == null) {
-            return null;
-        }
-        return Boolean.valueOf(!value.booleanValue());
     }
 
     private Boolean evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
                                          Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
         if (condition.isGrouped()) {
             Boolean subResult = evaluateConditions3vl(row, condition.subConditions, combinedColumnTypes, tables);
-            return condition.not ? not3vl(subResult) : subResult;
+            return condition.not ? ThreeValuedLogic.not(subResult) : subResult;
         }
 
         if (condition.isNullOperator()) {
@@ -715,17 +699,24 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 if (subQueryString.startsWith("(") && subQueryString.endsWith(")")) {
                     subQueryString = subQueryString.substring(1, subQueryString.length() - 1).trim();
                 }
-                LOGGER.log(Level.FINE, "Executing subquery: {0}", subQueryString);
-                Object subQueryResult = database.executeQuery(subQueryString, transactionId);
-                if (!(subQueryResult instanceof List)) {
-                    throw new IllegalStateException("Subquery must return a list of rows");
-                }
-                inValues = new ArrayList<>();
-                for (Map<String, Object> subRow : (List<Map<String, Object>>) subQueryResult) {
-                    if (!subRow.isEmpty()) {
-                        inValues.add(subRow.values().iterator().next());
+                // Ключ кэша строится после подстановки значений внешних колонок:
+                // некоррелированный подзапрос выполняется один раз на весь SELECT,
+                // коррелированный - один раз на каждый уникальный набор значений.
+                String resolvedSubQuery = substituteOuterReferences(subQueryString, row);
+                inValues = inSubQueryCache.computeIfAbsent(resolvedSubQuery, key -> {
+                    LOGGER.log(Level.FINE, "Executing subquery: {0}", key);
+                    Object subQueryResult = database.executeQuery(key, transactionId);
+                    if (!(subQueryResult instanceof List)) {
+                        throw new IllegalStateException("Subquery must return a list of rows");
                     }
-                }
+                    List<Object> values = new ArrayList<>();
+                    for (Map<String, Object> subRow : (List<Map<String, Object>>) subQueryResult) {
+                        if (!subRow.isEmpty()) {
+                            values.add(subRow.values().iterator().next());
+                        }
+                    }
+                    return values;
+                });
             } else {
                 inValues = condition.inValues;
             }

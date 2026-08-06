@@ -63,3 +63,31 @@ Restored `RECORD_COUNT = 600` in both test classes.
 - `timing12.md` - broken 10-row run (before RECORD_COUNT fix).
 - `timing13.md` - noisy first re-run at 600 rows.
 - `timing14.md` - verified re-run at 600 rows; within baseline.
+
+## Prompt 55: OR truth table with UNKNOWN
+
+- New shared class `diesel/ThreeValuedLogic.java` with `and` / `or` / `not` /
+  `isTrue` and the short-circuit helpers `orIsDetermined` / `andIsDetermined`.
+  `SelectQuery`, `UpdateQuery` and `DeleteQuery` now call it instead of keeping
+  three private copies of `and3vl` / `or3vl` / `not3vl`.
+- OR truth table: `TRUE OR UNKNOWN = TRUE`, `FALSE OR UNKNOWN = UNKNOWN`,
+  `UNKNOWN OR UNKNOWN = UNKNOWN`; only `TRUE` keeps a row.
+- WHERE evaluation short-circuits: the remaining OR operands are skipped once
+  the accumulated value is `TRUE`, the remaining AND operands once it is
+  `FALSE`, so the NULL handling adds no per-row cost.
+- IN subquery caching: `SelectQuery` caches IN subquery results per query
+  execution, keyed by the SQL after outer-reference substitution, so a
+  non-correlated `WHERE ID IN (SELECT ...)` executes its subquery once instead
+  of once per scanned row.
+- Tests: 12 new checks in `AllTestsSampleTest` and `QuantitativeTest`
+  (SELECT / UPDATE / DELETE with `OR` + `NULL`).
+
+| # | Action | Result | Time |
+|---|--------|--------|------|
+| 1 | baseline `mvn test` (no profile) | 106 OK / 0 FAIL | `timing48.md` |
+| 2 | `mvn test` after 3VL refactor | 118 OK / 0 FAIL | `timing49.md` |
+| 3 | `mvn test` after IN subquery cache | 93 queries, 0 FAIL | `timing50.md` |
+
+- No degradation vs `timing.md`: per-query values stay in the same range and the
+  heaviest case, `SubqueriesTest / simple subquery in in clause`, improved from
+  1250 ms (`timing.md`) to 206 ms (`timing50.md`).
