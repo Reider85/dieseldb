@@ -4,6 +4,8 @@ import diesel.Database;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -20,10 +22,30 @@ public class PerformanceTest {
     private static final int WARMUP_RUNS = 1;
     private static final int TEST_RUNS = 10;
     private static final long TRUE_CONDITION_WARNING_THRESHOLD_MS = 500;
+    private static final Map<String, Integer> EXPECTED_QUERY_ROW_COUNTS = new HashMap<>();
+
+    static {
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, ACTIVE FROM USERS WHERE AGE = 25", 1);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, SCORE FROM USERS WHERE SCORE > 75.0", 0);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE", 5);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, LEVEL FROM USERS WHERE AGE > 40 OR LEVEL > 50", 0);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, RANK FROM USERS WHERE NOT AGE = 30", 10);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, PRECISION FROM USERS WHERE (AGE < 35 AND ACTIVE = TRUE) OR BALANCE > 500", 5);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, INITIAL FROM USERS WHERE (AGE < 40 OR NOT ACTIVE = FALSE) AND RANK < 5", 4);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'CODE50'", 0);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'CODE50' AND AGE = 25", 0);
+        EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE FROM USERS WHERE ACTIVE = TRUE", 5);
+    }
+
     private final Database database;
 
     public PerformanceTest() {
         this.database = new Database();
+    }
+
+    private void assertQueryRowCount(String query, Object result) {
+        assertEquals(EXPECTED_QUERY_ROW_COUNTS.get(query).intValue(), ((List<?>) result).size(),
+                "Unexpected row count for query: " + query);
     }
 
     @Test
@@ -53,6 +75,8 @@ public class PerformanceTest {
         LOGGER.log(Level.INFO, "Unique clustered index created on USER_CODE");
 
         insertRecords(RECORD_COUNT);
+        Object verify = database.executeQuery("SELECT NAME FROM USERS", null);
+        assertEquals(RECORD_COUNT, ((List<?>) verify).size(), "Expected " + RECORD_COUNT + " rows after setup insert");
         LOGGER.log(Level.INFO, "Setup completed: {0} records inserted into USERS table", RECORD_COUNT);
     }
 
@@ -189,6 +213,9 @@ public class PerformanceTest {
         long minTimeNs = executionTimes.stream().min(Long::compareTo).orElse(0L);
         long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
         double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
+
+        Object verifyUpdate = database.executeQuery("SELECT NAME FROM USERS WHERE SCORE > 50", null);
+        assertEquals(RECORD_COUNT, ((List<?>) verifyUpdate).size(), "Expected all records to have an updated SCORE");
 
         LOGGER.log(Level.INFO, "UPDATE performance for {0} records", RECORD_COUNT);
         LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
@@ -408,7 +435,8 @@ public class PerformanceTest {
         LOGGER.log(Level.INFO, "Testing query: {0}", query);
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
-            database.executeQuery(query, null);
+            Object result = database.executeQuery(query, null);
+            assertQueryRowCount(query, result);
         }
 
         List<Long> executionTimes = new ArrayList<>();
@@ -447,7 +475,8 @@ public class PerformanceTest {
         LOGGER.log(Level.INFO, "Testing TRUE condition query performance: {0}", query);
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
-            database.executeQuery(query, null);
+            Object result = database.executeQuery(query, null);
+            assertQueryRowCount(query, result);
         }
 
         List<Long> executionTimes = new ArrayList<>();

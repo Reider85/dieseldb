@@ -49,7 +49,11 @@ public class AdvancedTest {
 
     @Test
     void insertWithDuplicateSequencePrimaryKey() {
-        assertDoesNotThrow(() -> database.executeQuery("INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE) VALUES ('CODE1001DUP', 'User1001Duplicate', 25, 1500.00)", null), "insertWithDuplicateSequencePrimaryKey");
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> database.executeQuery("INSERT INTO USERS (ID, USER_CODE, NAME, AGE, BALANCE) VALUES (5, 'CODE1001DUP', 'User1001Duplicate', 25, 1500.00)", null),
+                "insertWithDuplicateSequencePrimaryKey");
+        assertTrue(exception.getMessage().contains("sequence-based primary key column"),
+                "insertWithDuplicateSequencePrimaryKey must reject a manually specified value for the sequence primary key, got: " + exception.getMessage());
     }
 
     @Test

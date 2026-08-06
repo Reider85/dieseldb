@@ -108,24 +108,6 @@ public class AllTestsSampleTest {
         }
     }
 
-    private void runSelect(String group, String name, String query) {
-        long start = System.nanoTime();
-        boolean ok = false;
-        try {
-            Object result = database.executeQuery(query, null);
-            ok = result instanceof List;
-            check(ok, group + " / " + name + " returned a result set");
-            if (result instanceof List) {
-                LOGGER.log(Level.INFO, "{0} / {1}: {2} rows", new Object[]{group, name, ((List<?>) result).size()});
-            }
-        } catch (Exception e) {
-            check(false, group + " / " + name + " failed: " + e.getMessage());
-            LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
-        } finally {
-            recordTiming(group, name, query, (System.nanoTime() - start) / 1_000_000.0, ok);
-        }
-    }
-
     private void runSelectCount(String group, String name, String query, int expected) {
         long start = System.nanoTime();
         boolean ok = false;
@@ -216,98 +198,98 @@ public class AllTestsSampleTest {
     private void runAdvancedTestQueries() {
         runSelectCount("AdvancedTest", "simple select by primary key", "SELECT ID, NAME FROM USERS WHERE ID = 500", 1);
         runSelectCount("AdvancedTest", "simple select by name", "SELECT ID, NAME FROM USERS WHERE NAME = 'User500'", 1);
-        runSelect("AdvancedTest", "complex select with multi-column and conditions",
-                "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')");
-        runSelect("AdvancedTest", "complex select with or limit offset",
-                "SELECT ID, NAME FROM USERS WHERE AGE = 50 OR BALANCE > 5000 LIMIT 10 OFFSET 5");
+        runSelectCount("AdvancedTest", "complex select with multi-column and conditions",
+                "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')", 0);
+        runSelectCount("AdvancedTest", "complex select with or limit offset",
+                "SELECT ID, NAME FROM USERS WHERE AGE = 50 OR BALANCE > 5000 LIMIT 10 OFFSET 5", 2);
     }
 
     private void runAliasesTestQueries() {
-        runSelect("AliasesTest", "simple select with alias order by",
-                "SELECT NAME userName, USER_CODE code FROM USERS u ORDER BY userName");
-        runSelect("AliasesTest", "simple select with as alias order by",
-                "SELECT NAME AS userName, USER_CODE AS code FROM USERS u ORDER BY userName");
-        runSelect("AliasesTest", "complex select min max avg with join and group by",
+        runSelectCount("AliasesTest", "simple select with alias order by",
+                "SELECT NAME userName, USER_CODE code FROM USERS u ORDER BY userName", RECORD_COUNT);
+        runSelectCount("AliasesTest", "simple select with as alias order by",
+                "SELECT NAME AS userName, USER_CODE AS code FROM USERS u ORDER BY userName", RECORD_COUNT);
+        runSelectCount("AliasesTest", "complex select min max avg with join and group by",
                 "SELECT u.NAME userName, t.TRANS_DATE transDate, MIN(u.AGE) minAge, MAX(u.AGE) maxAge, AVG(u.AGE) avgAge " +
                         "FROM USERS u INNER JOIN TRANSACTIONS t ON u.ID = t.USER_ID " +
-                        "GROUP BY userName, transDate ORDER BY transDate DESC");
-        runSelect("AliasesTest", "complex select with multiple inner joins",
+                        "GROUP BY userName, transDate ORDER BY transDate DESC", RECORD_COUNT);
+        runSelectCount("AliasesTest", "complex select with multiple inner joins",
                 "SELECT u.NAME userName, t.AMOUNT transAmount, u2.NAME refName " +
                         "FROM USERS u " +
                         "INNER JOIN TRANSACTIONS t ON u.ID = t.USER_ID " +
                         "INNER JOIN USERS u2 ON u.ID = u2.ID " +
-                        "LIMIT 10 OFFSET 5");
+                        "LIMIT 10 OFFSET 5", 10);
     }
 
     private void runGroupByTestQueries() {
-        runSelect("GroupByTest", "simple group by min max avg",
-                "SELECT NAME, MIN(AGE), MAX(AGE), AVG(AGE) FROM USERS GROUP BY NAME");
-        runSelect("GroupByTest", "simple group by sum count",
-                "SELECT NAME, SUM(AGE), COUNT(AGE) FROM USERS GROUP BY NAME");
-        runSelect("GroupByTest", "complex group by date having",
-                "SELECT DATE_FIELD, SUM(BALANCE), COUNT(BALANCE) FROM USERS GROUP BY DATE_FIELD HAVING COUNT(*) > 0");
-        runSelect("GroupByTest", "complex group by join string date",
+        runSelectCount("GroupByTest", "simple group by min max avg",
+                "SELECT NAME, MIN(AGE), MAX(AGE), AVG(AGE) FROM USERS GROUP BY NAME", RECORD_COUNT);
+        runSelectCount("GroupByTest", "simple group by sum count",
+                "SELECT NAME, SUM(AGE), COUNT(AGE) FROM USERS GROUP BY NAME", RECORD_COUNT);
+        runSelectCount("GroupByTest", "complex group by date having",
+                "SELECT DATE_FIELD, SUM(BALANCE), COUNT(BALANCE) FROM USERS GROUP BY DATE_FIELD HAVING COUNT(*) > 0", RECORD_COUNT);
+        runSelectCount("GroupByTest", "complex group by join string date",
                 "SELECT USERS.NAME, PROFILES.PROFILE_DATE, SUM(USERS.BALANCE), COUNT(USERS.BALANCE) " +
                         "FROM USERS INNER JOIN PROFILES ON USERS.ID = PROFILES.USER_ID " +
-                        "GROUP BY USERS.NAME, PROFILES.PROFILE_DATE ORDER BY PROFILES.PROFILE_DATE DESC");
+                        "GROUP BY USERS.NAME, PROFILES.PROFILE_DATE ORDER BY PROFILES.PROFILE_DATE DESC", RECORD_COUNT);
     }
 
     private void runInTestQueries() {
-        runSelect("InTest", "simple in on btree index", "SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)");
+        runSelectCount("InTest", "simple in on btree index", "SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)", 21);
         runSelectCount("InTest", "simple in on primary key", "SELECT ID, NAME FROM USERS WHERE ID IN (500, 501, 502)", 3);
-        runSelect("InTest", "complex in with and",
-                "SELECT ID, NAME FROM USERS WHERE NAME IN ('User500', 'User501', 'User502') AND BALANCE > 5000");
-        runSelect("InTest", "complex in with or",
-                "SELECT ID, NAME FROM USERS WHERE USER_CODE IN ('CODE500', 'CODE501', 'CODE502') OR BALANCE > 5000");
+        runSelectCount("InTest", "complex in with and",
+                "SELECT ID, NAME FROM USERS WHERE NAME IN ('User500', 'User501', 'User502') AND BALANCE > 5000", 0);
+        runSelectCount("InTest", "complex in with or",
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE IN ('CODE500', 'CODE501', 'CODE502') OR BALANCE > 5000", 3);
     }
 
     private void runJoinTestQueries() {
-        runSelect("JoinTest", "simple inner join on primary key",
+        runSelectCount("JoinTest", "simple inner join on primary key",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID " +
-                        "WHERE USERS.ID IN (500, 501, 502)");
-        runSelect("JoinTest", "simple inner join on non indexed field",
+                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+        runSelectCount("JoinTest", "simple inner join on non indexed field",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS INNER JOIN USER_DETAILS ON USERS.BALANCE = USER_DETAILS.BALANCE " +
-                        "WHERE USERS.BALANCE = 5100.00");
-        runSelect("JoinTest", "complex full join on primary key",
+                        "WHERE USERS.BALANCE = 5100.00", 0);
+        runSelectCount("JoinTest", "complex full join on primary key",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS FULL JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID " +
-                        "WHERE USERS.ID IN (500, 501, 502)");
-        runSelect("JoinTest", "complex inner join with and or in on",
+                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+        runSelectCount("JoinTest", "complex inner join with and or in on",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS INNER JOIN USER_DETAILS ON (USERS.ID = USER_DETAILS.USER_ID AND USERS.NAME = USER_DETAILS.NAME) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) " +
-                        "WHERE USERS.ID IN (500, 501, 502)");
+                        "WHERE USERS.ID IN (500, 501, 502)", 3);
     }
 
     private void runLikeTestQueries() {
-        runSelect("LikeTest", "simple like on name",
-                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%'");
-        runSelect("LikeTest", "simple like on user code",
-                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%'");
-        runSelect("LikeTest", "complex like with and",
-                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%' AND BALANCE > 5000");
-        runSelect("LikeTest", "complex like with or",
-                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%' OR BALANCE > 5000");
+        runSelectCount("LikeTest", "simple like on name",
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%'", 1);
+        runSelectCount("LikeTest", "simple like on user code",
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%'", 1);
+        runSelectCount("LikeTest", "complex like with and",
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%' AND BALANCE > 5000", 0);
+        runSelectCount("LikeTest", "complex like with or",
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%' OR BALANCE > 5000", 1);
     }
 
     private void runOrderByTestQueries() {
         runSelectCount("OrderByTest", "simple order by name", "SELECT ID, NAME FROM USERS ORDER BY NAME", RECORD_COUNT);
         runSelectCount("OrderByTest", "simple order by age desc", "SELECT ID, AGE FROM USERS ORDER BY AGE DESC", RECORD_COUNT);
-        runSelect("OrderByTest", "complex join order by primary key",
-                "SELECT USERS.ID, USERS.NAME, PROFILES.PROFILE_NAME FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.USER_ID > 0 OR PROFILES.USER_ID IS NOT NULL ORDER BY USERS.ID");
-        runSelect("OrderByTest", "complex join order by non indexed",
-                "SELECT USERS.ID, USERS.BALANCE, PROFILES.NON_INDEXED FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.NON_INDEXED LIKE 'Non%' OR PROFILES.NON_INDEXED IS NOT NULL ORDER BY USERS.BALANCE");
+        runSelectCount("OrderByTest", "complex join order by primary key",
+                "SELECT USERS.ID, USERS.NAME, PROFILES.PROFILE_NAME FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.USER_ID > 0 OR PROFILES.USER_ID IS NOT NULL ORDER BY USERS.ID", RECORD_COUNT * RECORD_COUNT);
+        runSelectCount("OrderByTest", "complex join order by non indexed",
+                "SELECT USERS.ID, USERS.BALANCE, PROFILES.NON_INDEXED FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.NON_INDEXED LIKE 'Non%' OR PROFILES.NON_INDEXED IS NOT NULL ORDER BY USERS.BALANCE", RECORD_COUNT * RECORD_COUNT);
     }
 
     private void runPerformanceTestQueries() {
-        runSelect("PerformanceTest", "simple select where age",
-                "SELECT NAME, AGE FROM USERS WHERE AGE < 30");
+        runSelectCount("PerformanceTest", "simple select where age",
+                "SELECT NAME, AGE FROM USERS WHERE AGE < 30", 95);
         runSelectCount("PerformanceTest", "simple select clustered index", "SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'CODE50'", 1);
-        runSelect("PerformanceTest", "complex select age and active",
-                "SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE");
-        runSelect("PerformanceTest", "complex select parenthesized or",
-                "SELECT NAME, AGE, PRECISION FROM USERS WHERE (AGE < 35 AND ACTIVE = TRUE) OR BALANCE > 500");
+        runSelectCount("PerformanceTest", "complex select age and active",
+                "SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE", 47);
+        runSelectCount("PerformanceTest", "complex select parenthesized or",
+                "SELECT NAME, AGE, PRECISION FROM USERS WHERE (AGE < 35 AND ACTIVE = TRUE) OR BALANCE > 500", 244);
     }
 
     private void runPersistenceTestQueries() {
@@ -326,18 +308,18 @@ public class AllTestsSampleTest {
     }
 
     private void runSubqueriesTestQueries() {
-        runSelect("SubqueriesTest", "simple subquery in in clause",
-                "SELECT ID, NAME FROM USERS WHERE ID IN (SELECT ID FROM USERS WHERE AGE > 50) LIMIT 10");
-        runSelect("SubqueriesTest", "simple subquery in where",
-                "SELECT ID, NAME FROM USERS WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10");
-        runSelect("SubqueriesTest", "complex subquery in column where group by having",
+        runSelectCount("SubqueriesTest", "simple subquery in in clause",
+                "SELECT ID, NAME FROM USERS WHERE ID IN (SELECT ID FROM USERS WHERE AGE > 50) LIMIT 10", 10);
+        runSelectCount("SubqueriesTest", "simple subquery in where",
+                "SELECT ID, NAME FROM USERS WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10", 10);
+        runSelectCount("SubqueriesTest", "complex subquery in column where group by having",
                 "SELECT (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) AS user_name, COUNT(*) AS user_count " +
                         "FROM USERS u WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) " +
                         "GROUP BY (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) " +
-                        "HAVING COUNT(*) > (SELECT ID FROM USERS WHERE ID = 1 LIMIT 1) LIMIT 10");
-        runSelect("SubqueriesTest", "complex subquery in column inner join on",
+                        "HAVING COUNT(*) > (SELECT ID FROM USERS WHERE ID = 1 LIMIT 1) LIMIT 10", 0);
+        runSelectCount("SubqueriesTest", "complex subquery in column inner join on",
                 "SELECT u.ID, (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) AS user_name " +
-                        "FROM USERS u INNER JOIN USERS u2 ON u.ID = u2.ID AND u.AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10");
+                        "FROM USERS u INNER JOIN USERS u2 ON u.ID = u2.ID AND u.AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10", 10);
     }
 
     private void runTrueFalseNullTestQueries() {
