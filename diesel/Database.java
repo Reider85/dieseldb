@@ -133,24 +133,36 @@ class Database {
             boolean isDml = parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery || parsedQuery instanceof DeleteQuery;
             if (autoCommit && isDml && (currentTransaction == null || !currentTransaction.isActive())) {
                 Transaction implicitTransaction = new Transaction(defaultIsolationLevel);
-                Object implicitResult = parsedQuery.execute(table);
-                implicitTransaction.registerModifiedTable(tableName, table);
-                for (Map.Entry<String, Table> entry : implicitTransaction.getModifiedTables().entrySet()) {
-                    if (entry.getValue() != null) {
-                        tables.put(entry.getKey(), entry.getValue());
-                        entry.getValue().saveToFile(entry.getKey());
+                try {
+                    Object implicitResult = parsedQuery.execute(table);
+                    implicitTransaction.registerModifiedTable(tableName, table);
+                    for (Map.Entry<String, Table> entry : implicitTransaction.getModifiedTables().entrySet()) {
+                        if (entry.getValue() != null) {
+                            tables.put(entry.getKey(), entry.getValue());
+                            entry.getValue().saveToFile(entry.getKey());
+                        }
                     }
+                    return implicitResult;
+                } finally {
+                    implicitTransaction.setInactive();
                 }
-                return implicitResult;
+            }
+
+            if (isDml) {
+                Object dmlResult = parsedQuery.execute(table);
+                if (currentTransaction != null && currentTransaction.isActive()) {
+                    currentTransaction.updateTable(tableName, table);
+                } else {
+                    table.saveToFile(tableName);
+                }
+                return dmlResult;
             }
 
             Object result = parsedQuery.execute(table);
             if (currentTransaction != null && currentTransaction.isActive()) {
                 currentTransaction.updateTable(tableName, table);
-            } else if (isDml) {
-                table.saveToFile(tableName);
             }
-            return (parsedQuery instanceof DeleteQuery) ? result : result;
+            return result;
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
             throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
