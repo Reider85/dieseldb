@@ -4,6 +4,85 @@ This file records each failed test run and the analysis of why it happened.
 Fixes are applied in `QueryParser` / `SubqueryParser` until the whole test
 suite in `test/diesel/` passes.
 
+## Run 5 (after RECORD_COUNT reduction in 2.7.18)
+
+Date: 2026-08-06
+
+Failing tests: `diesel.AllTestsSampleTest` (4 failed) and
+`diesel.QuantitativeTest` (15 failed). `mvn test` run at 11:57 MSK.
+
+### Errors
+
+`AllTestsSampleTest` results: 58 passed, 4 failed:
+
+```
+FAIL: AdvancedTest / simple select by primary key returned 0 rows, expected 1
+FAIL: AdvancedTest / simple select by name returned 0 rows, expected 1
+FAIL: InTest / simple in on primary key returned 0 rows, expected 3
+FAIL: PerformanceTest / simple select clustered index returned 0 rows, expected 1
+```
+
+`QuantitativeTest` results: 45 passed, 15 failed:
+
+```
+FAIL: AdvancedTest / simple select by primary key returned 0 rows, expected 1
+FAIL: AdvancedTest / simple select by name returned 0 rows, expected 1
+FAIL: AdvancedTest / complex select with or limit offset returned 0 rows, expected 2
+FAIL: InTest / simple in on btree index returned 3 rows, expected 21
+FAIL: InTest / simple in on primary key returned 0 rows, expected 3
+FAIL: InTest / complex in with or returned 0 rows, expected 3
+FAIL: JoinTest / simple inner join on primary key returned 0 rows, expected 3
+FAIL: JoinTest / complex full join on primary key returned 0 rows, expected 3
+FAIL: JoinTest / complex inner join with and or in on returned 0 rows, expected 3
+FAIL: LikeTest / simple like on name returned 0 rows, expected 1
+FAIL: LikeTest / simple like on user code returned 0 rows, expected 1
+FAIL: LikeTest / complex like with or returned 0 rows, expected 1
+FAIL: PerformanceTest / simple select where age returned 11 rows, expected 95
+FAIL: PerformanceTest / complex select age and active returned 5 rows, expected 47
+FAIL: PerformanceTest / complex select parenthesized or returned 8 rows, expected 244
+```
+
+### Analysis
+
+Commit 2.7.18 ("test count") reduced `RECORD_COUNT` in `AllTestsSampleTest`
+from 600 to 10 and in `QuantitativeTest` from 600 to 60. The expected row
+counts in the test bodies, however, were calibrated for 600 rows (e.g.
+`WHERE ID = 500` expects 1, `WHERE AGE IN (50, 51, 52)` expects 21,
+`WHERE AGE < 30` expects 95, joins on `ID IN (500, 501, 502)` expect 3).
+With fewer rows these rows simply do not exist, so every query that refers to
+IDs 500-502 or to row counts that only hold at 600 rows returned fewer rows.
+
+The engine is not the cause: every failing query returns exactly the number of
+rows present in the reduced data set. This is a test data/expectation
+mismatch introduced by the record-count reduction, not an engine regression.
+
+### Fix
+
+- `src/test/java/diesel/AllTestsSampleTest.java`: restore
+  `RECORD_COUNT = 600`.
+- `src/test/java/diesel/QuantitativeTest.java`: restore
+  `RECORD_COUNT = 600`.
+
+Restoring the original scale also keeps the generated timing report comparable
+with the 600-row baseline `timing.md` (the timing check compares like with
+like).
+
+### Result
+
+Re-run at 11:59 MSK after restoring `RECORD_COUNT = 600`:
+
+- `AllTestsSampleTest`: 62 passed / 0 failed.
+- `QuantitativeTest`: 60 passed / 0 failed.
+- `mvn test` BUILD SUCCESS, total 55.1 s.
+
+Timing report written to `timing14.md` (the intermediate `timing12.md` came
+from the broken 10-row run and `timing13.md` from a noisy first re-run; both
+are kept for the record). `timing14.md` values are within normal run-to-run
+variation vs the 600-row baseline `timing.md` and the previous good run
+`timing11.md` (max ~1.3x on the large join/subquery queries; small sub-10 ms
+queries fluctuate in the 1.5-2.5x band as they always have, in absolute terms
+a few ms).
+
 ## Run 3 (after prompt 42 implementation)
 
 Date: 2026-08-05

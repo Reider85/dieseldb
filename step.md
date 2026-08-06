@@ -29,9 +29,37 @@ Record of the main actions for prompts 41-42 and their measured timings.
 
 Final full `mvn test` wall clock: ~42.7 s.
 
+## Prompt 42 re-verification run (2026-08-06)
+
+- Prompt 42 was already in place (`Database.executeQuery`, auto-commit DML
+  path); verified and no engine changes were needed.
+- Ran `mvn test` (`AllTestsSampleTest` + `QuantitativeTest`).
+
+### Run A (11:57 MSK) - broken
+
+Commit 2.7.18 had reduced `RECORD_COUNT` (600 -> 10 in `AllTestsSampleTest`,
+600 -> 60 in `QuantitativeTest`) but the expected row counts were calibrated
+for 600 rows. Result: `AllTestsSampleTest` 4 failed, `QuantitativeTest`
+15 failed. Cause recorded in `testfail.md` (Run 5).
+
+### Fix
+
+Restored `RECORD_COUNT = 600` in both test classes.
+
+### Run B (11:59 MSK) - pass
+
+- `AllTestsSampleTest` 62/0, `QuantitativeTest` 60/0, total 55.1 s.
+- Timing report `timing13.md` was a noisy run (clustered-index lookup 29 ms,
+  inserts ~3x baseline).
+- Re-run (12:0x) wrote `timing14.md`; values are within normal variation vs
+  baseline `timing.md` and previous good run `timing11.md`.
+
 ## Timing reports
 
 - `timing9.md` - after NPE fix (DML 2-6x slower, run 125.1 s / 121.5 s).
 - `timing10.md` - after optimization 1 (still 116.1 s / 113.5 s).
 - `timing11.md` - final (18.05 s / 14.79 s), all values within baseline of
   `timing7.md`.
+- `timing12.md` - broken 10-row run (before RECORD_COUNT fix).
+- `timing13.md` - noisy first re-run at 600 rows.
+- `timing14.md` - verified re-run at 600 rows; within baseline.

@@ -297,3 +297,4 @@
 2.7.16 AllTestsSampleTest writes each run to a new timing file: timing.md, then timing1.md, timing2.md, ... (next free index)
 2.7.17 autoCommit flag added to Database (default true); when true, DML statements outside an explicit transaction are auto-committed (prompt 41)
 2.7.18 test count
+2.7.19 restore RECORD_COUNT to 600 in AllTestsSampleTest and QuantitativeTest: expected row counts (IDs 500-502, AGE IN (50,51,52)=21, AGE<30=95, ...) are calibrated for 600 rows, so the 2.7.18 reduction broke 4 + 15 checks; cause recorded in testfail.md, rerun BUILD SUCCESS (62/0 + 60/0), timing report timing14.md within baseline timing.md

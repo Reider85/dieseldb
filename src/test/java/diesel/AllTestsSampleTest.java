@@ -18,7 +18,7 @@ import java.util.logging.Logger;
 
 public class AllTestsSampleTest {
     private static final Logger LOGGER = Logger.getLogger(AllTestsSampleTest.class.getName());
-    private static final int RECORD_COUNT = 10;
+    private static final int RECORD_COUNT = 600;
     private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
     private final Database database;
     private int passed = 0;
