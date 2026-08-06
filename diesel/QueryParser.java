@@ -542,9 +542,9 @@ class QueryParser {
                     isolationLevel = IsolationLevel.SERIALIZABLE;
                 }
                 return new BeginTransactionQuery(isolationLevel);
-            } else if (normalized.equals("COMMIT TRANSACTION")) {
+            } else if (normalized.equals("COMMIT TRANSACTION") || normalized.equals("COMMIT")) {
                 return new CommitTransactionQuery();
-            } else if (normalized.equals("ROLLBACK TRANSACTION")) {
+            } else if (normalized.equals("ROLLBACK TRANSACTION") || normalized.equals("ROLLBACK")) {
                 return new RollbackTransactionQuery();
             } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
                 return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);

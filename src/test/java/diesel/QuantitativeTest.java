@@ -9,6 +9,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -40,6 +41,7 @@ public class QuantitativeTest {
             runSubqueriesTestQueries();
             runTrueFalseNullTestQueries();
             runCaseSensitivityTestQueries();
+            runTransactionTestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "QuantitativeTest FAILED: {0}", e.getMessage());
@@ -290,6 +292,44 @@ public class QuantitativeTest {
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NULL", 2);
         runSelectCount("TrueFalseNullTest", "where col = null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL", 0);
+    }
+
+    private void runTransactionTestQueries() {
+        dropTable("TXN_TEST");
+        runExec("TransactionTest", "create table",
+                "CREATE TABLE TXN_TEST (ID LONG PRIMARY KEY SEQUENCE(txn_seq 1 1), NAME STRING)");
+        check(database.isAutoCommit(), "TransactionTest / autoCommit is true by default");
+
+        String beginResult = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID commitTxId = UUID.fromString(beginResult.split(": ")[1]);
+        check(!database.isAutoCommit(), "TransactionTest / autoCommit is false after BEGIN");
+        database.executeQuery("INSERT INTO TXN_TEST (NAME) VALUES ('committed')", commitTxId);
+        database.executeQuery("COMMIT", commitTxId);
+        check(!database.isAutoCommit(), "TransactionTest / autoCommit stays false after COMMIT");
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'committed'") == 1,
+                "TransactionTest / committed row is visible after COMMIT");
+
+        beginResult = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID rollbackTxId = UUID.fromString(beginResult.split(": ")[1]);
+        database.executeQuery("INSERT INTO TXN_TEST (NAME) VALUES ('rolled')", rollbackTxId);
+        database.executeQuery("ROLLBACK", rollbackTxId);
+        check(!database.isAutoCommit(), "TransactionTest / autoCommit stays false after ROLLBACK");
+        check(countRows("SELECT NAME FROM TXN_TEST WHERE NAME = 'rolled'") == 0,
+                "TransactionTest / rolled back row is not visible after ROLLBACK");
+
+        database.setAutoCommit(true);
+    }
+
+    private int countRows(String query) {
+        try {
+            Object result = database.executeQuery(query, null);
+            if (result instanceof List) {
+                return ((List<?>) result).size();
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "countRows failed for {0}: {1}", new Object[]{query, e.getMessage()});
+        }
+        return -1;
     }
 
     private void runCaseSensitivityTestQueries() {

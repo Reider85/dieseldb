@@ -73,6 +73,7 @@ class Database {
                 }
                 currentTransaction.setInactive();
                 activeTransactions.remove(transactionId);
+                setAutoCommit(false);
                 return "Transaction committed";
             } else if (parsedQuery instanceof RollbackTransactionQuery) {
                 if (currentTransaction == null || !currentTransaction.isActive()) {
@@ -80,6 +81,7 @@ class Database {
                 }
                 currentTransaction.setInactive();
                 activeTransactions.remove(transactionId);
+                setAutoCommit(false);
                 return "Transaction rolled back";
             } else if (parsedQuery instanceof CreateTableQuery) {
                 CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
