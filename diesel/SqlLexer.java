@@ -40,7 +40,7 @@ public class SqlLexer {
             "AND", "OR", "NOT", "LIKE", "IN", "IS", "AS", "JOIN",
             "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON", "GROUP", "BY", "ORDER",
             "HAVING", "LIMIT", "ASC", "DESC", "DISTINCT", "BEGIN", "TRANSACTION", "COMMIT",
-            "ROLLBACK", "ISOLATION", "LEVEL", "AUTOCOMMIT", "SAVEPOINT"));
+            "ROLLBACK", "ISOLATION", "LEVEL", "AUTOCOMMIT"));
 
     private static final Set<String> LITERALS = new HashSet<>(Set.of("TRUE", "FALSE", "NULL"));
 

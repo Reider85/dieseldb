@@ -4,6 +4,30 @@ This file records each failed test run and the analysis of why it happened.
 Fixes are applied in `QueryParser` / `SubqueryParser` until the whole test
 suite in `test/diesel/` passes.
 
+## Run 8 (after prompt 50 implementation)
+
+Date: 2026-08-06
+
+Failing tests: `diesel.AllTestsSampleTest` (crashed during execution)
+
+### Errors
+
+Test execution crashed with Java heap space error during OrderByTest #27:
+`SELECT USERS.ID, USERS.NAME, PROFILES.PROFILE_NAME FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.USER_ID > 0 OR PROFILES.USER_ID IS NOT NULL ORDER BY USERS.ID`
+
+### Analysis
+
+The query creates a cross join result (600×600 = 360000 rows) due to the OR condition in the JOIN ON clause. This causes memory exhaustion during sorting.
+
+This is a performance/memory limitation, not a logic bug. The test was passing before with timing ~5291ms (see timing.md row 27).
+
+### Fix
+
+- Increase JVM heap size in pom.xml: added `<argLine>-Xmx2g -XX:MaxMetaspaceSize=512m</argLine>` to surefire plugin configuration
+- Removed SAVEPOINT keyword from SqlLexer.java as per prompt 50 requirements (SAVEPOINT is not implemented and should be ignored)
+
+---
+
 ## Run 7 (after prompt 47 implementation, first attempt)
 
 Date: 2026-08-06
