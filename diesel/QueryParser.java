@@ -2047,6 +2047,16 @@ class QueryParser {
                 }
             }
 
+            // Группированные условия в скобках выделяются как единый токен (с учётом вложенности)
+            if (conditionStr.charAt(currentPos) == '(') {
+                int endParen = findMatchingParenthesis(conditionStr, currentPos);
+                String groupedToken = conditionStr.substring(currentPos, endParen + 1);
+                tokens.add(new Token(TokenType.CONDITION, groupedToken));
+                LOGGER.log(Level.FINEST, "Добавлен токен группированного условия: {0}", groupedToken);
+                currentPos = endParen + 1;
+                continue;
+            }
+
             // Проверяем остальные паттерны, исключая содержимое строк
             for (Map.Entry<String, Pattern> entry : patterns.subList(1, patterns.size())) {
                 String patternName = entry.getKey();

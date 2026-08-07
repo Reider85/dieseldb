@@ -360,6 +360,14 @@ public class AllTestsSampleTest {
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE <= NULL", 0);
         runSelectCount("TrueFalseNullTest", "where age >= null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE >= NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where true and unknown excludes row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 25 AND COL = NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where false and unknown excludes row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 30 AND COL = NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where unknown and unknown excludes row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL AND AGE = NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where not true and unknown keeps only false row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE NOT (AGE = 25 AND COL = NULL)", 1);
         runExec("TrueFalseNullTest", "update where col is null",
                 "UPDATE NULL_TEST SET AGE = 40 WHERE COL IS NULL");
         runSelectCount("TrueFalseNullTest", "select after update where col is null",
