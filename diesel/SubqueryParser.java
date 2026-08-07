@@ -1121,7 +1121,16 @@ public class SubqueryParser {
 
         String subQueryStr = subQueryContent.substring(0, endIndex).trim();
         validateSubQuery(subQueryStr);
-        Query<?> subQuery = queryParser.parse(subQueryStr, database);
+        Query<?> subQuery = new Query<List<?>>() {
+            @Override
+            public List<?> execute(Table table) {
+                throw new UnsupportedOperationException("Subquery execution should be handled by SelectQuery: " + subQueryStr);
+            }
+            @Override
+            public String toString() {
+                return subQueryStr;
+            }
+        };
         QueryParser.SubQuery newSubQuery = new QueryParser.SubQuery(subQuery, null);
         QueryParser.Operator operator = parseOperator(operatorStr);
         String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);

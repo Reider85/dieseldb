@@ -2470,7 +2470,16 @@ class QueryParser {
         String subQueryStr = subQueryMatcher.group(3).trim();
 
         validateSubquery("(" + subQueryStr + ")");
-        Query<?> subQuery = parse(subQueryStr, database);
+        Query<?> subQuery = new Query<List<?>>() {
+            @Override
+            public List<?> execute(Table table) {
+                throw new UnsupportedOperationException("Subquery execution should be handled by SelectQuery: " + subQueryStr);
+            }
+            @Override
+            public String toString() {
+                return subQueryStr;
+            }
+        };
         SubQuery newSubQuery = new SubQuery(subQuery, null);
 
         Operator operator = parseOperator(operatorStr);
