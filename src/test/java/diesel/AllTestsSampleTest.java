@@ -350,6 +350,16 @@ public class AllTestsSampleTest {
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL IS NULL", 2);
         runSelectCount("TrueFalseNullTest", "where col = null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where col != null returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL != NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where age < null returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE < NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where age > null returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE > NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where age <= null returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE <= NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where age >= null returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE >= NULL", 0);
     }
 
     private void runTransactionTestQueries() {
