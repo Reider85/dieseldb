@@ -302,6 +302,22 @@ public class QuantitativeTest {
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE <= NULL", 0);
         runSelectCount("TrueFalseNullTest", "where age >= null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE >= NULL", 0);
+        runExec("TrueFalseNullTest", "update where col is null",
+                "UPDATE NULL_TEST SET AGE = 40 WHERE COL IS NULL");
+        runSelectCount("TrueFalseNullTest", "select after update where col is null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 40", 2);
+        runExec("TrueFalseNullTest", "update where col is not null",
+                "UPDATE NULL_TEST SET AGE = 50 WHERE COL IS NOT NULL");
+        runSelectCount("TrueFalseNullTest", "select after update where col is not null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 50", 1);
+        runExec("TrueFalseNullTest", "delete where col is null",
+                "DELETE FROM NULL_TEST WHERE COL IS NULL");
+        runSelectCount("TrueFalseNullTest", "select after delete where col is null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST", 1);
+        runExec("TrueFalseNullTest", "delete where col is not null",
+                "DELETE FROM NULL_TEST WHERE COL IS NOT NULL");
+        runSelectCount("TrueFalseNullTest", "select after delete where col is not null",
+                "SELECT ID, FLAG, COL FROM NULL_TEST", 0);
     }
 
     private void runTransactionTestQueries() {
