@@ -410,3 +410,40 @@ Changes made:
 | SubqueriesTest        | PASS   |
 
 All 10 tests passed. No further attempts needed.
+
+---
+
+## Run 9 (prompt 54, after 2.7.32 changes)
+
+Date: 2026-08-07
+
+Failing tests: `TrueFalseNullTest / where not true and unknown keeps only false row`
+in both `AllTestsSampleTest` and `QuantitativeTest` (105 passed, 1 failed each).
+
+### Error
+
+`SELECT ID, FLAG, COL FROM NULL_TEST WHERE NOT (AGE = 25 AND COL = NULL)` returned
+0 rows, expected 1.
+
+### Analysis
+
+`QueryParser.tokenizeConditions` flattened balanced parentheses: the tokenizer
+patterns have no grouped-condition token, so `(` and `)` were skipped and the
+contents were tokenized as separate conditions. For `NOT (AGE = 25 AND COL = NULL)`
+the `NOT` keyword token therefore negated only the first sub-condition, producing
+`(NOT AGE = 25) AND COL = NULL`. The FALSE-AND-UNKNOWN row (AGE=30, COL='B') then
+evaluated to `TRUE AND UNKNOWN = UNKNOWN` and was excluded, so 0 rows were returned
+instead of 1. The three-valued logic engine itself was correct.
+
+### Fix
+
+`QueryParser.tokenizeConditions`: when the tokenizer hits a `(`, it now extracts
+the whole balanced parenthesized group via `findMatchingParenthesis` (handles
+nesting and quoted strings) and emits it as a single CONDITION token, so
+`parseTokenizedConditions` creates a `Condition(subConditions)` and the `NOT`
+keyword negates the whole group.
+
+### Test results
+
+AllTestsSampleTest 106/0 + QuantitativeTest 106/0 BUILD SUCCESS,
+timing report timing18.md within baseline timing13.md.
