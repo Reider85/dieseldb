@@ -26,6 +26,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final Map<String, String> tableAliases;
     private final List<QueryParser.SubQuery> subQueries;
     private final Map<String, String> groupBySubQueries;
+    private final Map<String, Object> scalarSubQueryCache = new HashMap<>();
     private final UUID transactionId; // Changed from String to UUID
 
     public SelectQuery(String tableName, String tableAlias, List<String> columns,
@@ -636,28 +637,60 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+        return Boolean.TRUE.equals(evaluateConditions3vl(row, conditions, combinedColumnTypes, tables));
+    }
+
+    private Boolean evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions,
+                                          Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
         if (conditions.isEmpty()) {
-            return true;
+            return Boolean.TRUE;
         }
-        boolean result = evaluateCondition(row, conditions.get(0), combinedColumnTypes, tables);
+        Boolean result = evaluateCondition3vl(row, conditions.get(0), combinedColumnTypes, tables);
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
-            boolean conditionResult = evaluateCondition(row, condition, combinedColumnTypes, tables);
+            Boolean conditionResult = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
             String conjunction = condition.conjunction;
             if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
-                result = result && conditionResult;
+                result = and3vl(result, conditionResult);
             } else if (conjunction.equalsIgnoreCase("OR")) {
-                result = result || conditionResult;
+                result = or3vl(result, conditionResult);
             }
         }
         return result;
     }
 
-    private boolean evaluateCondition(Map<String, Object> row, QueryParser.Condition condition,
-                                      Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+    private Boolean and3vl(Boolean left, Boolean right) {
+        if (Boolean.FALSE.equals(left) || Boolean.FALSE.equals(right)) {
+            return Boolean.FALSE;
+        }
+        if (Boolean.TRUE.equals(left) && Boolean.TRUE.equals(right)) {
+            return Boolean.TRUE;
+        }
+        return null;
+    }
+
+    private Boolean or3vl(Boolean left, Boolean right) {
+        if (Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right)) {
+            return Boolean.TRUE;
+        }
+        if (Boolean.FALSE.equals(left) && Boolean.FALSE.equals(right)) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    private Boolean not3vl(Boolean value) {
+        if (value == null) {
+            return null;
+        }
+        return Boolean.valueOf(!value.booleanValue());
+    }
+
+    private Boolean evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
+                                         Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
         if (condition.isGrouped()) {
-            boolean subResult = evaluateConditions(row, condition.subConditions, combinedColumnTypes, tables);
-            return condition.not ? !subResult : subResult;
+            Boolean subResult = evaluateConditions3vl(row, condition.subConditions, combinedColumnTypes, tables);
+            return condition.not ? not3vl(subResult) : subResult;
         }
 
         if (condition.isNullOperator()) {
@@ -665,14 +698,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             Object value = row.get(column);
             boolean isNull = value == null;
             boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
-            return condition.not ? !result : result;
+            return condition.not ? Boolean.valueOf(!result) : Boolean.valueOf(result);
         }
 
         if (condition.isInOperator()) {
             String column = normalizeColumnName(condition.column, mainTableName);
             Object value = row.get(column);
             if (value == null) {
-                return condition.not;
+                return null;
             }
 
             List<Object> inValues;
@@ -702,7 +735,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
 
             boolean inResult = inValues.stream().anyMatch(v -> valuesEqual(v, value));
-            return condition.not ? !inResult : inResult;
+            boolean result = condition.not ? !inResult : inResult;
+            return Boolean.valueOf(result);
         }
 
         if (condition.isColumnComparison()) {
@@ -710,73 +744,57 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
             Object leftValue = row.get(leftColumn);
             Object rightValue = row.get(rightColumn);
-
-            boolean comparisonResult;
-            switch (condition.operator) {
-                case EQUALS:
-                    comparisonResult = valuesEqual(leftValue, rightValue);
-                    break;
-                case NOT_EQUALS:
-                    comparisonResult = !valuesEqual(leftValue, rightValue);
-                    break;
-                case LESS_THAN:
-                    comparisonResult = compareValues(leftValue, rightValue) < 0;
-                    break;
-                case GREATER_THAN:
-                    comparisonResult = compareValues(leftValue, rightValue) > 0;
-                    break;
-                case LESS_THAN_OR_EQUALS:
-                    comparisonResult = compareValues(leftValue, rightValue) <= 0;
-                    break;
-                case GREATER_THAN_OR_EQUALS:
-                    comparisonResult = compareValues(leftValue, rightValue) >= 0;
-                    break;
-                case LIKE:
-                    comparisonResult = likeComparison(leftValue, condition.value);
-                    break;
-                case NOT_LIKE:
-                    comparisonResult = !likeComparison(leftValue, condition.value);
-                    break;
-                default:
-                    throw new IllegalStateException("Unsupported operator: " + condition.operator);
-            }
-            return condition.not ? !comparisonResult : comparisonResult;
+            return compareConditionOperand(leftValue, rightValue, condition);
         }
 
         String column = normalizeColumnName(condition.column, mainTableName);
         Object rowValue = row.get(column);
+        if (condition.subQuery != null) {
+            Database database = tables.get(mainTableName).getDatabase();
+            String subQueryString = condition.subQuery.toString();
+            String resolvedKey = substituteOuterReferences(subQueryString, row);
+            Object subQueryValue = scalarSubQueryCache.computeIfAbsent(resolvedKey,
+                    key -> evaluateGroupBySubQuery(key, Collections.emptyMap(), database));
+            return compareConditionOperand(rowValue, subQueryValue, condition);
+        }
         Object conditionValue = condition.value;
+        return compareConditionOperand(rowValue, conditionValue, condition);
+    }
 
+    private Boolean compareConditionOperand(Object leftValue, Object rightValue, QueryParser.Condition condition) {
+        if (leftValue == null || rightValue == null) {
+            return null;
+        }
         boolean comparisonResult;
         switch (condition.operator) {
             case EQUALS:
-                comparisonResult = valuesEqual(rowValue, conditionValue);
+                comparisonResult = valuesEqual(leftValue, rightValue);
                 break;
             case NOT_EQUALS:
-                comparisonResult = !valuesEqual(rowValue, conditionValue);
+                comparisonResult = !valuesEqual(leftValue, rightValue);
                 break;
             case LESS_THAN:
-                comparisonResult = compareValues(rowValue, conditionValue) < 0;
+                comparisonResult = compareValues(leftValue, rightValue) < 0;
                 break;
             case GREATER_THAN:
-                comparisonResult = compareValues(rowValue, conditionValue) > 0;
+                comparisonResult = compareValues(leftValue, rightValue) > 0;
                 break;
             case LESS_THAN_OR_EQUALS:
-                comparisonResult = compareValues(rowValue, conditionValue) <= 0;
+                comparisonResult = compareValues(leftValue, rightValue) <= 0;
                 break;
             case GREATER_THAN_OR_EQUALS:
-                comparisonResult = compareValues(rowValue, conditionValue) >= 0;
+                comparisonResult = compareValues(leftValue, rightValue) >= 0;
                 break;
             case LIKE:
-                comparisonResult = likeComparison(rowValue, conditionValue);
+                comparisonResult = likeComparison(leftValue, rightValue);
                 break;
             case NOT_LIKE:
-                comparisonResult = !likeComparison(rowValue, conditionValue);
+                comparisonResult = !likeComparison(leftValue, rightValue);
                 break;
             default:
                 throw new IllegalStateException("Unsupported operator: " + condition.operator);
         }
-        return condition.not ? !comparisonResult : comparisonResult;
+        return condition.not ? Boolean.valueOf(!comparisonResult) : Boolean.valueOf(comparisonResult);
     }
 
     private int compareValues(Object left, Object right) {
