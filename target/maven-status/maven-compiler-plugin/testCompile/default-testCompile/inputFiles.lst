@@ -1,0 +1,16 @@
+/workspace/src/test/java/diesel/AdvancedTest.java
+/workspace/src/test/java/diesel/GracefulShutdownTest.java
+/workspace/src/test/java/diesel/JoinTest.java
+/workspace/src/test/java/diesel/SocketTimeoutTest.java
+/workspace/src/test/java/diesel/PerformanceTest.java
+/workspace/src/test/java/diesel/SubqueriesTest.java
+/workspace/src/test/java/diesel/LikeTest.java
+/workspace/src/test/java/diesel/OrderByTest.java
+/workspace/src/test/java/diesel/AllTestsSampleTest.java
+/workspace/src/test/java/diesel/GroupByTest.java
+/workspace/src/test/java/diesel/ServerConnectionLimitTest.java
+/workspace/src/test/java/diesel/PersistenceTest.java
+/workspace/src/test/java/diesel/InTest.java
+/workspace/src/test/java/diesel/DatabaseSmokeTest.java
+/workspace/src/test/java/diesel/QuantitativeTest.java
+/workspace/src/test/java/diesel/AliasesTest.java

@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="diesel.DatabaseSmokeTest" time="1.478" tests="3" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="17"/>
+    <property name="sun.jnu.encoding" value="UTF-8"/>
+    <property name="java.class.path" value="/workspace/target/test-classes:/workspace/target/classes:/root/.m2/repository/org/junit/jupiter/junit-jupiter/5.10.0/junit-jupiter-5.10.0.jar:/root/.m2/repository/org/junit/jupiter/junit-jupiter-api/5.10.0/junit-jupiter-api-5.10.0.jar:/root/.m2/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/root/.m2/repository/org/junit/platform/junit-platform-commons/1.10.0/junit-platform-commons-1.10.0.jar:/root/.m2/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/root/.m2/repository/org/junit/jupiter/junit-jupiter-params/5.10.0/junit-jupiter-params-5.10.0.jar:/root/.m2/repository/org/junit/jupiter/junit-jupiter-engine/5.10.0/junit-jupiter-engine-5.10.0.jar:/root/.m2/repository/org/junit/platform/junit-platform-engine/1.10.0/junit-platform-engine-1.10.0.jar:"/>
+    <property name="java.vm.vendor" value="Debian"/>
+    <property name="sun.arch.data.model" value="64"/>
+    <property name="java.vendor.url" value="https://tracker.debian.org/openjdk-17"/>
+    <property name="user.timezone" value="Etc/UTC"/>
+    <property name="os.name" value="Linux"/>
+    <property name="java.vm.specification.version" value="17"/>
+    <property name="sun.java.launcher" value="SUN_STANDARD"/>
+    <property name="sun.boot.library.path" value="/usr/lib/jvm/java-17-openjdk-amd64/lib"/>
+    <property name="sun.java.command" value="/workspace/target/surefire/surefirebooter-20260807162455418_3.jar /workspace/target/surefire 2026-08-07T16-24-54_893-jvmRun1 surefire-20260807162455418_1tmp surefire_0-20260807162455418_2tmp"/>
+    <property name="jdk.debug" value="release"/>
+    <property name="test" value="DatabaseSmokeTest"/>
+    <property name="surefire.test.class.path" value="/workspace/target/test-classes:/workspace/target/classes:/root/.m2/repository/org/junit/jupiter/junit-jupiter/5.10.0/junit-jupiter-5.10.0.jar:/root/.m2/repository/org/junit/jupiter/junit-jupiter-api/5.10.0/junit-jupiter-api-5.10.0.jar:/root/.m2/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/root/.m2/repository/org/junit/platform/junit-platform-commons/1.10.0/junit-platform-commons-1.10.0.jar:/root/.m2/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/root/.m2/repository/org/junit/jupiter/junit-jupiter-params/5.10.0/junit-jupiter-params-5.10.0.jar:/root/.m2/repository/org/junit/jupiter/junit-jupiter-engine/5.10.0/junit-jupiter-engine-5.10.0.jar:/root/.m2/repository/org/junit/platform/junit-platform-engine/1.10.0/junit-platform-engine-1.10.0.jar:"/>
+    <property name="sun.cpu.endian" value="little"/>
+    <property name="user.home" value="/root"/>
+    <property name="user.language" value="en"/>
+    <property name="java.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.version.date" value="2025-07-15"/>
+    <property name="java.home" value="/usr/lib/jvm/java-17-openjdk-amd64"/>
+    <property name="file.separator" value="/"/>
+    <property name="basedir" value="/workspace"/>
+    <property name="java.vm.compressedOopsMode" value="32-bit"/>
+    <property name="line.separator" value="&#10;"/>
+    <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.specification.name" value="Java Platform API Specification"/>
+    <property name="surefire.real.class.path" value="/workspace/target/surefire/surefirebooter-20260807162455418_3.jar"/>
+    <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
+    <property name="java.runtime.version" value="17.0.16+8-Debian-1deb12u1"/>
+    <property name="user.name" value="root"/>
+    <property name="maven.surefire.argLine" value="-Xmx512m"/>
+    <property name="path.separator" value=":"/>
+    <property name="os.version" value="4.19.91-c8dfc93.al7.x86_64"/>
+    <property name="java.runtime.name" value="OpenJDK Runtime Environment"/>
+    <property name="file.encoding" value="UTF-8"/>
+    <property name="java.vm.name" value="OpenJDK 64-Bit Server VM"/>
+    <property name="localRepository" value="/root/.m2/repository"/>
+    <property name="java.vendor.url.bug" value="https://bugs.debian.org/openjdk-17"/>
+    <property name="java.io.tmpdir" value="/tmp"/>
+    <property name="java.version" value="17.0.16"/>
+    <property name="user.dir" value="/workspace"/>
+    <property name="os.arch" value="amd64"/>
+    <property name="java.vm.specification.name" value="Java Virtual Machine Specification"/>
+    <property name="native.encoding" value="UTF-8"/>
+    <property name="java.library.path" value="/usr/java/packages/lib:/usr/lib/x86_64-linux-gnu/jni:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/lib/jni:/lib:/usr/lib"/>
+    <property name="java.vm.info" value="mixed mode, sharing"/>
+    <property name="java.vendor" value="Debian"/>
+    <property name="java.vm.version" value="17.0.16+8-Debian-1deb12u1"/>
+    <property name="java.specification.maintenance.version" value="1"/>
+    <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
+    <property name="java.class.version" value="61.0"/>
+  </properties>
+  <testcase name="selectAllReturnsAllInsertedRows" classname="diesel.DatabaseSmokeTest" time="0.961">
+    <system-err><![CDATA[Aug 07, 2026 4:24:58 PM diesel.QueryParser <clinit>
+WARNING: config.properties not found, using default logging level INFO
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parse
+INFO: Normalized query: CREATE TABLE SMOKE (ID LONG PRIMARY KEY SEQUENCE(SMOKE_SEQ 1 1), NAME STRING, AGE INTEGER)
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parseCreateTableQuery
+INFO: Parsed CREATE TABLE query: table=SMOKE, columns=[ID, NAME, AGE], types={AGE=class java.lang.Integer, ID=class java.lang.Long, NAME=class java.lang.String}, primaryKey=ID, sequences=[ID]
+Aug 07, 2026 4:24:58 PM diesel.Table createUniqueClusteredIndex
+INFO: Created unique clustered B-tree index on column ID for table SMOKE
+Aug 07, 2026 4:24:58 PM diesel.Table <init>
+INFO: Created table: SMOKE with columns [ID, NAME, AGE], types {AGE=class java.lang.Integer, ID=class java.lang.Long, NAME=class java.lang.String}, primary key: ID, sequences: []
+Aug 07, 2026 4:24:58 PM diesel.Database createTable
+INFO: Created table SMOKE with primary key ID
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parse
+INFO: Normalized query: INSERT INTO SMOKE (NAME, AGE) VALUES ('ALICE', 25)
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parseInsertQuery
+INFO: Parsed INSERT query: table=SMOKE, columns=[NAME, AGE], values=[Alice, 25]
+Aug 07, 2026 4:24:58 PM diesel.Table addRow
+INFO: Inserted row into table SMOKE: {ID=1, NAME=Alice, AGE=25}
+Aug 07, 2026 4:24:58 PM diesel.InsertQuery execute
+INFO: Inserted row into table SMOKE: {NAME=Alice, AGE=25}
+Aug 07, 2026 4:24:58 PM diesel.Table saveToFile
+INFO: Table SMOKE saved to file SMOKE.csv with 1 rows
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parse
+INFO: Normalized query: INSERT INTO SMOKE (NAME, AGE) VALUES ('BOB', 30)
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parseInsertQuery
+INFO: Parsed INSERT query: table=SMOKE, columns=[NAME, AGE], values=[Bob, 30]
+Aug 07, 2026 4:24:58 PM diesel.Table addRow
+INFO: Inserted row into table SMOKE: {ID=2, NAME=Bob, AGE=30}
+Aug 07, 2026 4:24:58 PM diesel.InsertQuery execute
+INFO: Inserted row into table SMOKE: {NAME=Bob, AGE=30}
+Aug 07, 2026 4:24:58 PM diesel.Table saveToFile
+INFO: Table SMOKE saved to file SMOKE.csv with 2 rows
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parse
+INFO: Normalized query: SELECT ID, NAME FROM SMOKE
+Aug 07, 2026 4:24:58 PM diesel.QueryParser parseSelectQuery
+INFO: Разобран SELECT-запрос: таблица=SMOKE, столбцы=[ID, NAME], агрегации=[], соединения=[], условия=[]
+Aug 07, 2026 4:24:58 PM diesel.SelectQuery execute
+INFO: Selected 2 rows from table SMOKE with joins [], aggregates [], groupBy [], having=[], limit=null, offset=null, orderBy=[]
+]]></system-err>
+  </testcase>
+  <testcase name="selectWithOrderBySortsRows" classname="diesel.DatabaseSmokeTest" time="0.102">
+    <system-err><![CDATA[Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: CREATE TABLE SMOKE (ID LONG PRIMARY KEY SEQUENCE(SMOKE_SEQ 1 1), NAME STRING, AGE INTEGER)
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseCreateTableQuery
+INFO: Parsed CREATE TABLE query: table=SMOKE, columns=[ID, NAME, AGE], types={AGE=class java.lang.Integer, ID=class java.lang.Long, NAME=class java.lang.String}, primaryKey=ID, sequences=[ID]
+Aug 07, 2026 4:24:59 PM diesel.Table createUniqueClusteredIndex
+INFO: Created unique clustered B-tree index on column ID for table SMOKE
+Aug 07, 2026 4:24:59 PM diesel.Table <init>
+INFO: Created table: SMOKE with columns [ID, NAME, AGE], types {AGE=class java.lang.Integer, ID=class java.lang.Long, NAME=class java.lang.String}, primary key: ID, sequences: []
+Aug 07, 2026 4:24:59 PM diesel.Database createTable
+INFO: Created table SMOKE with primary key ID
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: INSERT INTO SMOKE (NAME, AGE) VALUES ('ALICE', 25)
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseInsertQuery
+INFO: Parsed INSERT query: table=SMOKE, columns=[NAME, AGE], values=[Alice, 25]
+Aug 07, 2026 4:24:59 PM diesel.Table addRow
+INFO: Inserted row into table SMOKE: {ID=1, NAME=Alice, AGE=25}
+Aug 07, 2026 4:24:59 PM diesel.InsertQuery execute
+INFO: Inserted row into table SMOKE: {NAME=Alice, AGE=25}
+Aug 07, 2026 4:24:59 PM diesel.Table saveToFile
+INFO: Table SMOKE saved to file SMOKE.csv with 1 rows
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: INSERT INTO SMOKE (NAME, AGE) VALUES ('BOB', 30)
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseInsertQuery
+INFO: Parsed INSERT query: table=SMOKE, columns=[NAME, AGE], values=[Bob, 30]
+Aug 07, 2026 4:24:59 PM diesel.Table addRow
+INFO: Inserted row into table SMOKE: {ID=2, NAME=Bob, AGE=30}
+Aug 07, 2026 4:24:59 PM diesel.InsertQuery execute
+INFO: Inserted row into table SMOKE: {NAME=Bob, AGE=30}
+Aug 07, 2026 4:24:59 PM diesel.Table saveToFile
+INFO: Table SMOKE saved to file SMOKE.csv with 2 rows
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: SELECT NAME FROM SMOKE ORDER BY AGE DESC
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseSelectQuery
+INFO: Разобран SELECT-запрос: таблица=SMOKE, столбцы=[NAME], агрегации=[], соединения=[], условия=[]
+Aug 07, 2026 4:24:59 PM diesel.SelectQuery execute
+INFO: Selected 2 rows from table SMOKE with joins [], aggregates [], groupBy [], having=[], limit=null, offset=null, orderBy=[AGE DESC]
+]]></system-err>
+  </testcase>
+  <testcase name="selectWithWhereReturnsMatchingRows" classname="diesel.DatabaseSmokeTest" time="0.239">
+    <system-err><![CDATA[Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: CREATE TABLE SMOKE (ID LONG PRIMARY KEY SEQUENCE(SMOKE_SEQ 1 1), NAME STRING, AGE INTEGER)
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseCreateTableQuery
+INFO: Parsed CREATE TABLE query: table=SMOKE, columns=[ID, NAME, AGE], types={AGE=class java.lang.Integer, ID=class java.lang.Long, NAME=class java.lang.String}, primaryKey=ID, sequences=[ID]
+Aug 07, 2026 4:24:59 PM diesel.Table createUniqueClusteredIndex
+INFO: Created unique clustered B-tree index on column ID for table SMOKE
+Aug 07, 2026 4:24:59 PM diesel.Table <init>
+INFO: Created table: SMOKE with columns [ID, NAME, AGE], types {AGE=class java.lang.Integer, ID=class java.lang.Long, NAME=class java.lang.String}, primary key: ID, sequences: []
+Aug 07, 2026 4:24:59 PM diesel.Database createTable
+INFO: Created table SMOKE with primary key ID
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: INSERT INTO SMOKE (NAME, AGE) VALUES ('ALICE', 25)
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseInsertQuery
+INFO: Parsed INSERT query: table=SMOKE, columns=[NAME, AGE], values=[Alice, 25]
+Aug 07, 2026 4:24:59 PM diesel.Table addRow
+INFO: Inserted row into table SMOKE: {ID=1, NAME=Alice, AGE=25}
+Aug 07, 2026 4:24:59 PM diesel.InsertQuery execute
+INFO: Inserted row into table SMOKE: {NAME=Alice, AGE=25}
+Aug 07, 2026 4:24:59 PM diesel.Table saveToFile
+INFO: Table SMOKE saved to file SMOKE.csv with 1 rows
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: INSERT INTO SMOKE (NAME, AGE) VALUES ('BOB', 30)
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseInsertQuery
+INFO: Parsed INSERT query: table=SMOKE, columns=[NAME, AGE], values=[Bob, 30]
+Aug 07, 2026 4:24:59 PM diesel.Table addRow
+INFO: Inserted row into table SMOKE: {ID=2, NAME=Bob, AGE=30}
+Aug 07, 2026 4:24:59 PM diesel.InsertQuery execute
+INFO: Inserted row into table SMOKE: {NAME=Bob, AGE=30}
+Aug 07, 2026 4:24:59 PM diesel.Table saveToFile
+INFO: Table SMOKE saved to file SMOKE.csv with 2 rows
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parse
+INFO: Normalized query: SELECT ID, NAME FROM SMOKE WHERE NAME = 'ALICE'
+Aug 07, 2026 4:24:59 PM diesel.QueryParser parseSelectQuery
+INFO: Разобран SELECT-запрос: таблица=SMOKE, столбцы=[ID, NAME], агрегации=[], соединения=[], условия=[NAME EQUALS 'Alice']
+Aug 07, 2026 4:24:59 PM diesel.SelectQuery execute
+INFO: Selected 1 rows from table SMOKE with joins [], aggregates [], groupBy [], having=[], limit=null, offset=null, orderBy=[]
+]]></system-err>
+  </testcase>
+</testsuite>
