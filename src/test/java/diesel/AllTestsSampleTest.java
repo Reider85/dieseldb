@@ -358,6 +358,10 @@ public class AllTestsSampleTest {
                 "SELECT * FROM NULL_TEST WHERE COL != NULL", 0);
         runSelectCount("TrueFalseNullTest", "prompt 58 select * where col is null returns rows with null col",
                 "SELECT * FROM NULL_TEST WHERE COL IS NULL", 2);
+        runSelectCount("TrueFalseNullTest", "prompt 59 select * where col = 25 or col is null returns value and null rows",
+                "SELECT * FROM NULL_TEST WHERE AGE = 25 OR AGE IS NULL", 2);
+        runSelectCount("TrueFalseNullTest", "prompt 59 select * where col = 25 and col is not null returns only value row",
+                "SELECT * FROM NULL_TEST WHERE AGE = 25 AND AGE IS NOT NULL", 1);
         runSelectCount("TrueFalseNullTest", "where age < null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE < NULL", 0);
         runSelectCount("TrueFalseNullTest", "where age > null returns empty",
