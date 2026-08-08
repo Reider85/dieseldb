@@ -317,3 +317,4 @@
 2.7.35 OR truth table with UNKNOWN
 2.7.36 analytics
 2.7.37 sonar
+2.7.38 sonar-analytics
