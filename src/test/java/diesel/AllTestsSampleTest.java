@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -135,6 +136,31 @@ public class AllTestsSampleTest {
             database.executeQuery(query, null);
             ok = true;
             check(true, group + " / " + name + " executed");
+        } catch (Exception e) {
+            check(false, group + " / " + name + " failed: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+        } finally {
+            recordTiming(group, name, query, (System.nanoTime() - start) / 1_000_000.0, ok);
+        }
+    }
+
+    private void checkAggregate(String group, String name, String query, String key, Object expected) {
+        long start = System.nanoTime();
+        boolean ok = false;
+        try {
+            Object result = database.executeQuery(query, null);
+            if (result instanceof List) {
+                List<?> rows = (List<?>) result;
+                if (rows.size() == 1 && rows.get(0) instanceof Map) {
+                    Object value = ((Map<?, ?>) rows.get(0)).get(key);
+                    ok = expected.equals(value);
+                    check(ok, group + " / " + name + " aggregate " + key + " = " + value + ", expected " + expected);
+                } else {
+                    check(false, group + " / " + name + " expected a single aggregate row, got " + rows.size() + " rows");
+                }
+            } else {
+                check(false, group + " / " + name + " did not return a result set");
+            }
         } catch (Exception e) {
             check(false, group + " / " + name + " failed: " + e.getMessage());
             LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
@@ -426,6 +452,34 @@ public class AllTestsSampleTest {
                 "DELETE FROM NULL_TEST WHERE AGE = 25 OR COL = NULL");
         runSelectCount("TrueFalseNullTest", "select after delete with or unknown",
                 "SELECT ID, FLAG, COL FROM NULL_TEST", 2);
+        dropTable("AGG_TEST");
+        runExec("TrueFalseNullTest", "prompt 60 create agg table",
+                "CREATE TABLE AGG_TEST (ID LONG PRIMARY KEY SEQUENCE(agg_test_seq 1 1), AMOUNT INTEGER)");
+        runExec("TrueFalseNullTest", "prompt 60 insert amount 10",
+                "INSERT INTO AGG_TEST (AMOUNT) VALUES (10)");
+        runExec("TrueFalseNullTest", "prompt 60 insert amount 20",
+                "INSERT INTO AGG_TEST (AMOUNT) VALUES (20)");
+        runExec("TrueFalseNullTest", "prompt 60 insert amount null",
+                "INSERT INTO AGG_TEST (AMOUNT) VALUES (NULL)");
+        runExec("TrueFalseNullTest", "prompt 60 insert amount 30",
+                "INSERT INTO AGG_TEST (AMOUNT) VALUES (30)");
+        runExec("TrueFalseNullTest", "prompt 60 insert amount null 2",
+                "INSERT INTO AGG_TEST (AMOUNT) VALUES (NULL)");
+        runSelectCount("TrueFalseNullTest", "prompt 60 select * returns all rows incl nulls",
+                "SELECT * FROM AGG_TEST", 5);
+        checkAggregate("TrueFalseNullTest", "prompt 60 count star counts all rows",
+                "SELECT COUNT(*) FROM AGG_TEST", "COUNT(*)", 5L);
+        checkAggregate("TrueFalseNullTest", "prompt 60 count column skips null",
+                "SELECT COUNT(AMOUNT) FROM AGG_TEST", "COUNT(AMOUNT)", 3L);
+        checkAggregate("TrueFalseNullTest", "prompt 60 sum skips null",
+                "SELECT SUM(AMOUNT) FROM AGG_TEST", "SUM(AMOUNT)", 60);
+        checkAggregate("TrueFalseNullTest", "prompt 60 avg skips null",
+                "SELECT AVG(AMOUNT) FROM AGG_TEST", "AVG(AMOUNT)", 20);
+        checkAggregate("TrueFalseNullTest", "prompt 60 min skips null",
+                "SELECT MIN(AMOUNT) FROM AGG_TEST", "MIN(AMOUNT)", 10);
+        checkAggregate("TrueFalseNullTest", "prompt 60 max skips null",
+                "SELECT MAX(AMOUNT) FROM AGG_TEST", "MAX(AMOUNT)", 30);
+        dropTable("AGG_TEST");
     }
 
     private void runTransactionTestQueries() {
