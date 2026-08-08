@@ -1,25 +1,48 @@
-```
-# Compiled Java classes
+# Compiled and build artifacts
+*.pyc
+__pycache__/
+*.o
+*.obj
 *.class
+*.exe
+*.dll
+*.so
+*.a
+*.out
 
-# Maven build artifacts
-target/
+# Dependencies
+node_modules/
+venv/
+.venv/
+.env
+.env.local
+*.env.*
 
-# Java heap dumps/logs
-hs_err_pid*.log
-
-# Test reports
-**/surefire-reports/
-
-# CSV data files (likely test data)
-*.csv
-
-# Table files (likely test data)
-*.table
-
-# Markdown files (likely documentation/test results)
-*.md
-
-# Log files
+# Logs and temp files
 *.log
-```
+*.tmp
+*.swp
+*.swo
+
+# Editors
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Build directories
+dist/
+build/
+target/
+.gradle/
+
+# Python cache
+.mypy_cache/
+.pytest_cache/
