@@ -318,3 +318,4 @@
 2.7.36 analytics
 2.7.37 sonar
 2.7.38 sonar-analytics
+2.7.39 prompt 56 test coverage (no false positives for non-IS NULL comparisons with NULL): added 4 checks to AllTestsSampleTest and QuantitativeTest verifying that NULL column values never leak into comparison results - WHERE COL != 'A' excludes the NULL-COL row (1 row), WHERE AGE < 30 excludes the NULL-AGE row (1 row), WHERE AGE = 25 OR COL = NULL keeps only the AGE=25 row and does not leak the NULL rows (1 row), WHERE COL = NULL AND AGE = 25 returns empty even though a NULL-COL row exists (0 rows). The three-valued logic engine itself was already implemented in 2.7.29, so no engine change was needed. AllTestsSampleTest 110/0 + QuantitativeTest 110/0 BUILD SUCCESS; timing report timing24.md (this session's machine runs ~2x slower than the timing.md baseline for all queries, including identical pre-change runs, so the deviation is environmental load, not a regression - no engine code was touched)

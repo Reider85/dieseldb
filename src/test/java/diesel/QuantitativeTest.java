@@ -302,6 +302,14 @@ public class QuantitativeTest {
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE <= NULL", 0);
         runSelectCount("TrueFalseNullTest", "where age >= null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE >= NULL", 0);
+        runSelectCount("TrueFalseNullTest", "where col != 'A' excludes null rows",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL != 'A'", 1);
+        runSelectCount("TrueFalseNullTest", "where age < 30 excludes null row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE < 30", 1);
+        runSelectCount("TrueFalseNullTest", "where age = 25 or col = null keeps only matching row",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 25 OR COL = NULL", 1);
+        runSelectCount("TrueFalseNullTest", "where col = null and age = 25 returns empty",
+                "SELECT ID, FLAG, COL FROM NULL_TEST WHERE COL = NULL AND AGE = 25", 0);
         runSelectCount("TrueFalseNullTest", "where true and unknown excludes row",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE = 25 AND COL = NULL", 0);
         runSelectCount("TrueFalseNullTest", "where false and unknown excludes row",
