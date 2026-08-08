@@ -298,6 +298,8 @@ public class QuantitativeTest {
                 "SELECT * FROM NULL_TEST WHERE COL = NULL", 0);
         runSelectCount("TrueFalseNullTest", "prompt 57 select * where col != null returns empty",
                 "SELECT * FROM NULL_TEST WHERE COL != NULL", 0);
+        runSelectCount("TrueFalseNullTest", "prompt 58 select * where col is null returns rows with null col",
+                "SELECT * FROM NULL_TEST WHERE COL IS NULL", 2);
         runSelectCount("TrueFalseNullTest", "where age < null returns empty",
                 "SELECT ID, FLAG, COL FROM NULL_TEST WHERE AGE < NULL", 0);
         runSelectCount("TrueFalseNullTest", "where age > null returns empty",
