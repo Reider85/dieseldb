@@ -1,6 +1,1 @@
-Nothing should be ignored in this case, as only a markdown file (`future.md`) was added without any build artifacts, dependencies, or temporary files.
-
-Therefore, the output is empty:
-
-```(empty)
-```
+Nothing needs to be added to .gitignore since only a markdown file (sonaranalitics.md) was added, which is a source/config file and should not be ignored.
