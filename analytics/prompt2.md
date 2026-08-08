@@ -3,7 +3,7 @@
 ## Раздел 1: Исправление ошибок SonarQube (20 промптов)
 *На основе документа sonaranalitics.md - приоритет P0 и P1*
 
-### Промпт 1.1: Исправление StackOverflow в регулярных выражениях (java:S5998)
+### Промпт 1: Исправление StackOverflow в регулярных выражениях (java:S5998)
 ```
 Проанализируй файлы QueryParser.java, SubqueryParser.java и SqlLexer.java. Найди 57 регулярных выражений, которые могут вызвать StackOverflowError (правило java:S5998). Для каждого problematic regex:
 1. Определи причину (чрезмерная вложенность, catastrophic backtracking)
@@ -15,7 +15,7 @@
 Файлы: diesel/QueryParser.java, diesel/SubqueryParser.java, diesel/SqlLexer.java
 ```
 
-### Промпт 1.2: Исправление Null Pointer Dereference (java:S2259)
+### Промпт 2: Исправление Null Pointer Dereference (java:S2259)
 ```
 Найди 13 мест в коде где возможен NullPointerException (правило java:S2259). Для каждого случая:
 1. Добавь проверку null перед использованием объекта
@@ -27,7 +27,7 @@
 Приоритет: CRITICAL (BUG, вызывает падение сервера)
 ```
 
-### Промпт 1.3: Удаление мёртвого кода (java:S2583, S108, S1144, S1068)
+### Промпт 3: Удаление мёртвого кода (java:S2583, S108, S1144, S1068)
 ```
 Найди и удали весь мёртвый код в проекте:
 1. Conditionally executed code that is never reachable (3 места, java:S2583)
@@ -40,7 +40,7 @@
 Приоритет: LOW но БЫСТРО (-20 проблем за 30 минут)
 ```
 
-### Промпт 1.4: Исправление Double Brace Initialization (java:S3599)
+### Промпт 4: Исправление Double Brace Initialization (java:S3599)
 ```
 Найди 2 случая Double Brace Initialization и замени на нормальную инициализацию:
 
@@ -65,7 +65,7 @@ Map<String, Object> map = Map.of("key", "value");
 Приоритет: BUG (утечки памяти, проблемы с сериализацией)
 ```
 
-### Промпт 1.5: Исправление игнорирования возвращаемых значений (java:S899)
+### Промпт 5: Исправление игнорирования возвращаемых значений (java:S899)
 ```
 Найди 2 места где игнорируются возвращаемые значения важных методов:
 
@@ -85,7 +85,7 @@ stream.forEach(...); // Intentionally ignoring result
 Приоритет: BUG (может скрывать ошибки)
 ```
 
-### Промпт 1.6: Исправление проблем с regex grouping (java:S5850)
+### Промпт 6: Исправление проблем с regex grouping (java:S5850)
 ```
 Найди 3 случая где alternations в regex должны быть сгруппированы:
 
@@ -99,7 +99,7 @@ stream.forEach(...); // Intentionally ignoring result
 Приоритет: BUG (некорректная работа парсера)
 ```
 
-### Промпт 1.7: Исправление regex с repeated patterns (java:S5842)
+### Промпт 7: Исправление regex с repeated patterns (java:S5842)
 ```
 Найди 1 случай где repeated pattern в regex match empty string:
 
@@ -112,7 +112,7 @@ stream.forEach(...); // Intentionally ignoring result
 Приоритет: BUG (бесконечные циклы в парсере)
 ```
 
-### Промпт 1.8: Оптимизация Cognitive Complexity в QueryParser.java (java:S3776)
+### Промпт 8: Оптимизация Cognitive Complexity в QueryParser.java (java:S3776)
 ```
 Проанализируй QueryParser.java (363 проблемы, cognitive complexity 37-45).
 
@@ -128,7 +128,7 @@ stream.forEach(...); // Intentionally ignoring result
 Приоритет: HIGH (68% всех проблем в этом файле)
 ```
 
-### Промпт 1.9: Рефакторинг SelectQuery.execute() (complexity=59)
+### Промпт 9: Рефакторинг SelectQuery.execute() (complexity=59)
 ```
 Метод execute() в SelectQuery.java имеет complexity=59 (при норме ~15).
 
@@ -145,7 +145,7 @@ stream.forEach(...); // Intentionally ignoring result
 Приоритет: CRITICAL (главный источник багов)
 ```
 
-### Промпт 1.10: Оптимизация регулярных выражений (java:S5869, S6353)
+### Промпт 10: Оптимизация регулярных выражений (java:S5869, S6353)
 ```
 Исправь 360 проблем с regex в парсере:
 
@@ -166,7 +166,7 @@ Benchmark: парсинг 1000 SQL запросов до/после.
 Приоритет: HIGH (+30-50% производительности парсера)
 ```
 
-### Промпт 1.11: Вынос строковых литералов в константы (java:S1192)
+### Промпт 11: Вынос строковых литералов в константы (java:S1192)
 ```
 Найди 34 случая дублирования строковых литералов и вынеси в константы:
 
@@ -197,7 +197,7 @@ public final class SqlKeywords {
 Приоритет: MEDIUM (упрощение рефакторинга)
 ```
 
-### Промпт 1.12: Уменьшение количества параметров методов (java:S107)
+### Промпт 12: Уменьшение количества параметров методов (java:S107)
 ```
 Найди 20 методов с >7 параметрами и примени refactoring:
 
@@ -232,7 +232,7 @@ public void process(UserContext.Builder builder) { ... }
 Приоритет: MEDIUM (нарушение инкапсуляции)
 ```
 
-### Промпт 1.13: Исправление null из Boolean методов (java:S2447)
+### Промпт 13: Исправление null из Boolean методов (java:S2447)
 ```
 Найди 8 мест где Boolean методы возвращают null:
 
@@ -266,7 +266,7 @@ public Optional<Boolean> isValid() {
 Приоритет: HIGH (NullPointerException в условиях)
 ```
 
-### Промпт 1.14: Исправление Serializable полей (java:S1948)
+### Промпт 14: Исправление Serializable полей (java:S1948)
 ```
 Найди 8 не-serializable полей в Serializable классах:
 
@@ -294,7 +294,7 @@ class Table implements Serializable {
 Приоритет: HIGH (проблемы кластеризации/репликации)
 ```
 
-### Промпт 1.15: Замена System.out.println на Logger (java:S106)
+### Промпт 15: Замена System.out.println на Logger (java:S106)
 ```
 Замени 8 случаев System.out.println на proper logging:
 
@@ -320,7 +320,7 @@ LOGGER.severe("Error: " + e.getMessage(), e);
 Приоритет: MEDIUM (proper logging для production)
 ```
 
-### Промпт 1.16: Использование специфичных исключений (java:S112)
+### Промпт 16: Использование специфичных исключений (java:S112)
 ```
 Замени 8 случаев generic exceptions на specific:
 
@@ -347,7 +347,7 @@ public class ConstraintViolationException extends RuntimeException { ... }
 Приоритет: MEDIUM (лучшая обработка ошибок)
 ```
 
-### Промпт 1.17: Упрощение обработки исключений (java:S2139, S1141)
+### Промпт 17: Упрощение обработки исключений (java:S2139, S1141)
 ```
 Исправь проблемы с exception handling:
 
@@ -378,7 +378,7 @@ try {
 Приоритет: MEDIUM (cleaner error handling)
 ```
 
-### Промпт 1.18: Удаление unused параметров, переменных, импортов
+### Промпт 18: Удаление unused параметров, переменных, импортов
 ```
 Удали весь unused code:
 1. java:S1172 (20 issues) - unused method parameters
@@ -392,7 +392,7 @@ Code → Analyze Code → Run Inspection → "Unused declaration"
 Приоритет: LOW но ОЧЕНЬ БЫСТРО (-72 проблемы за 1 час)
 ```
 
-### Промпт 1.19: Упрощение условий и тернарных операторов
+### Промпт 19: Упрощение условий и тернарных операторов
 ```
 Исправь:
 1. java:S3358 (7 issues) - nested ternary operators:
@@ -415,7 +415,7 @@ if (condition1) {
 Приоритет: LOW (улучшение читаемости)
 ```
 
-### Промпт 1.20: Финальная очистка (остальные CODE_SMELL)
+### Промпт 20: Финальная очистка (остальные CODE_SMELL)
 ```
 Исправь оставшиеся minor issues:
 1. java:S127 (8) - for loop stop conditions invariant
@@ -434,7 +434,7 @@ if (condition1) {
 ## Раздел 2: Исправление проблем производительности и архитектуры (20 промптов)
 *На основе документа problems.md - O(n²) проблемы и архитектура транзакций*
 
-### Промпт 2.1: Оптимизация updateIndicesAfterInsert (O(n × m × log n))
+### Промпт 21: Оптимизация updateIndicesAfterInsert (O(n × m × log n))
 ```
 Проанализируй метод Table.updateIndicesAfterInsert() (строки 476-512).
 
@@ -450,7 +450,7 @@ if (condition1) {
 Цель: ускорение с O(n²) до O(n log n) или лучше.
 ```
 
-### Промпт 2.2: Замена Nested Loop Join на Hash Join
+### Промпт 22: Замена Nested Loop Join на Hash Join
 ```
 Проанализируй SelectQuery.java (строки 186-218) где реализован Nested Loop Join.
 
@@ -471,7 +471,7 @@ Benchmark: JOIN двух таблиц по 10K строк каждая.
 Цель: ускорение с 100 секунд до <10 секунд.
 ```
 
-### Промпт 2.3: Оптимизация обновления индексов после DELETE
+### Промпт 23: Оптимизация обновления индексов после DELETE
 ```
 Проанализируй DeleteQuery.java (строки 95-112).
 
@@ -487,7 +487,7 @@ Benchmark: JOIN двух таблиц по 10K строк каждая.
 Цель: ускорение с минут до секунд.
 ```
 
-### Промпт 2.4: Оптимизация создания кластеризованного индекса
+### Промпт 24: Оптимизация создания кластеризованного индекса
 ```
 Проанализируй Table.createUniqueClusteredIndex() (строки 172-218).
 
@@ -502,7 +502,7 @@ Benchmark: создание индекса на таблице с 1M строк.
 Цель: сокращение времени с часов до минут.
 ```
 
-### Промпт 2.5: Пакетная вставка индексов при загрузке (readObject)
+### Промпт 25: Пакетная вставка индексов при загрузке (readObject)
 ```
 Проанализируй Table.readObject() (строки 297-322).
 
@@ -517,7 +517,7 @@ Benchmark: создание индекса на таблице с 1M строк.
 Benchmark: загрузка таблицы с 100K строк и 5 индексами.
 ```
 
-### Промпт 2.6: Индексы для покрытия WHERE условий
+### Промпт 26: Индексы для покрытия WHERE условий
 ```
 Проанализируй SelectQuery.evaluateConditions() (строки 57-62, 223-229).
 
@@ -536,7 +536,7 @@ Benchmark: WHERE с 3 условиями на таблице 1M строк.
 Цель: ускорение с секунд до миллисекунд.
 ```
 
-### Промпт 2.7: Оптимизация массового UPDATE
+### Промпт 27: Оптимизация массового UPDATE
 ```
 Проанализируй UpdateQuery.java (строки 27-32).
 
@@ -554,7 +554,7 @@ WITH (BATCH_SIZE=1000, DEFER_INDEX_UPDATE=true);
 Benchmark: обновление 10K строк в таблице 1M строк.
 ```
 
-### Промпт 2.8: Исправление потери indexDefinitions при сериализации
+### Промпт 28: Исправление потери indexDefinitions при сериализации
 ```
 Проанализируй проблему #1 в problems.md (сериализация Table.java).
 
@@ -566,7 +566,7 @@ Benchmark: обновление 10K строк в таблице 1M строк.
 3. Добавь тест на serialize → deserialize → проверка целостности индексов
 ```
 
-### Промпт 2.9: Сохранение состояния индексов в сериализованном виде
+### Промпт 29: Сохранение состояния индексов в сериализованном виде
 ```
 Вместо перестройки индексов при десериализации (проблема #2 в problems.md):
 
@@ -580,7 +580,7 @@ Benchmark: загрузка таблицы 100K строк с 5 индексам
 Цель: сокращение с минут до секунд.
 ```
 
-### Промпт 2.10: Замена сериализации на Copy-on-Write для транзакций
+### Промпт 30: Замена сериализации на Copy-on-Write для транзакций
 ```
 Проанализируй Transaction.cloneTable() (строки 76-93).
 
@@ -601,7 +601,7 @@ Benchmark: начало 100 транзакций на базе с 10 табли�
 Цель: ускорение с секунд до миллисекунд.
 ```
 
-### Промпт 2.11: Исправление READ_UNCOMMITTED dirty reads
+### Промпт 31: Исправление READ_UNCOMMITTED dirty reads
 ```
 Проанализируй Database.getTableForQuery() (строки 176-195).
 
@@ -620,7 +620,7 @@ Benchmark: начало 100 транзакций на базе с 10 табли�
 Напиши тесты на concurrency для каждого уровня изоляции.
 ```
 
-### Промпт 2.12: Реализация Write-Ahead Log (WAL) для атомарности коммита
+### Промпт 32: Реализация Write-Ahead Log (WAL) для атомарности коммита
 ```
 Проанализируй проблему #3 в problems.md (отсутствие атомарности при коммите).
 
@@ -638,7 +638,7 @@ Benchmark: начало 100 транзакций на базе с 10 табли�
 Benchmark: краш сервера во время коммита → восстановление без потери данных.
 ```
 
-### Промпт 2.13: Исправление утечки памяти в длинных транзакциях
+### Промпт 33: Исправление утечки памяти в длинных транзакциях
 ```
 Проанализируй проблему #4 в problems.md (утечка памяти при длинных транзакциях).
 
@@ -657,7 +657,7 @@ Benchmark: краш сервера во время коммита → восст
 - Alert при превышении лимитов
 ```
 
-### Промпт 2.14: Исправление race condition в activeTransactions
+### Промпт 34: Исправление race condition в activeTransactions
 ```
 Проанализируй проблему #5 в problems.md (race condition при доступе к activeTransactions).
 
@@ -671,7 +671,7 @@ Benchmark: краш сервера во время коммита → восст
 Напиши stress test с 100 потоками создающими/удаляющими таблицы.
 ```
 
-### Промпт 2.15: Реализация каскадных откатов транзакций
+### Промпт 35: Реализация каскадных откатов транзакций
 ```
 Проанализируй проблему #6 в problems.md (отсутствие обработки каскадных откатов).
 
@@ -689,7 +689,7 @@ ROLLBACK A;
 -- Транзакция B должна быть откачена ИЛИ заблокирована
 ```
 
-### Промпт 2.16: Fine-grained versioning вместо копирования таблиц
+### Промпт 36: Fine-grained versioning вместо копирования таблиц
 ```
 Проанализируй проблему #7 в problems.md (неэффективная работа с большими таблицами).
 
@@ -703,7 +703,7 @@ ROLLBACK A;
 Это сократит память с O(n) до O(k) где k - количество измененных строк.
 ```
 
-### Промпт 2.17: Реализация gap locking для предотвращения phantom reads
+### Промпт 37: Реализация gap locking для предотвращения phantom reads
 ```
 Проанализируй проблему #8 в problems.md (фантомное чтение не решено).
 
@@ -717,7 +717,7 @@ ROLLBACK A;
 Напиши тесты на phantom read prevention.
 ```
 
-### Промпт 2.18: Implicit transaction rollback при ошибке
+### Промпт 38: Implicit transaction rollback при ошибке
 ```
 Проанализируй проблему #9 в problems.md (implicit transaction не откатывается при ошибке).
 
@@ -735,7 +735,7 @@ try (AutoRollbackTransaction tx = database.beginImplicitTransaction()) {
 Реализуй try-with-resources для автоматического управления транзакцией.
 ```
 
-### Промпт 2.19: Замена ConcurrentHashMap на HashMap в индексах
+### Промпт 39: Замена ConcurrentHashMap на HashMap в индексах
 ```
 Проанализируй проблему #4 в problems.md (сериализация ConcurrentHashMap в HashIndex).
 
@@ -749,7 +749,7 @@ try (AutoRollbackTransaction tx = database.beginImplicitTransaction()) {
 Benchmark: сериализация/десериализация индекса с 100K ключей.
 ```
 
-### Промпт 2.20: Плоское представление B-tree для сериализации
+### Промпт 40: Плоское представление B-tree для сериализации
 ```
 Проанализируй проблему #7 в problems.md (сериализация внутренней структуры Node в B-tree).
 
@@ -770,7 +770,7 @@ Benchmark: сериализация/десериализация B-tree с 1M к
 ## Раздел 3: Внедрение Варианта 2 (Parquet + Query Cache) - 40 промптов
 *На основе документа Roadmap_Parquet_Stage1.md, Вариант 2*
 
-### Промпт 3.1: Добавление Maven зависимостей для Parquet
+### Промпт 41: Добавление Maven зависимостей для Parquet
 ```
 Добавь в pom.xml зависимости Apache Parquet:
 
@@ -815,7 +815,7 @@ Benchmark: сериализация/десериализация B-tree с 1M к
 Проверь что зависимости разрешаются: mvn dependency:tree
 ```
 
-### Промпт 3.2: Создание класса ParquetTableStorage.java
+### Промпт 42: Создание класса ParquetTableStorage.java
 ```
 Создай файл diesel/ParquetTableStorage.java с методами:
 - save(Table table, Path parquetPath) - сохранение таблицы в Parquet
@@ -827,7 +827,7 @@ Benchmark: сериализация/десериализация B-tree с 1M к
 Используй ZSTD compression, 128MB row groups, 8KB pages, dictionary encoding.
 ```
 
-### Промпт 3.3: Реализация конвертации схемы Table → Parquet
+### Промпт 43: Реализация конвертации схемы Table → Parquet
 ```
 Реализуй метод convertToParquetSchema() который маппит типы DieselDB на типы Parquet:
 - INT/INTEGER → INT32
@@ -842,7 +842,7 @@ Benchmark: сериализация/десериализация B-tree с 1M к
 Используй Types.primitive() builder pattern для создания MessageType.
 ```
 
-### Промпт 3.4: Реализация сохранения метаданных в JSON
+### Промпт 44: Реализация сохранения метаданных в JSON
 ```
 Реализуй saveMetadata() который сохраняет в JSON:
 - tableName
@@ -855,14 +855,14 @@ Benchmark: сериализация/десериализация B-tree с 1M к
 Используй Jackson ObjectMapper для сериализации.
 ```
 
-### Промпт 3.5: Реализация загрузки метаданных из JSON
+### Промпт 45: Реализация загрузки метаданных из JSON
 ```
 Реализуй loadMetadata() который читает JSON и создаёт TableMetadata объект.
 Добавь version field для future compatibility.
 Обработай missing fields gracefully (backward compatibility).
 ```
 
-### Промпт 3.6: Модификация Table.java для выбора формата хранения
+### Промпт 46: Модификация Table.java для выбора формата хранения
 ```
 Измени Table.java:
 1. Добавь enum StorageFormat { CSV, PARQUET }
@@ -872,7 +872,7 @@ Benchmark: сериализация/десериализация B-tree с 1M к
 5. Добавь fallback на CSV если Parquet не найден
 ```
 
-### Промпт 3.7: Создание утилиты миграции CSV → Parquet
+### Промпт 47: Создание утилиты миграции CSV → Parquet
 ```
 Создай ParquetMigrationTool.java с методами:
 - migrateAllTables() - миграция всех таблиц
@@ -886,7 +886,7 @@ Features:
 - CLI интерфейс: java ParquetMigrationTool [tableName]
 ```
 
-### Промпт 3.8: Benchmark Parquet vs CSV
+### Промпт 48: Benchmark Parquet vs CSV
 ```
 Создай StorageBenchmark.java который сравнивает:
 - Write performance: CSV vs Parquet
@@ -898,7 +898,7 @@ Features:
 Выведи результаты в формате Markdown для docs/BENCHMARK_RESULTS.md
 ```
 
-### Промпт 3.9: Создание QueryCache.java
+### Промпт 49: Создание QueryCache.java
 ```
 Создай diesel/cache/QueryCache.java:
 - put(normalizedSql, result) - кэширование результата
@@ -913,7 +913,7 @@ Features:
 - Statistics: hitCount, missCount, hitRatio
 ```
 
-### Промпт 3.10: Конфигурация QueryCache
+### Промпт 50: Конфигурация QueryCache
 ```
 Создай CacheConfig.java с параметрами:
 - maxSize (default 1000 queries)
@@ -927,7 +927,7 @@ cache.ttlMillis=300000
 cache.enabled=true
 ```
 
-### Промпт 3.11: Интеграция QueryCache в SelectQuery.java
+### Промпт 51: Интеграция QueryCache в SelectQuery.java
 ```
 Измени SelectQuery.execute():
 1. Нормализация SQL (upper case, trim, sort conditions)
@@ -937,27 +937,27 @@ cache.enabled=true
 5. Не кэшировать non-deterministic запросы (NOW(), RANDOM())
 ```
 
-### Промпт 3.12: Инвалидация кэша при INSERT
+### Промпт 52: Инвалидация кэша при INSERT
 ```
 Измени InsertQuery.execute():
 После успешного INSERT вызови SelectQuery.getQueryCache().invalidate(tableName)
 Добавь debug логирование: "Cache invalidated for table: users"
 ```
 
-### Промпт 3.13: Инвалидация кэша при UPDATE
+### Промпт 53: Инвалидация кэша при UPDATE
 ```
 Измени UpdateQuery.execute():
 После успешного UPDATE вызови инвалидацию кэша.
 Опционально: selective invalidation только если UPDATE затрагивает колонки используемые в закэшированных SELECT.
 ```
 
-### Промпт 3.14: Инвалидация кэша при DELETE
+### Промпт 54: Инвалидация кэша при DELETE
 ```
 Измени DeleteQuery.execute():
 После успешного DELETE вызови инвалидацию кэша.
 ```
 
-### Промпт 3.15: Инвалидация кэша при DDL операциях
+### Промпт 55: Инвалидация кэша при DDL операциях
 ```
 Измени Database.java:
 - CREATE TABLE → invalidate("*") (весь кэш)
@@ -966,7 +966,7 @@ cache.enabled=true
 - CREATE INDEX → invalidate(tableName)
 ```
 
-### Промпт 3.16: Мониторинг QueryCache
+### Промпт 56: Мониторинг QueryCache
 ```
 Добавь команду SQL: SHOW CACHE STATS
 Возвращает:
@@ -979,7 +979,7 @@ cache.enabled=true
 Используй AtomicLong для hitCount/missCount counters.
 ```
 
-### Промпт 3.17: Тестирование Parquet storage
+### Промпт 57: Тестирование Parquet storage
 ```
 Создай ParquetStorageTest.java:
 - testSaveAndLoad() - roundtrip тест
@@ -990,7 +990,7 @@ cache.enabled=true
 Запуск: mvn test -Dtest=ParquetStorageTest
 ```
 
-### Промпт 3.18: Тестирование QueryCache
+### Промпт 58: Тестирование QueryCache
 ```
 Создай QueryCacheTest.java:
 - testPutAndGet() - basic functionality
@@ -1002,7 +1002,7 @@ cache.enabled=true
 Запуск: mvn test -Dtest=QueryCacheTest
 ```
 
-### Промпт 3.19: Integration test Parquet + Cache
+### Промпт 59: Integration test Parquet + Cache
 ```
 Создай ParquetCacheIntegrationTest.java:
 1. CREATE TABLE с PARQUET storage
@@ -1016,7 +1016,7 @@ cache.enabled=true
 Запуск: mvn test -Dtest=ParquetCacheIntegrationTest
 ```
 
-### Промпт 3.20: Документация Parquet формата
+### Промпт 60: Документация Parquet формата
 ```
 Создай docs/PARQUET_FORMAT.md:
 - Преимущества Parquet над CSV
@@ -1028,7 +1028,7 @@ cache.enabled=true
 - Совместимость со Spark/Hive/Presto
 ```
 
-### Промпт 3.21: Конфигурация Parquet на уровне таблицы
+### Промпт 61: Конфигурация Parquet на уровне таблицы
 ```
 Добавь поддержку WITH clause при CREATE TABLE:
 CREATE TABLE users (...) WITH (
@@ -1040,7 +1040,7 @@ CREATE TABLE users (...) WITH (
 Измени CreateTableQuery.java для парсинга опций.
 ```
 
-### Промпт 3.22: Lazy загрузка Parquet файлов
+### Промпт 62: Lazy загрузка Parquet файлов
 ```
 Реализуй LazyParquetTable которая:
 - Не загружает все данные в память сразу
@@ -1049,7 +1049,7 @@ CREATE TABLE users (...) WITH (
 - Позволяет работать с таблицами > размера RAM
 ```
 
-### Промпт 3.23: Predicate pushdown для Parquet
+### Промпт 63: Predicate pushdown для Parquet
 ```
 Реализуй predicate pushdown в SelectQuery:
 1. Extract WHERE conditions
@@ -1060,7 +1060,7 @@ CREATE TABLE users (...) WITH (
 Benchmark: WHERE id=100 на 1M строк → чтение 1 row group вместо всей таблицы.
 ```
 
-### Промпт 3.24: Параллельное чтение Parquet
+### Промпт 64: Параллельное чтение Parquet
 ```
 Реализуй ParallelParquetReader:
 1. Распредели row groups across threads
@@ -1070,7 +1070,7 @@ Benchmark: WHERE id=100 на 1M строк → чтение 1 row group вмес
 Benchmark: чтение 1GB файла с 4 threads → 3-4x ускорение.
 ```
 
-### Промпт 3.25: Статистика использования кэша
+### Промпт 65: Статистика использования кэша
 ```
 Добавь детальную статистику в QueryCache:
 - hitCount, missCount, hitRatio
@@ -1082,7 +1082,7 @@ Benchmark: чтение 1GB файла с 4 threads → 3-4x ускорение.
 "Cache stats: hits=1234, misses=56, ratio=95.7%, speedup=42x"
 ```
 
-### Промпт 3.26: Настройка Database.java для Parquet by default
+### Промпт 66: Настройка Database.java для Parquet by default
 ```
 Измени Database constructor:
 - По умолчанию использовать StorageFormat.PARQUET
@@ -1090,7 +1090,7 @@ Benchmark: чтение 1GB файла с 4 threads → 3-4x ускорение.
 - Параметр: default.storage.format=PARQUET
 ```
 
-### Промпт 3.27: Обработка ошибок при миграции
+### Промпт 67: Обработка ошибок при миграции
 ```
 Добавь в ParquetMigrationTool:
 - Rollback при ошибке миграции
@@ -1099,7 +1099,7 @@ Benchmark: чтение 1GB файла с 4 threads → 3-4x ускорение.
 - Recovery mode: продолжить с места падения
 ```
 
-### Промпт 3.28: Поддержка partitioned tables в Parquet
+### Промпт 68: Поддержка partitioned tables в Parquet
 ```
 Реализуй partitioning:
 CREATE TABLE logs (...) PARTITION BY (year, month)
@@ -1114,7 +1114,7 @@ logs/
     month=01/data.parquet
 ```
 
-### Промпт 3.29: Оптимизация Dictionary encoding для строк
+### Промпт 69: Оптимизация Dictionary encoding для строк
 ```
 Включи dictionary encoding в ParquetWriter:
 - Для STRING колонок автоматически
@@ -1123,7 +1123,7 @@ logs/
 Это даст дополнительное сжатие 2-3x для строковых данных.
 ```
 
-### Промпт 3.30: Compression tuning (ZSTD levels)
+### Промпт 70: Compression tuning (ZSTD levels)
 ```
 Добавь настройку уровня сжатия ZSTD:
 - Level 1: fastest, lower compression
@@ -1133,7 +1133,7 @@ logs/
 Benchmark разные уровни для разных workload.
 ```
 
-### Промпт 3.31: Row group size tuning
+### Промпт 71: Row group size tuning
 ```
 Добавь настройку row group size:
 - Small (32MB): better for random access
@@ -1143,7 +1143,7 @@ Benchmark разные уровни для разных workload.
 Benchmark для разных patterns доступа.
 ```
 
-### Промпт 3.32: Column statistics в Parquet metadata
+### Промпт 72: Column statistics в Parquet metadata
 ```
 Включи min/max statistics для каждой колонки:
 - Используется для predicate pushdown
@@ -1152,7 +1152,7 @@ Benchmark для разных patterns доступа.
 Это ускорит WHERE queries на 10-100x.
 ```
 
-### Промпт 3.33: Bloom filters для Parquet
+### Промпт 73: Bloom filters для Parquet
 ```
 Добавь bloom filters для high-cardinality колонок:
 CREATE INDEX idx_email ON users(email) 
@@ -1162,7 +1162,7 @@ Bloom filter хранится в Parquet metadata.
 Ускоряет point lookups (WHERE email='...').
 ```
 
-### Промпт 3.34: Query Cache warm-up strategy
+### Промпт 74: Query Cache warm-up strategy
 ```
 Реализуй cache warm-up при старте DB:
 - Load frequent queries from history
@@ -1174,7 +1174,7 @@ cache.warmup.enabled=true
 cache.warmup.queries=SELECT * FROM users WHERE id=?,...
 ```
 
-### Промпт 3.35: Adaptive TTL для кэша
+### Промпт 75: Adaptive TTL для кэша
 ```
 Реализуй adaptive TTL:
 - Frequent queries → longer TTL
@@ -1184,7 +1184,7 @@ cache.warmup.queries=SELECT * FROM users WHERE id=?,...
 Это увеличит hit ratio на 10-20%.
 ```
 
-### Промпт 3.36: Query normalization improvements
+### Промпт 76: Query normalization improvements
 ```
 Улучши нормализацию SQL для лучшего cache hit:
 - Remove extra whitespace
@@ -1198,7 +1198,7 @@ cache.warmup.queries=SELECT * FROM users WHERE id=?,...
 → одинаковый normalized key
 ```
 
-### Промпт 3.37: Parameterized query caching
+### Промпт 77: Parameterized query caching
 ```
 Поддержи parameterized queries в кэше:
 - Ключ: normalized SQL с placeholders
@@ -1212,7 +1212,7 @@ params={1: 200} → result2
 Это увеличит hit ratio для prepared statements.
 ```
 
-### Промпт 3.38: Multi-level cache (L1/L2)
+### Промпт 78: Multi-level cache (L1/L2)
 ```
 Реализуй two-level cache:
 - L1: in-memory, small (100 entries), very fast
@@ -1221,7 +1221,7 @@ params={1: 200} → result2
 Hot queries stay in L1, cold queries evicted to L2.
 ```
 
-### Промпт 3.39: Cache persistence across restarts
+### Промпт 79: Cache persistence across restarts
 ```
 Сохраняй кэш на диск при shutdown:
 - Serialize cache entries to cache.dat
@@ -1230,7 +1230,7 @@ Hot queries stay in L1, cold queries evicted to L2.
 Это избежит cache cold-start problem.
 ```
 
-### Промпт 3.40: Final integration testing and documentation
+### Промпт 80: Final integration testing and documentation
 ```
 Проведи comprehensive testing:
 1. Unit tests для ParquetTableStorage
