@@ -608,6 +608,12 @@ public class AllTestsSampleTest {
                 "SELECT * FROM USERS WHERE NAME = 'JOHN'", 0);
         runSelectCount("Prompt62Test", "prompt 63 where name = 'John' returns the John row",
                 "SELECT * FROM USERS WHERE NAME = 'John'", 1);
+        runExec("Prompt62Test", "prompt 64 insert null name",
+                "INSERT INTO USERS (ID, NAME) VALUES (3, NULL)");
+        runSelectCount("Prompt62Test", "prompt 64 where name is null returns only the null name row",
+                "SELECT * FROM USERS WHERE NAME IS NULL", 1);
+        runSelectCount("Prompt62Test", "prompt 64 where name = null returns no rows",
+                "SELECT * FROM USERS WHERE NAME = NULL", 0);
     }
 
     public static void main(String[] args) {
