@@ -48,6 +48,7 @@ public class AllTestsSampleTest {
             runTrueFalseNullTestQueries();
             runCaseSensitivityTestQueries();
             runTransactionTestQueries();
+            runPrompt62TestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "AllTestsSampleTest FAILED: {0}", e.getMessage());
@@ -591,6 +592,18 @@ public class AllTestsSampleTest {
                 "SELECT * FROM \"MyTable\"", 1);
         dropTable("CASE_TEST");
         dropTable("MyTable");
+    }
+
+    private void runPrompt62TestQueries() {
+        dropTable("USERS");
+        runExec("Prompt62Test", "prompt 62 create users table",
+                "CREATE TABLE USERS (ID INTEGER, NAME STRING)");
+        runExec("Prompt62Test", "prompt 62 insert John",
+                "INSERT INTO USERS (ID, NAME) VALUES (1, 'John')");
+        runExec("Prompt62Test", "prompt 62 insert jane",
+                "INSERT INTO USERS (ID, NAME) VALUES (2, 'jane')");
+        runSelectCount("Prompt62Test", "prompt 62 where name = 'John' returns only the John row",
+                "SELECT * FROM USERS WHERE NAME = 'John'", 1);
     }
 
     public static void main(String[] args) {
