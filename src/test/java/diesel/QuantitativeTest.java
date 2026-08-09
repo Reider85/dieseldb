@@ -541,6 +541,10 @@ public class QuantitativeTest {
                 "INSERT INTO USERS (ID, NAME) VALUES (2, 'jane')");
         runSelectCount("Prompt62Test", "prompt 62 where name = 'John' returns only the John row",
                 "SELECT * FROM USERS WHERE NAME = 'John'", 1);
+        runSelectCount("Prompt62Test", "prompt 63 where name = 'JOHN' returns no rows",
+                "SELECT * FROM USERS WHERE NAME = 'JOHN'", 0);
+        runSelectCount("Prompt62Test", "prompt 63 where name = 'John' returns the John row",
+                "SELECT * FROM USERS WHERE NAME = 'John'", 1);
     }
 
     public static void main(String[] args) {
