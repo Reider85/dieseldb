@@ -45,6 +45,7 @@ public class QuantitativeTest {
             runTransactionTestQueries();
             runPrompt62TestQueries();
             runPrompt65TestQueries();
+            runPrompt66TestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "QuantitativeTest FAILED: {0}", e.getMessage());
@@ -566,6 +567,34 @@ public class QuantitativeTest {
                 "SELECT * FROM BOOL_TEST WHERE FLAG = TRUE", 1);
         runSelectCount("Prompt65Test", "prompt 65 where flag = false returns only the false row",
                 "SELECT * FROM BOOL_TEST WHERE FLAG = FALSE", 1);
+    }
+
+    private void runPrompt66TestQueries() {
+        dropTable("TXN66_TEST");
+        runExec("Prompt66Test", "prompt 66 create transaction table",
+                "CREATE TABLE TXN66_TEST (ID LONG PRIMARY KEY SEQUENCE(txn66_seq 1 1), NAME STRING)");
+        check(database.isAutoCommit(), "Prompt66Test / autoCommit is true by default");
+
+        runExec("Prompt66Test", "prompt 66 insert without begin auto-commits",
+                "INSERT INTO TXN66_TEST (NAME) VALUES ('prompt66-auto')");
+        check(countRows("SELECT * FROM TXN66_TEST WHERE NAME = 'prompt66-auto'") == 1,
+                "Prompt66Test / INSERT without BEGIN is committed and visible via SELECT");
+
+        String beginResult = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID prompt66TxId = UUID.fromString(beginResult.split(": ")[1]);
+        database.executeQuery("INSERT INTO TXN66_TEST (NAME) VALUES ('prompt66-rolled')", prompt66TxId);
+        Object inTx66 = database.executeQuery("SELECT * FROM TXN66_TEST WHERE NAME = 'prompt66-rolled'", prompt66TxId);
+        check(inTx66 instanceof List && ((List<?>) inTx66).size() == 1,
+                "Prompt66Test / BEGIN+INSERT row is visible inside the current transaction");
+        check(countRows("SELECT * FROM TXN66_TEST WHERE NAME = 'prompt66-rolled'") == 0,
+                "Prompt66Test / BEGIN+INSERT row is not visible outside the transaction");
+        database.executeQuery("ROLLBACK", prompt66TxId);
+        check(countRows("SELECT * FROM TXN66_TEST WHERE NAME = 'prompt66-rolled'") == 0,
+                "Prompt66Test / BEGIN+INSERT row is not inserted after ROLLBACK");
+        check(countRows("SELECT * FROM TXN66_TEST WHERE NAME = 'prompt66-auto'") == 1,
+                "Prompt66Test / auto-committed row is still present after ROLLBACK");
+
+        database.setAutoCommit(true);
     }
 
     public static void main(String[] args) {
