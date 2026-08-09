@@ -44,6 +44,7 @@ public class QuantitativeTest {
             runCaseSensitivityTestQueries();
             runTransactionTestQueries();
             runPrompt62TestQueries();
+            runPrompt65TestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "QuantitativeTest FAILED: {0}", e.getMessage());
@@ -551,6 +552,20 @@ public class QuantitativeTest {
                 "SELECT * FROM USERS WHERE NAME IS NULL", 1);
         runSelectCount("Prompt62Test", "prompt 64 where name = null returns no rows",
                 "SELECT * FROM USERS WHERE NAME = NULL", 0);
+    }
+
+    private void runPrompt65TestQueries() {
+        dropTable("BOOL_TEST");
+        runExec("Prompt65Test", "prompt 65 create bool table",
+                "CREATE TABLE BOOL_TEST (ID LONG PRIMARY KEY SEQUENCE(bool_test_seq 1 1), FLAG BOOLEAN)");
+        runExec("Prompt65Test", "prompt 65 insert flag true",
+                "INSERT INTO BOOL_TEST (FLAG) VALUES (TRUE)");
+        runExec("Prompt65Test", "prompt 65 insert flag false",
+                "INSERT INTO BOOL_TEST (FLAG) VALUES (FALSE)");
+        runSelectCount("Prompt65Test", "prompt 65 where flag = true returns only the true row",
+                "SELECT * FROM BOOL_TEST WHERE FLAG = TRUE", 1);
+        runSelectCount("Prompt65Test", "prompt 65 where flag = false returns only the false row",
+                "SELECT * FROM BOOL_TEST WHERE FLAG = FALSE", 1);
     }
 
     public static void main(String[] args) {
