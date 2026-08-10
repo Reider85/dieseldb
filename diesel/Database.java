@@ -1,11 +1,19 @@
 package diesel;
 
 import java.io.File;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+/**
+ * Central database engine. Owns the shared table map, the active client
+ * transactions and the auto-commit flag, parses incoming SQL and dispatches
+ * each parsed query to its dedicated execution path.
+ */
 class Database {
     private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
@@ -14,165 +22,217 @@ class Database {
     private boolean autoCommit = true;
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
-        if (!tables.containsKey(tableName)) {
-            Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
-            tables.put(tableName, newTable);
-            for (Transaction transaction : activeTransactions.values()) {
-                if (transaction.isActive()) {
-                    transaction.updateTable(tableName, newTable);
-                }
-            }
-            LOGGER.log(Level.INFO, "Created table {0} with primary key {1}", new Object[]{tableName, primaryKeyColumn});
-        } else {
+        if (tables.containsKey(tableName)) {
             throw new IllegalArgumentException("Table " + tableName + " already exists");
         }
+        Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
+        tables.put(tableName, newTable);
+        for (Transaction transaction : activeTransactions.values()) {
+            if (transaction.isActive()) {
+                transaction.updateTable(tableName, newTable);
+            }
+        }
+        LOGGER.log(Level.INFO, "Created table {0} with primary key {1}", new Object[]{tableName, primaryKeyColumn});
     }
 
+    /**
+     * Parses and executes a query. {@code transactionId} is the caller's active
+     * transaction session, or null when the caller is not in a transaction.
+     */
     public Object executeQuery(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
-        SubqueryParser subqueryParser = new SubqueryParser();
-        Query<?> parsedQuery = subqueryParser.containsSubquery(query)
-                ? subqueryParser.parse(query, this)
-                : new QueryParser().parse(query, this);
-        LOGGER.log(Level.FINE, "Parsed query type: {0}", parsedQuery.getClass().getSimpleName());
+        Query<?> parsedQuery = parse(query);
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
         try {
             if (parsedQuery instanceof SetIsolationLevelQuery) {
-                SetIsolationLevelQuery isolationQuery = (SetIsolationLevelQuery) parsedQuery;
-                defaultIsolationLevel = isolationQuery.getIsolationLevel();
-                return "Isolation level set to " + defaultIsolationLevel;
-            } else if (parsedQuery instanceof SetAutoCommitQuery) {
-                SetAutoCommitQuery autoCommitQuery = (SetAutoCommitQuery) parsedQuery;
-                setAutoCommit(autoCommitQuery.isAutoCommit());
-                return "AUTOCOMMIT set to " + (autoCommitQuery.isAutoCommit() ? "ON" : "OFF");
-            } else if (parsedQuery instanceof BeginTransactionQuery) {
-                if (currentTransaction != null && currentTransaction.isActive()) {
-                    throw new IllegalStateException("Another transaction is already active for this client");
-                }
-                IsolationLevel isolationLevel = ((BeginTransactionQuery) parsedQuery).getIsolationLevel() != null
-                        ? ((BeginTransactionQuery) parsedQuery).getIsolationLevel()
-                        : defaultIsolationLevel;
-                currentTransaction = new Transaction(isolationLevel);
-                transactionId = currentTransaction.getTransactionId();
-                activeTransactions.put(transactionId, currentTransaction);
-                for (Map.Entry<String, Table> entry : tables.entrySet()) {
-                    currentTransaction.snapshotTable(entry.getKey(), entry.getValue());
-                }
-                setAutoCommit(false);
-                return "Transaction started: " + transactionId;
-            } else if (parsedQuery instanceof CommitTransactionQuery) {
-                if (currentTransaction == null || !currentTransaction.isActive()) {
-                    throw new IllegalStateException("No active transaction to commit");
-                }
-                for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
-                    if (entry.getValue() != null) {
-                        tables.put(entry.getKey(), entry.getValue());
-                        entry.getValue().saveToFile(entry.getKey());
-                        entry.getValue().saveToSerializedFile(entry.getKey());
-                    } else {
-                        tables.remove(entry.getKey());
-                        deleteTableFiles(entry.getKey());
-                    }
-                }
-                currentTransaction.setInactive();
-                activeTransactions.remove(transactionId);
-                setAutoCommit(false);
-                return "Transaction committed";
-            } else if (parsedQuery instanceof RollbackTransactionQuery) {
-                if (currentTransaction == null || !currentTransaction.isActive()) {
-                    throw new IllegalStateException("No active transaction to rollback");
-                }
-                currentTransaction.setInactive();
-                activeTransactions.remove(transactionId);
-                setAutoCommit(false);
-                return "Transaction rolled back";
-            } else if (parsedQuery instanceof CreateTableQuery) {
-                CreateTableQuery createQuery = (CreateTableQuery) parsedQuery;
-                createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes(), createQuery.getPrimaryKeyColumn());
-                Table table = getTable(createQuery.getTableName());
-                for (Map.Entry<String, Sequence> entry : createQuery.getSequences().entrySet()) {
-                    table.getSequences().put(entry.getKey(), entry.getValue());
-                }
-                return "Table created successfully";
-            } else if (parsedQuery instanceof CreateIndexQuery) {
-                CreateIndexQuery indexQuery = (CreateIndexQuery) parsedQuery;
-                Table table = getTable(indexQuery.getTableName());
-                indexQuery.execute(table);
-                if (currentTransaction != null && currentTransaction.isActive()) {
-                    currentTransaction.updateTable(indexQuery.getTableName(), table);
-                }
-                return "B-tree index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
-            } else if (parsedQuery instanceof CreateHashIndexQuery) {
-                CreateHashIndexQuery indexQuery = (CreateHashIndexQuery) parsedQuery;
-                Table table = getTable(indexQuery.getTableName());
-                indexQuery.execute(table);
-                if (currentTransaction != null && currentTransaction.isActive()) {
-                    currentTransaction.updateTable(indexQuery.getTableName(), table);
-                }
-                return "Hash index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
-            } else if (parsedQuery instanceof CreateUniqueIndexQuery) {
-                CreateUniqueIndexQuery indexQuery = (CreateUniqueIndexQuery) parsedQuery;
-                Table table = getTable(indexQuery.getTableName());
-                indexQuery.execute(table);
-                if (currentTransaction != null && currentTransaction.isActive()) {
-                    currentTransaction.updateTable(indexQuery.getTableName(), table);
-                }
-                return "Unique index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
-            } else if (parsedQuery instanceof CreateUniqueClusteredIndexQuery) {
-                CreateUniqueClusteredIndexQuery indexQuery = (CreateUniqueClusteredIndexQuery) parsedQuery;
-                Table table = getTable(indexQuery.getTableName());
-                indexQuery.execute(table);
-                if (currentTransaction != null && currentTransaction.isActive()) {
-                    currentTransaction.updateTable(indexQuery.getTableName(), table);
-                }
-                return "Unique clustered index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getColumnName();
+                return executeSetIsolationLevel((SetIsolationLevelQuery) parsedQuery);
             }
-
-            LOGGER.log(Level.FINE, "Calling extractTableName for query: {0}", query);
-            String tableName = extractTableName(query);
-            LOGGER.log(Level.FINE, "Extracted table name: {0}", tableName);
-            Table table = getTableForQuery(tableName, currentTransaction);
-            if (table == null) {
-                throw new IllegalArgumentException("Table " + tableName + " does not exist");
+            if (parsedQuery instanceof SetAutoCommitQuery) {
+                return executeSetAutoCommit((SetAutoCommitQuery) parsedQuery);
             }
-
-            boolean isDml = parsedQuery instanceof InsertQuery || parsedQuery instanceof UpdateQuery || parsedQuery instanceof DeleteQuery;
-            if (autoCommit && isDml && (currentTransaction == null || !currentTransaction.isActive())) {
-                Transaction implicitTransaction = new Transaction(defaultIsolationLevel);
-                try {
-                    Object implicitResult = parsedQuery.execute(table);
-                    implicitTransaction.registerModifiedTable(tableName, table);
-                    for (Map.Entry<String, Table> entry : implicitTransaction.getModifiedTables().entrySet()) {
-                        if (entry.getValue() != null) {
-                            tables.put(entry.getKey(), entry.getValue());
-                            entry.getValue().saveToFile(entry.getKey());
-                        }
-                    }
-                    return implicitResult;
-                } finally {
-                    implicitTransaction.setInactive();
-                }
+            if (parsedQuery instanceof BeginTransactionQuery) {
+                return executeBeginTransaction((BeginTransactionQuery) parsedQuery, currentTransaction);
             }
-
-            if (isDml) {
-                Object dmlResult = parsedQuery.execute(table);
-                if (currentTransaction != null && currentTransaction.isActive()) {
-                    currentTransaction.updateTable(tableName, table);
-                } else {
-                    table.saveToFile(tableName);
-                }
-                return dmlResult;
+            if (parsedQuery instanceof CommitTransactionQuery) {
+                return executeCommit(currentTransaction, transactionId);
             }
-
-            Object result = parsedQuery.execute(table);
-            return result;
+            if (parsedQuery instanceof RollbackTransactionQuery) {
+                return executeRollback(currentTransaction, transactionId);
+            }
+            if (parsedQuery instanceof CreateTableQuery) {
+                return executeCreateTable((CreateTableQuery) parsedQuery);
+            }
+            if (parsedQuery instanceof CreateIndexQueryBase) {
+                return executeCreateIndex((CreateIndexQueryBase) parsedQuery, currentTransaction);
+            }
+            return executeDataQuery(parsedQuery, query, currentTransaction);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
             throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
         }
     }
 
+    private Query<?> parse(String query) {
+        SubqueryParser subqueryParser = new SubqueryParser();
+        return subqueryParser.containsSubquery(query)
+                ? subqueryParser.parse(query, this)
+                : new QueryParser().parse(query, this);
+    }
+
+    private Object executeSetIsolationLevel(SetIsolationLevelQuery isolationQuery) {
+        defaultIsolationLevel = isolationQuery.getIsolationLevel();
+        return "Isolation level set to " + defaultIsolationLevel;
+    }
+
+    private Object executeSetAutoCommit(SetAutoCommitQuery autoCommitQuery) {
+        setAutoCommit(autoCommitQuery.isAutoCommit());
+        return "AUTOCOMMIT set to " + (autoCommitQuery.isAutoCommit() ? "ON" : "OFF");
+    }
+
+    private Object executeBeginTransaction(BeginTransactionQuery beginQuery, Transaction currentTransaction) {
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            throw new IllegalStateException("Another transaction is already active for this client");
+        }
+        IsolationLevel isolationLevel = beginQuery.getIsolationLevel() != null
+                ? beginQuery.getIsolationLevel()
+                : defaultIsolationLevel;
+        Transaction transaction = new Transaction(isolationLevel);
+        UUID newTransactionId = transaction.getTransactionId();
+        activeTransactions.put(newTransactionId, transaction);
+        for (Map.Entry<String, Table> entry : tables.entrySet()) {
+            transaction.snapshotTable(entry.getKey(), entry.getValue());
+        }
+        setAutoCommit(false);
+        return "Transaction started: " + newTransactionId;
+    }
+
+    private Object executeCommit(Transaction currentTransaction, UUID transactionId) {
+        if (currentTransaction == null || !currentTransaction.isActive()) {
+            throw new IllegalStateException("No active transaction to commit");
+        }
+        persistModifiedTables(currentTransaction.getModifiedTables(), true);
+        currentTransaction.setInactive();
+        activeTransactions.remove(transactionId);
+        setAutoCommit(false);
+        return "Transaction committed";
+    }
+
+    private Object executeRollback(Transaction currentTransaction, UUID transactionId) {
+        if (currentTransaction == null || !currentTransaction.isActive()) {
+            throw new IllegalStateException("No active transaction to rollback");
+        }
+        currentTransaction.setInactive();
+        activeTransactions.remove(transactionId);
+        setAutoCommit(false);
+        return "Transaction rolled back";
+    }
+
+    private Object executeCreateTable(CreateTableQuery createQuery) {
+        createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes(), createQuery.getPrimaryKeyColumn());
+        Table table = getTable(createQuery.getTableName());
+        for (Map.Entry<String, Sequence> entry : createQuery.getSequences().entrySet()) {
+            table.getSequences().put(entry.getKey(), entry.getValue());
+        }
+        return "Table created successfully";
+    }
+
+    private Object executeCreateIndex(CreateIndexQueryBase indexQuery, Transaction currentTransaction) {
+        Table table = getTable(indexQuery.getTableName());
+        indexQuery.execute(table);
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            currentTransaction.updateTable(indexQuery.getTableName(), table);
+        }
+        return indexDescription(indexQuery) + " created successfully on "
+                + indexQuery.getTableName() + "." + indexQuery.getColumnName();
+    }
+
+    private String indexDescription(CreateIndexQueryBase indexQuery) {
+        if (indexQuery instanceof CreateIndexQuery) {
+            return "B-tree index";
+        }
+        if (indexQuery instanceof CreateHashIndexQuery) {
+            return "Hash index";
+        }
+        if (indexQuery instanceof CreateUniqueIndexQuery) {
+            return "Unique index";
+        }
+        if (indexQuery instanceof CreateUniqueClusteredIndexQuery) {
+            return "Unique clustered index";
+        }
+        throw new IllegalArgumentException("Unsupported index query type: " + indexQuery.getClass().getSimpleName());
+    }
+
+    /**
+     * Executes queries that operate on table data (INSERT/UPDATE/DELETE/SELECT),
+     * applying the transaction view, auto-commit DML and persistence rules.
+     */
+    private Object executeDataQuery(Query<?> parsedQuery, String query, Transaction currentTransaction) {
+        String tableName = extractTableName(query);
+        Table table = getTableForQuery(tableName, currentTransaction);
+        if (table == null) {
+            throw new IllegalArgumentException("Table " + tableName + " does not exist");
+        }
+
+        boolean isDml = parsedQuery instanceof InsertQuery
+                || parsedQuery instanceof UpdateQuery
+                || parsedQuery instanceof DeleteQuery;
+
+        // Auto-commit DML runs in a short-lived implicit transaction and is persisted immediately.
+        if (autoCommit && isDml && (currentTransaction == null || !currentTransaction.isActive())) {
+            Transaction implicitTransaction = new Transaction(defaultIsolationLevel);
+            try {
+                Object implicitResult = parsedQuery.execute(table);
+                implicitTransaction.registerModifiedTable(tableName, table);
+                persistModifiedTables(implicitTransaction.getModifiedTables(), false);
+                return implicitResult;
+            } finally {
+                implicitTransaction.setInactive();
+            }
+        }
+
+        // DML inside an explicit transaction records a copy for the eventual COMMIT.
+        if (isDml) {
+            Object dmlResult = parsedQuery.execute(table);
+            if (currentTransaction != null && currentTransaction.isActive()) {
+                currentTransaction.updateTable(tableName, table);
+            } else {
+                table.saveToFile(tableName);
+            }
+            return dmlResult;
+        }
+
+        return parsedQuery.execute(table);
+    }
+
+    /**
+     * Publishes transaction-modified tables back into the shared table map and
+     * writes them to disk. A null value means the table was dropped in the
+     * transaction. Auto-commit DML persists only the CSV, while an explicit
+     * COMMIT also writes the serialized table file.
+     */
+    private void persistModifiedTables(Map<String, Table> modifiedTables, boolean writeSerialized) {
+        for (Map.Entry<String, Table> entry : modifiedTables.entrySet()) {
+            String tableName = entry.getKey();
+            Table modifiedTable = entry.getValue();
+            if (modifiedTable != null) {
+                tables.put(tableName, modifiedTable);
+                modifiedTable.saveToFile(tableName);
+                if (writeSerialized) {
+                    modifiedTable.saveToSerializedFile(tableName);
+                }
+            } else {
+                tables.remove(tableName);
+                deleteTableFiles(tableName);
+            }
+        }
+    }
+
+    /**
+     * Returns the table a query operates on, honoring the caller's transaction:
+     * an active transaction first sees its own modified copy, then the copies of
+     * other READ_UNCOMMITTED transactions, and finally its BEGIN-time snapshot.
+     */
     private Table getTableForQuery(String tableName, Transaction currentTransaction) {
         if (currentTransaction != null && currentTransaction.isActive()) {
             Table modifiedTable = currentTransaction.getModifiedTables().get(tableName);
@@ -194,100 +254,62 @@ class Database {
         return tables.get(tableName);
     }
 
+    /** Extracts the name of the table a query operates on from the normalized query text. */
     private String extractTableName(String query) {
-        LOGGER.log(Level.FINE, "Raw query for table name extraction: {0}", query);
         String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
-        LOGGER.log(Level.FINE, "Extracting table name from normalized query: {0}", normalized);
         if (normalized.startsWith("SELECT")) {
-            LOGGER.log(Level.FINE, "Processing SELECT query");
             String[] parts = normalized.split("(?i)FROM\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid SELECT format");
             }
-            LOGGER.log(Level.FINE, "SELECT query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
-            // Extract the first table before any INNER JOIN or WHERE
-            String tablePart = parts[1].split("(?i)(INNER JOIN|WHERE)\\s")[0].trim();
-            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            // Handle alias by taking the first word
-            String tableName = QueryParser.unquoteIdentifier(tablePart.split("\\s+")[0].trim());
-            LOGGER.log(Level.FINE, "Extracted table name: {0}", tableName);
-            if (tableName.isEmpty()) {
-                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in SELECT");
-            }
-            return tableName;
-        } else if (normalized.startsWith("INSERT INTO")) {
-            LOGGER.log(Level.FINE, "Processing INSERT query");
+            // The first table appears before any INNER JOIN or WHERE clause and may carry an alias.
+            return firstIdentifier(parts[1].split("(?i)(INNER JOIN|WHERE)\\s")[0].trim().split("\\s+")[0]);
+        }
+        if (normalized.startsWith("INSERT INTO")) {
             String[] parts = normalized.split("(?i)INSERT INTO\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid INSERT format");
             }
-            LOGGER.log(Level.FINE, "INSERT query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
-            String tablePart = parts[1].split("\\s+|\\(")[0].trim();
-            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            String tableName = QueryParser.unquoteIdentifier(tablePart);
-            if (tableName.isEmpty()) {
-                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in INSERT");
-            }
-            return tableName;
-        } else if (normalized.startsWith("UPDATE")) {
-            LOGGER.log(Level.FINE, "Processing UPDATE query");
+            return firstIdentifier(parts[1].split("\\s+|\\(")[0]);
+        }
+        if (normalized.startsWith("UPDATE")) {
             String[] parts = normalized.split("(?i)UPDATE\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid UPDATE format");
             }
-            LOGGER.log(Level.FINE, "UPDATE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
-            String tablePart = parts[1].split("\\s+")[0].trim();
-            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            String tableName = QueryParser.unquoteIdentifier(tablePart);
-            if (tableName.isEmpty()) {
-                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in UPDATE");
-            }
-            return tableName;
-        } else if (normalized.startsWith("DELETE FROM")) {
-            LOGGER.log(Level.FINE, "Processing DELETE query");
+            return firstIdentifier(parts[1].split("\\s+")[0]);
+        }
+        if (normalized.startsWith("DELETE FROM")) {
             String[] parts = normalized.split("(?i)FROM\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid DELETE format");
             }
-            LOGGER.log(Level.FINE, "DELETE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
-            String[] whereParts = parts[1].split("(?i)WHERE\\s*", 2);
-            String tableName = QueryParser.unquoteIdentifier(whereParts[0].trim());
-            LOGGER.log(Level.FINE, "Table part after WHERE split: {0}", tableName);
-            if (tableName.isEmpty()) {
-                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in DELETE");
-            }
-            return tableName;
-        } else if (normalized.startsWith("CREATE TABLE")) {
-            LOGGER.log(Level.FINE, "Processing CREATE TABLE query");
+            return firstIdentifier(parts[1].split("(?i)WHERE\\s*", 2)[0]);
+        }
+        if (normalized.startsWith("CREATE TABLE")) {
             String[] parts = normalized.split("(?i)CREATE TABLE\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE TABLE format");
             }
-            LOGGER.log(Level.FINE, "CREATE TABLE query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
-            String tablePart = parts[1].split("\\s+")[0].trim();
-            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            String tableName = QueryParser.unquoteIdentifier(tablePart);
-            if (tableName.isEmpty()) {
-                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE TABLE");
-            }
-            return tableName;
-        } else if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX") ||
-                normalized.startsWith("CREATE UNIQUE INDEX") || normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
-            LOGGER.log(Level.FINE, "Processing CREATE INDEX query");
+            return firstIdentifier(parts[1].split("\\s+")[0]);
+        }
+        if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX")
+                || normalized.startsWith("CREATE UNIQUE INDEX") || normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
             String[] parts = normalized.split("(?i)ON\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE INDEX format");
             }
-            LOGGER.log(Level.FINE, "CREATE INDEX query parts: part0={0}, part1={1}", new Object[]{parts[0], parts[1]});
-            String tablePart = parts[1].split("\\s+")[0].trim();
-            LOGGER.log(Level.FINE, "Table part after split: {0}", tablePart);
-            String tableName = QueryParser.unquoteIdentifier(tablePart);
-            if (tableName.isEmpty()) {
-                throw new IllegalArgumentException("Cannot extract table name from query: table name missing in CREATE INDEX");
-            }
-            return tableName;
+            return firstIdentifier(parts[1].split("\\s+")[0]);
         }
         throw new IllegalArgumentException("Cannot extract table name from query: unsupported query type");
+    }
+
+    private String firstIdentifier(String token) {
+        String tableName = QueryParser.unquoteIdentifier(token.trim());
+        if (tableName.isEmpty()) {
+            throw new IllegalArgumentException("Cannot extract table name from query: table name missing");
+        }
+        return tableName;
     }
 
     public Table getTable(String tableName) {

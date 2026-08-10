@@ -1,12 +1,28 @@
 package diesel;
 
-import java.io.*;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -17,6 +33,11 @@ interface Index {
     Class<?> getKeyType();
 }
 
+/**
+ * An in-memory table: schema (columns, types, primary key), the row storage,
+ * secondary indexes, an optional clustered index and the sequences used to
+ * auto-generate values. Rows are protected by per-row read/write locks.
+ */
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
     private static final int CURRENT_FORMAT_VERSION = 1;
@@ -115,58 +136,42 @@ class Table implements Serializable {
     }
 
     public void createBTreeIndex(String columnName) {
-        if (!columnTypes.containsKey(columnName)) {
-            throw new IllegalArgumentException("Column " + columnName + " does not exist");
-        }
-        BTreeIndex index = new BTreeIndex(columnTypes.get(columnName));
-        for (int i = 0; i < rows.size(); i++) {
-            Map<String, Object> row = rows.get(i);
-            Object key = row.get(columnName);
-            if (key != null) {
-                index.insert(key, i);
-            }
-        }
-        indexes.put(columnName, index);
-        indexDefinitions.put(columnName, "BTREE");
+        createSecondaryIndex(columnName, "BTREE", BTreeIndex::new, false);
         LOGGER.log(Level.INFO, "Created B-tree index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
     public void createHashIndex(String columnName) {
-        if (!columnTypes.containsKey(columnName)) {
-            throw new IllegalArgumentException("Column " + columnName + " does not exist");
-        }
-        HashIndex index = new HashIndex(columnTypes.get(columnName));
-        for (int i = 0; i < rows.size(); i++) {
-            Map<String, Object> row = rows.get(i);
-            Object key = row.get(columnName);
-            if (key != null) {
-                index.insert(key, i);
-            }
-        }
-        indexes.put(columnName, index);
-        indexDefinitions.put(columnName, "HASH");
+        createSecondaryIndex(columnName, "HASH", HashIndex::new, false);
         LOGGER.log(Level.INFO, "Created hash index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
     public void createUniqueIndex(String columnName) {
+        createSecondaryIndex(columnName, "UNIQUE", UniqueIndex::new, true);
+        LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
+    }
+
+    /**
+     * Builds a secondary index over the already-present rows and registers it
+     * under {@code columnName}. When {@code unique} is set, duplicate keys abort
+     * the creation.
+     */
+    private void createSecondaryIndex(String columnName, String definition, Function<Class<?>, Index> indexFactory, boolean unique) {
         if (!columnTypes.containsKey(columnName)) {
             throw new IllegalArgumentException("Column " + columnName + " does not exist");
         }
-        UniqueIndex index = new UniqueIndex(columnTypes.get(columnName));
-        Set<Object> seenKeys = new HashSet<>();
+        Index index = indexFactory.apply(columnTypes.get(columnName));
+        Set<Object> seenKeys = unique ? new HashSet<>() : null;
         for (int i = 0; i < rows.size(); i++) {
-            Map<String, Object> row = rows.get(i);
-            Object key = row.get(columnName);
+            Object key = rows.get(i).get(columnName);
             if (key != null) {
-                if (!seenKeys.add(key)) {
+                if (unique && !seenKeys.add(key)) {
                     throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique index");
                 }
                 index.insert(key, i);
             }
         }
         indexes.put(columnName, index);
-        indexDefinitions.put(columnName, "UNIQUE");
-        LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
+        indexDefinitions.put(columnName, definition);
     }
 
     public void createUniqueClusteredIndex(String columnName) {
@@ -181,6 +186,7 @@ class Table implements Serializable {
         hasClusteredIndex = true;
         clusteredIndexColumn = columnName;
 
+        // Sort the rows by the clustered key and verify uniqueness before reindexing.
         List<Map<String, Object>> sortedRows = new ArrayList<>(rows);
         sortedRows.sort((row1, row2) -> {
             Object key1 = row1.get(columnName);
@@ -204,14 +210,7 @@ class Table implements Serializable {
         for (int i = 0; i < rows.size(); i++) {
             Object key = rows.get(i).get(columnName);
             clusteredIndex.insert(key, i);
-            for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-                String col = entry.getKey();
-                Index idx = entry.getValue();
-                Object idxKey = rows.get(i).get(col);
-                if (idxKey != null) {
-                    idx.insert(idxKey, i);
-                }
-            }
+            insertRowIntoIndexes(rows.get(i), i);
         }
 
         LOGGER.log(Level.INFO, "Created unique clustered B-tree index on column {0} for table {1}", new Object[]{columnName, name});
@@ -245,7 +244,9 @@ class Table implements Serializable {
     }
 
     public Map<String, Class<?>> getColumnTypes() {
-        return new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }};
+        Map<String, Class<?>> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        copy.putAll(columnTypes);
+        return copy;
     }
 
     public String getPrimaryKeyColumn() {
@@ -261,8 +262,8 @@ class Table implements Serializable {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
         rows.remove(rowIndex);
-        rowLocks.remove(rowIndex);
-        for (int i = rowIndex; i < rows.size(); i++) {
+        // Row indexes shift down by one, so the locks of this and all following rows are stale.
+        for (int i = rowIndex; i <= rows.size(); i++) {
             rowLocks.remove(i);
         }
     }
@@ -276,6 +277,7 @@ class Table implements Serializable {
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
+        // Rebuild the case-insensitive type map so lookups stay case-insensitive after load.
         Map<String, Class<?>> tempColumnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         tempColumnTypes.putAll(columnTypes);
         this.columnTypes.clear();
@@ -294,6 +296,7 @@ class Table implements Serializable {
                 }
             }
         }
+        // Rebuild all secondary indexes from their persisted definitions.
         if (indexDefinitions != null) {
             for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
                 String column = entry.getKey();
@@ -325,7 +328,6 @@ class Table implements Serializable {
     }
 
     public void addRow(Map<String, Object> row) {
-        LOGGER.log(Level.FINE, "Entering addRow: row={0}", row);
         Map<String, Object> validatedRow = new HashMap<>();
         for (String col : columns) {
             Object value;
@@ -334,23 +336,15 @@ class Table implements Serializable {
                 if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
                     throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
                 }
-                if (!row.containsKey(col)) {
-                    value = sequence.nextValue();
-                } else {
-                    value = row.get(col);
-                }
+                value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
             } else if (!row.containsKey(col)) {
                 throw new IllegalArgumentException("Missing value for column: " + col);
             } else {
                 value = row.get(col);
             }
-            Index index = indexes.get(col);
-            if (index instanceof UniqueIndex || index instanceof BTreeClusteredIndex) {
-                if (value != null && index.search(value).size() > 0) {
-                    LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, col});
-                    throw new IllegalStateException("Duplicate key violation: key '" + value + "' already exists in column " + col);
-                }
-            }
+
+            checkUniqueConstraint(col, value);
+
             Class<?> expectedType = columnTypes.get(col);
             if (expectedType == null) {
                 throw new IllegalArgumentException("Invalid value or type for column: " + col);
@@ -359,46 +353,7 @@ class Table implements Serializable {
                 validatedRow.put(col, null);
                 continue;
             }
-            if (expectedType == Integer.class && !(value instanceof Integer)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Integer, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == Long.class && !(value instanceof Long)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Long, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == Short.class && !(value instanceof Short)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Short, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == Byte.class && !(value instanceof Byte)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Byte, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == BigDecimal.class && !(value instanceof BigDecimal)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected BigDecimal, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == Float.class && !(value instanceof Float)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Float, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == Double.class && !(value instanceof Double)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Double, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == Character.class && !(value instanceof Character)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Character, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == UUID.class && !(value instanceof UUID)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected UUID, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == String.class && !(value instanceof String)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected String, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected Boolean, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected LocalDate, got %s", col, value.getClass().getSimpleName()));
-            } else if (expectedType == LocalDateTime.class && !(value instanceof LocalDateTime)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid type for column %s: expected LocalDateTime, got %s", col, value.getClass().getSimpleName()));
-            }
+            validateColumnValueType(col, expectedType, value);
             validatedRow.put(col, value);
         }
 
@@ -412,44 +367,78 @@ class Table implements Serializable {
                 LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
                 throw new IllegalStateException("Duplicate key violation: key '" + key + "' in column " + clusteredIndexColumn);
             }
-
-            int insertIndex = findInsertPosition(key);
-            ReentrantReadWriteLock lock = getRowLock(insertIndex);
-            lock.writeLock().lock();
-            try {
-                rows.add(insertIndex, validatedRow);
-                clusteredIndex.insert(key, insertIndex);
-                for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-                    String column = entry.getKey();
-                    Index index = entry.getValue();
-                    Object idxKey = validatedRow.get(column);
-                    if (idxKey != null) {
-                        index.insert(idxKey, insertIndex);
-                    }
-                }
-                updateIndicesAfterInsert(insertIndex);
-            } finally {
-                lock.writeLock().unlock();
-            }
+            insertIntoClusteredPosition(validatedRow, key);
         } else {
-            int rowIndex = rows.size();
-            ReentrantReadWriteLock lock = getRowLock(rowIndex);
-            lock.writeLock().lock();
-            try {
-                rows.add(validatedRow);
-                for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-                    String column = entry.getKey();
-                    Index index = entry.getValue();
-                    Object key = validatedRow.get(column);
-                    if (key != null) {
-                        index.insert(key, rowIndex);
-                    }
-                }
-            } finally {
-                lock.writeLock().unlock();
-            }
+            insertAtEnd(validatedRow);
         }
         LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
+    }
+
+    private void checkUniqueConstraint(String column, Object value) {
+        Index index = indexes.get(column);
+        if (index instanceof UniqueIndex || index instanceof BTreeClusteredIndex) {
+            if (value != null && index.search(value).size() > 0) {
+                LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
+                throw new IllegalStateException("Duplicate key violation: key '" + value + "' already exists in column " + column);
+            }
+        }
+    }
+
+    private void validateColumnValueType(String column, Class<?> expectedType, Object value) {
+        boolean validType = (expectedType == Integer.class && value instanceof Integer)
+                || (expectedType == Long.class && value instanceof Long)
+                || (expectedType == Short.class && value instanceof Short)
+                || (expectedType == Byte.class && value instanceof Byte)
+                || (expectedType == BigDecimal.class && value instanceof BigDecimal)
+                || (expectedType == Float.class && value instanceof Float)
+                || (expectedType == Double.class && value instanceof Double)
+                || (expectedType == Character.class && value instanceof Character)
+                || (expectedType == UUID.class && value instanceof UUID)
+                || (expectedType == String.class && value instanceof String)
+                || (expectedType == Boolean.class && value instanceof Boolean)
+                || (expectedType == LocalDate.class && value instanceof LocalDate)
+                || (expectedType == LocalDateTime.class && value instanceof LocalDateTime);
+        if (!validType) {
+            throw new IllegalArgumentException(
+                    String.format("Invalid type for column %s: expected %s, got %s",
+                            column, expectedType.getSimpleName(), value.getClass().getSimpleName()));
+        }
+    }
+
+    private void insertIntoClusteredPosition(Map<String, Object> row, Object clusteredKey) {
+        int insertIndex = findInsertPosition(clusteredKey);
+        ReentrantReadWriteLock lock = getRowLock(insertIndex);
+        lock.writeLock().lock();
+        try {
+            rows.add(insertIndex, row);
+            clusteredIndex.insert(clusteredKey, insertIndex);
+            insertRowIntoIndexes(row, insertIndex);
+            updateIndicesAfterInsert(insertIndex);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    private void insertAtEnd(Map<String, Object> row) {
+        int rowIndex = rows.size();
+        ReentrantReadWriteLock lock = getRowLock(rowIndex);
+        lock.writeLock().lock();
+        try {
+            rows.add(row);
+            insertRowIntoIndexes(row, rowIndex);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /** Inserts {@code row} into every secondary index at {@code rowIndex}, skipping NULL keys. */
+    private void insertRowIntoIndexes(Map<String, Object> row, int rowIndex) {
+        for (Map.Entry<String, Index> entry : indexes.entrySet()) {
+            Object key = row.get(entry.getKey());
+            if (key != null) {
+                entry.getValue().insert(key, rowIndex);
+            }
+        }
     }
 
     private int findInsertPosition(Object key) {
@@ -473,46 +462,34 @@ class Table implements Serializable {
         return low;
     }
 
+    /** Shifts the stored row index of every row after an insert into a clustered table. */
     private void updateIndicesAfterInsert(int insertIndex) {
-        LOGGER.log(Level.FINE, "Entering updateIndicesAfterInsert: insertIndex={0}, rows size={1}",
-                new Object[]{insertIndex, rows.size()});
         for (int i = insertIndex + 1; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
-            LOGGER.log(Level.FINE, "Processing row {0}: {1}", new Object[]{i, row});
 
             Object clusteredKey = row.get(clusteredIndexColumn);
             if (clusteredKey != null) {
                 List<Integer> clusteredIndices = clusteredIndex.search(clusteredKey);
                 if (clusteredIndices.contains(i - 1)) {
-                    LOGGER.log(Level.FINE, "Updating clustered index: key={0}, oldIndex={1}, newIndex={2}, currentIndices={3}",
-                            new Object[]{clusteredKey, i - 1, i, clusteredIndices});
                     clusteredIndex.remove(clusteredKey, i - 1);
                     clusteredIndex.insert(clusteredKey, i);
                 }
             }
 
             for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-                String column = entry.getKey();
-                Index index = entry.getValue();
-                Object key = row.get(column);
+                Object key = row.get(entry.getKey());
                 if (key != null) {
-                    List<Integer> currentIndices = index.search(key);
-                    LOGGER.log(Level.FINE, "Checking index for column={0}, key={1}, currentIndices={2}, rowIndex={3}",
-                            new Object[]{column, key, currentIndices, i});
+                    List<Integer> currentIndices = entry.getValue().search(key);
                     if (currentIndices.contains(i - 1)) {
-                        LOGGER.log(Level.FINE, "Updating index: column={0}, key={1}, oldIndex={2}, newIndex={3}",
-                                new Object[]{column, key, i - 1, i});
-                        index.remove(key, i - 1);
-                        index.insert(key, i);
+                        entry.getValue().remove(key, i - 1);
+                        entry.getValue().insert(key, i);
                     }
                 }
             }
         }
-        LOGGER.log(Level.FINE, "Exiting updateIndicesAfterInsert: insertIndex={0}", insertIndex);
     }
 
     public void saveToFile(String tableName) {
-        LOGGER.log(Level.FINE, "Entering saveToFile: tableName={0}", tableName);
         String fileName = tableName + ".csv";
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
             writer.write(String.join(",", columns));
@@ -525,8 +502,7 @@ class Table implements Serializable {
                     Map<String, Object> row = rows.get(i);
                     List<String> values = new ArrayList<>();
                     for (String column : columns) {
-                        Object value = row.get(column);
-                        values.add(formatValue(value));
+                        values.add(formatValue(row.get(column)));
                     }
                     writer.write(String.join(",", values));
                     writer.newLine();
@@ -542,7 +518,6 @@ class Table implements Serializable {
             LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
             throw new RuntimeException("Failed to save table to file: " + fileName, e);
         }
-        LOGGER.log(Level.FINE, "Exiting saveToFile: tableName={0}", tableName);
     }
 
     private String formatValue(Object value) {

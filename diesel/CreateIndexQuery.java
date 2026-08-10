@@ -1,25 +1,13 @@
 package diesel;
 
-class CreateIndexQuery implements Query<Void> {
-    private final String tableName;
-    private final String columnName;
-
+class CreateIndexQuery extends CreateIndexQueryBase {
     public CreateIndexQuery(String tableName, String columnName) {
-        this.tableName = tableName;
-        this.columnName = columnName;
-    }
-
-    public String getTableName() {
-        return tableName;
-    }
-
-    public String getColumnName() {
-        return columnName;
+        super(tableName, columnName);
     }
 
     @Override
     public Void execute(Table table) {
-        table.createBTreeIndex(columnName);
+        table.createBTreeIndex(getColumnName());
         return null;
     }
 }

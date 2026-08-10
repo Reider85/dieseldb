@@ -1,26 +1,13 @@
 package diesel;
 
-
-class CreateHashIndexQuery implements Query<Void> {
-    private final String tableName;
-    private final String columnName;
-
+class CreateHashIndexQuery extends CreateIndexQueryBase {
     public CreateHashIndexQuery(String tableName, String columnName) {
-        this.tableName = tableName;
-        this.columnName = columnName;
-    }
-
-    public String getTableName() {
-        return tableName;
-    }
-
-    public String getColumnName() {
-        return columnName;
+        super(tableName, columnName);
     }
 
     @Override
     public Void execute(Table table) {
-        table.createHashIndex(columnName);
+        table.createHashIndex(getColumnName());
         return null;
     }
 }
