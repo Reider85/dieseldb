@@ -51,6 +51,7 @@ public class AllTestsSampleTest {
             runPrompt62TestQueries();
             runPrompt65TestQueries();
             runPrompt66TestQueries();
+            runPrompt67TestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "AllTestsSampleTest FAILED: {0}", e.getMessage());
@@ -656,6 +657,42 @@ public class AllTestsSampleTest {
                 "Prompt66Test / BEGIN+INSERT row is not inserted after ROLLBACK");
         check(countRows("SELECT * FROM TXN66_TEST WHERE NAME = 'prompt66-auto'") == 1,
                 "Prompt66Test / auto-committed row is still present after ROLLBACK");
+
+        database.setAutoCommit(true);
+    }
+
+    private void runPrompt67TestQueries() {
+        dropTable("TXN67_TEST");
+        runExec("Prompt67Test", "prompt 67 create transaction table",
+                "CREATE TABLE TXN67_TEST (ID LONG PRIMARY KEY SEQUENCE(txn67_seq 1 1), NAME STRING)");
+        check(database.isAutoCommit(), "Prompt67Test / autoCommit is true by default");
+
+        String beginResult = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID prompt67TxId = UUID.fromString(beginResult.split(": ")[1]);
+
+        database.executeQuery("INSERT INTO TXN67_TEST (NAME) VALUES ('prompt67-first')", prompt67TxId);
+        Object firstInTx = database.executeQuery("SELECT * FROM TXN67_TEST WHERE NAME = 'prompt67-first'", prompt67TxId);
+        check(firstInTx instanceof List && ((List<?>) firstInTx).size() == 1,
+                "Prompt67Test / SELECT right after the first INSERT sees the row inside the transaction");
+
+        database.executeQuery("INSERT INTO TXN67_TEST (NAME) VALUES ('prompt67-second')", prompt67TxId);
+        Object allInTx = database.executeQuery("SELECT * FROM TXN67_TEST", prompt67TxId);
+        check(allInTx instanceof List && ((List<?>) allInTx).size() == 2,
+                "Prompt67Test / SELECT after the second INSERT sees both rows inserted in the same transaction");
+        check(!database.isAutoCommit(), "Prompt67Test / autoCommit is false while the transaction is open");
+
+        runSelectCount("Prompt67Test", "prompt 67 select before commit is isolated from the transaction",
+                "SELECT * FROM TXN67_TEST WHERE NAME = 'prompt67-first'", 0);
+
+        database.executeQuery("COMMIT", prompt67TxId);
+        runSelectCount("Prompt67Test", "prompt 67 both rows visible only after COMMIT",
+                "SELECT * FROM TXN67_TEST", 2);
+        check(countRows("SELECT * FROM TXN67_TEST WHERE NAME = 'prompt67-first'") == 1,
+                "Prompt67Test / first row is visible only after COMMIT");
+        check(countRows("SELECT * FROM TXN67_TEST WHERE NAME = 'prompt67-second'") == 1,
+                "Prompt67Test / second row is visible only after COMMIT");
+        check(!database.isInTransaction(prompt67TxId),
+                "Prompt67Test / COMMIT ends the transaction");
 
         database.setAutoCommit(true);
     }
