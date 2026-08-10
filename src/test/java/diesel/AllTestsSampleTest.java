@@ -125,6 +125,10 @@ public class AllTestsSampleTest {
         }
     }
 
+    private boolean isErrorResponse(Object response) {
+        return response instanceof String && ((String) response).startsWith("Error:");
+    }
+
     private void runSelectCount(String group, String name, String query, int expected) {
         long start = System.nanoTime();
         boolean ok = false;
@@ -822,12 +826,12 @@ public class AllTestsSampleTest {
             try (Socket client = new Socket("localhost", port)) {
                 client.setSoTimeout(60000);
                 ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-                out.writeObject(new QueryMessage("SELECT 1", null));
+                out.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
                 out.flush();
                 ObjectInputStream in = new ObjectInputStream(client.getInputStream());
                 Object response = in.readObject();
-                check(response != null,
-                        "Prompt69Test / the long-running client connection is functional (server answers a query)");
+                check(response != null && !isErrorResponse(response),
+                        "Prompt69Test / the long-running client connection is functional (server answers a query without an error)");
 
                 long start = System.currentTimeMillis();
                 boolean closedByServer = false;
@@ -848,11 +852,11 @@ public class AllTestsSampleTest {
             try (Socket probe = new Socket("localhost", port)) {
                 probe.setSoTimeout(5000);
                 ObjectOutputStream probeOut = new ObjectOutputStream(probe.getOutputStream());
-                probeOut.writeObject(new QueryMessage("SELECT 1", null));
+                probeOut.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
                 probeOut.flush();
                 ObjectInputStream probeIn = new ObjectInputStream(probe.getInputStream());
                 Object probeResponse = probeIn.readObject();
-                check(probeResponse != null,
+                check(probeResponse != null && !isErrorResponse(probeResponse),
                         "Prompt69Test / the server stays alive and accepts a new connection after the timed-out client was closed");
             }
         } catch (Exception e) {

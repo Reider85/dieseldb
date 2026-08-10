@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -73,12 +74,14 @@ public class SocketTimeoutTest {
             client.setSoTimeout(SOCKET_TIMEOUT_MS + 5000);
 
             ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-            out.writeObject(new QueryMessage("SELECT 1", null));
+            out.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
             out.flush();
 
             ObjectInputStream in = new ObjectInputStream(client.getInputStream());
             Object response = in.readObject();
-            LOGGER.log(Level.INFO, "Received response to SELECT 1: " + response);
+            LOGGER.log(Level.INFO, "Received response to round-trip query: " + response);
+            assertFalse(response instanceof String && ((String) response).startsWith("Error:"),
+                    "Round-trip query should be answered without an error");
 
             // The server blocks in in.readObject() with a socket timeout. After
             // SOCKET_TIMEOUT_MS of idle time the server times out, breaks the loop

@@ -95,7 +95,7 @@ public class ServerConnectionLimitTest {
                 probe.setSoTimeout(2000);
                 
                 ObjectOutputStream out = new ObjectOutputStream(probe.getOutputStream());
-                out.writeObject(new QueryMessage("SELECT 1", null));
+                out.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
                 out.flush();
                 
                 ObjectInputStream in = new ObjectInputStream(probe.getInputStream());
