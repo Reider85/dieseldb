@@ -7,7 +7,11 @@ import org.junit.jupiter.api.Test;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.math.BigDecimal;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -59,6 +63,7 @@ public class AllTestsSampleTest {
             runPrompt66TestQueries();
             runPrompt67TestQueries();
             runPrompt68TestQueries();
+            runPrompt69TestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "AllTestsSampleTest FAILED: {0}", e.getMessage());
@@ -798,6 +803,82 @@ public class AllTestsSampleTest {
                 "Prompt68Test / concurrent reader sees 0 of the writer's rows while the transaction is open");
         check(committedVisible.get() == 5,
                 "Prompt68Test / concurrent reader sees all 5 writer rows only after COMMIT");
+    }
+
+    private void runPrompt69TestQueries() {
+        int port = -1;
+        try (ServerSocket tempSocket = new ServerSocket(0)) {
+            port = tempSocket.getLocalPort();
+        } catch (IOException e) {
+            check(false, "Prompt69Test / failed to allocate a port: " + e.getMessage());
+            return;
+        }
+        DatabaseServer server = new DatabaseServer(port);
+        Thread serverThread = new Thread(() -> server.start(), "prompt69-server");
+        try {
+            serverThread.start();
+            waitForPrompt69Server(port);
+
+            try (Socket client = new Socket("localhost", port)) {
+                client.setSoTimeout(60000);
+                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
+                out.writeObject(new QueryMessage("SELECT 1", null));
+                out.flush();
+                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
+                Object response = in.readObject();
+                check(response != null,
+                        "Prompt69Test / the long-running client connection is functional (server answers a query)");
+
+                long start = System.currentTimeMillis();
+                boolean closedByServer = false;
+                try {
+                    in.readObject();
+                } catch (IOException e) {
+                    closedByServer = true;
+                }
+                long elapsed = System.currentTimeMillis() - start;
+                check(closedByServer,
+                        "Prompt69Test / the server closes the connection when the idle long query (no next query) exceeds the 30s timeout");
+                check(elapsed >= 30000,
+                        "Prompt69Test / the timeout fires only after ~30 seconds (elapsed " + elapsed + " ms, configured server.socket.timeout 30000 ms)");
+                check(elapsed < 50000,
+                        "Prompt69Test / the close is caused by the server's 30s timeout, not by the client's own read timeout (elapsed " + elapsed + " ms)");
+            }
+
+            try (Socket probe = new Socket("localhost", port)) {
+                probe.setSoTimeout(5000);
+                ObjectOutputStream probeOut = new ObjectOutputStream(probe.getOutputStream());
+                probeOut.writeObject(new QueryMessage("SELECT 1", null));
+                probeOut.flush();
+                ObjectInputStream probeIn = new ObjectInputStream(probe.getInputStream());
+                Object probeResponse = probeIn.readObject();
+                check(probeResponse != null,
+                        "Prompt69Test / the server stays alive and accepts a new connection after the timed-out client was closed");
+            }
+        } catch (Exception e) {
+            check(false, "Prompt69Test / long-query 30s timeout test failed: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "Prompt69Test / long-query 30s timeout test failed", e);
+        } finally {
+            server.stop();
+            serverThread.interrupt();
+        }
+    }
+
+    private void waitForPrompt69Server(int port) {
+        long deadline = System.currentTimeMillis() + 15000;
+        while (System.currentTimeMillis() < deadline) {
+            try (Socket s = new Socket("localhost", port)) {
+                return;
+            } catch (IOException ignored) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+        throw new IllegalStateException("Prompt69Test / server did not start within timeout");
     }
 
     public static void main(String[] args) {
