@@ -4,14 +4,17 @@ import diesel.Database;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.math.BigDecimal;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -64,6 +67,7 @@ public class AllTestsSampleTest {
             runPrompt67TestQueries();
             runPrompt68TestQueries();
             runPrompt69TestQueries();
+            runPrompt70TestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "AllTestsSampleTest FAILED: {0}", e.getMessage());
@@ -883,6 +887,181 @@ public class AllTestsSampleTest {
             }
         }
         throw new IllegalStateException("Prompt69Test / server did not start within timeout");
+    }
+
+    private void runPrompt70TestQueries() {
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        File tempDir = null;
+        Process process = null;
+        List<String> outputLines = new ArrayList<>();
+        try {
+            tempDir = Files.createTempDirectory("prompt70-server").toFile();
+        } catch (IOException e) {
+            check(false, "Prompt70Test / failed to create temp directory: " + e.getMessage());
+            return;
+        }
+        int port = -1;
+        try (ServerSocket tempSocket = new ServerSocket(0)) {
+            port = tempSocket.getLocalPort();
+        } catch (IOException e) {
+            check(false, "Prompt70Test / failed to allocate a port: " + e.getMessage());
+            return;
+        }
+        String javaBin = System.getProperty("java.home") + File.separator + "bin" + File.separator
+                + (isWindows ? "java.exe" : "java");
+        String classpath = System.getProperty("java.class.path");
+        ProcessBuilder pb = new ProcessBuilder(javaBin, "-cp", classpath, "diesel.DatabaseServer", String.valueOf(port));
+        pb.redirectErrorStream(true);
+        pb.directory(tempDir);
+        try {
+            process = pb.start();
+        } catch (IOException e) {
+            check(false, "Prompt70Test / failed to start server process: " + e.getMessage());
+            return;
+        }
+        final Process runningProcess = process;
+        Thread outputPump = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(runningProcess.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    synchronized (outputLines) {
+                        outputLines.add(line);
+                    }
+                }
+            } catch (IOException ignored) {
+            }
+        }, "prompt70-output-pump");
+        outputPump.setDaemon(true);
+        outputPump.start();
+
+        try {
+            waitForPrompt70Server(port);
+            check(true, "Prompt70Test / server subprocess started on port " + port);
+
+            try (Socket client = new Socket("localhost", port)) {
+                client.setSoTimeout(15000);
+                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
+                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
+
+                Object createResponse = prompt70RoundTrip(out, in, "CREATE TABLE PROMPT70_TEST (ID LONG PRIMARY KEY SEQUENCE(p70_seq 1 1), NAME STRING)");
+                check(createResponse != null && !isErrorResponse(createResponse),
+                        "Prompt70Test / CREATE TABLE round-trip against the separate server process succeeds");
+
+                Object insert1 = prompt70RoundTrip(out, in, "INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-first')");
+                check(!isErrorResponse(insert1),
+                        "Prompt70Test / first INSERT round-trip against the separate server process succeeds");
+
+                Object insert2 = prompt70RoundTrip(out, in, "INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-second')");
+                check(!isErrorResponse(insert2),
+                        "Prompt70Test / second INSERT round-trip against the separate server process succeeds");
+
+                Object beginResponse = prompt70RoundTrip(out, in, "BEGIN TRANSACTION");
+                String beginText = beginResponse instanceof String ? (String) beginResponse : null;
+                UUID prompt70Tx = beginText != null && beginText.startsWith("Transaction started: ")
+                        ? UUID.fromString(beginText.substring("Transaction started: ".length())) : null;
+                Object insert3 = prompt70RoundTrip(out, in, new QueryMessage("INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-third')", prompt70Tx));
+                check(!isErrorResponse(insert3),
+                        "Prompt70Test / INSERT inside a BEGIN/COMMIT transaction against the separate server process succeeds");
+
+                Object commitResponse = prompt70RoundTrip(out, in, new QueryMessage("COMMIT", prompt70Tx));
+                check(commitResponse != null && !isErrorResponse(commitResponse),
+                        "Prompt70Test / COMMIT round-trip against the separate server process succeeds");
+            }
+
+            LOGGER.log(Level.INFO, "Prompt70Test / sending SIGTERM via process.destroy() to the server process");
+            long destroyStart = System.currentTimeMillis();
+            process.destroy();
+            boolean terminated = process.waitFor(30, TimeUnit.SECONDS);
+            long destroyElapsed = System.currentTimeMillis() - destroyStart;
+            check(terminated,
+                    "Prompt70Test / the server process terminates within 30 seconds after SIGTERM (destroy took " + destroyElapsed + " ms)");
+
+            File csvFile = new File(tempDir, "PROMPT70_TEST.csv");
+            File tableFile = new File(tempDir, "PROMPT70_TEST.table");
+            check(csvFile.exists(),
+                    "Prompt70Test / the PROMPT70_TEST.csv data file is saved on disk after server termination");
+            check(tableFile.exists(),
+                    "Prompt70Test / the PROMPT70_TEST.table serialized file is saved on disk after server termination");
+            if (csvFile.exists()) {
+                List<String> csvLines = Files.readAllLines(csvFile.toPath());
+                boolean hasFirst = csvLines.stream().anyMatch(l -> l.contains("prompt70-first"));
+                boolean hasSecond = csvLines.stream().anyMatch(l -> l.contains("prompt70-second"));
+                boolean hasThird = csvLines.stream().anyMatch(l -> l.contains("prompt70-third"));
+                check(hasFirst && hasSecond && hasThird && csvLines.size() == 4,
+                        "Prompt70Test / the saved CSV file contains all 3 inserted rows (header + " + (csvLines.size() - 1) + " data rows)");
+            }
+
+            if (isWindows) {
+                check(true, "Prompt70Test / Windows Process.destroy() is forceful and does not run JVM shutdown hooks; only clean termination and saved files are verified");
+            } else {
+                check(process.exitValue() == 0,
+                        "Prompt70Test / the server process exits with status 0 after graceful shutdown");
+                String log;
+                synchronized (outputLines) {
+                    log = String.join("\n", outputLines);
+                }
+                check(log.contains("Database server stopped"),
+                        "Prompt70Test / the shutdown hook stops the server gracefully (server output shows 'Database server stopped')");
+            }
+        } catch (Exception e) {
+            check(false, "Prompt70Test / graceful shutdown subprocess test failed: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "Prompt70Test / graceful shutdown subprocess test failed", e);
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+                try {
+                    process.waitFor(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            try {
+                outputPump.join(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            deletePrompt70Dir(tempDir);
+        }
+    }
+
+    private Object prompt70RoundTrip(ObjectOutputStream out, ObjectInputStream in, String query) throws IOException, ClassNotFoundException {
+        return prompt70RoundTrip(out, in, new QueryMessage(query, null));
+    }
+
+    private Object prompt70RoundTrip(ObjectOutputStream out, ObjectInputStream in, QueryMessage message) throws IOException, ClassNotFoundException {
+        out.writeObject(message);
+        out.flush();
+        return in.readObject();
+    }
+
+    private void waitForPrompt70Server(int port) {
+        long deadline = System.currentTimeMillis() + 15000;
+        while (System.currentTimeMillis() < deadline) {
+            try (Socket s = new Socket("localhost", port)) {
+                return;
+            } catch (IOException ignored) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+        throw new IllegalStateException("Prompt70Test / server process did not start within timeout");
+    }
+
+    private void deletePrompt70Dir(File dir) {
+        if (dir == null) {
+            return;
+        }
+        File[] children = dir.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deletePrompt70Dir(child);
+            }
+        }
+        dir.delete();
     }
 
     public static void main(String[] args) {
