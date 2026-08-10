@@ -11,6 +11,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -47,6 +53,7 @@ public class QuantitativeTest {
             runPrompt65TestQueries();
             runPrompt66TestQueries();
             runPrompt67TestQueries();
+            runPrompt68TestQueries();
         } catch (Exception e) {
             failed++;
             LOGGER.log(Level.SEVERE, "QuantitativeTest FAILED: {0}", e.getMessage());
@@ -632,6 +639,102 @@ public class QuantitativeTest {
                 "Prompt67Test / COMMIT ends the transaction");
 
         database.setAutoCommit(true);
+    }
+
+    private void runPrompt68TestQueries() {
+        dropTable("TXN68_TEST");
+        runExec("Prompt68Test", "prompt 68 create multi-client table",
+                "CREATE TABLE TXN68_TEST (ID LONG PRIMARY KEY SEQUENCE(txn68_seq 1 1), CLIENT STRING, NAME STRING)");
+
+        String beginA = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID clientA = UUID.fromString(beginA.split(": ")[1]);
+        String beginB = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID clientB = UUID.fromString(beginB.split(": ")[1]);
+        check(!clientA.equals(clientB) && database.isInTransaction(clientA) && database.isInTransaction(clientB),
+                "Prompt68Test / two clients hold two distinct active transaction sessions");
+
+        database.executeQuery("INSERT INTO TXN68_TEST (CLIENT, NAME) VALUES ('clientA', 'prompt68-committed')", clientA);
+        database.executeQuery("COMMIT", clientA);
+        check(!database.isInTransaction(clientA), "Prompt68Test / client A's COMMIT ends its transaction");
+
+        runSelectCount("Prompt68Test", "prompt 68 reader sees the other client's committed row",
+                "SELECT * FROM TXN68_TEST WHERE NAME = 'prompt68-committed'", 1);
+
+        String beginA2 = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID clientA2 = UUID.fromString(beginA2.split(": ")[1]);
+        database.executeQuery("INSERT INTO TXN68_TEST (CLIENT, NAME) VALUES ('clientA', 'prompt68-uncommitted')", clientA2);
+        runSelectCount("Prompt68Test", "prompt 68 reader does not see the other client's uncommitted row",
+                "SELECT * FROM TXN68_TEST WHERE NAME = 'prompt68-uncommitted'", 0);
+        database.executeQuery("COMMIT", clientA2);
+        runSelectCount("Prompt68Test", "prompt 68 reader sees the row after the writer's COMMIT",
+                "SELECT * FROM TXN68_TEST WHERE NAME = 'prompt68-uncommitted'", 1);
+
+        Object bSnapshot = database.executeQuery("SELECT * FROM TXN68_TEST", clientB);
+        check(bSnapshot instanceof List && ((List<?>) bSnapshot).size() == 0,
+                "Prompt68Test / reader's own transaction keeps its BEGIN-time snapshot (other clients' commits not visible)");
+
+        String beginA3 = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        UUID clientA3 = UUID.fromString(beginA3.split(": ")[1]);
+        database.executeQuery("INSERT INTO TXN68_TEST (CLIENT, NAME) VALUES ('clientA', 'prompt68-dirty')", clientA3);
+        Object dirtyRead = database.executeQuery("SELECT * FROM TXN68_TEST WHERE NAME = 'prompt68-dirty'", clientB);
+        check(dirtyRead instanceof List && ((List<?>) dirtyRead).size() == 1,
+                "Prompt68Test / reader at READ_UNCOMMITTED isolation sees the writer's uncommitted row (dirty read)");
+        database.executeQuery("ROLLBACK", clientA3);
+        Object afterRollback = database.executeQuery("SELECT * FROM TXN68_TEST WHERE NAME = 'prompt68-dirty'", clientB);
+        check(afterRollback instanceof List && ((List<?>) afterRollback).size() == 0,
+                "Prompt68Test / reader no longer sees the row after the writer's ROLLBACK");
+
+        runPrompt68ConcurrentClients();
+
+        database.setAutoCommit(true);
+    }
+
+    private void runPrompt68ConcurrentClients() {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch writerInserted = new CountDownLatch(1);
+        CountDownLatch readerVerified = new CountDownLatch(1);
+        CountDownLatch writerCommitted = new CountDownLatch(1);
+        AtomicInteger uncommittedVisible = new AtomicInteger(-1);
+        AtomicInteger committedVisible = new AtomicInteger(-1);
+
+        Future<?> writerFuture = executor.submit(() -> {
+            String begin = (String) database.executeQuery("BEGIN TRANSACTION", null);
+            UUID writerTx = UUID.fromString(begin.split(": ")[1]);
+            for (int i = 1; i <= 5; i++) {
+                database.executeQuery("INSERT INTO TXN68_TEST (CLIENT, NAME) VALUES ('concurrent', 'prompt68-concurrent-" + i + "')", writerTx);
+            }
+            writerInserted.countDown();
+            readerVerified.await();
+            database.executeQuery("COMMIT", writerTx);
+            writerCommitted.countDown();
+            return null;
+        });
+
+        Future<?> readerFuture = executor.submit(() -> {
+            writerInserted.await();
+            Object beforeCommit = database.executeQuery("SELECT * FROM TXN68_TEST WHERE CLIENT = 'concurrent'", null);
+            uncommittedVisible.set(beforeCommit instanceof List ? ((List<?>) beforeCommit).size() : -1);
+            readerVerified.countDown();
+            writerCommitted.await();
+            Object afterCommit = database.executeQuery("SELECT * FROM TXN68_TEST WHERE CLIENT = 'concurrent'", null);
+            committedVisible.set(afterCommit instanceof List ? ((List<?>) afterCommit).size() : -1);
+            return null;
+        });
+
+        try {
+            writerFuture.get(30, TimeUnit.SECONDS);
+            readerFuture.get(30, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Prompt68Test concurrent client test failed: {0}", e.getMessage());
+            throw new RuntimeException("Prompt68Test concurrent client test failed", e);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        check(uncommittedVisible.get() == 0,
+                "Prompt68Test / concurrent reader sees 0 of the writer's rows while the transaction is open");
+        check(committedVisible.get() == 5,
+                "Prompt68Test / concurrent reader sees all 5 writer rows only after COMMIT");
     }
 
     public static void main(String[] args) {
