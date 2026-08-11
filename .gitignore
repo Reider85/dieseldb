@@ -1,8 +1,19 @@
-```
 # Logs and temp files
 *.log
 hs_err_pid*.log
 
 # Data files
 *.csv
-```
+
+# Build output
+target/
+
+# Timing files
+timing/
+timing*.md
+
+# Execution plans
+.kilo/plans/
+
+# IDE
+.idea/
