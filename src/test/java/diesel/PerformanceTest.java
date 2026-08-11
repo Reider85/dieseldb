@@ -3,26 +3,28 @@ package diesel;
 import diesel.Database;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.logging.Logger;
-import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.Locale;
 import java.util.concurrent.*;
+import java.io.*;
 
 public class PerformanceTest {
-    private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(PerformanceTest.class);
     private static final int RECORD_COUNT = 10;
     private static final int WARMUP_RUNS = 1;
     private static final int TEST_RUNS = 10;
     private static final long TRUE_CONDITION_WARNING_THRESHOLD_MS = 500;
     private static final Map<String, Integer> EXPECTED_QUERY_ROW_COUNTS = new HashMap<>();
+    private static final String BENCHMARK_REPORT_FILE = "benchmark_report.md";
 
     static {
         EXPECTED_QUERY_ROW_COUNTS.put("SELECT NAME, AGE, ACTIVE FROM USERS WHERE AGE = 25", 1);
@@ -50,6 +52,7 @@ public class PerformanceTest {
 
     @Test
     public void runTests() {
+        initializeBenchmarkReport();
         runInsertPerformanceTest();
         setupTable();
         runUpdatePerformanceTest();
@@ -60,24 +63,38 @@ public class PerformanceTest {
         for (String query : queries) {
             runPerformanceTest(query);
         }
+        LOGGER.info("Benchmark report written to {}", BENCHMARK_REPORT_FILE);
+    }
+
+    private void initializeBenchmarkReport() {
+        try (FileWriter fw = new FileWriter(BENCHMARK_REPORT_FILE);
+             BufferedWriter bw = new BufferedWriter(fw);
+             PrintWriter out = new PrintWriter(bw)) {
+            out.println("# DieselDB Benchmark Report");
+            out.println();
+            out.println("| Operation            | Details                                      |   Avg (ms) |   Min (ms) |   Max (ms) | StdDev (ms) |");
+            out.println("|----------------------|----------------------------------------------|------------|------------|------------|-------------|");
+        } catch (IOException e) {
+            LOGGER.error("Failed to initialize benchmark report: {}", e.getMessage(), e);
+        }
     }
 
     private void setupTable() {
         dropTable(); // Ensure table does not exist
         String createTableQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
-        LOGGER.log(Level.INFO, "Executing CREATE TABLE query in setupTable: {0}", createTableQuery);
+        LOGGER.info("Executing CREATE TABLE query in setupTable: {}", createTableQuery);
         database.executeQuery(createTableQuery, null);
 
         // Create clustered index on USER_CODE
         String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
-        LOGGER.log(Level.INFO, "Executing: {0}", createIndexQuery);
+        LOGGER.info("Executing: {}", createIndexQuery);
         database.executeQuery(createIndexQuery, null);
-        LOGGER.log(Level.INFO, "Unique clustered index created on USER_CODE");
+        LOGGER.info("Unique clustered index created on USER_CODE");
 
         insertRecords(RECORD_COUNT);
         Object verify = database.executeQuery("SELECT NAME FROM USERS", null);
         assertEquals(RECORD_COUNT, ((List<?>) verify).size(), "Expected " + RECORD_COUNT + " rows after setup insert");
-        LOGGER.log(Level.INFO, "Setup completed: {0} records inserted into USERS table", RECORD_COUNT);
+        LOGGER.info("Setup completed: {} records inserted into USERS table", RECORD_COUNT);
     }
 
     private void insertRecords(int count) {
@@ -135,16 +152,16 @@ public class PerformanceTest {
 
     private void runInsertPerformanceTest() {
         try {
-            LOGGER.log(Level.INFO, "Starting INSERT performance test for {0} records", RECORD_COUNT);
+            LOGGER.info("Starting INSERT performance test for {} records", RECORD_COUNT);
 
             List<String> columns = Arrays.asList("ID", "USER_CODE", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
             Random random = new Random();
 
             for (int i = 0; i < WARMUP_RUNS; i++) {
-                LOGGER.log(Level.INFO, "Warmup run {0}", i);
+                LOGGER.info("Warmup run {}", i);
                 dropTable();
                 String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
-                LOGGER.log(Level.INFO, "Executing CREATE TABLE query in warmup: {0}", createQuery);
+                LOGGER.info("Executing CREATE TABLE query in warmup: {}", createQuery);
                 database.executeQuery(createQuery, null);
                 String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
                 database.executeQuery(createIndexQuery, null);
@@ -153,10 +170,10 @@ public class PerformanceTest {
 
             List<Long> executionTimes = new ArrayList<>();
             for (int i = 0; i < TEST_RUNS; i++) {
-                LOGGER.log(Level.INFO, "Test run {0}", i);
+                LOGGER.info("Test run {}", i);
                 dropTable();
                 String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
-                LOGGER.log(Level.INFO, "Executing CREATE TABLE query in test run: {0}", createQuery);
+                LOGGER.info("Executing CREATE TABLE query in test run: {}", createQuery);
                 database.executeQuery(createQuery, null);
                 String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
                 database.executeQuery(createIndexQuery, null);
@@ -174,20 +191,20 @@ public class PerformanceTest {
             long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
             double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
 
-            LOGGER.log(Level.INFO, "INSERT performance for {0} records", RECORD_COUNT);
-            LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
-            LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
-            LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
-            LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
-            LOGGER.log(Level.INFO, "--------------------------------");
+            LOGGER.info("INSERT performance for {} records", RECORD_COUNT);
+            LOGGER.info("Average execution time: {} ms", String.format("%.3f", averageTimeMs));
+            LOGGER.info("Min execution time: {} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+            LOGGER.info("Max execution time: {} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+            LOGGER.info("Standard deviation: {} ms", String.format("%.3f", stdDevMs));
+            LOGGER.info("--------------------------------");
+            writeBenchmarkResult("INSERT", RECORD_COUNT, averageTimeMs, minTimeNs / 1_000_000.0, maxTimeNs / 1_000_000.0, stdDevMs);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error in INSERT performance test: {0}", e.getMessage());
-            e.printStackTrace();
+            LOGGER.error("Error in INSERT performance test: {}", e.getMessage(), e);
         }
     }
 
     private void runUpdatePerformanceTest() {
-        LOGGER.log(Level.INFO, "Testing UPDATE performance for {0} records", RECORD_COUNT);
+        LOGGER.info("Testing UPDATE performance for {} records", RECORD_COUNT);
 
         Random random = new Random();
 
@@ -198,7 +215,7 @@ public class PerformanceTest {
 
         List<Long> executionTimes = new ArrayList<>();
         for (int i = 0; i < TEST_RUNS; i++) {
-            LOGGER.log(Level.INFO, "Test run {0}", i);
+            LOGGER.info("Test run {}", i);
             resetScoreColumn();
             long startTime = System.nanoTime();
             performUpdateRun(random);
@@ -217,25 +234,26 @@ public class PerformanceTest {
         Object verifyUpdate = database.executeQuery("SELECT NAME FROM USERS WHERE SCORE > 50", null);
         assertEquals(RECORD_COUNT, ((List<?>) verifyUpdate).size(), "Expected all records to have an updated SCORE");
 
-        LOGGER.log(Level.INFO, "UPDATE performance for {0} records", RECORD_COUNT);
-        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
-        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
-        LOGGER.log(Level.INFO, "--------------------------------");
+        LOGGER.info("UPDATE performance for {} records", RECORD_COUNT);
+        LOGGER.info("Average execution time: {} ms", String.format("%.3f", averageTimeMs));
+        LOGGER.info("Min execution time: {} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.info("Max execution time: {} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.info("Standard deviation: {} ms", String.format("%.3f", stdDevMs));
+        LOGGER.info("--------------------------------");
+        writeBenchmarkResult("UPDATE", RECORD_COUNT, averageTimeMs, minTimeNs / 1_000_000.0, maxTimeNs / 1_000_000.0, stdDevMs);
     }
 
     private void runTransactionPerformanceTest() {
-        LOGGER.log(Level.INFO, "Testing TRANSACTION performance for {0} records", RECORD_COUNT);
+        LOGGER.info("Testing TRANSACTION performance for {} records", RECORD_COUNT);
 
         Random random = new Random();
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
-            LOGGER.log(Level.INFO, "Warmup run {0}", i);
+            LOGGER.info("Warmup run {}", i);
             dropTable();
             UUID txId = database.beginTransaction(null);
             String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
-            LOGGER.log(Level.INFO, "Executing CREATE TABLE query in transaction warmup: {0}", createQuery);
+            LOGGER.info("Executing CREATE TABLE query in transaction warmup: {}", createQuery);
             database.executeQuery(createQuery, txId);
             String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
             database.executeQuery(createIndexQuery, txId);
@@ -246,12 +264,12 @@ public class PerformanceTest {
 
         List<Long> executionTimes = new ArrayList<>();
         for (int i = 0; i < TEST_RUNS; i++) {
-            LOGGER.log(Level.INFO, "Test run {0}", i);
+            LOGGER.info("Test run {}", i);
             dropTable();
             long startTime = System.nanoTime();
             UUID txId = database.beginTransaction(null);
             String createQuery = "CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LASTLOGIN DATETIME, LASTACTION DATETIME_MS, USERSCORE LONG, LEVEL SHORT, RANK BYTE, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)";
-            LOGGER.log(Level.INFO, "Executing CREATE TABLE query in transaction test: {0}", createQuery);
+            LOGGER.info("Executing CREATE TABLE query in transaction test: {}", createQuery);
             database.executeQuery(createQuery, txId);
             String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
             database.executeQuery(createIndexQuery, txId);
@@ -270,22 +288,23 @@ public class PerformanceTest {
         long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
         double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
 
-        LOGGER.log(Level.INFO, "TRANSACTION performance for {0} records", RECORD_COUNT);
-        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
-        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
-        LOGGER.log(Level.INFO, "--------------------------------");
+        LOGGER.info("TRANSACTION performance for {} records", RECORD_COUNT);
+        LOGGER.info("Average execution time: {} ms", String.format("%.3f", averageTimeMs));
+        LOGGER.info("Min execution time: {} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.info("Max execution time: {} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.info("Standard deviation: {} ms", String.format("%.3f", stdDevMs));
+        LOGGER.info("--------------------------------");
+        writeBenchmarkResult("TRANSACTION", RECORD_COUNT, averageTimeMs, minTimeNs / 1_000_000.0, maxTimeNs / 1_000_000.0, stdDevMs);
     }
 
     private void runReadUncommittedPerformanceTest() {
-        LOGGER.log(Level.INFO, "Тестирование производительности READ UNCOMMITTED с {0} записями", RECORD_COUNT);
+        LOGGER.info("Тестирование производительности READ UNCOMMITTED с {} записями", RECORD_COUNT);
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
         Random random = new Random();
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
-            LOGGER.log(Level.INFO, "Прогревочный запуск {0}", i);
+            LOGGER.info("Прогревочный запуск {}", i);
             dropTable();
             database.executeQuery("CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER)", null);
             String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
@@ -309,7 +328,7 @@ public class PerformanceTest {
                     String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
                     database.executeQuery(selectQuery, tx2Id);
                 } catch (InterruptedException e) {
-                    LOGGER.log(Level.SEVERE, "Ошибка в tx2: {0}", e.getMessage());
+                    LOGGER.error("Ошибка в tx2: {}", e.getMessage(), e);
                 }
             });
 
@@ -319,13 +338,13 @@ public class PerformanceTest {
                 database.executeQuery("COMMIT TRANSACTION", tx1Id);
                 database.executeQuery("COMMIT TRANSACTION", tx2Id);
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Ошибка в прогревочном запуске: {0}", e.getMessage());
+                LOGGER.error("Ошибка в прогревочном запуске: {}", e.getMessage(), e);
             }
         }
 
         List<Long> executionTimes = new ArrayList<>();
         for (int i = 0; i < TEST_RUNS; i++) {
-            LOGGER.log(Level.INFO, "Тестовый запуск {0}", i);
+            LOGGER.info("Тестовый запуск {}", i);
             dropTable();
             database.executeQuery("CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER)", null);
             String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
@@ -348,7 +367,7 @@ public class PerformanceTest {
                     String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
                     database.executeQuery(selectQuery, tx2Id);
                 } catch (InterruptedException e) {
-                    LOGGER.log(Level.SEVERE, "Ошибка в tx2: {0}", e.getMessage());
+                    LOGGER.error("Ошибка в tx2: {}", e.getMessage(), e);
                 }
             });
 
@@ -358,7 +377,7 @@ public class PerformanceTest {
                 database.executeQuery("COMMIT TRANSACTION", tx1Id);
                 database.executeQuery("COMMIT TRANSACTION", tx2Id);
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Ошибка в тесте: {0}", e.getMessage());
+                LOGGER.error("Ошибка в тесте: {}", e.getMessage(), e);
             }
             long endTime = System.nanoTime();
             executionTimes.add(endTime - startTime);
@@ -368,7 +387,7 @@ public class PerformanceTest {
         try {
             executor.awaitTermination(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
-            LOGGER.log(Level.SEVERE, "Прерывание завершения исполнителя: {0}", e.getMessage());
+            LOGGER.error("Прерывание завершения исполнителя: {}", e.getMessage(), e);
         }
 
         double averageTimeMs = executionTimes.stream()
@@ -379,12 +398,13 @@ public class PerformanceTest {
         long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
         double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
 
-        LOGGER.log(Level.INFO, "Производительность READ UNCOMMITTED для {0} записей", RECORD_COUNT);
-        LOGGER.log(Level.INFO, "Среднее время выполнения: {0} мс", String.format("%.3f", averageTimeMs));
-        LOGGER.log(Level.INFO, "Минимальное время выполнения: {0} мс", String.format("%.3f", minTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Максимальное время выполнения: {0} мс", String.format("%.3f", maxTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Стандартное отклонение: {0} мс", String.format("%.3f", stdDevMs));
-        LOGGER.log(Level.INFO, "--------------------------------");
+        LOGGER.info("Производительность READ UNCOMMITTED для {} записей", RECORD_COUNT);
+        LOGGER.info("Среднее время выполнения: {} мс", String.format("%.3f", averageTimeMs));
+        LOGGER.info("Минимальное время выполнения: {} мс", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.info("Максимальное время выполнения: {} мс", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.info("Стандартное отклонение: {} мс", String.format("%.3f", stdDevMs));
+        LOGGER.info("--------------------------------");
+        writeBenchmarkResult("READ_UNCOMMITTED", RECORD_COUNT, averageTimeMs, minTimeNs / 1_000_000.0, maxTimeNs / 1_000_000.0, stdDevMs);
 
         // Восстановление исходной схемы таблицы
         setupTable();
@@ -413,7 +433,7 @@ public class PerformanceTest {
         try {
             database.dropTable("USERS");
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.WARNING, "Table USERS not found for dropping");
+            LOGGER.warn("Table USERS not found for dropping");
         }
     }
 
@@ -432,7 +452,7 @@ public class PerformanceTest {
     }
 
     private void runPerformanceTest(String query) {
-        LOGGER.log(Level.INFO, "Testing query: {0}", query);
+        LOGGER.info("Testing query: {}", query);
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
             Object result = database.executeQuery(query, null);
@@ -455,12 +475,13 @@ public class PerformanceTest {
         long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
         double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
 
-        LOGGER.log(Level.INFO, "Query: {0}", query);
-        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
-        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
-        LOGGER.log(Level.INFO, "--------------------------------");
+        LOGGER.info("Query: {}", query);
+        LOGGER.info("Average execution time: {} ms", String.format("%.3f", averageTimeMs));
+        LOGGER.info("Min execution time: {} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.info("Max execution time: {} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.info("Standard deviation: {} ms", String.format("%.3f", stdDevMs));
+        LOGGER.info("--------------------------------");
+        writeBenchmarkResult("SELECT", query, averageTimeMs, minTimeNs / 1_000_000.0, maxTimeNs / 1_000_000.0, stdDevMs);
     }
 
     private double calculateStandardDeviation(List<Long> times, double meanNs) {
@@ -472,7 +493,7 @@ public class PerformanceTest {
 
     private void runTrueConditionPerformanceTest() {
         String query = "SELECT NAME, AGE FROM USERS WHERE ACTIVE = TRUE";
-        LOGGER.log(Level.INFO, "Testing TRUE condition query performance: {0}", query);
+        LOGGER.info("Testing TRUE condition query performance: {}", query);
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
             Object result = database.executeQuery(query, null);
@@ -495,16 +516,32 @@ public class PerformanceTest {
         long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
         double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
 
-        LOGGER.log(Level.INFO, "TRUE condition query: {0}", query);
-        LOGGER.log(Level.INFO, "Average execution time: {0} ms", String.format("%.3f", averageTimeMs));
-        LOGGER.log(Level.INFO, "Min execution time: {0} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Max execution time: {0} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
-        LOGGER.log(Level.INFO, "Standard deviation: {0} ms", String.format("%.3f", stdDevMs));
-        LOGGER.log(Level.INFO, "--------------------------------");
+        LOGGER.info("TRUE condition query: {}", query);
+        LOGGER.info("Average execution time: {} ms", String.format("%.3f", averageTimeMs));
+        LOGGER.info("Min execution time: {} ms", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.info("Max execution time: {} ms", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.info("Standard deviation: {} ms", String.format("%.3f", stdDevMs));
+        LOGGER.info("--------------------------------");
+        writeBenchmarkResult("TRUE_CONDITION", query, averageTimeMs, minTimeNs / 1_000_000.0, maxTimeNs / 1_000_000.0, stdDevMs);
 
         if (averageTimeMs > TRUE_CONDITION_WARNING_THRESHOLD_MS) {
-            LOGGER.log(Level.WARNING, "TRUE condition query is too slow: {0} ms (threshold {1} ms)",
-                    new Object[]{String.format("%.3f", averageTimeMs), TRUE_CONDITION_WARNING_THRESHOLD_MS});
+            LOGGER.warn("TRUE condition query is too slow: {} ms (threshold {} ms)",
+                    String.format("%.3f", averageTimeMs), TRUE_CONDITION_WARNING_THRESHOLD_MS);
         }
+    }
+
+    private void writeBenchmarkResult(String operation, String details, double avgMs, double minMs, double maxMs, double stdDevMs) {
+        try (FileWriter fw = new FileWriter(BENCHMARK_REPORT_FILE, true);
+             BufferedWriter bw = new BufferedWriter(fw);
+             PrintWriter out = new PrintWriter(bw)) {
+            out.printf("| %-20s | %-50s | %10.3f | %10.3f | %10.3f | %10.3f |%n",
+                    operation, details.length() > 48 ? details.substring(0, 48) + ".." : details, avgMs, minMs, maxMs, stdDevMs);
+        } catch (IOException e) {
+            LOGGER.error("Failed to write benchmark report: {}", e.getMessage(), e);
+        }
+    }
+
+    private void writeBenchmarkResult(String operation, int recordCount, double avgMs, double minMs, double maxMs, double stdDevMs) {
+        writeBenchmarkResult(operation, String.valueOf(recordCount) + " records", avgMs, minMs, maxMs, stdDevMs);
     }
 }

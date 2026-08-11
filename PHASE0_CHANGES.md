@@ -129,6 +129,7 @@ This document describes all features and improvements implemented in Phase 0 of 
 - Baseline `timing/timing53.md`: 138 queries, 0 FAIL.
 - Latest runs within ±20% of baseline (environmental noise on micro-queries).
 - Subquery IN caching reduced non-correlated IN subquery from ~1250ms to ~200ms.
+- **Benchmark report**: `PerformanceTest` writes `benchmark_report.md` with average/min/max/stddev timings (ms) for INSERT, UPDATE, TRANSACTION, READ_UNCOMMITTED, TRUE-condition and SELECT queries (also logged via SLF4J).
 
 ## Version
 Phase 0 complete at version **2.7.57** (see Changelog.md).
