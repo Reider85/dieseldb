@@ -489,8 +489,13 @@ class Table implements Serializable {
         }
     }
 
+    private String resolveFilePath(String tableName, String extension) {
+        String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
+        return dir + File.separator + tableName + extension;
+    }
+
     public void saveToFile(String tableName) {
-        String fileName = tableName + ".csv";
+        String fileName = resolveFilePath(tableName, ".csv");
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
             writer.write(String.join(",", columns));
             writer.newLine();
@@ -537,7 +542,7 @@ class Table implements Serializable {
     }
 
     public void saveToSerializedFile(String tableName) {
-        String fileName = tableName + ".table";
+        String fileName = resolveFilePath(tableName, ".table");
         try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
             oos.writeObject(this);
             oos.flush();
@@ -551,7 +556,8 @@ class Table implements Serializable {
     }
 
     public static Table loadFromFile(Database database, String tableName) {
-        String fileName = tableName + ".table";
+        String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
+        String fileName = dir + File.separator + tableName + ".table";
         File file = new File(fileName);
         if (!file.exists()) {
             LOGGER.log(Level.INFO, "Serialized file {0} not found, creating new table {1} with base structure",

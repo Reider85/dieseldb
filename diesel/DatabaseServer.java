@@ -24,9 +24,13 @@ public class DatabaseServer {
     }
 
     public DatabaseServer(int port, int socketTimeout) {
+        this(port, socketTimeout, new Database());
+    }
+
+    public DatabaseServer(int port, int socketTimeout, Database database) {
         this.port = port;
         this.socketTimeout = socketTimeout;
-        this.database = new Database();
+        this.database = database;
         this.executor = new ThreadPoolExecutor(
                 POOL_SIZE, POOL_SIZE, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(QUEUE_CAPACITY),
@@ -237,7 +241,12 @@ public class DatabaseServer {
                 LOGGER.log(Level.SEVERE, "Invalid port {0}, using default {1}", new Object[]{args[0], port});
             }
         }
-        DatabaseServer server = new DatabaseServer(port);
+        String dataDir = ".";
+        if (args.length > 1) {
+            dataDir = args[1];
+        }
+        Database database = new Database(dataDir);
+        DatabaseServer server = new DatabaseServer(port, -1, database);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
             try {

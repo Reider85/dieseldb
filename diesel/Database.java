@@ -20,6 +20,34 @@ class Database {
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
+    private String dataDir = ".";
+
+    public Database() {
+    }
+
+    public Database(String dataDir) {
+        if (dataDir != null && !dataDir.isEmpty()) {
+            this.dataDir = dataDir;
+        }
+        File dir = new File(this.dataDir);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+    }
+
+    public String getDataDir() {
+        return dataDir;
+    }
+
+    public void setDataDir(String dataDir) {
+        if (dataDir != null && !dataDir.isEmpty()) {
+            this.dataDir = dataDir;
+        }
+        File dir = new File(this.dataDir);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+    }
 
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         if (tables.containsKey(tableName)) {
@@ -333,6 +361,10 @@ class Database {
     }
 
     public void saveTablesToDisk() {
+        File dir = new File(dataDir);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             entry.getValue().saveToSerializedFile(entry.getKey());
         }
@@ -340,7 +372,7 @@ class Database {
     }
 
     public void loadTablesFromDisk() {
-        File dir = new File(".");
+        File dir = new File(dataDir);
         File[] files = dir.listFiles((d, name) -> name.endsWith(".table"));
         if (files == null) {
             return;
@@ -357,8 +389,8 @@ class Database {
     }
 
     private void deleteTableFiles(String tableName) {
-        new File(tableName + ".csv").delete();
-        new File(tableName + ".table").delete();
+        new File(dataDir + File.separator + tableName + ".csv").delete();
+        new File(dataDir + File.separator + tableName + ".table").delete();
     }
 
     public boolean isInTransaction(UUID transactionId) {

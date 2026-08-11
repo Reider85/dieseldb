@@ -74,7 +74,19 @@ public class DatabaseClient {
     }
 
     public static void main(String[] args) {
-        DatabaseClient client = new DatabaseClient("localhost", 3306);
+        String host = "localhost";
+        int port = 3306;
+        if (args.length > 0) {
+            host = args[0];
+        }
+        if (args.length > 1) {
+            try {
+                port = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                LOGGER.warn("Invalid port {}, using default {}", args[1], port);
+            }
+        }
+        DatabaseClient client = new DatabaseClient(host, port);
         try {
             client.connect();
 
