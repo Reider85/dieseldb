@@ -7,6 +7,20 @@ import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+/**
+ * TCP server that accepts client connections and executes their SQL queries
+ * against a shared {@link Database}.
+ *
+ * <p>Each accepted client is handled on a worker thread from a fixed-size
+ * pool ({@code POOL_SIZE} workers, bounded queue). Queries arrive as
+ * serialized {@link QueryMessage} objects and the result object is written
+ * back; server-side errors are returned as {@code Error: } prefixed Strings.
+ * On startup the database is populated from the data directory, and on exit
+ * the shutdown hook stops the server gracefully.
+ *
+ * @see DatabaseClient
+ * @see Database
+ */
 public class DatabaseServer {
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
     private static final String CONFIG_FILE = "config.properties";
@@ -19,14 +33,35 @@ public class DatabaseServer {
     private final ThreadPoolExecutor executor;
     private final int socketTimeout;
 
+    /**
+     * Creates a server on the given port with the default socket timeout.
+     *
+     * @param port the port to listen on
+     */
     public DatabaseServer(int port) {
         this(port, -1);
     }
 
+    /**
+     * Creates a server on the given port with the given socket timeout.
+     *
+     * @param port          the port to listen on
+     * @param socketTimeout the per-client socket read timeout in milliseconds,
+     *                      or -1 to load it from the configuration file
+     */
     public DatabaseServer(int port, int socketTimeout) {
         this(port, socketTimeout, new Database());
     }
 
+    /**
+     * Creates a server on the given port with the given socket timeout and
+     * database.
+     *
+     * @param port          the port to listen on
+     * @param socketTimeout the per-client socket read timeout in milliseconds,
+     *                      or -1 to load it from the configuration file
+     * @param database      the database instance to serve
+     */
     public DatabaseServer(int port, int socketTimeout, Database database) {
         this.port = port;
         this.socketTimeout = socketTimeout;
@@ -90,6 +125,11 @@ public class DatabaseServer {
         }
     }
 
+    /**
+     * Loads the configuration, populates the database from disk and starts the
+     * accept loop. Each connection is served on a worker thread; the loop runs
+     * until {@link #stop()} is called.
+     */
     public void start() {
         // Load and log configuration
         Properties config = loadConfig();
@@ -130,6 +170,10 @@ public class DatabaseServer {
         }
     }
 
+    /**
+     * Stops accepting connections and shuts the worker pool down, giving the
+     * workers up to 2 seconds to finish before forcing termination.
+     */
     public void stop() {
         running = false;
         try {
@@ -232,6 +276,13 @@ public class DatabaseServer {
         }
     }
 
+    /**
+     * Entry point: starts a server on the given port (default 3306) with an
+     * optional data directory (default "."). A shutdown hook stops the server
+     * gracefully on JVM exit.
+     *
+     * @param args optional {@code port} and {@code dataDir} arguments
+     */
     public static void main(String[] args) {
         int port = 3306;
         if (args.length > 0) {

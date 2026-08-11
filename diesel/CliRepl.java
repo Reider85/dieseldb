@@ -10,6 +10,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Interactive command-line REPL for manual testing of DieselDB.
+ *
+ * <p>It accepts SQL queries from stdin and prints the results. Two modes are
+ * supported: remote mode wraps a {@link DatabaseClient} connected to a live
+ * {@link DatabaseServer} (so transactions and error responses behave exactly
+ * as over the wire), while local mode creates a {@link Database} directly and
+ * executes queries in memory with auto-commit on by default.
+ *
+ * <p>The loop prompts with {@code diesel> }, ends on EXIT/QUIT or EOF, prints
+ * HELP on request, strips a trailing semicolon, prints SELECT results as an
+ * aligned column table with a row count, null results as OK, String results
+ * as-is and errors on a single {@code Error: } line.
+ *
+ * @see DatabaseClient
+ * @see Database
+ */
 public class CliRepl {
     private static final Logger LOGGER = LoggerFactory.getLogger(CliRepl.class);
     private static final String PROMPT = "diesel> ";
@@ -18,16 +35,34 @@ public class CliRepl {
     private final DatabaseClient client;
     private final Database database;
 
+    /**
+     * Creates a REPL in remote mode backed by the given client.
+     *
+     * @param client the connected database client
+     */
     public CliRepl(DatabaseClient client) {
         this.client = client;
         this.database = null;
     }
 
+    /**
+     * Creates a REPL in local mode backed by the given in-memory database.
+     *
+     * @param database the database to run queries against
+     */
     public CliRepl(Database database) {
         this.client = null;
         this.database = database;
     }
 
+    /**
+     * Entry point. With {@code --local [dataDir]} a local in-memory database
+     * is used; otherwise the arguments are interpreted as {@code [host] [port]}
+     * (defaults {@code localhost:3306}) and the REPL connects to the server,
+     * printing the error and exiting when the connection fails.
+     *
+     * @param args the command-line arguments
+     */
     public static void main(String[] args) {
         if (args.length > 0 && "--local".equals(args[0])) {
             String dataDir = args.length > 1 ? args[1] : ".";
@@ -56,6 +91,10 @@ public class CliRepl {
         new CliRepl(client).run();
     }
 
+    /**
+     * Runs the REPL loop until EXIT/QUIT is entered, an empty line or EOF is
+     * read, or an input error occurs. The connection is closed afterwards.
+     */
     public void run() {
         printHelp();
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));

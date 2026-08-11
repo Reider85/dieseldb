@@ -12,6 +12,15 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * Executes a SELECT statement against a table: applies WHERE conditions
+ * (optionally via an index), joins, GROUP BY / HAVING aggregation, ORDER BY,
+ * LIMIT/OFFSET and the SELECT column/alias projection, including aggregate
+ * functions and scalar/in-list subqueries.
+ *
+ * @see QueryParser
+ * @see Query
+ */
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
     private final List<String> columns;
@@ -31,6 +40,26 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final Map<String, List<Object>> inSubQueryCache = new HashMap<>();
     private final UUID transactionId; // Changed from String to UUID
 
+    /**
+     * Creates a SELECT query over the given table, without subqueries in the
+     * GROUP BY clause.
+     *
+     * @param tableName         the main table name
+     * @param tableAlias        the main table alias, or null
+     * @param columns           the selected columns (or aggregates/subqueries)
+     * @param aggregates        the parsed aggregate functions
+     * @param joins             the parsed join clauses
+     * @param conditions        the WHERE conditions
+     * @param groupBy           the GROUP BY columns
+     * @param havingConditions  the HAVING conditions
+     * @param orderBy           the ORDER BY list
+     * @param limit             the LIMIT, or null
+     * @param offset            the OFFSET, or null
+     * @param subQueries        the scalar subqueries in the SELECT clause
+     * @param tableAliases      the alias to table name mapping
+     * @param extraTableAliases extra aliases from joins
+     * @param columnTypes       the combined column types
+     */
     public SelectQuery(String tableName, String tableAlias, List<String> columns,
                        List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
                        List<QueryParser.Condition> conditions, List<String> groupBy,
@@ -42,6 +71,27 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 limit, offset, subQueries, tableAliases, extraTableAliases, columnTypes, new HashMap<>());
     }
 
+    /**
+     * Creates a SELECT query over the given table, including any subqueries in
+     * the GROUP BY clause.
+     *
+     * @param tableName         the main table name
+     * @param tableAlias        the main table alias, or null
+     * @param columns           the selected columns (or aggregates/subqueries)
+     * @param aggregates        the parsed aggregate functions
+     * @param joins             the parsed join clauses
+     * @param conditions        the WHERE conditions
+     * @param groupBy           the GROUP BY columns
+     * @param havingConditions  the HAVING conditions
+     * @param orderBy           the ORDER BY list
+     * @param limit             the LIMIT, or null
+     * @param offset            the OFFSET, or null
+     * @param subQueries        the scalar subqueries in the SELECT clause
+     * @param tableAliases      the alias to table name mapping
+     * @param extraTableAliases extra aliases from joins
+     * @param columnTypes       the combined column types
+     * @param groupBySubQueries the subqueries used in the GROUP BY clause
+     */
     public SelectQuery(String tableName, String tableAlias, List<String> columns,
                        List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
                        List<QueryParser.Condition> conditions, List<String> groupBy,
@@ -75,6 +125,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
+    /**
+     * Executes the query against the table, resolving join tables through the
+     * attached database.
+     *
+     * @param table the main table
+     * @return the result rows as a list of column-to-value maps
+     * @throws IllegalArgumentException if a join table is missing
+     */
     @Override
     public List<Map<String, Object>> execute(Table table) {
         Database database = table.getDatabase();
@@ -951,50 +1009,110 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return value.toString();
     }
 
+    /**
+     * Returns the selected plain columns.
+     *
+     * @return the unmodifiable column list
+     */
     public List<String> getColumns() {
         return Collections.unmodifiableList(columns);
     }
 
+    /**
+     * Returns the selected aggregate functions.
+     *
+     * @return the unmodifiable aggregate list
+     */
     public List<QueryParser.AggregateFunction> getAggregates() {
         return Collections.unmodifiableList(aggregates);
     }
 
+    /**
+     * Returns the WHERE conditions.
+     *
+     * @return the unmodifiable condition list
+     */
     public List<QueryParser.Condition> getConditions() {
         return Collections.unmodifiableList(conditions);
     }
 
+    /**
+     * Returns the join clauses.
+     *
+     * @return the unmodifiable join list
+     */
     public List<QueryParser.JoinInfo> getJoins() {
         return Collections.unmodifiableList(joins);
     }
 
+    /**
+     * Returns the main table name.
+     *
+     * @return the main table name
+     */
     public String getTableName() {
         return mainTableName;
     }
 
+    /**
+     * Returns the LIMIT, or null when not set.
+     *
+     * @return the limit
+     */
     public Integer getLimit() {
         return limit;
     }
 
+    /**
+     * Returns the OFFSET, or null when not set.
+     *
+     * @return the offset
+     */
     public Integer getOffset() {
         return offset;
     }
 
+    /**
+     * Returns the ORDER BY clauses.
+     *
+     * @return the unmodifiable order-by list
+     */
     public List<QueryParser.OrderByInfo> getOrderBy() {
         return Collections.unmodifiableList(orderBy);
     }
 
+    /**
+     * Returns the GROUP BY columns.
+     *
+     * @return the unmodifiable group-by list
+     */
     public List<String> getGroupBy() {
         return Collections.unmodifiableList(groupBy);
     }
 
+    /**
+     * Returns the HAVING conditions.
+     *
+     * @return the unmodifiable having list
+     */
     public List<QueryParser.HavingCondition> getHavingConditions() {
         return Collections.unmodifiableList(havingConditions);
     }
 
+    /**
+     * Returns the alias to table name mapping.
+     *
+     * @return the unmodifiable alias map
+     */
     public Map<String, String> getTableAliases() {
         return Collections.unmodifiableMap(tableAliases);
     }
 
+    /**
+     * Renders the query back to its SQL form.
+     *
+     * @return the SQL representation
+     */
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("SELECT ");

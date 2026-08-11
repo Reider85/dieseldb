@@ -7,14 +7,32 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
+/**
+ * Executes a DELETE statement: removes every row matching the WHERE
+ * conditions (or all rows when there are none), preferring index lookups for
+ * equality and IN conditions.
+ *
+ * @see Query
+ */
 class DeleteQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(DeleteQuery.class.getName());
     private final List<QueryParser.Condition> conditions;
 
+    /**
+     * Creates a delete query with the given conditions.
+     *
+     * @param conditions the WHERE conditions, empty for deleting all rows
+     */
     public DeleteQuery(List<QueryParser.Condition> conditions) {
         this.conditions = conditions;
     }
 
+    /**
+     * Deletes the matching rows and removes them from every index.
+     *
+     * @param table the table to delete from
+     * @return null on success
+     */
     @Override
     public Void execute(Table table) {
         LOGGER.log(Level.FINE, "Executing DeleteQuery for table: {0}", table.getName());

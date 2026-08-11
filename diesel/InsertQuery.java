@@ -7,17 +7,39 @@ import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+/**
+ * Executes an INSERT INTO statement: converts the raw values to the column
+ * types and adds the resulting row to the table.
+ *
+ * @see Query
+ */
 class InsertQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(InsertQuery.class.getName());
     private final List<String> columns;
     private final List<Object> values;
 
+    /**
+     * Creates an insert query for the given columns and values.
+     *
+     * @param columns the column names being inserted into
+     * @param values  the values, one per column
+     */
     public InsertQuery(List<String> columns, List<Object> values) {
         this.columns = columns;
         this.values = values;
         LOGGER.log(Level.FINE, "Created InsertQuery with columns: {0}, values: {1}", new Object[]{columns, values});
     }
 
+    /**
+     * Converts and validates each value against the table's column types and
+     * inserts the row.
+     *
+     * @param table the table to insert into
+     * @return null on success
+     * @throws IllegalArgumentException if the column/value counts mismatch or
+     *                                  a value is invalid for its column type
+     * @throws IllegalStateException    if a unique constraint is violated
+     */
     @Override
     public Void execute(Table table) {
         if (columns.size() != values.size()) {

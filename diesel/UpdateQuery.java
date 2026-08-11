@@ -6,16 +6,40 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+/**
+ * Executes an UPDATE statement: for every row matching the WHERE conditions,
+ * applies the SET assignments, maintaining the secondary indexes.
+ *
+ * <p>Conditions are evaluated with SQL three-valued logic (see
+ * {@link ThreeValuedLogic}), so rows with null values behave like in SQL.
+ *
+ * @see Query
+ */
 class UpdateQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(UpdateQuery.class.getName());
     private final Map<String, Object> updates;
     private final List<QueryParser.Condition> conditions;
 
+    /**
+     * Creates an update query with the given SET assignments and conditions.
+     *
+     * @param updates    the column to new-value map
+     * @param conditions the WHERE conditions, empty for updating all rows
+     */
     public UpdateQuery(Map<String, Object> updates, List<QueryParser.Condition> conditions) {
         this.updates = updates;
         this.conditions = conditions;
     }
 
+    /**
+     * Finds the matching rows, locks them, converts the new values to the
+     * column types and applies the updates, keeping the indexes in sync.
+     *
+     * @param table the table to update
+     * @return null on success
+     * @throws IllegalArgumentException if a value cannot be converted to its
+     *                                  column type
+     */
     @Override
     public Void execute(Table table) {
         List<Map<String, Object>> rows = table.getRows();

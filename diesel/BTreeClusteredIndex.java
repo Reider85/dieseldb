@@ -5,6 +5,14 @@ import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+/**
+ * A unique clustered B-tree index over the table's primary key: each key maps
+ * to exactly one row index, and the physical row order follows the key order.
+ * Duplicate or null keys are rejected on insert.
+ *
+ * @see Index
+ * @see Table#createUniqueClusteredIndex
+ */
 class BTreeClusteredIndex implements Index, Serializable {
     private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = Logger.getLogger(BTreeClusteredIndex.class.getName());
@@ -28,17 +36,34 @@ class BTreeClusteredIndex implements Index, Serializable {
     private final int t; // Minimum degree
     private final Class<?> keyType;
 
+    /**
+     * Creates an empty clustered B-tree index for the given key type.
+     *
+     * @param keyType the Java type of the indexed keys
+     */
     public BTreeClusteredIndex(Class<?> keyType) {
         this.t = 3;
         this.root = new Node(true);
         this.keyType = keyType;
     }
 
+    /**
+     * Returns the Java type of the indexed keys.
+     *
+     * @return the key type
+     */
     @Override
     public Class<?> getKeyType() {
         return keyType;
     }
 
+    /**
+     * Inserts the key, associating it with the given row index.
+     *
+     * @param key      the key to insert
+     * @param rowIndex the row index to associate with the key
+     * @throws IllegalStateException if the key already exists in the index
+     */
     @Override
     public void insert(Object key, int rowIndex) {
         // Проверяем уникальность ключа
@@ -114,6 +139,12 @@ class BTreeClusteredIndex implements Index, Serializable {
         validateNode(z);
     }
 
+    /**
+     * Removes the association between the key and the given row index.
+     *
+     * @param key      the key to remove
+     * @param rowIndex the row index to remove
+     */
     @Override
     public void remove(Object key, int rowIndex) {
         remove(root, key, rowIndex);
@@ -279,6 +310,13 @@ class BTreeClusteredIndex implements Index, Serializable {
                 new Object[]{child.keys, child.isLeaf ? child.rowIndices : null, child.isLeaf ? 0 : child.children.size()});
     }
 
+    /**
+     * Returns the row index that holds the given key, or an empty list when
+     * the key is absent.
+     *
+     * @param key the key to look up
+     * @return the list with the matching row index, or an empty list
+     */
     @Override
     public List<Integer> search(Object key) {
         return search(root, key);

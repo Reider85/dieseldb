@@ -13,6 +13,23 @@ import java.util.logging.Logger;
  * Central database engine. Owns the shared table map, the active client
  * transactions and the auto-commit flag, parses incoming SQL and dispatches
  * each parsed query to its dedicated execution path.
+ *
+ * <p>The engine is the single entry point for both in-memory use and the
+ * client/server mode: {@link #executeQuery} accepts any supported SQL string
+ * together with the caller's transaction id, and every data mutation is
+ * persisted to the configured data directory (CSV plus serialized table
+ * files).
+ *
+ * <p>Example:
+ * <pre>{@code
+ * Database db = new Database("data");
+ * db.executeQuery("CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(users_seq 1 1), NAME STRING)", null);
+ * db.executeQuery("INSERT INTO USERS (NAME) VALUES ('Alice')", null);
+ * }</pre>
+ *
+ * @see Table
+ * @see Transaction
+ * @see QueryParser
  */
 class Database {
     private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
@@ -22,9 +39,20 @@ class Database {
     private boolean autoCommit = true;
     private String dataDir = ".";
 
+    /**
+     * Creates an empty in-memory database whose data files live in the
+     * current working directory (".").
+     */
     public Database() {
     }
 
+    /**
+     * Creates an in-memory database whose data files live in the given
+     * directory, creating the directory when it does not exist yet.
+     *
+     * @param dataDir directory for the CSV and serialized table files, or
+     *                null/empty to keep the current working directory
+     */
     public Database(String dataDir) {
         if (dataDir != null && !dataDir.isEmpty()) {
             this.dataDir = dataDir;
@@ -35,10 +63,21 @@ class Database {
         }
     }
 
+    /**
+     * Returns the directory used for the CSV and serialized table files.
+     *
+     * @return the data directory, never null
+     */
     public String getDataDir() {
         return dataDir;
     }
 
+    /**
+     * Changes the directory used for the CSV and serialized table files,
+     * creating it when it does not exist yet.
+     *
+     * @param dataDir new data directory, or null/empty to keep the current one
+     */
     public void setDataDir(String dataDir) {
         if (dataDir != null && !dataDir.isEmpty()) {
             this.dataDir = dataDir;
@@ -49,6 +88,18 @@ class Database {
         }
     }
 
+    /**
+     * Creates a table with the given schema and registers it in the shared
+     * table map. When a primary key column is specified, a unique clustered
+     * index is built over it automatically.
+     *
+     * @param tableName        the table name, must be unique
+     * @param columns          the ordered list of column names
+     * @param columnTypes      the column name to type mapping
+     * @param primaryKeyColumn the primary key column, or null for none
+     * @throws IllegalArgumentException if the table already exists or the
+     *                                  primary key column is not part of the schema
+     */
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         if (tables.containsKey(tableName)) {
             throw new IllegalArgumentException("Table " + tableName + " already exists");
@@ -66,6 +117,18 @@ class Database {
     /**
      * Parses and executes a query. {@code transactionId} is the caller's active
      * transaction session, or null when the caller is not in a transaction.
+     *
+     * <p>The result depends on the query type: SELECT yields a
+     * {@code List<Map<String, Object>>} of rows, INSERT/UPDATE/DELETE yield
+     * null, and transaction/DDL statements yield a String status message.
+     * Errors are wrapped in a {@link RuntimeException} whose message is
+     * prefixed with {@code Query execution failed: }.
+     *
+     * @param query         the SQL query to execute
+     * @param transactionId the caller's transaction id, or null when not in a
+     *                      transaction
+     * @return the query result (row list, null, or a status String)
+     * @throws RuntimeException when the query cannot be parsed or executed
      */
     public Object executeQuery(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
@@ -340,6 +403,13 @@ class Database {
         return tableName;
     }
 
+    /**
+     * Returns the table registered under the given name.
+     *
+     * @param tableName the table name
+     * @return the registered table
+     * @throws IllegalArgumentException if no such table exists
+     */
     public Table getTable(String tableName) {
         Table table = tables.get(tableName);
         if (table == null) {
@@ -348,6 +418,14 @@ class Database {
         return table;
     }
 
+    /**
+     * Removes the table and its CSV and serialized files from disk. Active
+     * transactions are notified so their snapshots no longer reference the
+     * dropped table.
+     *
+     * @param tableName the table name
+     * @throws IllegalArgumentException if no such table exists
+     */
     public void dropTable(String tableName) {
         if (tables.remove(tableName) == null) {
             throw new IllegalArgumentException("Table " + tableName + " does not exist");
@@ -360,6 +438,12 @@ class Database {
         }
     }
 
+    /**
+     * Writes every registered table to disk as a serialized {@code .table}
+     * file in the data directory.
+     *
+     * @see Table#saveToSerializedFile
+     */
     public void saveTablesToDisk() {
         File dir = new File(dataDir);
         if (!dir.exists()) {
@@ -371,6 +455,12 @@ class Database {
         LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
     }
 
+    /**
+     * Loads every {@code .table} file found in the data directory back into
+     * the shared table map, skipping corrupt files with a warning.
+     *
+     * @see Table#loadFromFile
+     */
     public void loadTablesFromDisk() {
         File dir = new File(dataDir);
         File[] files = dir.listFiles((d, name) -> name.endsWith(".table"));
@@ -393,19 +483,45 @@ class Database {
         new File(dataDir + File.separator + tableName + ".table").delete();
     }
 
+    /**
+     * Returns whether the given transaction id refers to an active transaction.
+     *
+     * @param transactionId the transaction id to check
+     * @return true when the transaction exists and is still active
+     */
     public boolean isInTransaction(UUID transactionId) {
         Transaction transaction = activeTransactions.get(transactionId);
         return transaction != null && transaction.isActive();
     }
 
+    /**
+     * Returns the current auto-commit flag. When it is true, INSERT/UPDATE/
+     * DELETE statements outside a transaction are persisted immediately.
+     *
+     * @return the auto-commit flag
+     */
     public boolean isAutoCommit() {
         return autoCommit;
     }
 
+    /**
+     * Sets the auto-commit flag.
+     *
+     * @param autoCommit true to persist DML immediately, false to require an
+     *                   explicit transaction
+     */
     public void setAutoCommit(boolean autoCommit) {
         this.autoCommit = autoCommit;
     }
 
+    /**
+     * Starts a new transaction at the given isolation level, snapshotting every
+     * registered table as the transaction's BEGIN-time view.
+     *
+     * @param isolationLevel the isolation level for the new transaction
+     * @return the id of the started transaction
+     * @see Transaction
+     */
     public UUID beginTransaction(IsolationLevel isolationLevel) {
         Transaction transaction = new Transaction(isolationLevel);
         UUID transactionId = transaction.getTransactionId();

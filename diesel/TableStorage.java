@@ -1,11 +1,50 @@
 package diesel;
 import java.util.*;
 
+/**
+ * Storage contract of a table: row access, schema access and persistence to
+ * disk. Implemented by {@link Table}.
+ */
 interface TableStorage {
-    List<Map<String, Object>> getRows(); // Изменено с String на Object
+    /**
+     * Returns the table rows.
+     *
+     * @return the list of column-to-value maps
+     */
+    List<Map<String, Object>> getRows();
+
+    /**
+     * Returns the ordered column names.
+     *
+     * @return the column list
+     */
     List<String> getColumns();
-    Map<String, Class<?>> getColumnTypes(); // Новый метод для хранения типов столбцов
-    void addRow(Map<String, Object> row); // Изменено с String на Object
+
+    /**
+     * Returns the column name to type mapping.
+     *
+     * @return the column type map
+     */
+    Map<String, Class<?>> getColumnTypes();
+
+    /**
+     * Validates and inserts a row.
+     *
+     * @param row the column-to-value map
+     */
+    void addRow(Map<String, Object> row);
+
+    /**
+     * Writes the table contents to its CSV file.
+     *
+     * @param tableName the table name
+     */
     void saveToFile(String tableName);
+
+    /**
+     * Loads the table from its serialized file.
+     *
+     * @param tableName the table name
+     */
     void loadFromFile(String tableName);
 }

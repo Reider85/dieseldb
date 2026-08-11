@@ -9,6 +9,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * TCP client for a {@link DatabaseServer}: connects over a socket, sends SQL
+ * queries as serialized {@link QueryMessage} objects and reads back the
+ * results.
+ *
+ * <p>The client tracks the server-side transaction state: a "Transaction
+ * started" response stores the transaction id and sends it with every
+ * following query, while COMMIT/ROLLBACK reset it. Server error responses
+ * (prefixed with {@code Error: }) are rethrown as {@link RuntimeException}.
+ *
+ * @see DatabaseServer
+ * @see QueryMessage
+ */
 public class DatabaseClient {
     private static final Logger LOGGER = LoggerFactory.getLogger(DatabaseClient.class);
     private final String host;
@@ -18,12 +31,24 @@ public class DatabaseClient {
     private ObjectInputStream in;
     private UUID transactionId;
 
+    /**
+     * Creates a client for the given server endpoint. No connection is opened
+     * until {@link #connect()} is called.
+     *
+     * @param host the server host name
+     * @param port the server port
+     */
     public DatabaseClient(String host, int port) {
         this.host = host;
         this.port = port;
         this.transactionId = null;
     }
 
+    /**
+     * Opens the socket connection and the object streams to the server.
+     *
+     * @throws RuntimeException if the connection cannot be established
+     */
     public void connect() {
         try {
             socket = new Socket(host, port);
@@ -36,6 +61,17 @@ public class DatabaseClient {
         }
     }
 
+    /**
+     * Sends a SQL query to the server and returns the result: a
+     * {@code List<Map<String, Object>>} for SELECT, null for DML, or a status
+     * String for transaction and DDL statements. The caller's transaction id
+     * is attached to the message.
+     *
+     * @param query the SQL query to execute
+     * @return the server result
+     * @throws RuntimeException if the query fails on the server or the
+     *                          communication breaks
+     */
     public Object executeQuery(String query) {
         try {
             String normalizedQuery = query.trim();
@@ -60,6 +96,11 @@ public class DatabaseClient {
         }
     }
 
+    /**
+     * Closes the connection: an {@code EXIT} message is sent first, then the
+     * streams and the socket are closed. Any active server-side transaction is
+     * rolled back by the server.
+     */
     public void disconnect() {
         try {
             out.writeObject("EXIT");
@@ -73,6 +114,14 @@ public class DatabaseClient {
         }
     }
 
+    /**
+     * Demo entry point: connects to {@code localhost:3306} by default (host
+     * and port may be given as arguments), sets the isolation level, runs a
+     * small create/insert/update/select/commit scenario inside a transaction
+     * and prints the SELECT result.
+     *
+     * @param args optional {@code host} and {@code port} arguments
+     */
     public static void main(String[] args) {
         String host = "localhost";
         int port = 3306;

@@ -9,6 +9,18 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Parser for queries containing subqueries.
+ *
+ * <p>It detects whether a query contains a subquery and, when it does, parses
+ * the whole statement by wrapping the inner {@link QueryParser} results into
+ * executable {@link Query} objects (scalar subqueries in the SELECT/WHERE/
+ * HAVING clauses and IN-lists, correlated and non-correlated). Queries without
+ * subqueries are delegated to {@link QueryParser} unchanged.
+ *
+ * @see QueryParser
+ * @see Query
+ */
 public class SubqueryParser {
     private static final Logger LOGGER = Logger.getLogger(SubqueryParser.class.getName());
     private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
@@ -17,6 +29,9 @@ public class SubqueryParser {
     private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*";
     private final QueryParser queryParser;
 
+    /**
+     * Creates a subquery parser backed by an internal {@link QueryParser}.
+     */
     public SubqueryParser() {
         this.queryParser = new QueryParser();
     }
@@ -47,7 +62,14 @@ public class SubqueryParser {
         return sb.toString();
     }
 
-    // Модифицируем метод parse для обработки всех подзапросов
+    /**
+     * Parses a query, handling its subqueries when present.
+     *
+     * @param query    the SQL query to parse
+     * @param database the database the query will run against
+     * @return the parsed query object
+     * @throws IllegalArgumentException if the query is unsupported
+     */
     public Query<?> parse(String query, Database database) {
         LOGGER.log(Level.INFO, "Parsing query: {0}", query);
         String normalizedQuery = normalizeQueryString(query).trim();
@@ -80,6 +102,13 @@ public class SubqueryParser {
         }
     }
 
+    /**
+     * Returns whether the query contains a subquery, detected by the presence
+     * of an opening parenthesis followed by the SELECT keyword.
+     *
+     * @param query the SQL query to inspect
+     * @return true when the query contains a {@code (SELECT ...)} subquery
+     */
     public boolean containsSubquery(String query) {
         Pattern subqueryPattern = Pattern.compile("(?i)\\(\\s*SELECT\\b", Pattern.DOTALL);
         Matcher matcher = subqueryPattern.matcher(query);

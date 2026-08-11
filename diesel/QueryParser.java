@@ -14,6 +14,27 @@ import java.util.stream.Collectors;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+/**
+ * Parser that turns a SQL string into a {@link Query} execution object.
+ *
+ * <p>The parser normalizes the input (uppercasing keywords while preserving
+ * quoted identifiers), strips surrounding parentheses, and dispatches on the
+ * leading statement keyword: SELECT, INSERT, UPDATE, DELETE, CREATE TABLE,
+ * CREATE INDEX variants, BEGIN/COMMIT/ROLLBACK TRANSACTION, SET AUTOCOMMIT and
+ * SET TRANSACTION ISOLATION LEVEL. Complex SELECTs are further decomposed by
+ * the lexer-based {@link #parse} path, and queries containing subqueries are
+ * delegated to {@link SubqueryParser}.
+ *
+ * <p>Example:
+ * <pre>{@code
+ * Query<?> query = new QueryParser().parse("SELECT ID FROM USERS WHERE NAME = 'Alice'", database);
+ * Object result = query.execute(database.getTable("USERS"));
+ * }</pre>
+ *
+ * @see Query
+ * @see SubqueryParser
+ * @see Database
+ */
 class QueryParser {
     private static final Logger LOGGER;
 
@@ -388,6 +409,10 @@ class QueryParser {
 
 
     // Вспомогательный класс для хранения результатов парсинга элементов SELECT
+    /**
+     * Holds the parsed items of a SELECT clause: plain columns, aggregate
+     * functions, scalar subqueries and their aliases.
+     */
     public static class SelectItems {
         List<String> columns;
         List<AggregateFunction> aggregates;
@@ -404,6 +429,10 @@ class QueryParser {
     }
 
     // Вспомогательный класс для хранения результатов парсинга таблиц и соединений
+    /**
+     * Holds the parsed FROM clause of a SELECT: the main table, its alias,
+     * the list of joins, and the combined column types of all involved tables.
+     */
     public static class TableJoins {
         String tableName;
         String tableAlias;
@@ -422,6 +451,11 @@ class QueryParser {
     }
 
     // Вспомогательный класс для хранения дополнительных клауз
+    /**
+     * Holds the trailing clauses of a SELECT: WHERE conditions, GROUP BY
+     * columns, HAVING conditions, ORDER BY list, LIMIT/OFFSET and subquery
+     * GROUP BY expressions.
+     */
     public static class AdditionalClauses {
         List<Condition> conditions;
         List<String> groupBy;
@@ -460,6 +494,10 @@ class QueryParser {
         }
     }
 
+    /**
+     * A single lexer token: either a {@link TokenType#CONDITION} or a
+     * {@link TokenType#LOGICAL_OPERATOR} with its text value.
+     */
     public static class Token {
         final TokenType type;
         final String value;
@@ -475,6 +513,15 @@ class QueryParser {
         }
     }
 
+    /**
+     * Converts a SQL LIKE pattern into an anchored regular expression.
+     * {@code %} becomes {@code .*} and {@code _} becomes {@code .}, while
+     * every regex metacharacter in the pattern is escaped.
+     *
+     * @param pattern the LIKE pattern, e.g. {@code %er500}
+     * @return the anchored regex, e.g. {@code ^.*er500$}
+     * @throws IllegalArgumentException if the pattern is null or empty
+     */
     public static String convertLikePatternToRegex(String pattern) {
         if (pattern == null || pattern.isEmpty()) {
             throw new IllegalArgumentException("LIKE pattern cannot be null or empty");
@@ -496,6 +543,16 @@ class QueryParser {
         return "^" + regex + "$";
     }
 
+    /**
+     * Parses a SQL query into an executable {@link Query} object bound to the
+     * given database. The database is used to resolve table metadata while
+     * parsing and when executing joins.
+     *
+     * @param query    the SQL query to parse
+     * @param database the database the query will run against
+     * @return the parsed query object
+     * @throws IllegalArgumentException if the query is null, empty or unsupported
+     */
     public Query<?> parse(String query, Database database) {
         try {
             // Normalize and remove surrounding parentheses

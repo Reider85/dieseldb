@@ -9,15 +9,31 @@ abstract class CreateIndexQueryBase implements Query<Void> {
     private final String tableName;
     private final String columnName;
 
+    /**
+     * Creates the base with the shared metadata.
+     *
+     * @param tableName  the table the index is built on
+     * @param columnName the column the index is built on
+     */
     protected CreateIndexQueryBase(String tableName, String columnName) {
         this.tableName = tableName;
         this.columnName = columnName;
     }
 
+    /**
+     * Returns the table the index is built on.
+     *
+     * @return the table name
+     */
     public String getTableName() {
         return tableName;
     }
 
+    /**
+     * Returns the column the index is built on.
+     *
+     * @return the column name
+     */
     public String getColumnName() {
         return columnName;
     }

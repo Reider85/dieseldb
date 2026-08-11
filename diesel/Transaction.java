@@ -9,6 +9,18 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * The isolation level of a transaction, in increasing order of strictness:
+ * <ul>
+ *   <li>{@link #READ_UNCOMMITTED} - dirty reads are allowed; a transaction can
+ *       see another transaction's uncommitted modifications.</li>
+ *   <li>{@link #READ_COMMITTED} - only committed data is visible (currently
+ *       treated the same as {@link #REPEATABLE_READ}).</li>
+ *   <li>{@link #REPEATABLE_READ} - the BEGIN-time snapshot is used for reads.</li>
+ *   <li>{@link #SERIALIZABLE} - strongest isolation (currently treated the
+ *       same as {@link #REPEATABLE_READ}).</li>
+ * </ul>
+ */
 enum IsolationLevel {
     READ_UNCOMMITTED,
     READ_COMMITTED,
@@ -28,6 +40,16 @@ enum IsolationLevel {
  *       every DML statement. On COMMIT these copies are published back into the
  *       shared database and persisted to disk.</li>
  * </ul>
+ *
+ * <p>Example:
+ * <pre>{@code
+ * Transaction txn = new Transaction(IsolationLevel.REPEATABLE_READ);
+ * txn.snapshotTable("USERS", table);
+ * txn.updateTable("USERS", modifiedTable);
+ * }</pre>
+ *
+ * @see Database
+ * @see IsolationLevel
  */
 class Transaction {
     private final UUID transactionId;
@@ -36,6 +58,12 @@ class Transaction {
     private final Map<String, Table> modifiedTables;
     private boolean active;
 
+    /**
+     * Starts a transaction at the given isolation level, defaulting to
+     * {@link IsolationLevel#READ_UNCOMMITTED} when the level is null.
+     *
+     * @param isolationLevel the isolation level, or null for the default
+     */
     public Transaction(IsolationLevel isolationLevel) {
         this.transactionId = UUID.randomUUID();
         this.isolationLevel = isolationLevel != null ? isolationLevel : IsolationLevel.READ_UNCOMMITTED;
@@ -44,18 +72,37 @@ class Transaction {
         this.active = true;
     }
 
+    /**
+     * Returns the unique id of this transaction, used by the client to refer
+     * to the transaction in subsequent queries.
+     *
+     * @return the transaction id
+     */
     public UUID getTransactionId() {
         return transactionId;
     }
 
+    /**
+     * Returns the isolation level of this transaction.
+     *
+     * @return the isolation level, never null
+     */
     public IsolationLevel getIsolationLevel() {
         return isolationLevel;
     }
 
+    /**
+     * Returns whether the transaction is still active.
+     *
+     * @return true while the transaction has neither been committed nor rolled back
+     */
     public boolean isActive() {
         return active;
     }
 
+    /**
+     * Marks the transaction as no longer active.
+     */
     public void setInactive() {
         this.active = false;
     }
@@ -78,10 +125,20 @@ class Transaction {
         modifiedTables.put(tableName, table);
     }
 
+    /**
+     * Returns the BEGIN-time snapshot views of the tables.
+     *
+     * @return the original table map
+     */
     public Map<String, Table> getOriginalTables() {
         return originalTables;
     }
 
+    /**
+     * Returns the transaction's own modified table views.
+     *
+     * @return the modified table map
+     */
     public Map<String, Table> getModifiedTables() {
         return modifiedTables;
     }

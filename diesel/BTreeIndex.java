@@ -5,6 +5,13 @@ import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+/**
+ * A B-tree secondary index mapping keys to the row indexes that hold them.
+ * Supports exact lookup via {@link #search} and ordered range lookups via
+ * {@link #rangeSearch}. Null keys are ignored on insert and remove.
+ *
+ * @see Index
+ */
 class BTreeIndex implements Index, Serializable {
     private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = Logger.getLogger(BTreeIndex.class.getName());
@@ -28,17 +35,34 @@ class BTreeIndex implements Index, Serializable {
     private final int t; // Minimum degree (defines the range for number of keys)
     private final Class<?> keyType;
 
+    /**
+     * Creates an empty B-tree index for the given key type.
+     *
+     * @param keyType the Java type of the indexed keys
+     */
     public BTreeIndex(Class<?> keyType) {
         this.t = 3; // Minimum degree, can be adjusted
         this.root = new Node(true);
         this.keyType = keyType;
     }
 
+    /**
+     * Returns the Java type of the indexed keys.
+     *
+     * @return the key type
+     */
     @Override
     public Class<?> getKeyType() {
         return keyType;
     }
 
+    /**
+     * Inserts the key, associating it with the given row index. Null keys are
+     * ignored.
+     *
+     * @param key      the key to insert
+     * @param rowIndex the row index to associate with the key
+     */
     @Override
     public void insert(Object key, int rowIndex) {
         if (key == null) {
@@ -114,6 +138,13 @@ class BTreeIndex implements Index, Serializable {
         validateNode(z);
     }
 
+    /**
+     * Removes the association between the key and the given row index. Null
+     * keys are ignored.
+     *
+     * @param key      the key to remove
+     * @param rowIndex the row index to remove
+     */
     @Override
     public void remove(Object key, int rowIndex) {
         if (key == null) {
@@ -188,6 +219,12 @@ class BTreeIndex implements Index, Serializable {
         }
     }
 
+    /**
+     * Returns every row index that holds the given key.
+     *
+     * @param key the key to look up
+     * @return the list of matching row indexes, possibly empty
+     */
     @Override
     public List<Integer> search(Object key) {
         return search(root, key);
@@ -214,6 +251,14 @@ class BTreeIndex implements Index, Serializable {
         return result;
     }
 
+    /**
+     * Returns every row index whose key lies within the inclusive
+     * {@code [low, high]} range.
+     *
+     * @param low  the inclusive lower bound
+     * @param high the inclusive upper bound
+     * @return the list of matching row indexes, possibly empty
+     */
     public List<Integer> rangeSearch(Object low, Object high) {
         List<Integer> result = new ArrayList<>();
         if (low == null || high == null) {

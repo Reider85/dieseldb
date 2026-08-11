@@ -8,9 +8,23 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Tokenizer that splits a SQL statement into a sequence of {@link Token}s.
+ *
+ * <p>It recognizes keywords, identifiers (including double-quoted ones),
+ * integer and decimal numbers, single-quoted string literals (with
+ * doubled-quote and backslash escapes), the SQL literals TRUE/FALSE/NULL,
+ * comparison operators and punctuation. Unterminated literals and unexpected
+ * characters raise an {@link IllegalArgumentException}.
+ *
+ * @see QueryParser
+ */
 public class SqlLexer {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqlLexer.class);
 
+    /**
+     * The lexical category of a {@link Token}.
+     */
     public enum TokenType {
         KEYWORD,
         IDENTIFIER,
@@ -23,6 +37,9 @@ public class SqlLexer {
         PUNCTUATION
     }
 
+    /**
+     * A single lexer token: its {@link TokenType} and raw text value.
+     */
     public static class Token {
         public final TokenType type;
         public final String value;
@@ -80,6 +97,14 @@ public class SqlLexer {
         return sb.toString();
     }
 
+    /**
+     * Tokenizes a SQL statement.
+     *
+     * @param sql the SQL statement to tokenize
+     * @return the ordered list of tokens
+     * @throws IllegalArgumentException if the input is null, contains an
+     *                                  unterminated literal, or an unexpected character
+     */
     public List<Token> tokenize(String sql) {
         if (sql == null) {
             throw new IllegalArgumentException("SQL query cannot be null");
@@ -207,6 +232,12 @@ public class SqlLexer {
         return tokens;
     }
 
+    /**
+     * Demo entry point that tokenizes a handful of example queries and logs
+     * the resulting tokens.
+     *
+     * @param args not used
+     */
     public static void main(String[] args) {
         SqlLexer lexer = new SqlLexer();
         String[] queries = {

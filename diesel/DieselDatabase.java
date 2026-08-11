@@ -9,6 +9,16 @@ import java.io.InputStream;
 import java.util.Properties;
 import java.util.UUID;
 
+/**
+ * Demo entry point that runs a small database scenario: it loads
+ * {@code config.properties} for the transaction isolation level, starts a
+ * transaction, creates a USERS table with a wide schema, inserts two rows,
+ * updates and selects them, then commits. On failure the transaction is rolled
+ * back.
+ *
+ * @see Database
+ * @see IsolationLevel
+ */
 public class DieselDatabase {
     private static final Logger LOGGER = LoggerFactory.getLogger(DieselDatabase.class);
     private static final String CONFIG_FILE = "config.properties";
@@ -40,6 +50,11 @@ public class DieselDatabase {
         }
     }
 
+    /**
+     * Runs the demo scenario described in the class documentation.
+     *
+     * @param args not used
+     */
     public static void main(String[] args) {
         // Load and log configuration parameters
         Properties config = loadConfig();

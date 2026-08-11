@@ -26,10 +26,40 @@ import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+/**
+ * Contract implemented by every index (secondary and clustered) that maps
+ * column keys to row indexes.
+ */
 interface Index {
+    /**
+     * Associates {@code key} with {@code rowIndex}.
+     *
+     * @param key      the index key, must not be null
+     * @param rowIndex the row index to associate with the key
+     */
     void insert(Object key, int rowIndex);
+
+    /**
+     * Removes the association between {@code key} and {@code rowIndex}.
+     *
+     * @param key      the index key
+     * @param rowIndex the row index to remove
+     */
     void remove(Object key, int rowIndex);
+
+    /**
+     * Returns every row index that holds the given key.
+     *
+     * @param key the index key
+     * @return the list of matching row indexes, possibly empty
+     */
     List<Integer> search(Object key);
+
+    /**
+     * Returns the Java type of the indexed keys.
+     *
+     * @return the key type of the indexed column
+     */
     Class<?> getKeyType();
 }
 
@@ -37,6 +67,23 @@ interface Index {
  * An in-memory table: schema (columns, types, primary key), the row storage,
  * secondary indexes, an optional clustered index and the sequences used to
  * auto-generate values. Rows are protected by per-row read/write locks.
+ *
+ * <p>Tables are serializable: the full state (schema, rows, index definitions
+ * and sequences) is persisted to a {@code .table} file and rebuilt on load.
+ * A primary key column automatically becomes a unique clustered index.
+ *
+ * <p>Example:
+ * <pre>{@code
+ * Table table = new Table(database, "USERS", columns, columnTypes, "ID", sequences);
+ * table.addRow(row);
+ * table.saveToFile("USERS");
+ * }</pre>
+ *
+ * @see Database
+ * @see BTreeIndex
+ * @see HashIndex
+ * @see UniqueIndex
+ * @see BTreeClusteredIndex
  */
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
@@ -58,6 +105,20 @@ class Table implements Serializable {
     private transient Database database;
     private int formatVersion = CURRENT_FORMAT_VERSION;
 
+    /**
+     * Creates a table with the given schema. When {@code primaryKeyColumn} is
+     * not null it must be part of the schema, and a unique clustered index is
+     * built over it.
+     *
+     * @param database         the owning database (for data-dir resolution)
+     * @param name             the table name
+     * @param columns          the ordered list of column names
+     * @param columnTypes      the column name to type mapping
+     * @param primaryKeyColumn the primary key column, or null for none
+     * @param sequences        the sequences usable by this table, or null
+     * @throws IllegalArgumentException if the schema is invalid or the primary
+     *                                  key column is missing
+     */
     public Table(Database database, String name, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
         this.database = database;
         this.name = name;
@@ -87,10 +148,22 @@ class Table implements Serializable {
                 new Object[]{name, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
     }
 
+    /**
+     * Returns the owning database, or null when the table was deserialized
+     * without one.
+     *
+     * @return the owning database, possibly null
+     */
     public Database getDatabase() {
         return database;
     }
 
+    /**
+     * Attaches a database to this table, used to restore the transient
+     * reference after deserialization.
+     *
+     * @param database the database to attach
+     */
     public void attachDatabase(Database database) {
         this.database = database;
     }
@@ -111,40 +184,94 @@ class Table implements Serializable {
         }
     }
 
+    /**
+     * Returns the table name.
+     *
+     * @return the table name
+     */
     public String getName() {
         return name;
     }
 
+    /**
+     * Returns the secondary indexes keyed by column name.
+     *
+     * @return the secondary index map
+     */
     public Map<String, Index> getIndexes() {
         return indexes;
     }
 
+    /**
+     * Returns whether the table has been written to disk at least once.
+     *
+     * @return the file-initialized flag
+     */
     public boolean isFileInitialized() {
         return isFileInitialized;
     }
 
+    /**
+     * Sets the file-initialized flag.
+     *
+     * @param fileInitialized the new flag value
+     */
     public void setFileInitialized(boolean fileInitialized) {
         isFileInitialized = fileInitialized;
     }
 
+    /**
+     * Returns the read/write lock guarding the given row, creating it on
+     * demand.
+     *
+     * @param rowIndex the row index
+     * @return the row's lock
+     */
     public ReentrantReadWriteLock getRowLock(int rowIndex) {
         return rowLocks.computeIfAbsent(rowIndex, k -> new ReentrantReadWriteLock());
     }
 
+    /**
+     * Returns the sequences registered for this table.
+     *
+     * @return the sequence map
+     */
     public Map<String, Sequence> getSequences() {
         return sequences;
     }
 
+    /**
+     * Builds a B-tree secondary index over the column, failing when the
+     * column does not exist.
+     *
+     * @param columnName the column to index
+     * @throws IllegalArgumentException if the column does not exist
+     */
     public void createBTreeIndex(String columnName) {
         createSecondaryIndex(columnName, "BTREE", BTreeIndex::new, false);
         LOGGER.log(Level.INFO, "Created B-tree index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
+    /**
+     * Builds a hash secondary index over the column, failing when the column
+     * does not exist.
+     *
+     * @param columnName the column to index
+     * @throws IllegalArgumentException if the column does not exist
+     */
     public void createHashIndex(String columnName) {
         createSecondaryIndex(columnName, "HASH", HashIndex::new, false);
         LOGGER.log(Level.INFO, "Created hash index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
+    /**
+     * Builds a unique secondary index over the column, failing on duplicate
+     * keys and unknown columns.
+     *
+     * @param columnName the column to index
+     * @throws IllegalArgumentException if the column does not exist
+     * @throws IllegalStateException    if the column already holds duplicate keys
+     */
     public void createUniqueIndex(String columnName) {
         createSecondaryIndex(columnName, "UNIQUE", UniqueIndex::new, true);
         LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
@@ -174,6 +301,16 @@ class Table implements Serializable {
         indexDefinitions.put(columnName, definition);
     }
 
+    /**
+     * Builds a unique clustered B-tree index over the column: the rows are
+     * sorted by the key and every secondary index is rebuilt on the new row
+     * order. Null and duplicate keys abort the creation.
+     *
+     * @param columnName the column to index
+     * @throws IllegalArgumentException if the column does not exist
+     * @throws IllegalStateException    if the table already has a clustered
+     *                                  index or the column holds null/duplicate keys
+     */
     public void createUniqueClusteredIndex(String columnName) {
         if (!columnTypes.containsKey(columnName)) {
             throw new IllegalArgumentException("Column " + columnName + " does not exist");
@@ -223,40 +360,89 @@ class Table implements Serializable {
         return String.valueOf(k1).compareTo(String.valueOf(k2));
     }
 
+    /**
+     * Returns the secondary index built on the column, or null when there is
+     * none.
+     *
+     * @param columnName the column name
+     * @return the index, or null
+     */
     public Index getIndex(String columnName) {
         return indexes.get(columnName);
     }
 
+    /**
+     * Returns whether the table has a clustered index.
+     *
+     * @return true when a clustered index exists
+     */
     public boolean hasClusteredIndex() {
         return hasClusteredIndex;
     }
 
+    /**
+     * Returns the column the clustered index is built on, or null.
+     *
+     * @return the clustered index column, or null
+     */
     public String getClusteredIndexColumn() {
         return clusteredIndexColumn;
     }
 
+    /**
+     * Returns the clustered index, or null when the table has none.
+     *
+     * @return the clustered index, or null
+     */
     public BTreeClusteredIndex getClusteredIndex() {
         return clusteredIndex;
     }
 
+    /**
+     * Returns a copy of the ordered column names.
+     *
+     * @return the column list
+     */
     public List<String> getColumns() {
         return new ArrayList<>(columns);
     }
 
+    /**
+     * Returns a copy of the case-insensitive column-to-type mapping.
+     *
+     * @return the column type map
+     */
     public Map<String, Class<?>> getColumnTypes() {
         Map<String, Class<?>> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         copy.putAll(columnTypes);
         return copy;
     }
 
+    /**
+     * Returns the primary key column name, or null when the table has none.
+     *
+     * @return the primary key column, or null
+     */
     public String getPrimaryKeyColumn() {
         return primaryKeyColumn;
     }
 
+    /**
+     * Returns a copy of the table rows.
+     *
+     * @return the row list
+     */
     public List<Map<String, Object>> getRows() {
         return new ArrayList<>(rows);
     }
 
+    /**
+     * Removes the row at the given index and invalidates the locks of this
+     * and all following rows, whose indexes shift down by one.
+     *
+     * @param rowIndex the row index to remove
+     * @throws IndexOutOfBoundsException if the index is out of range
+     */
     public void removeRow(int rowIndex) {
         if (rowIndex < 0 || rowIndex >= rows.size()) {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
@@ -327,6 +513,17 @@ class Table implements Serializable {
         this.database = null;
     }
 
+    /**
+     * Validates and inserts a row. Missing values are filled from sequences,
+     * values are checked against the column types and unique constraints, and
+     * the row is either inserted at its clustered position or appended at the
+     * end.
+     *
+     * @param row the column-to-value map
+     * @throws IllegalArgumentException if a value is missing, has the wrong
+     *                                  type, or the sequence-based primary key is set manually
+     * @throws IllegalStateException    if a unique/clustered key is duplicated
+     */
     public void addRow(Map<String, Object> row) {
         Map<String, Object> validatedRow = new HashMap<>();
         for (String col : columns) {
@@ -494,6 +691,13 @@ class Table implements Serializable {
         return dir + File.separator + tableName + extension;
     }
 
+    /**
+     * Writes the table contents (header plus rows) to a CSV file in the data
+     * directory. Each row is read under its lock while writing.
+     *
+     * @param tableName the table name, used as the file base name
+     * @throws RuntimeException if the file cannot be written
+     */
     public void saveToFile(String tableName) {
         String fileName = resolveFilePath(tableName, ".csv");
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
@@ -541,6 +745,13 @@ class Table implements Serializable {
         return value.toString();
     }
 
+    /**
+     * Serializes the whole table (schema, rows, index definitions, sequences)
+     * to a {@code .table} file in the data directory.
+     *
+     * @param tableName the table name, used as the file base name
+     * @throws RuntimeException if the file cannot be written
+     */
     public void saveToSerializedFile(String tableName) {
         String fileName = resolveFilePath(tableName, ".table");
         try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
@@ -555,6 +766,16 @@ class Table implements Serializable {
         }
     }
 
+    /**
+     * Loads a table from its serialized {@code .table} file in the data
+     * directory, restoring the database reference and rebuilding the indexes.
+     * When the file is missing, a new empty table with the base structure is
+     * created; corrupt files or unsupported format versions yield null.
+     *
+     * @param database  the database to attach to the loaded table
+     * @param tableName the table name, used as the file base name
+     * @return the loaded table, a new empty table, or null on failure
+     */
     public static Table loadFromFile(Database database, String tableName) {
         String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
         String fileName = dir + File.separator + tableName + ".table";
