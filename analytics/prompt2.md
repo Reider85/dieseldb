@@ -1,9 +1,304 @@
-# 80 Промптов для улучшения DieselDB
+# 100 Промптов для улучшения DieselDB
+
+## Раздел 0: Приоритетные исправления по итогам ретроспективы (20 промптов)
+*Принцип Парето: 20% усилий исправят 80% проблем. На основе retrospective.md*
+
+### Промпт 1: Исправление JOIN с OR в условии (критично - OOM)
+```
+Проблема: Запросы JOIN ... ON ... OR ... создают декартово произведение (360000 строк) и вызывают OutOfMemoryError.
+
+Задача:
+1. Добавь детекцию OR в JOIN条件 и принудительно используй Hash Join вместо Nested Loop
+2. Реализуй early termination при превышении лимита строк (например 100K)
+3. Добавь предупреждение в лог: "WARNING: JOIN with OR condition may produce large result set"
+4. Для тестов OrderByTest #27, #28 добавь проверку на отсутствие OOM
+
+Файлы: diesel/SelectQuery.java, diesel/QueryParser.java
+Тесты: OrderByTest, JoinTest
+Приоритет: CRITICAL (падает production)
+```
+
+### Промпт 2: Оптимизация памяти для Cross Join (streaming)
+```
+Проблема: QuantitativeTest требует 4GB heap из-за хранения всех результатов в памяти.
+
+Задача:
+1. Реализуй streaming для SELECT результатов (Iterator<Row> вместо List<Row>)
+2. Добавь external sort для ORDER BY когда результат > available memory
+3. Используй File-based temporary storage для больших промежуточных результатов
+4. Добавь конфиг: max.inmemory.rows = 10000 (превышение → spill to disk)
+
+Файлы: diesel/SelectQuery.java, diesel/Table.java
+Конфиг: diesel.properties
+Приоритет: HIGH (масштабируемость)
+```
+
+### Промпт 3: Исправление GROUP BY с уникальными значениями
+```
+Проблема: При группировке по столбцу с уникальными значениями возвращается 1 строка вместо N групп.
+
+Задача:
+1. Проверь логику группировки в SelectQuery.execute() - секция GROUP BY
+2. Убедись что каждая уникальная комбинация GROUP BY ключей создаёт новую группу
+3. Добавь тест: GROUP BY по первичному ключу → должно вернуть N строк
+4. Проверь работу агрегатных функций внутри каждой группы
+
+Файлы: diesel/SelectQuery.java
+Тесты: GroupByTest (добавить тест на unique column grouping)
+Приоритет: HIGH (некорректные результаты)
+```
+
+### Промпт 4: Исправление IN со списком значений
+```
+Проблема: WHERE AGE IN (50, 51, 52) возвращает 2 строки вместо 21.
+
+Задача:
+1. Проверь парсинг списка значений в QueryParser.parseInList()
+2. Убедись что все значения из списка корректно добавляются в Condition
+3. Проверь фильтрацию: row.value IN (list) должно проверять все элементы
+4. Добавь тесты: IN с 1, 3, 10, 100 значениями; IN с NULL в списке
+
+Файлы: diesel/QueryParser.java, diesel/SelectQuery.java
+Тесты: InTest (расширить покрытие)
+Приоритет: HIGH (некорректная фильтрация)
+```
+
+### Промпт 5: Исправление IN с дополнительными условиями (AND/OR)
+```
+Проблема: WHERE NAME IN (...) AND BALANCE > 5000 игнорируется, возвращаются все 600 строк.
+
+Задача:
+1. Проверь построение AST для комбинированных условий (IN + AND + сравнение)
+2. Убедись что все части WHERE условия выполняются (short-circuit evaluation)
+3. Добавь логирование: "Evaluating WHERE: condition1 AND condition2"
+4. Тесты: IN+AND, IN+OR, IN+AND+OR, NOT IN+AND
+
+Файлы: diesel/QueryParser.java, diesel/SelectQuery.java
+Тесты: InTest, AdvancedTest
+Приоритет: CRITICAL (полностью игнорируется фильтрация)
+```
+
+### Промпт 6: Исправление LIMIT без OFFSET
+```
+Проблема: LIMIT 10 возвращает некорректное количество строк.
+
+Задача:
+1. Проверь применение limit в SelectQuery.execute() после всех операций
+2. Убедись что limit применяется ПОСЛЕ сортировки (ORDER BY ... LIMIT)
+3. Тесты: LIMIT 1, LIMIT 10, LIMIT 100, LIMIT больше чем всего строк
+4. Проверь взаимодействие LIMIT с GROUP BY и агрегатами
+
+Файлы: diesel/SelectQuery.java
+Тесты: LimitOffsetTest (создать новый файл)
+Приоритет: HIGH (некорректное ограничение результата)
+```
+
+### Промпт 7: Исправление OFFSET без LIMIT
+```
+Проблема: OFFSET 5 без LIMIT пропускает первые 5 строк но может вернуть 0.
+
+Задача:
+1. Проверь что offset применяется после сортировки
+2. Если offset > total rows → верни пустой результат (а не ошибку)
+3. Тесты: OFFSET 0, OFFSET 5, OFFSET больше чем всего строк
+4. Добавь предупреждение: "OFFSET without LIMIT may be inefficient"
+
+Файлы: diesel/SelectQuery.java
+Тесты: LimitOffsetTest
+Приоритет: MEDIUM
+```
+
+### Промпт 8: Исправление LIMIT + OFFSET вместе
+```
+Проблема: LIMIT 10 OFFSET 5 возвращает 0 строк вместо ожидаемых.
+
+Задача:
+1. Проверь порядок применения: сначала ORDER BY, потом OFFSET, потом LIMIT
+2. Формула: result.slice(offset, offset + limit)
+3. Тесты: LIMIT 10 OFFSET 5, LIMIT 1 OFFSET 99, LIMIT 100 OFFSET 0
+4. Проверь edge cases: offset=0, limit=0, offset+limit > total
+
+Файлы: diesel/SelectQuery.java
+Тесты: LimitOffsetTest
+Приоритет: HIGH
+```
+
+### Промпт 9: Исправление LIMIT в подзапросах
+```
+Проблема: В подзапросах LIMIT игнорируется (возвращает 600 строк вместо 10).
+
+Задача:
+1. Проверь выполнение подзапросов в SubqueryParser или SelectQuery
+2. Убедись что LIMIT из подзапроса применяется к результату подзапроса
+3. Тесты: SELECT * FROM (SELECT ... LIMIT 10) AS subq
+4. Проверь вложенные подзапросы (2+ уровня)
+
+Файлы: diesel/SubqueryParser.java, diesel/SelectQuery.java
+Тесты: SubqueriesTest
+Приоритет: HIGH
+```
+
+### Промпт 10: Оптимизация Hash Join для больших таблиц
+```
+Проблема: Hash Join создаёт хеш-таблицу в памяти которая может вызвать OOM.
+
+Задача:
+1. Добавь оценку размера хеш-таблицы до начала построения
+2. Если estimated size > max.inmemory.rows → fallback на Block Nested Loop Join
+3. Реализуй partitioned hash join для таблиц > memory (spill to disk)
+4. Добавь метрики: hash table size, build time, probe time
+
+Файлы: diesel/SelectQuery.java
+Конфиг: max.hash.table.size.mb = 512
+Приоритет: MEDIUM (профилактика OOM)
+```
+
+### Промпт 11: Добавление EXPLAIN для анализа плана выполнения
+```
+Проблема: Нет способа понять почему запрос медленный или потребляет много памяти.
+
+Задача:
+1. Реализуй команду EXPLAIN SELECT/INSERT/UPDATE/DELETE
+2. Выводи: тип JOIN (Hash/Nested Loop), estimated rows, используемые индексы
+3. Формат: текстовое дерево плана выполнения
+4. EXPLAIN ANALYZE: выполни запрос и покажи фактические метрики
+
+Файлы: diesel/ExplainQuery.java (новый), diesel/SelectQuery.java
+Тесты: ExplainTest (новый)
+Приоритет: MEDIUM (диагностика)
+```
+
+### Промпт 12: Лимит на максимальное количество строк в результате
+```
+Проблема: Нет защиты от accidental cross join который генерирует миллиарды строк.
+
+Задача:
+1. Добавь конфиг: max.result.rows = 1000000 (1 миллион)
+2. Если результат превышает лимит → выброси exception с понятным сообщением
+3. Добавь hint: /* MAX_ROWS=10000 */ для override на уровне запроса
+4. Логгируй предупреждение при достижении 80% лимита
+
+Файлы: diesel/SelectQuery.java, diesel/Database.java
+Конфиг: max.result.rows
+Приоритет: HIGH (защита от crash)
+```
+
+### Промпт 13: Улучшение ошибок OutOfMemoryError
+```
+Проблема: OOM падает без полезной информации о причине.
+
+Задача:
+1. Перехватывай OutOfMemoryError в DatabaseServer.ClientHandler
+2. Логируй контекст: какой запрос, сколько строк, сколько памяти выделено
+3. Отправляй клиенту: "Error: Query exceeded memory limit. Consider adding LIMIT or indexes."
+4. Добавь метрику: peak.memory.usage.per.query
+
+Файлы: diesel/DatabaseServer.java, diesel/SelectQuery.java
+Приоритет: MEDIUM (debuggability)
+```
+
+### Промпт 14: Автоматическая статистика по таблицам
+```
+Проблема: Оптимизатор не знает размер таблиц для выбора плана выполнения.
+
+Задача:
+1. Храни в Table: rowCount, avgRowSize, lastAnalyzed timestamp
+2. Обновляй статистику после INSERT/DELETE (асинхронно)
+3. Добавь команду: ANALYZE TABLE name (принудительный пересчёт)
+4. Используй статистику для выбора Hash Join vs Nested Loop
+
+Файлы: diesel/Table.java, diesel/Database.java
+Приоритет: MEDIUM (основа для оптимизатора)
+```
+
+### Промпт 15: Индексы для ускорения JOIN условий
+```
+Проблема: JOIN без индексов требует полного сканирования обеих таблиц.
+
+Задача:
+1. Авто-создавай индекс на колонках JOIN условия если его нет
+2. Предупреждай: "Consider creating index on TABLE.COLUMN for faster JOIN"
+3. Для FOREIGN KEY автоматически создавай индекс (как в PostgreSQL)
+4. Добавь тест: JOIN с индексом vs без (benchmark)
+
+Файлы: diesel/SelectQuery.java, diesel/CreateIndexQuery.java
+Приоритет: MEDIUM (производительность)
+```
+
+### Промпт 16: Кэширование планов выполнения запросов
+```
+Проблема: Парсинг и планирование выполняется заново для каждого запроса.
+
+Задача:
+1. Кэшируй AST + план выполнения для параметризованных запросов
+2. Ключ кэша: normalized SQL (без литералов, только структура)
+3. Invalidация: при DDL или изменении статистики таблиц
+4. Метрики: cache hit rate, average parse time saved
+
+Файлы: diesel/QueryCache.java (новый), diesel/QueryParser.java
+Приоритет: LOW (оптимизация)
+```
+
+### Промпт 17: Уменьшение heap requirement для тестов
+```
+Проблема: QuantitativeTest требует 4GB heap что медленно и дорого в CI.
+
+Задача:
+1. Раздели QuantitativeTest на маленькие тесты по 50MB каждый
+2. Добавь @LargeTest аннотацию для тестов требующих >1GB (skip в CI по умолчанию)
+3. Оптимизируй тестовые данные: меньше строк, более репрезентативные выборки
+4. Цель: полный набор тестов запускается с -Xmx512m за <5 минут
+
+Файлы: diesel/QuantitativeTest.java, pom.xml
+Приоритет: HIGH (CI/CD эффективность)
+```
+
+### Промпт 18: Профилировщик производительности запросов
+```
+Проблема: Неясно какая часть запроса consumes больше всего времени.
+
+Задача:
+1. Добавь профилирование: parse time, plan time, execute time, sort time
+2. Вывод в лог для медленных запросов (>1s): "Slow query breakdown: ..."
+3. Метрики в JMX/SLF4J для мониторинга
+4. Флаг: -Ddiesel.profile.slow.threshold.ms=1000
+
+Файлы: diesel/SelectQuery.java, diesel/QueryParser.java
+Приоритет: MEDIUM (диагностика)
+```
+
+### Промпт 19: Тесты на регрессию производительности
+```
+Проблема: Нет автоматической детекции деградации производительности.
+
+Задача:
+1. Сохраняй baseline timing для ключевых запросов (timing60.md)
+2. В CI сравнивай текущее время с baseline (допустимо ±20%)
+3. При деградации >20% → fail build с отчётом
+4. Храни историю производительности в analytics/performance_history.csv
+
+Файлы: .github/workflows/ci.yml (новый step), diesel/PerformanceRegressionTest.java
+Приоритет: MEDIUM (quality gate)
+```
+
+### Промпт 20: Документация известных ограничений и workaround
+```
+Проблема: Пользователи не знают о ограничениях DieselDB.
+
+Задача:
+1. Создай KNOWN_LIMITATIONS.md в корне проекта
+2. Опиши: макс. размер результата, ограничения JOIN с OR, требования к памяти
+3. Для каждого ограничения предложи workaround (например "используй LIMIT")
+4. Обнови README.md ссылкой на этот документ
+
+Файлы: KNOWN_LIMITATIONS.md (новый), README.md
+Приоритет: LOW (user experience)
+```
 
 ## Раздел 1: Исправление ошибок SonarQube (20 промптов)
 *На основе документа sonaranalitics.md - приоритет P0 и P1*
 
-### Промпт 1: Исправление StackOverflow в регулярных выражениях (java:S5998)
+### Промпт 21: Исправление StackOverflow в регулярных выражениях (java:S5998)
 ```
 Проанализируй файлы QueryParser.java, SubqueryParser.java и SqlLexer.java. Найди 57 регулярных выражений, которые могут вызвать StackOverflowError (правило java:S5998). Для каждого problematic regex:
 1. Определи причину (чрезмерная вложенность, catastrophic backtracking)
@@ -15,11 +310,11 @@
 Файлы: diesel/QueryParser.java, diesel/SubqueryParser.java, diesel/SqlLexer.java
 ```
 
-### Промпт 2: Исправление Null Pointer Dereference (java:S2259)
+### Промпт 22: Исправление Null Pointer Dereference (java:S2259)
 ```
 Найди 13 мест в коде где возможен NullPointerException (правило java:S2259). Для каждого случая:
 1. Добавь проверку null перед использованием объекта
-2. Используй Optional<T> где это уместно (Java 8+)
+2. Используйте Optional<T> где это уместно (Java 8+)
 3. Добавь @NotNull/@Nullable аннотации для документирования
 4. Напиши unit test для проверки edge cases
 
@@ -27,7 +322,7 @@
 Приоритет: CRITICAL (BUG, вызывает падение сервера)
 ```
 
-### Промпт 3: Удаление мёртвого кода (java:S2583, S108, S1144, S1068)
+### Промпт 23: Удаление мёртвого кода (java:S2583, S108, S1144, S1068)
 ```
 Найди и удали весь мёртвый код в проекте:
 1. Conditionally executed code that is never reachable (3 места, java:S2583)
@@ -40,7 +335,7 @@
 Приоритет: LOW но БЫСТРО (-20 проблем за 30 минут)
 ```
 
-### Промпт 4: Исправление Double Brace Initialization (java:S3599)
+### Промпт 24: Исправление Double Brace Initialization (java:S3599)
 ```
 Найди 2 случая Double Brace Initialization и замени на нормальную инициализацию:
 
@@ -65,7 +360,7 @@ Map<String, Object> map = Map.of("key", "value");
 Приоритет: BUG (утечки памяти, проблемы с сериализацией)
 ```
 
-### Промпт 5: Исправление игнорирования возвращаемых значений (java:S899)
+### Промпт 25: Исправление игнорирования возвращаемых значений (java:S899)
 ```
 Найди 2 места где игнорируются возвращаемые значения важных методов:
 
@@ -85,7 +380,7 @@ stream.forEach(...); // Intentionally ignoring result
 Приоритет: BUG (может скрывать ошибки)
 ```
 
-### Промпт 6: Исправление проблем с regex grouping (java:S5850)
+### Промпт 26: Исправление проблем с regex grouping (java:S5850)
 ```
 Найди 3 случая где alternations в regex должны быть сгруппированы:
 
@@ -99,1163 +394,1006 @@ stream.forEach(...); // Intentionally ignoring result
 Приоритет: BUG (некорректная работа парсера)
 ```
 
-### Промпт 7: Исправление regex с repeated patterns (java:S5842)
+### Промпт 27: Исправление regex с repeated patterns (java:S5842)
 ```
-Найди 1 случай где repeated pattern в regex match empty string:
+Найди 4 regex с repeated patterns которые работают медленно:
 
-БЫЛО: `(a*)*` или `([^"]*")*`
-ПРОБЛЕМА: может вызвать infinite loop или catastrophic backtracking
+Проблемные паттерны:
+- `(a+)+` - exponential backtracking
+- `(.*?)+` - nested quantifiers
+- `[a-z]+[a-z]+` - redundant character classes
 
-СТАЛО: `(?:a+)*` или `([^"]*+")*`
-РЕШЕНИЕ: используем possessive quantifiers или atomic groups
-
-Приоритет: BUG (бесконечные циклы в парсере)
-```
-
-### Промпт 8: Оптимизация Cognitive Complexity в QueryParser.java (java:S3776)
-```
-Проанализируй QueryParser.java (363 проблемы, cognitive complexity 37-45).
-
-Разбей brain methods (строки 974, 1114, 1971, 2678, 2793) на smaller methods:
-1. Выдели parseWhereClause() из main parse method
-2. Выдели parseJoinClause() 
-3. Выдели parseSubquery()
-4. Выдели parseOrderBy()
-5. Выдели parseGroupBy()
-
-Цель: снизить complexity с 37-45 до <20 для каждого метода.
-Добавь unit tests для каждого выделенного метода.
-Приоритет: HIGH (68% всех проблем в этом файле)
+Оптимизируй с помощью possessive quantifiers и atomic groups.
+Добавь бенчмарк на парсинг 10K SQL запросов.
+Приоритет: PERFORMANCE
 ```
 
-### Промпт 9: Рефакторинг SelectQuery.execute() (complexity=59)
+### Промпт 28: Оптимизация Cognitive Complexity в QueryParser.java (java:S3776)
 ```
-Метод execute() в SelectQuery.java имеет complexity=59 (при норме ~15).
+QueryParser.java имеет cognitive complexity >200 (порог 15).
 
-Раздели на методы:
-1. executeWhereClause(rows) - фильтрация по WHERE
-2. executeGroupBy(rows) - группировка
-3. executeHaving(rows) - фильтрация групп
-4. executeOrderBy(rows) - сортировка
-5. executeJoins(rows) - JOIN обработка
-6. executeSelectColumns(rows) - проекция колонок
+Задача:
+1. Вынеси парсинг SELECT в отдельный метод parseSelect()
+2. Вынеси парсинг JOIN в parseJoins()
+3. Вынеси парсинг WHERE условий в parseConditions()
+4. Используй Strategy pattern для разных типов запросов
 
-Каждый метод должен иметь complexity <20.
-Добавь integration tests что результат тот же.
-Приоритет: CRITICAL (главный источник багов)
+Цель: снизить complexity каждого метода до <20.
+Добавь test что рефакторинг не сломал парсинг.
+Приоритет: MAINTAINABILITY
 ```
 
-### Промпт 10: Оптимизация регулярных выражений (java:S5869, S6353)
+### Промпт 29: Рефакторинг SelectQuery.execute() (complexity=59)
 ```
-Исправь 360 проблем с regex в парсере:
+SelectQuery.execute() имеет complexity 59 (порог 15).
 
-1. java:S5869 (228 issues) - удали дубликаты символов:
-   - `[a-zA-Z0-9_]` → `\w`
-   - `[0-9]` → `\d`
-   - `[ \t\n\r\f]` → `\s`
-   - `[a-z]` → использовать case-insensitive flag
+Разбей на методы:
+1. executeSelect() - основной flow
+2. applyJoins() - обработка JOIN
+3. applyWhereFilter() - фильтрация WHERE
+4. applyGroupBy() - группировка
+5. applyOrderBy() - сортировка
+6. applyLimitOffset() - лимиты
 
-2. java:S6353 (119 issues) - используй краткие формы:
-   - Автоматическая замена через IDE (Find/Replace)
-
-3. java:S5843 (13 issues) - упрости сложные regex:
-   - Разбей на несколько простых паттернов
-   - Используй named groups для читаемости
-
-Benchmark: парсинг 1000 SQL запросов до/после.
-Приоритет: HIGH (+30-50% производительности парсера)
+Каждый метод <20 complexity, покрыт unit tests.
+Приоритет: MAINTAINABILITY
 ```
 
-### Промпт 11: Вынос строковых литералов в константы (java:S1192)
+### Промпт 30: Оптимизация регулярных выражений (java:S5869, S6353)
 ```
-Найди 34 случая дублирования строковых литералов и вынеси в константы:
+Найди regex которые можно заменить на строковые операции:
 
-БЫЛО:
-```java
-if (token.equals("SELECT")) { ... }
-if (keyword.equals("SELECT")) { ... }
-```
+БЫЛО: `Pattern.matches("\\d+", str)`
+СТАЛО: `str.chars().allMatch(Character::isDigit)`
 
-СТАЛО:
-```java
-public static final String KEYWORD_SELECT = "SELECT";
-if (token.equals(KEYWORD_SELECT)) { ... }
-if (keyword.equals(KEYWORD_SELECT)) { ... }
+БЫЛО: `Pattern.compile("[A-Za-z]+")`
+СТАЛО: простой цикл или Character.isLetter()
+
+Для простых паттернов строковые операции быстрее в 10 раз.
+Добавь бенчмарк comparing old vs new.
+Приоритет: PERFORMANCE
 ```
 
-Создай класс SqlKeywords.java с всеми SQL keywords:
+### Промпт 31: Вынос строковых литералов в константы (java:S1192)
+```
+Найди 133 строковых литерала которые повторяются 3+ раз:
+
+Примеры:
+- "SELECT", "INSERT", "UPDATE", "DELETE"
+- "WHERE", "GROUP BY", "ORDER BY", "LIMIT"
+- "INNER JOIN", "LEFT JOIN", "RIGHT JOIN"
+- "NULL", "TRUE", "FALSE"
+
+Вынеси в класс SqlKeywords:
 ```java
 public final class SqlKeywords {
     public static final String SELECT = "SELECT";
-    public static final String FROM = "FROM";
-    public static final String WHERE = "WHERE";
-    public static final String JOIN = "JOIN";
-    // ... все keywords
+    // ...
 }
 ```
 
-Приоритет: MEDIUM (упрощение рефакторинга)
+Приоритет: MAINTAINABILITY (быстро)
 ```
 
-### Промпт 12: Уменьшение количества параметров методов (java:S107)
+### Промпт 32: Уменьшение количества параметров методов (java:S107)
 ```
-Найди 20 методов с >7 параметрами и примени refactoring:
+Найди 10 методов с >7 параметрами:
+
+Рефакторинг варианты:
+1. Объедини параметры в объект (Parameter Object pattern)
+2. Используй Builder pattern для сложных объектов
+3. Разбей метод на несколько с меньшим числом параметров
+
+Пример:
+```java
+// БЫЛО
+executeQuery(String sql, Connection conn, Transaction tx, 
+             boolean autoCommit, int timeout, Logger log)
+
+// СТАЛО
+executeQuery(QueryContext context) // context содержит все параметры
+```
+
+Приоритет: MAINTAINABILITY
+```
+
+### Промпт 33: Исправление null из Boolean методов (java:S2447)
+```
+Найди методы возвращающие Boolean которые могут вернуть null:
 
 БЫЛО:
 ```java
-public void process(String name, int age, String email, 
-                   boolean active, Date created, String role,
-                   int department, String manager) { ... }
-```
-
-СТАЛО - используем Parameter Object:
-```java
-public class UserContext {
-    String name;
-    int age;
-    String email;
-    boolean active;
-    Date created;
-    String role;
-    int department;
-    String manager;
-}
-
-public void process(UserContext context) { ... }
-```
-
-ИЛИ Builder pattern:
-```java
-public void process(UserContext.Builder builder) { ... }
-```
-
-Приоритет: MEDIUM (нарушение инкапсуляции)
-```
-
-### Промпт 13: Исправление null из Boolean методов (java:S2447)
-```
-Найди 8 мест где Boolean методы возвращают null:
-
-БЫЛО:
-```java
-public Boolean isValid() {
+public Boolean evaluate(...) {
     if (condition) return true;
-    if (otherCondition) return false;
-    return null; // PROBLEM!
+    // missing else → returns null
 }
-
-// Usage:
-if (obj.isValid()) { ... } // NullPointerException!
 ```
 
 СТАЛО:
 ```java
-public Boolean isValid() {
+public Boolean evaluate(...) {
     if (condition) return true;
-    return false; // Never return null
-}
-
-// ИЛИ используем Optional:
-public Optional<Boolean> isValid() {
-    if (condition) return Optional.of(true);
-    if (otherCondition) return Optional.of(false);
-    return Optional.empty();
+    return false; // явное значение
 }
 ```
 
-Приоритет: HIGH (NullPointerException в условиях)
+ИЛИ используй three-valued logic enum: TRUE, FALSE, UNKNOWN
+Приоритет: BUG (NullPointerException)
 ```
 
-### Промпт 14: Исправление Serializable полей (java:S1948)
+### Промпт 34: Исправление Serializable полей (java:S1948)
 ```
-Найди 8 не-serializable полей в Serializable классах:
+Найди 2 класса с не-serializable полями:
+
+Проблема:
+```java
+class Transaction implements Serializable {
+    transient Logger logger = LoggerFactory.getLogger(...); // OK
+    Map<String, Object> cache = new HashMap<>(); // СЕРИАЛИЗУЕТСЯ
+}
+```
+
+Решение:
+1. Добавь transient для не-serializable полей
+2. ИЛИ сделай поле static final
+3. ИЛИ реализуй custom writeObject/readObject
+
+Приоритет: BUG (SerializationException)
+```
+
+### Промпт 35: Замена System.out.println на Logger (java:S106)
+```
+Найди 8 случаев System.out.println и замени на SLF4J logger:
 
 БЫЛО:
 ```java
-class Table implements Serializable {
-    private transient Logger logger = Logger.getLogger(...); // OK
-    private Connection connection; // PROBLEM! Not serializable
-}
+System.out.println("Debug info: " + value);
 ```
 
 СТАЛО:
 ```java
-class Table implements Serializable {
-    private transient Logger logger = Logger.getLogger(...);
-    private transient Connection connection; // Mark as transient
-    
-    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
-        in.defaultReadObject();
-        this.connection = createNewConnection(); // Reinitialize after deserialization
-    }
-}
+logger.debug("Debug info: {}", value);
 ```
 
-Приоритет: HIGH (проблемы кластеризации/репликации)
+Преимущества:
+- Можно отключить в production
+- Форматированный вывод
+- Rolling files
+- Разные уровни (DEBUG, INFO, WARN, ERROR)
+
+Приоритет: MAINTAINABILITY
 ```
 
-### Промпт 15: Замена System.out.println на Logger (java:S106)
+### Промпт 36: Использование специфичных исключений (java:S112)
 ```
-Замени 8 случаев System.out.println на proper logging:
+Найди 10 мест где бросается generic Exception:
 
 БЫЛО:
 ```java
-System.out.println("Query executed: " + sql);
-System.out.println("Error: " + e.getMessage());
+throw new Exception("Table not found");
 ```
 
 СТАЛО:
 ```java
-private static final Logger LOGGER = Logger.getLogger(ClassName.class.getName());
-
-LOGGER.info("Query executed: " + sql);
-LOGGER.severe("Error: " + e.getMessage(), e);
+throw new TableNotFoundException("Table " + tableName + " not found");
 ```
 
-Настрой log levels:
-- INFO для обычных операций
-- WARNING для recoverable errors
-- SEVERE для critical errors
+Создай hierarchy исключений:
+- DieselException (base)
+- TableNotFoundException
+- ColumnNotFoundException
+- SyntaxErrorException
+- TransactionException
 
-Приоритет: MEDIUM (proper logging для production)
+Приоритет: MAINTAINABILITY
 ```
 
-### Промпт 16: Использование специфичных исключений (java:S112)
+### Промпт 37: Упрощение обработки исключений (java:S2139, S1141)
 ```
-Замени 8 случаев generic exceptions на specific:
+Найди 15 мест с избыточной обработкой исключений:
 
-БЫЛО:
-```java
-throw new Exception("Something went wrong");
-throw new RuntimeException("Error");
-```
-
-СТАЛО:
-```java
-throw new IllegalArgumentException("Invalid parameter: " + paramName);
-throw new IllegalStateException("Database not initialized");
-throw new SQLException("Failed to execute query", cause);
-throw new FileNotFoundException("Table file not found: " + tableName);
-```
-
-Создай custom exceptions если нужно:
-```java
-public class QueryParseException extends RuntimeException { ... }
-public class ConstraintViolationException extends RuntimeException { ... }
-```
-
-Приоритет: MEDIUM (лучшая обработка ошибок)
-```
-
-### Промпт 17: Упрощение обработки исключений (java:S2139, S1141)
-```
-Исправь проблемы с exception handling:
-
-1. java:S2139 (8 issues) - не логировать И выбрасывать:
 БЫЛО:
 ```java
 try {
-    ...
-} catch (Exception e) {
-    logger.error("Error", e);
-    throw e; // Both logging AND rethrowing
+    method();
+} catch (IOException e) {
+    throw new RuntimeException(e);
 }
 ```
 
 СТАЛО:
 ```java
 try {
-    ...
-} catch (Exception e) {
-    logger.error("Error during operation", e);
-    throw new CustomException("Operation failed", e); // Or just rethrow without logging
+    method();
+} catch (IOException e) {
+    throw new DieselIOException("Failed to ...", e);
 }
 ```
 
-2. java:S1141 (8 issues) - упростить nested try-catch:
-Вынести inner try-catch в отдельный метод.
-
-Приоритет: MEDIUM (cleaner error handling)
+ИЛИ используй try-with-resources для AutoCloseable.
+Приоритет: MAINTAINABILITY
 ```
 
-### Промпт 18: Удаление unused параметров, переменных, импортов
+### Промпт 38: Удаление unused параметров, переменных, импортов
 ```
-Удали весь unused code:
-1. java:S1172 (20 issues) - unused method parameters
-2. java:S1854 (15 issues) - unused assignments  
-3. java:S1481 (13 issues) - unused local variables
-4. java:S1128 (24 issues) - unnecessary imports
+Найди и удали:
+1. Unused parameters методов (12 мест)
+2. Unused local variables (8 мест)
+3. Unused imports (20+ файлов)
 
-Используй IntelliJ: Code → Optimize Imports
-Code → Analyze Code → Run Inspection → "Unused declaration"
-
-Приоритет: LOW но ОЧЕНЬ БЫСТРО (-72 проблемы за 1 час)
+IntelliJ: Code → Cleanup → Optimize Imports + Remove unused
+Проверь что тесты проходят после удаления.
+Приоритет: LOW (быстро)
 ```
 
-### Промпт 19: Упрощение условий и тернарных операторов
+### Промпт 39: Упрощение условий и тернарных операторов
 ```
-Исправь:
-1. java:S3358 (7 issues) - nested ternary operators:
-БЫЛО: `a ? b : c ? d : e ? f : g`
-СТАЛО: if-else ladder или extract method
+Найди 20 сложных условий которые можно упростить:
 
-2. java:S2589 (4 issues) - gratuitous boolean expressions:
-БЫЛО: `if (flag == true)`
-СТАЛО: `if (flag)`
-
-3. java:S1066 (3 issues) - mergeable if statements:
 БЫЛО:
 ```java
-if (condition1) {
-    if (condition2) { ... }
-}
-```
-СТАЛО: `if (condition1 && condition2) { ... }`
-
-Приоритет: LOW (улучшение читаемости)
+if (flag == true) { ... }
+if (x != null && x.equals("value")) { ... }
+boolean result = condition ? true : false;
 ```
 
-### Промпт 20: Финальная очистка (остальные CODE_SMELL)
-```
-Исправь оставшиеся minor issues:
-1. java:S127 (8) - for loop stop conditions invariant
-2. java:S2925 (7) - Thread.sleep in tests (используй Awaitility)
-3. java:S125 (3) - commented out code (удалить)
-4. java:S3457 (16) - incorrect format strings
-5. java:S5786 (16) - JUnit5 public visibility (remove public)
-6. java:S6201 (49) - pattern matching for instanceof (Java 16+)
-
-Цель: снизить общее количество проблем с 908 до <450.
-Приоритет: LOW (косметические улучшения)
+СТАЛО:
+```java
+if (flag) { ... }
+if ("value".equals(x)) { ... } // null-safe
+boolean result = condition;
 ```
 
----
-
-## Раздел 2: Исправление проблем производительности и архитектуры (20 промптов)
-*На основе документа problems.md - O(n²) проблемы и архитектура транзакций*
-
-### Промпт 21: Оптимизация updateIndicesAfterInsert (O(n × m × log n))
-```
-Проанализируй метод Table.updateIndicesAfterInsert() (строки 476-512).
-
-Проблема: Вложенные циклы обновляют все индексы для всех последующих строк после вставки.
-Сложность: O(n × m × log n) где n - строки, m - индексы
-
-Предложи и реализуй оптимизации:
-1. Используй lazy index updates - отложи обновление до момента чтения
-2. ИЛИ используй delta buffering - накапливай изменения и применяй батчами
-3. ИЛИ измени структуру данных на skip list / tree-based storage для эффективных вставок в середину
-
-Добавь benchmark: вставка 10K строк в середину таблицы с 5 индексами.
-Цель: ускорение с O(n²) до O(n log n) или лучше.
+Используй Objects.equals(), Objects.isNull().
+Приоритет: MAINTAINABILITY
 ```
 
-### Промпт 22: Замена Nested Loop Join на Hash Join
+### Промпт 40: Финальная очистка (остальные CODE_SMELL)
 ```
-Проанализируй SelectQuery.java (строки 186-218) где реализован Nested Loop Join.
+Запусти SonarQube analysis и исправь оставшиеся CODE_SMELL:
+- Дублированный код (DRY violation)
+- Слишком длинные методы (>50 строк)
+- Слишком большие классы (>500 строк)
+- Missing default в switch
+- Primitive obsession (замени на объекты)
 
-Проблема: O(n × m) сложность для JOIN без индексов
+Цель: снизить Technical Debt Ratio до <3%.
+Приоритет: MAINTAINABILITY
+```
+
+## Раздел 2: Оптимизация производительности (20 промптов)
+
+### Промпт 41: Оптимизация updateIndicesAfterInsert (O(n × m × log n))
+```
+Проблема: После каждой вставки обновляются все индексы (O(m × log n)).
+
+Решение:
+1. Пакетное обновление индексов после bulk insert
+2. Отложенное обновление (async queue)
+3. Bulk load режим: disable indices → insert all → rebuild indices
+
+Файлы: diesel/Table.java, diesel/BTreeIndex.java
+Приоритет: HIGH
+```
+
+### Промпт 42: Замена Nested Loop Join на Hash Join
+```
+Проблема: Nested Loop Join имеет сложность O(n × m).
 
 Реализуй Hash Join:
-1. Detect equi-joins (JOIN ... ON a.id = b.id)
-2. Build hash table из меньшей таблицы
-3. Probe hash table для большей таблицы
-4. Сложность: O(n + m) вместо O(n × m)
+1. Построй хеш-таблицу по меньшей таблице (O(m))
+2. Probe по большей таблице (O(n))
+3. Итого: O(n + m) вместо O(n × m)
 
-Добавь эвристику выбора алгоритма:
-- Если размер таблиц < 1000 строк → Nested Loop (быстрее для малых данных)
-- Если есть equi-join condition → Hash Join
-- Если данные отсортированы по join key → Merge Join
-
-Benchmark: JOIN двух таблиц по 10K строк каждая.
-Цель: ускорение с 100 секунд до <10 секунд.
+Добавь эвристику выбора: если smaller table < 1000 строк → Hash Join.
+Файлы: diesel/SelectQuery.java
+Приоритет: CRITICAL
 ```
 
-### Промпт 23: Оптимизация обновления индексов после DELETE
+### Промпт 43: Оптимизация обновления индексов после DELETE
 ```
-Проанализируй DeleteQuery.java (строки 95-112).
-
-Проблема: После удаления строк индексы перестраиваются для ВСЕХ оставшихся строк.
-Сложность: O(n × m × k)
+Проблема: Удаление строки требует обновления всех индексов.
 
-Реализуй оптимизации:
-1. Track offset shifts вместо полного перестроения
-2. Используй logical delete (flag) вместо physical delete
-3. Periodic vacuum для физического удаления помеченных строк
+Решение:
+1. Пакетное удаление из индексов
+2. Bloom filter для быстрой проверки наличия в индексе
+3. Lazy deletion: помечай строки как deleted, физическое удаление позже
 
-Добавь benchmark: удаление 1K строк из таблицы с 1M строк и 5 индексами.
-Цель: ускорение с минут до секунд.
+Файлы: diesel/Table.java, diesel/Index.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 24: Оптимизация создания кластеризованного индекса
+### Промпт 44: Оптимизация создания кластеризованного индекса
 ```
-Проанализируй Table.createUniqueClusteredIndex() (строки 172-218).
+Проблема: Создание кластеризованного индекса требует полной пересортировки таблицы.
 
-Проблема: O(n × m) сложность при создании индекса на существующей таблице
+Решение:
+1. Incremental build: строй индекс порциями (не блокируя таблицу)
+2. Parallel build: используй ForkJoinPool для параллельной сортировки
+3. Online index creation: разрешай reads во время build
 
-Оптимизируй:
-1. Bulk index build - строй индекс из отсортированных данных за O(n)
-2. Отложи построение не-кластеризованных индексов на потом
-3. Используй parallel sort для больших таблиц
-
-Benchmark: создание индекса на таблице с 1M строк.
-Цель: сокращение времени с часов до минут.
+Файлы: diesel/BTreeClusteredIndex.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 25: Пакетная вставка индексов при загрузке (readObject)
+### Промпт 45: Пакетная вставка индексов при загрузке (readObject)
 ```
-Проанализируй Table.readObject() (строки 297-322).
-
-Проблема: При десериализации каждый insert в индекс имеет сложность O(log n), общая сложность O(n × m × log n)
+Проблема: При десериализации таблицы индексы строятся по одной записи.
 
-Реализуй batch index build:
-1. Собери все ключи в список
-2. Отсортируй ключи
-3. Построй сбалансированное B-дерево за один проход O(n)
+Решение:
+1. Прочитай все данные → отсортируй → построй индекс за один проход
+2. Используй bulk load API индекса (addBatch())
+3. Пропусти балансировку дерева до конца вставки
 
-Это даст ускорение с O(n log n) до O(n) для каждого индекса.
-Benchmark: загрузка таблицы с 100K строк и 5 индексами.
+Файлы: diesel/TableStorage.java, diesel/BTreeIndex.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 26: Индексы для покрытия WHERE условий
+### Промпт 46: Индексы для покрытия WHERE условий
 ```
-Проанализируй SelectQuery.evaluateConditions() (строки 57-62, 223-229).
+Проблема: WHERE условия сканируют всю таблицу.
 
-Проблема: Полный скан таблицы O(n × c) при отсутствии подходящего индекса
+Решение:
+1. Авто-рекомендация индексов на основе частых WHERE условий
+2. Composite индексы для multi-column WHERE
+3. Covering index: включает все колонки из SELECT чтобы избежать lookup
 
-Реализуй:
-1. Composite indexes для multi-column WHERE условий
-2. Range scan через B-tree индексы (>, <, BETWEEN)
-3. Index-only scan когда все нужные колонки в индексе
-
-Добавь query planner который выбирает оптимальный индекс:
-- Statistics по кардинальности колонок
-- Cost-based optimization
-
-Benchmark: WHERE с 3 условиями на таблице 1M строк.
-Цель: ускорение с секунд до миллисекунд.
+Файлы: diesel/SelectQuery.java, diesel/CreateIndexQuery.java
+Приоритет: HIGH
 ```
 
-### Промпт 27: Оптимизация массового UPDATE
+### Промпт 47: Оптимизация массового UPDATE
 ```
-Проанализируй UpdateQuery.java (строки 27-32).
+Проблема: UPDATE каждой строки отдельно неэффективен.
 
-Проблема: O(n × c) для поиска + O(u × m) для обновления индексов
+Решение:
+1. Пакетный UPDATE: собери все изменения → примени одним проходом
+2. Индекс-ассистированный UPDATE: найди строки через индекс → обнови
+3. Bulk update режим: disable indices → update all → rebuild
 
-Реализуй:
-1. Index-based update - найди строки через индекс вместо full scan
-2. Batch index updates - обновляй индексы батчами
-3. Deferred index maintenance - отложи обновление индексов
-
-Добавь синтаксис:
-UPDATE users SET status='ACTIVE' WHERE id BETWEEN 1 AND 10000
-WITH (BATCH_SIZE=1000, DEFER_INDEX_UPDATE=true);
-
-Benchmark: обновление 10K строк в таблице 1M строк.
+Файлы: diesel/UpdateQuery.java, diesel/Table.java
+Приоритет: HIGH
 ```
 
-### Промпт 28: Исправление потери indexDefinitions при сериализации
+### Промпт 48: Исправление потери indexDefinitions при сериализации
 ```
-Проанализируй проблему #1 в problems.md (сериализация Table.java).
+Проблема: После сериализации/десериализации пропадают определения индексов.
 
-Проблема: Поле indexDefinitions может потерять данные при сериализации/десериализации
+Решение:
+1. Добавь indexDefinitions в serializable состояние Table
+2. Реализуй custom writeObject/readObject для сохранения индексов
+3. Тест: serialize → deserialize → проверь что индексы работают
 
-Исправь:
-1. Явно сериализуй indexDefinitions в writeObject()
-2. Корректно восстанавливай в readObject()
-3. Добавь тест на serialize → deserialize → проверка целостности индексов
+Файлы: diesel/Table.java, diesel/TableStorage.java
+Приоритет: BUG
 ```
 
-### Промпт 29: Сохранение состояния индексов в сериализованном виде
+### Промпт 49: Сохранение состояния индексов в сериализованном виде
 ```
-Вместо перестройки индексов при десериализации (проблема #2 в problems.md):
+Проблема: Индексы не сохраняются между перезапусками.
 
-Реализуй сохранение состояния индексов:
-1. Сериализуй внутреннюю структуру B-tree (узлы, ключи, указатели)
-2. При десериализации восстанавливай структуру без перестройки
-3. Для HashIndex сериализуй HashMap напрямую
+Решение:
+1. Сериализуй структуру индекса (BTree nodes)
+2. При загрузке восстанови индексы из сериализованных данных
+3. Валидация: checksum индекса после загрузки
 
-Это сократит время загрузки с O(n × m × log n) до O(n).
-Benchmark: загрузка таблицы 100K строк с 5 индексами.
-Цель: сокращение с минут до секунд.
+Файлы: diesel/BTreeIndex.java, diesel/TableStorage.java
+Приоритет: BUG
 ```
 
-### Промпт 30: Замена сериализации на Copy-on-Write для транзакций
+### Промпт 50: Замена сериализации на Copy-on-Write для транзакций
 ```
-Проанализируй Transaction.cloneTable() (строки 76-93).
-
-Проблема: Полная сериализация/десериализация для каждого снимка таблицы.
-Сложность: O(n × m × log n) для каждого клонирования
+Проблема: Сериализация всей таблицы для транзакций медленная.
 
-Реализуй Copy-on-Write:
-1. Shared data - неизмененные строки разделяются между snapshot'ами
-2. Copy on modify - копируются только измененные строки
-3. Reference counting для управления памятью
+Решение:
+1. Copy-on-Write: создавай snapshot только изменённых страниц
+2. MVCC: храни версии строк вместо копирования таблиц
+3. Delta storage: сохраняй только разницу (insert/delete log)
 
-ИЛИ реализуй MVCC (Multi-Version Concurrency Control):
-1. Каждая строка имеет версию (transaction ID)
-2. Чтение видит snapshot на момент начала транзакции
-3. Запись создает новую версию строки
-
-Benchmark: начало 100 транзакций на базе с 10 таблицами по 10K строк.
-Цель: ускорение с секунд до миллисекунд.
+Файлы: diesel/Transaction.java, diesel/Table.java
+Приоритет: HIGH
 ```
 
-### Промпт 31: Исправление READ_UNCOMMITTED dirty reads
+### Промпт 51: Параллельное выполнение независимых запросов
 ```
-Проанализируй Database.getTableForQuery() (строки 176-195).
-
-Проблема: READ_UNCOMMITTED позволяет читать грязные данные других транзакций
+Проблема: Запросы выполняются последовательно даже если независимы.
 
-Исправь семантику уровней изоляции:
-1. READ_UNCOMMITTED: используй snapshot на момент начала транзакции (никаких dirty reads)
-2. READ_COMMITTED: читай только закоммиченные данные
-3. REPEATABLE_READ: гарантируй повторную читаемость
-4. SERIALIZABLE: полная сериализуемость
+Решение:
+1. Детекция независимых запросов (разные таблицы)
+2. Параллельное выполнение через ExecutorService
+3. Merge результатов в конце
 
-Добавь проверку конфликтов при коммите:
-- Optimistic locking (version check)
-- Pessimistic locking (row-level locks)
-
-Напиши тесты на concurrency для каждого уровня изоляции.
+Файлы: diesel/DatabaseServer.java, diesel/QueryExecutor.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 32: Реализация Write-Ahead Log (WAL) для атомарности коммита
+### Промпт 52: Асинхронный I/O для сетевых операций
 ```
-Проанализируй проблему #3 в problems.md (отсутствие атомарности при коммите).
+Проблема: Синхронный I/O блокирует потоки на чтение/запись в сокет.
 
-Реализуй WAL:
-1. Перед применением изменений запиши их в WAL
-2. WAL имеет формат: [LSN][TransactionID][Operation][Data][Checksum]
-3. При коммите: сначала flush WAL to disk, потом apply changes
-4. При восстановлении: replay WAL с последнего checkpoint
+Решение:
+1. Java NIO: Selector + SocketChannel для non-blocking I/O
+2. Event loop architecture вместо thread-per-connection
+3. Zero-copy transfer: FileChannel.transferTo()
 
-Структура WAL файла:
-[Header: magic_number, version, created_at]
-[Record 1: LSN=1, TX=100, OP=INSERT, table=users, data=..., checksum=...]
-[Commit: LSN=3, TX=100, status=COMMITTED, checksum=...]
-
-Benchmark: краш сервера во время коммита → восстановление без потери данных.
+Файлы: diesel/DatabaseServer.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 33: Исправление утечки памяти в длинных транзакциях
+### Промпт 53: Compression для сетевых ответов
 ```
-Проанализируй проблему #4 в problems.md (утечка памяти при длинных транзакциях).
-
-Проблема: originalTables и modifiedTables хранятся в памяти до завершения транзакции
+Проблема: Большие результаты передаются без сжатия.
 
-Реализуй:
-1. Lazy loading snapshot'ов - загружай с диска по требованию
-2. Delta storage - храни только дельты изменений
-3. Disk spillout - выгружай старые версии на диск при нехватке памяти
-4. Transaction timeout - лимит на длительность транзакции
-5. GC для завершенных транзакций - освобождай память сразу после commit/rollback
+Решение:
+1. GZIP compression для результатов >1KB
+2. Negotiate compression level с клиентом
+3. Метрики: compression ratio, CPU overhead
 
-Добавь мониторинг:
-- Memory usage per transaction
-- Transaction duration tracking
-- Alert при превышении лимитов
+Файлы: diesel/DatabaseClient.java, diesel/DatabaseServer.java
+Приоритет: LOW
 ```
 
-### Промпт 34: Исправление race condition в activeTransactions
+### Промпт 54: Prepared Statements caching
 ```
-Проанализируй проблему #5 в problems.md (race condition при доступе к activeTransactions).
+Проблема: Каждый запрос парсится заново.
 
-Проблема: Итерация по ConcurrentHashMap.values() может привести к ConcurrentModificationException
+Решение:
+1. Кэшируй parsed AST для prepared statements
+2. Bind parameters at execution time
+3. LRU cache с maxSize=1000
 
-Исправь:
-1. Используй ReentrantReadWriteLock для критических секций
-2. Гарантируй атомарность "добавить таблицу + уведомить транзакции"
-3. ИЛИ используй StampedLock для оптимистичного чтения
-
-Напиши stress test с 100 потоками создающими/удаляющими таблицы.
+Файлы: diesel/PreparedStatement.java (новый), diesel/QueryParser.java
+Приоритет: HIGH
 ```
 
-### Промпт 35: Реализация каскадных откатов транзакций
+### Промпт 55: Batch execution support
 ```
-Проанализируй проблему #6 в problems.md (отсутствие обработки каскадных откатов).
-
-Проблема: Если транзакция B прочитала данные из транзакции A, и A делает rollback, B продолжает работать с несуществующими данными
+Проблема: Нет пакетного выполнения запросов.
 
-Реализуй:
-1. Dependency graph - отслеживай зависимости между транзакциями
-2. При rollback проверяй зависимые транзакции
-3. Реализуй cascading rollback ИЛИ блокировку зависимых транзакций
+Решение:
+1. Добавь BEGIN BATCH ... END BATCH синтаксис
+2. Выполняй запросы в батче одной транзакцией
+3. Оптимизируй: отложенная запись индексов до конца батча
 
-Добавь тест:
-BEGIN TRANSACTION A; UPDATE users SET x=10 WHERE id=1;
-BEGIN TRANSACTION B; SELECT x FROM users WHERE id=1;
-ROLLBACK A;
--- Транзакция B должна быть откачена ИЛИ заблокирована
+Файлы: diesel/BatchQuery.java (новый), diesel/Transaction.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 36: Fine-grained versioning вместо копирования таблиц
+### Промпт 56: Query result pagination
 ```
-Проанализируй проблему #7 в problems.md (неэффективная работа с большими таблицами).
+Проблема: Клиент получает весь результат сразу (OOM risk).
 
-Проблема: При изменении одной строки клонируется вся таблица
+Решение:
+1. Server-side cursors: клиент запрашивает по N строк за раз
+2. Keyset pagination: WHERE id > last_seen_id LIMIT N
+3. Stateless pagination: OFFSET/LIMIT с кэшированием
 
-Реализуй row-level versioning:
-1. Каждая строка имеет metadata: [version_id, created_by_tx, deleted_by_tx]
-2. modifiedTables хранит только измененные строки (дельты)
-3. originalTables хранит snapshot только для неизмененных строк
-
-Это сократит память с O(n) до O(k) где k - количество измененных строк.
+Файлы: diesel/Cursor.java (новый), diesel/SelectQuery.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 37: Реализация gap locking для предотвращения phantom reads
+### Промпт 57: Adaptive query execution
 ```
-Проанализируй проблему #8 в problems.md (фантомное чтение не решено).
+Проблема: План выполнения выбирается один раз и не меняется.
 
-Проблема: Даже при SERIALIZABLE нет блокировки диапазонов
+Решение:
+1. Мониторь фактическое количество строк во время выполнения
+2. Если estimate != actual → перепланируй остаток запроса
+3. Learning optimizer: запоминай лучшие планы для похожих запросов
 
-Реализуй:
-1. Gap locking - блокировка диапазона ключей между существующими строками
-2. Predicate locking - блокировка по условию (WHERE x > 10)
-3. ИЛИ используй Serializable Snapshot Isolation (SSI) алгоритм
-
-Напиши тесты на phantom read prevention.
+Файлы: diesel/SelectQuery.java, diesel/QueryOptimizer.java (новый)
+Приоритет: LOW
 ```
 
-### Промпт 38: Implicit transaction rollback при ошибке
+### Промпт 58: Index-only scans
 ```
-Проанализируй проблему #9 в problems.md (implicit transaction не откатывается при ошибке).
-
-Проблема: При exception в autoCommit режиме транзакция не откатывается явно
+Проблема: Даже при наличии индекса читается вся таблица.
 
-Исправь используя try-with-resources:
-try (AutoRollbackTransaction tx = database.beginImplicitTransaction()) {
-    parsedQuery.execute(table);
-    tx.commit();
-} catch (Exception e) {
-    // Автоматический rollback в AutoRollbackTransaction.close()
-    throw e;
-}
+Решение:
+1. Если индекс покрывает все колонки SELECT → не читай таблицу
+2. Covering index detection в оптимизаторе
+3. Метрики: index-only scan ratio
 
-Реализуй try-with-resources для автоматического управления транзакцией.
+Файлы: diesel/SelectQuery.java, diesel/Index.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 39: Замена ConcurrentHashMap на HashMap в индексах
+### Промпт 59: Parallel index scan
 ```
-Проанализируй проблему #4 в problems.md (сериализация ConcurrentHashMap в HashIndex).
+Проблема: Сканирование индекса однопоточное.
 
-Проблема: ConcurrentHashMap неэффективен для сериализации
+Решение:
+1. Разбей индекс на ranges
+2. Параллельное сканирование ranges через ForkJoinPool
+3. Merge результатов (sorted merge для ordered index)
 
-Исправь:
-1. Замени ConcurrentHashMap на обычный HashMap в HashIndex
-2. Table сам управляет блокировками на уровне таблицы
-3. Это упростит сериализацию и улучшит производительность
-
-Benchmark: сериализация/десериализация индекса с 100K ключей.
+Файлы: diesel/BTreeIndex.java, diesel/SelectQuery.java
+Приоритет: LOW
 ```
 
-### Промпт 40: Плоское представление B-tree для сериализации
+### Промпт 60: SIMD векторизация для агрегатов
 ```
-Проанализируй проблему #7 в problems.md (сериализация внутренней структуры Node в B-tree).
-
-Проблема: Сериализация древовидной структуры неэффективна
+Проблема: Агрегатные функции (SUM, AVG) обрабатывают строки по одной.
 
-Реализуй flat representation:
-1. Пронумеруй узлы в порядке обхода (level-order)
-2. Сериализуй как массив: [node0, node1, node2, ...]
-3. Каждый узел хранит индексы детей в массиве
-4. При десериализации воссоздавай дерево из массива за O(n)
+Решение:
+1. Используй Vector API (Java 16+) для SIMD операций
+2. Пакетная обработка: 8-16 значений за одну инструкцию CPU
+3. Benchmark: сравнение scalar vs vectorized
 
-Benchmark: сериализация/десериализация B-tree с 1M ключей.
-Цель: сокращение с минут до секунд.
+Файлы: diesel/AggregateFunctions.java (новый)
+Приоритет: LOW (experimental)
 ```
 
----
+## Раздел 3: Parquet Storage и Query Cache (20 промптов)
 
-## Раздел 3: Внедрение Варианта 2 (Parquet + Query Cache) - 40 промптов
-*На основе документа Roadmap_Parquet_Stage1.md, Вариант 2*
-
-### Промпт 41: Добавление Maven зависимостей для Parquet
+### Промпт 61: Интеграция Apache Parquet библиотеки
 ```
-Добавь в pom.xml зависимости Apache Parquet:
-
-<dependencies>
-    <!-- Parquet Core -->
-    <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-common</artifactId>
-        <version>1.13.1</version>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-column</artifactId>
-        <version>1.13.1</version>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-hadoop</artifactId>
-        <version>1.13.1</version>
-    </dependency>
-    
-    <!-- Compression codecs -->
-    <dependency>
-        <groupId>org.xerial.snappy</groupId>
-        <artifactId>snappy-java</artifactId>
-        <version>1.1.10.4</version>
-    </dependency>
-    <dependency>
-        <groupId>com.github.luben</groupId>
-        <artifactId>zstd-jni</artifactId>
-        <version>1.5.5-5</version>
-    </dependency>
-    
-    <!-- JSON для метаданных -->
-    <dependency>
-        <groupId>com.fasterxml.jackson.core</groupId>
-        <artifactId>jackson-databind</artifactId>
-        <version>2.15.2</version>
-    </dependency>
-</dependencies>
-
-Проверь что зависимости разрешаются: mvn dependency:tree
+Добавь зависимость Apache Parquet в pom.xml:
+```xml
+<dependency>
+    <groupId>org.apache.parquet</groupId>
+    <artifactId>parquet-column</artifactId>
+    <version>1.13.1</version>
+</dependency>
 ```
 
-### Промпт 42: Создание класса ParquetTableStorage.java
+Реализуй базовый ParquetWriter для записи таблиц в Parquet формат.
+Файлы: pom.xml, diesel/ParquetWriter.java (новый)
+Приоритет: HIGH
 ```
-Создай файл diesel/ParquetTableStorage.java с методами:
-- save(Table table, Path parquetPath) - сохранение таблицы в Parquet
-- load(Path parquetPath, Path metadataPath) - загрузка из Parquet
-- convertToParquetSchema(TableSchema schema) - конвертация схемы
-- saveMetadata(Table table, Path metadataPath) - сохранение метаданных JSON
-- loadMetadata(Path metadataPath) - загрузка метаданных
 
-Используй ZSTD compression, 128MB row groups, 8KB pages, dictionary encoding.
+### Промпт 62: ParquetReader для чтения данных
 ```
+Реализуй ParquetReader который:
+1. Читает Parquet файлы в Row объекты
+2. Поддерживает projection pushdown (читай только нужные колонки)
+3. Поддерживает predicate pushdown (фильтруй при чтении)
 
-### Промпт 43: Реализация конвертации схемы Table → Parquet
+Файлы: diesel/ParquetReader.java (новый)
+Приоритет: HIGH
 ```
-Реализуй метод convertToParquetSchema() который маппит типы DieselDB на типы Parquet:
-- INT/INTEGER → INT32
-- BIGINT/LONG → INT64
-- FLOAT/REAL → FLOAT
-- DOUBLE → DOUBLE
-- STRING/VARCHAR/TEXT → BINARY (UTF8)
-- BOOLEAN → BOOLEAN
-- DATE → INT32 (DATE)
-- TIMESTAMP → INT96
 
-Используй Types.primitive() builder pattern для создания MessageType.
+### Промпт 63: Columnar storage для аналитических запросов
 ```
+Для таблиц >1M строк предлагай columnar storage (Parquet):
+1. Конвертация row-based → columnar (async background job)
+2. Dual storage: row-based для OLTP, columnar для OLAP
+3. Auto-switch: оптимизатор выбирает storage based on query type
 
-### Промпт 44: Реализация сохранения метаданных в JSON
+Файлы: diesel/TableStorage.java, diesel/QueryOptimizer.java
+Приоритет: MEDIUM
 ```
-Реализуй saveMetadata() который сохраняет в JSON:
-- tableName
-- format: "PARQUET"
-- schema (колонки с типами)
-- indexes (имя, тип, колонки)
-- sequences (имя, текущее значение)
-- createdAt, lastModifiedAt timestamps
 
-Используй Jackson ObjectMapper для сериализации.
+### Промпт 64: Schema evolution для Parquet
 ```
+Поддержи эволюцию схемы Parquet файлов:
+1. Добавление новых колонок (nullable)
+2. Удаление колонок (игнорируй при чтении старых файлов)
+3. Изменение типов (safe casts only)
 
-### Промпт 45: Реализация загрузки метаданных из JSON
+Файлы: diesel/ParquetSchemaManager.java (новый)
+Приоритет: MEDIUM
 ```
-Реализуй loadMetadata() который читает JSON и создаёт TableMetadata объект.
-Добавь version field для future compatibility.
-Обработай missing fields gracefully (backward compatibility).
-```
 
-### Промпт 46: Модификация Table.java для выбора формата хранения
+### Промпт 65: Partitioning для Parquet таблиц
 ```
-Измени Table.java:
-1. Добавь enum StorageFormat { CSV, PARQUET }
-2. Добавь поле storageFormat (default: PARQUET)
-3. Модифицируй saveToFile() - пишет в Parquet если format=PARQUET
-4. Модифицируй loadFromFile() - автодетект формата по наличию data.parquet
-5. Добавь fallback на CSV если Parquet не найден
+Реализуй partitioning по дате/категории:
+1. Directory structure: /table/date=2024-01-01/data.parquet
+2. Partition pruning: skip partitions не подходящие под WHERE
+3. Dynamic partition creation при INSERT
+
+Файлы: diesel/PartitionedTable.java (новый)
+Приоритет: MEDIUM
 ```
 
-### Промпт 47: Создание утилиты миграции CSV → Parquet
+### Промпт 66: Compression codecs для Parquet
 ```
-Создай ParquetMigrationTool.java с методами:
-- migrateAllTables() - миграция всех таблиц
-- migrateTable(tableName) - миграция одной таблицы
-- validateTable(original, migrated) - валидация после миграции
+Поддержи разные codecs:
+1. UNCOMPRESSED - быстро, большой размер
+2. SNAPPY - баланс скорость/размер (default)
+3. GZIP - лучше сжатие, медленнее
+4. ZSTD - лучшее сжатие, средняя скорость
 
-Features:
-- Backup CSV файлов перед удалением
-- Progress reporting
-- Error handling с продолжением миграции остальных таблиц
-- CLI интерфейс: java ParquetMigrationTool [tableName]
+Конфигурируемо на уровне таблицы.
+Файлы: diesel/ParquetWriter.java
+Приоритет: LOW
 ```
 
-### Промпт 48: Benchmark Parquet vs CSV
+### Промпт 67: Statistics в Parquet metadata
 ```
-Создай StorageBenchmark.java который сравнивает:
-- Write performance: CSV vs Parquet
-- Read performance: CSV vs Parquet
-- File size: compression ratio
-- Memory usage during read/write
+Используй встроенную статистику Parquet:
+1. Min/max значения для каждой колонки в row group
+2. Count null values
+3. Skip row groups где min/max не удовлетворяют WHERE условию
 
-Таблица: 100K строк с разными типами данных.
-Выведи результаты в формате Markdown для docs/BENCHMARK_RESULTS.md
+Файлы: diesel/ParquetReader.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 49: Создание QueryCache.java
+### Промпт 68: Bloom filters для Parquet
 ```
-Создай diesel/cache/QueryCache.java:
-- put(normalizedSql, result) - кэширование результата
-- get(normalizedSql) - возврат из кэша или null
-- invalidate(tableName) - инвалидация по таблице
-- cleanupExpired() - фоновая очистка по TTL
+Добавь bloom filters для fast lookup:
+1. Bloom filter на первичный ключ
+2. Проверка наличия значения перед чтением row group
+3. False positive rate configurable (default 1%)
 
-Features:
-- LRU eviction при достижении maxSize
-- TTL-based expiration (default 5 минут)
-- Thread-safe (ConcurrentHashMap)
-- Statistics: hitCount, missCount, hitRatio
+Файлы: diesel/ParquetWriter.java, diesel/ParquetReader.java
+Приоритет: LOW
 ```
 
-### Промпт 50: Конфигурация QueryCache
+### Промпт 69: QueryCache архитектура
 ```
-Создай CacheConfig.java с параметрами:
-- maxSize (default 1000 queries)
-- ttlMillis (default 300000 = 5 min)
-- enabled (default true)
+Создай QueryCache с:
+1. Ключ: normalized SQL + parameter types
+2. Значение: List<Row> результат
+3. TTL: 5 минут (configurable)
+4. Max size: 1000 entries (LRU eviction)
 
-Добавь загрузку/сохранение из config/cache.properties
-Пример:
-cache.maxSize=1000
-cache.ttlMillis=300000
-cache.enabled=true
+Файлы: diesel/QueryCache.java (новый)
+Приоритет: HIGH
 ```
 
-### Промпт 51: Интеграция QueryCache в SelectQuery.java
+### Промпт 70: Cache invalidation策略
 ```
-Измени SelectQuery.execute():
-1. Нормализация SQL (upper case, trim, sort conditions)
-2. Проверка кэша перед выполнением
-3. При cache hit - возврат результата (<1ms)
-4. При cache miss - выполнение и сохранение в кэш
-5. Не кэшировать non-deterministic запросы (NOW(), RANDOM())
+Реализуй инвалидацию кэша:
+1. INSERT/UPDATE/DELETE → invalidate cache для этой таблицы
+2. DDL (ALTER TABLE) → invalidate все запросы к таблице
+3. Time-based: TTL expiry
+4. Manual: CLEAR CACHE команда
+
+Файлы: diesel/QueryCache.java, diesel/Table.java
+Приоритет: HIGH
 ```
 
-### Промпт 52: Инвалидация кэша при INSERT
+### Промпт 71: Интеграция QueryCache в SelectQuery.java
 ```
-Измени InsertQuery.execute():
-После успешного INSERT вызови SelectQuery.getQueryCache().invalidate(tableName)
-Добавь debug логирование: "Cache invalidated for table: users"
+Модифицируй SelectQuery.execute():
+1. Перед выполнением: check cache
+2. При cache hit: верни из кэша
+3. При cache miss: выполни → сохрани в кэш → верни
+
+Добавь метрики: hit rate, miss rate, avg latency saved.
+Файлы: diesel/SelectQuery.java
+Приоритет: HIGH
 ```
 
-### Промпт 53: Инвалидация кэша при UPDATE
+### Промпт 72: Инвалидация кэша при INSERT
 ```
-Измени UpdateQuery.execute():
-После успешного UPDATE вызови инвалидацию кэша.
-Опционально: selective invalidation только если UPDATE затрагивает колонки используемые в закэшированных SELECT.
+При INSERT в таблицу:
+1. Найди все cached queries для этой таблицы
+2. Invalidate их (remove from cache)
+3. Логгируй: "Invalidated 5 cache entries for table USERS"
+
+Файлы: diesel/InsertQuery.java, diesel/QueryCache.java
+Приоритет: HIGH
 ```
 
-### Промпт 54: Инвалидация кэша при DELETE
+### Промпт 73: Инвалидация кэша при UPDATE
 ```
-Измени DeleteQuery.execute():
-После успешного DELETE вызови инвалидацию кэша.
+При UPDATE таблицы:
+1. Invalidate все cached SELECT queries к этой таблице
+2. Для UPDATE с WHERE: попробуй partial invalidation (сложно)
+3. По умолчанию: full invalidation для безопасности
+
+Файлы: diesel/UpdateQuery.java, diesel/QueryCache.java
+Приоритет: HIGH
 ```
 
-### Промпт 55: Инвалидация кэша при DDL операциях
+### Промпт 74: Инвалидация кэша при DELETE
 ```
-Измени Database.java:
-- CREATE TABLE → invalidate("*") (весь кэш)
-- DROP TABLE → invalidate(tableName)
-- ALTER TABLE → invalidate(tableName)
-- CREATE INDEX → invalidate(tableName)
+При DELETE из таблицы:
+1. Invalidate все cached queries к этой таблице
+2. Аналогично UPDATE - conservative approach
+
+Файлы: diesel/DeleteQuery.java, diesel/QueryCache.java
+Приоритет: HIGH
 ```
 
-### Промпт 56: Мониторинг QueryCache
+### Промпт 75: Инвалидация кэша при DDL операциях
 ```
-Добавь команду SQL: SHOW CACHE STATS
-Возвращает:
-- cache_size
-- max_size
-- utilization_percent
-- hit_ratio
-- average_speedup
+При DDL (CREATE TABLE, ALTER TABLE, DROP TABLE):
+1. CREATE TABLE: no invalidation needed (новая таблица)
+2. ALTER TABLE: invalidate все запросы к изменённой таблице
+3. DROP TABLE: invalidate + cleanup cache entries
 
-Используй AtomicLong для hitCount/missCount counters.
+Файлы: diesel/CreateTableQuery.java, diesel/QueryCache.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 57: Тестирование Parquet storage
+### Промпт 76: Мониторинг QueryCache
 ```
-Создай ParquetStorageTest.java:
-- testSaveAndLoad() - roundtrip тест
-- testCompressionRatio() - проверка 4x сжатия
-- testSchemaPreservation() - типы данных сохраняются
-- testIndexMetadata() - индексы восстанавливаются
+Добавь JMX metrics для QueryCache:
+1. Cache size (entries count)
+2. Hit rate (%)
+3. Miss rate (%)
+4. Eviction count (LRU, TTL)
+5. Average latency for hit vs miss
 
-Запуск: mvn test -Dtest=ParquetStorageTest
+Файлы: diesel/QueryCacheMXBean.java (новый)
+Приоритет: LOW
 ```
 
-### Промпт 58: Тестирование QueryCache
+### Промпт 77: Тестирование Parquet storage
 ```
-Создай QueryCacheTest.java:
-- testPutAndGet() - basic functionality
-- testCacheMiss() - return null для отсутствующих
-- testTtlExpiration() - entry expire после TTL
-- testInvalidate() - очистка по таблице
-- testMaxSizeEviction() - LRU eviction
+Напиши тесты для Parquet integration:
+1. Write table to Parquet → read back → compare data
+2. Test projection pushdown (read 2 columns from 10)
+3. Test predicate pushdown (WHERE age > 50)
+4. Test partition pruning (skip irrelevant partitions)
 
-Запуск: mvn test -Dtest=QueryCacheTest
+Файлы: diesel/ParquetStorageTest.java (новый)
+Приоритет: HIGH
 ```
 
-### Промпт 59: Integration test Parquet + Cache
+### Промпт 78: Тестирование QueryCache
 ```
-Создай ParquetCacheIntegrationTest.java:
-1. CREATE TABLE с PARQUET storage
-2. INSERT данные
-3. Первый SELECT (cache miss) - замер времени
-4. Второй SELECT (cache hit) - проверка 10x ускорения
-5. INSERT → проверка инвалидации кэша
-6. Третий SELECT → проверка новых данных
-7. Restart DB → проверка persistence
+Напиши тесты для QueryCache:
+1. Cache hit: одинаковый запрос → cache hit
+2. Cache miss: разный запрос → cache miss
+3. Invalidation: INSERT → cache invalidated
+4. TTL expiry: wait 5 min → cache expired
+5. LRU eviction: fill cache → oldest evicted
 
-Запуск: mvn test -Dtest=ParquetCacheIntegrationTest
+Файлы: diesel/QueryCacheTest.java (новый)
+Приоритет: HIGH
 ```
 
-### Промпт 60: Документация Parquet формата
+### Промпт 79: Integration test Parquet + Cache
 ```
-Создай docs/PARQUET_FORMAT.md:
-- Преимущества Parquet над CSV
-- Структура файлов (data.parquet + metadata.json)
-- Пример metadata.json
-- Параметры сжатия (ZSTD, row group size)
-- Миграция с CSV
-- Benchmark результаты
-- Совместимость со Spark/Hive/Presto
+Комплексный тест:
+1. Создай таблицу с 1M строк
+2. Запиши в Parquet
+3. Выполни SELECT → cache miss → read from Parquet
+4. Повтори SELECT → cache hit → return from cache
+5. Сделай INSERT → cache invalidated
+6. Повтори SELECT → cache miss → read updated data
+
+Файлы: diesel/ParquetCacheIntegrationTest.java (новый)
+Приоритет: MEDIUM
 ```
 
-### Промпт 61: Конфигурация Parquet на уровне таблицы
+### Промпт 80: Документация Parquet формата
 ```
-Добавь поддержку WITH clause при CREATE TABLE:
-CREATE TABLE users (...) WITH (
-    storage_format='PARQUET',
-    compression='ZSTD',
-    row_group_size='128MB'
-);
+Создай документацию:
+1. Как включить Parquet storage (config)
+2. Преимущества columnar storage для аналитики
+3. Ограничения: не подходит для частых UPDATE
+4. Best practices: когда использовать Parquet vs row-based
 
-Измени CreateTableQuery.java для парсинга опций.
+Файлы: analytics/PARQUET_GUIDE.md (новый)
+Приоритет: MEDIUM
 ```
 
-### Промпт 62: Lazy загрузка Parquet файлов
+## Раздел 4: Дополнительные улучшения (20 промптов)
+
+### Промпт 81: Конфигурация Parquet на уровне таблицы
 ```
-Реализуй LazyParquetTable которая:
-- Не загружает все данные в память сразу
-- Читает row groups on-demand
-- Поддерживает seek к конкретным строкам
-- Позволяет работать с таблицами > размера RAM
+Добавь возможность настройки Parquet per table:
+```sql
+CREATE TABLE analytics (
+    id INT,
+    event_date DATE,
+    ...
+) WITH (
+    storage_format = 'PARQUET',
+    compression = 'ZSTD',
+    partition_by = 'event_date'
+)
 ```
 
-### Промпт 63: Predicate pushdown для Parquet
+Файлы: diesel/CreateTableQuery.java, diesel/TableOptions.java (новый)
+Приоритет: MEDIUM
 ```
-Реализуй predicate pushdown в SelectQuery:
-1. Extract WHERE conditions
-2. Convert to Parquet FilterPredicate
-3. Create ParquetReader.withFilter(predicate)
-4. Читать только matching row groups
 
-Benchmark: WHERE id=100 на 1M строк → чтение 1 row group вместо всей таблицы.
+### Промпт 82: Lazy загрузка Parquet файлов
 ```
+Не загружай все Parquet файлы в память:
+1. Открывай файл только когда нужны данные из него
+2. Закрывай после использования (resource management)
+3. Кэшируй metadata (schema, statistics) но не данные
 
-### Промпт 64: Параллельное чтение Parquet
+Файлы: diesel/ParquetReader.java
+Приоритет: MEDIUM
 ```
-Реализуй ParallelParquetReader:
-1. Распредели row groups across threads
-2. Каждый thread читает свои groups
-3. Собери результаты вместе
 
-Benchmark: чтение 1GB файла с 4 threads → 3-4x ускорение.
+### Промпт 83: Predicate pushdown для Parquet
 ```
+Передавай WHERE условия в ParquetReader:
+1. Parquet filter row groups по statistics (min/max)
+2. Filter individual rows внутри row group
+3. Минимизируй I/O: читай только matching данные
 
-### Промпт 65: Статистика использования кэша
+Файлы: diesel/ParquetReader.java, diesel/SelectQuery.java
+Приоритет: HIGH
 ```
-Добавь детальную статистику в QueryCache:
-- hitCount, missCount, hitRatio
-- evictionCount, invalidationCount
-- averageQueryTime (cached vs non-cached)
-- averageSpeedup factor
 
-Вывод в логи каждые 5 минут:
-"Cache stats: hits=1234, misses=56, ratio=95.7%, speedup=42x"
+### Промпт 84: Параллельное чтение Parquet
 ```
+Читай多个 Parquet файлы параллельно:
+1. Один файл → один поток (или один row group → один поток)
+2. ForkJoinPool для управления потоками
+3. Merge результатов (concatenation для UNION, sorted merge для ORDER BY)
 
-### Промпт 66: Настройка Database.java для Parquet by default
-```
-Измени Database constructor:
-- По умолчанию использовать StorageFormat.PARQUET
-- Добавить конфигурационный файл db.properties
-- Параметр: default.storage.format=PARQUET
+Файлы: diesel/ParquetReader.java, diesel/SelectQuery.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 67: Обработка ошибок при миграции
+### Промпт 85: Статистика использования кэша
 ```
-Добавь в ParquetMigrationTool:
-- Rollback при ошибке миграции
-- Логирование ошибок в migration.log
-- Отчёт: successful/failed tables
-- Recovery mode: продолжить с места падения
+Собирай detailed статистику:
+1. Per-query cache performance (hit/miss/ttl)
+2. Per-table invalidation frequency
+3. Recommendation: "Table USERS is modified frequently, consider reducing cache TTL"
+
+Файлы: diesel/QueryCache.java, diesel/CacheStatistics.java (новый)
+Приоритет: LOW
 ```
 
-### Промпт 68: Поддержка partitioned tables в Parquet
+### Промпт 86: Настройка Database.java для Parquet by default
 ```
-Реализуй partitioning:
-CREATE TABLE logs (...) PARTITION BY (year, month)
-WITH (storage_format='PARQUET');
+Для новых таблиц по умолчанию используй Parquet если:
+1. Таблица >100K строк (estimated)
+2. Query pattern: больше SELECT чем INSERT/UPDATE
+3. Columns >10 (columnar эффективнее)
 
-Структура:
-logs/
-  year=2024/
-    month=01/data.parquet
-    month=02/data.parquet
-  year=2025/
-    month=01/data.parquet
+Иначе используй row-based storage.
+Файлы: diesel/Database.java, diesel/TableFactory.java (новый)
+Приоритет: LOW
 ```
 
-### Промпт 69: Оптимизация Dictionary encoding для строк
+### Промпт 87: Обработка ошибок при миграции
 ```
-Включи dictionary encoding в ParquetWriter:
-- Для STRING колонок автоматически
-- Для low-cardinality колонок (status, gender, etc.)
+При конвертации table → Parquet:
+1. Валидируй данные перед записью (no nulls в NOT NULL columns)
+2. Rollback при ошибке: оставь original table intact
+3. Логгируй прогресс: "Migrated 50% of rows..."
 
-Это даст дополнительное сжатие 2-3x для строковых данных.
+Файлы: diesel/ParquetMigrationJob.java (новый)
+Приоритет: MEDIUM
 ```
 
-### Промпт 70: Compression tuning (ZSTD levels)
+### Промпт 88: Поддержка partitioned tables в Parquet
 ```
-Добавь настройку уровня сжатия ZSTD:
-- Level 1: fastest, lower compression
-- Level 3: balanced (default)
-- Level 9: best compression, slower
+Расширь поддержку partitioning:
+1. Multi-level partitioning: date=.../category=.../data.parquet
+2. Dynamic partition discovery: scan directory structure
+3. Partition maintenance: DROP OLD PARTITIONS command
 
-Benchmark разные уровни для разных workload.
+Файлы: diesel/PartitionedTable.java
+Приоритет: LOW
 ```
 
-### Промпт 71: Row group size tuning
+### Промпт 89: Оптимизация Dictionary encoding для строк
 ```
-Добавь настройку row group size:
-- Small (32MB): better for random access
-- Medium (128MB): balanced (default)
-- Large (512MB): better for sequential scan
+Для string колонок с low cardinality:
+1. Dictionary encoding: map strings → integers
+2. Храни dictionary в metadata
+3. Decode только при необходимости (projection)
 
-Benchmark для разных patterns доступа.
+Файлы: diesel/ParquetWriter.java
+Приоритет: LOW
 ```
 
-### Промпт 72: Column statistics в Parquet metadata
+### Промпт 90: Compression tuning (ZSTD levels)
 ```
-Включи min/max statistics для каждой колонки:
-- Используется для predicate pushdown
-- Bloom filters для fast lookups
+ZSTD поддерживает уровни сжатия 1-22:
+1. Level 1-3: fast compression, good ratio (default)
+2. Level 4-9: balanced
+3. Level 10-22: slow compression, best ratio (archival)
 
-Это ускорит WHERE queries на 10-100x.
+Добавь настройку уровня в table options.
+Файлы: diesel/ParquetWriter.java
+Приоритет: LOW
 ```
 
-### Промпт 73: Bloom filters для Parquet
+### Промпт 91: Row group size tuning
 ```
-Добавь bloom filters для high-cardinality колонок:
-CREATE INDEX idx_email ON users(email) 
-WITH (bloom_filter=true);
+Parquet row group size влияет на performance:
+1. Small groups (1MB): better pruning, more overhead
+2. Large groups (128MB): less overhead, worse pruning
+3. Default: 128MB, configurable per table
 
-Bloom filter хранится в Parquet metadata.
-Ускоряет point lookups (WHERE email='...').
+Файлы: diesel/ParquetWriter.java
+Приоритет: LOW
 ```
 
-### Промпт 74: Query Cache warm-up strategy
+### Промпт 92: Column statistics в Parquet metadata
 ```
-Реализуй cache warm-up при старте DB:
-- Load frequent queries from history
-- Execute them to populate cache
-- Особенно полезно после restart
+Включи сбор статистики для всех колонок:
+1. Min, max, null count, distinct count (approximate)
+2. Используй для query optimization
+3. Обновляй statistics при дописке данных
 
-Конфигурация:
-cache.warmup.enabled=true
-cache.warmup.queries=SELECT * FROM users WHERE id=?,...
+Файлы: diesel/ParquetWriter.java
+Приоритет: MEDIUM
 ```
 
-### Промпт 75: Adaptive TTL для кэша
+### Промпт 93: Bloom filters для Parquet
 ```
-Реализуй adaptive TTL:
-- Frequent queries → longer TTL
-- Rare queries → shorter TTL
-- Based on access pattern analysis
+Добавь bloom filters для быстрого lookup:
+1. Один bloom filter на колонку на row group
+2. Fast check: value possibly present / definitely absent
+3. Особенно полезно для JOIN conditions
 
-Это увеличит hit ratio на 10-20%.
+Файлы: diesel/ParquetWriter.java, diesel/ParquetReader.java
+Приоритет: LOW
 ```
 
-### Промпт 76: Query normalization improvements
+### Промпт 94: Query Cache warm-up strategy
 ```
-Улучши нормализацию SQL для лучшего cache hit:
-- Remove extra whitespace
-- Normalize keywords (UPPER)
-- Sort AND/OR conditions (commutative)
-- Normalize literals (1 vs 1.0)
+При старте сервера:
+1. Load frequently used queries from persistent cache
+2. Execute them proactively to warm up cache
+3. Configurable list of "important" queries
 
-Пример:
-"SELECT * FROM users WHERE id=1 AND name='John'"
-"SELECT * FROM users WHERE name='John' AND id=1"
-→ одинаковый normalized key
+Файлы: diesel/DatabaseServer.java, diesel/CacheWarmer.java (новый)
+Приоритет: LOW
 ```
 
-### Промпт 77: Parameterized query caching
+### Промпт 95: Adaptive TTL для кэша
 ```
-Поддержи parameterized queries в кэше:
-- Ключ: normalized SQL с placeholders
-- Значение: map of params → result
+Dynamic TTL based on table activity:
+1. High write frequency → shorter TTL
+2. Read-only tables → longer TTL (or infinite)
+3. Learn from access patterns (ML-based?)
 
-Пример:
-SELECT * FROM users WHERE id=?
-params={1: 100} → result1
-params={1: 200} → result2
+Файлы: diesel/QueryCache.java
+Приоритет: LOW
+```
 
-Это увеличит hit ratio для prepared statements.
+### Промпт 96: Query normalization improvements
 ```
+Улучши нормализацию SQL для cache key:
+1. Ignore whitespace differences
+2. Normalize identifier case (uppercase)
+3. Replace literals with placeholders: WHERE age = 25 → WHERE age = ?
+4. Sort IN-list values: IN(3,1,2) → IN(1,2,3)
 
-### Промпт 78: Multi-level cache (L1/L2)
+Файлы: diesel/QueryNormalizer.java (новый)
+Приоритет: MEDIUM
 ```
-Реализуй two-level cache:
-- L1: in-memory, small (100 entries), very fast
-- L2: disk-backed, large (10000 entries), slower
 
-Hot queries stay in L1, cold queries evicted to L2.
+### Промпт 97: Parameterized query caching
 ```
+Кэшируй параметризованные запросы:
+1. Key: normalized SQL с placeholders
+2. Value: Map<parameter_values, result>
+3. Ограничь количество parameter combinations (max 100 per query)
 
-### Промпт 79: Cache persistence across restarts
+Файлы: diesel/QueryCache.java
+Приоритет: MEDIUM
 ```
-Сохраняй кэш на диск при shutdown:
-- Serialize cache entries to cache.dat
-- Load on startup
 
-Это избежит cache cold-start problem.
+### Промпт 98: Multi-level cache (L1/L2)
 ```
+Двухуровневый кэш:
+1. L1: in-memory, fast, small (100 entries, TTL 1 min)
+2. L2: off-heap/disk, slower, large (10000 entries, TTL 1 hour)
+3. L1 miss → check L2 → execute query
 
-### Промпт 80: Final integration testing and documentation
+Файлы: diesel/QueryCache.java, diesel/OffHeapCache.java (новый)
+Приоритет: LOW
 ```
-Проведи comprehensive testing:
-1. Unit tests для ParquetTableStorage
-2. Unit tests для QueryCache
-3. Integration tests (Parquet + Cache together)
-4. Performance benchmarks (before/after)
-5. Stress tests (concurrent queries)
 
-Обнови документацию:
-- README.md с новыми features
-- MIGRATION_GUIDE.md для пользователей CSV
-- PERFORMANCE_TUNING.md с best practices
+### Промпт 99: Cache persistence across restarts
 ```
+Персистентный кэш:
+1. Save cache to disk on graceful shutdown
+2. Load cache on startup
+3. Check validity: table schema unchanged?
 
----
+Файлы: diesel/QueryCache.java, diesel/CachePersistence.java (новый)
+Приоритет: LOW
+```
 
-## Итого: 80 промптов
-- Раздел 1: 20 промптов (SonarQube fixes)
-- Раздел 2: 20 промптов (Performance & Architecture fixes)
-- Раздел 3: 40 промптов (Parquet + Query Cache implementation)
+### Промпт 100: Final integration testing and documentation
+```
+Финальные задачи:
+1. Full regression test suite (все тесты проходят)
+2. Performance benchmark: сравнение before/after оптимизаций
+3. Documentation update: новые фичи, ограничения, best practices
+4. Release notes для версии 3.0
 
-Ожидаемый эффект после выполнения всех промптов:
-- Количество проблем SonarQube: 908 → <200 (-78%)
-- Производительность чтения: +300-500%
-- Производительность записи: +50-100% (для bulk operations)
-- Размер файлов: -75% (сжатие Parquet)
-- Cache hit ratio: 80-95% для read-heavy workload
-- Общая оценка: 80% improvement при 20% effort (принцип Парето)
+Файлы: CHANGELOG.md, README.md, analytics/PERFORMANCE_REPORT.md
+Приоритет: HIGH
+```
