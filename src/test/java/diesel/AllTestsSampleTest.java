@@ -12,6 +12,7 @@ import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
@@ -220,7 +221,7 @@ public class AllTestsSampleTest {
 
         for (int i = 1; i <= RECORD_COUNT; i++) {
             String date = DATE_FORMATTER.format(new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)));
-            BigDecimal balance = new BigDecimal(100 + (i % 9000)).setScale(2, BigDecimal.ROUND_HALF_UP);
+            BigDecimal balance = new BigDecimal(100 + (i % 9000)).setScale(2, RoundingMode.HALF_UP);
 
             String userQuery = String.format(Locale.US,
                     "INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE, DATE_FIELD, ACTIVE, PRECISION) VALUES ('CODE%d', 'User%d', %d, %s, '%s', %s, %f)",
@@ -234,7 +235,7 @@ public class AllTestsSampleTest {
 
             String transQuery = String.format(Locale.US,
                     "INSERT INTO TRANSACTIONS (USER_ID, TRANS_DATE, AMOUNT) VALUES (%d, '%s', %s)",
-                    i, date, new BigDecimal(50 + (i % 500)).setScale(2, BigDecimal.ROUND_HALF_UP));
+                    i, date, new BigDecimal(50 + (i % 500)).setScale(2, RoundingMode.HALF_UP));
             database.executeQuery(transQuery, null);
 
             String detailQuery = String.format(Locale.US,

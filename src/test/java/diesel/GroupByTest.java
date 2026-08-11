@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Date;
 import java.text.SimpleDateFormat;
 import java.util.Locale;
@@ -84,7 +85,7 @@ public class GroupByTest {
                     "INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE, BYTE_FIELD, SHORT_FIELD, FLOAT_FIELD, DOUBLE_FIELD, CHAR_FIELD, DATE_FIELD) " +
                             "VALUES ('CODE%d', 'User%d', %d, %s, %d, %d, %f, %f, '%c', '%s')",
                     i, i, 18 + (  i % 82),
-                    new BigDecimal(100 + (i % 9000)).setScale(2, BigDecimal.ROUND_HALF_UP),
+                    new BigDecimal(100 + (i % 9000)).setScale(2, RoundingMode.HALF_UP),
                     (byte) (i % 127), (short) (i % 32767), (float) (i % 1000) / 10.0, (double) (i % 1000) / 10.0,
                     (char) ('A' + (i % 26)),
                     DATE_FORMATTER.format(new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)))

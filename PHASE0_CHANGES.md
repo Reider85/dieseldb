@@ -131,5 +131,11 @@ This document describes all features and improvements implemented in Phase 0 of 
 - Subquery IN caching reduced non-correlated IN subquery from ~1250ms to ~200ms.
 - **Benchmark report**: `PerformanceTest` writes `benchmark_report.md` with average/min/max/stddev timings (ms) for INSERT, UPDATE, TRANSACTION, READ_UNCOMMITTED, TRUE-condition and SELECT queries (also logged via SLF4J).
 
+## 18. Java 17 & 21 (LTS) Compatibility
+
+- Project compiles to Java 17 bytecode (`maven.compiler.release=17`), verified under both JDK 17 and JDK 21 LTS.
+- No deprecated APIs used: `BigDecimal.ROUND_HALF_UP` replaced with `RoundingMode.HALF_UP` (identical semantics) in `SelectQuery.java` and 10 test classes.
+- CI matrix builds with JDK 17 and JDK 21 (`.github/workflows/ci.yml`).
+
 ## Version
-Phase 0 complete at version **2.7.57** (see Changelog.md).
+Phase 0 complete at version **2.7.59** (see Changelog.md).

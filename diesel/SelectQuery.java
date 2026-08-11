@@ -1,6 +1,7 @@
 package diesel;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -425,7 +426,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (count == 0) {
                 return null;
             }
-            BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, BigDecimal.ROUND_HALF_UP);
+            BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, RoundingMode.HALF_UP);
             Class<?> columnType = combinedColumnTypes.get(columnKey);
             if (columnType == Float.class) {
                 return avg.floatValue();
