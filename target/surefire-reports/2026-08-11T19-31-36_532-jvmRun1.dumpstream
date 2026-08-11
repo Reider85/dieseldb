@@ -1,0 +1,15 @@
+# Created at 2026-08-11T19:32:11.550
+Corrupted channel by directly writing to native stream in forked JVM 1. Stream '#'.
+
+# Created at 2026-08-11T19:32:11.571
+Corrupted channel by directly writing to native stream in forked JVM 1. Stream '# There is insufficient memory for the Java Runtime Environment to continue.'.
+
+# Created at 2026-08-11T19:32:11.576
+Corrupted channel by directly writing to native stream in forked JVM 1. Stream '# Native memory allocation (mmap) failed to map 190070784 bytes. Error detail: committing reserved memory.'.
+
+# Created at 2026-08-11T19:32:11.592
+Corrupted channel by directly writing to native stream in forked JVM 1. Stream '# An error report file with more information is saved as:'.
+
+# Created at 2026-08-11T19:32:11.656
+Corrupted channel by directly writing to native stream in forked JVM 1. Stream '# /workspace/hs_err_pid1813.log'.
+

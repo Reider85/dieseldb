@@ -1,0 +1,17 @@
+diesel/PerformanceTest.class
+diesel/SubqueriesTest.class
+diesel/JoinTest.class
+diesel/LikeTest.class
+diesel/PersistenceTest.class
+diesel/GroupByTest.class
+diesel/AliasesTest.class
+diesel/DatabaseSmokeTest.class
+diesel/SocketTimeoutTest.class
+diesel/InTest.class
+diesel/Phase0IntegrationTest.class
+diesel/OrderByTest.class
+diesel/ServerConnectionLimitTest.class
+diesel/AllTestsSampleTest.class
+diesel/QuantitativeTest.class
+diesel/GracefulShutdownTest.class
+diesel/AdvancedTest.class

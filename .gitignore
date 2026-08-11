@@ -1,3 +1,8 @@
-target/
-*.class
-*.jar
+```
+# Logs and temp files
+*.log
+hs_err_pid*.log
+
+# Data files
+*.csv
+```
