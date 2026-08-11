@@ -1,15 +1,16 @@
 package diesel;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.*;
 import java.net.*;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.logging.Logger;
-import java.util.logging.Level;
 
 public class DatabaseClient {
-    private static final Logger LOGGER = Logger.getLogger(DatabaseClient.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DatabaseClient.class);
     private final String host;
     private final int port;
     private Socket socket;
@@ -28,9 +29,9 @@ public class DatabaseClient {
             socket = new Socket(host, port);
             out = new ObjectOutputStream(socket.getOutputStream());
             in = new ObjectInputStream(socket.getInputStream());
-            LOGGER.log(Level.INFO, "Connected to server at {0}:{1}", new Object[]{host, port});
+            LOGGER.info("Connected to server at " + host + ":" + port);
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to connect to server: {0}", e.getMessage());
+            LOGGER.error("Failed to connect to server: {}", e.getMessage());
             throw new RuntimeException("Connection failed: " + e.getMessage());
         }
     }
@@ -48,14 +49,13 @@ public class DatabaseClient {
                 transactionId = null;
             }
             if (result instanceof String && ((String) result).startsWith("Error: ")) {
-                LOGGER.log(Level.SEVERE, "Server error for query '{0}': {1}", new Object[]{normalizedQuery, result});
+                LOGGER.error("Server error for query '{}': {}", normalizedQuery, result);
                 throw new RuntimeException((String) result);
             }
-            LOGGER.log(Level.INFO, "Query executed: {0}, Result: {1}", new Object[]{normalizedQuery, result});
+            LOGGER.info("Query executed: {}, Result: {}", normalizedQuery, result);
             return result;
         } catch (IOException | ClassNotFoundException e) {
-            LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
-                    new Object[]{query, e.getMessage()});
+            LOGGER.error("Query execution failed: {}, Error: {}", query, e.getMessage());
             throw new RuntimeException("Query failed: " + e.getMessage());
         }
     }
@@ -67,9 +67,9 @@ public class DatabaseClient {
             if (in != null) in.close();
             if (out != null) out.close();
             if (socket != null) socket.close();
-            LOGGER.log(Level.INFO, "Disconnected from server");
+            LOGGER.info("Disconnected from server");
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Error disconnecting from server: {0}", e.getMessage());
+            LOGGER.error("Error disconnecting from server: {}", e.getMessage());
         }
     }
 
@@ -82,7 +82,7 @@ public class DatabaseClient {
             try {
                 client.executeQuery("SET TRANSACTION ISOLATION LEVEL READ_UNCOMMITTED");
             } catch (RuntimeException e) {
-                LOGGER.log(Level.WARNING, "Failed to set isolation level: {0}. Continuing with default.", e.getMessage());
+                LOGGER.warn("Failed to set isolation level: {}. Continuing with default.", e.getMessage());
             }
 
             client.executeQuery("BEGIN TRANSACTION");
@@ -111,22 +111,22 @@ public class DatabaseClient {
             if (result instanceof List) {
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> rows = (List<Map<String, Object>>) result;
-                System.out.println("Query Results:");
+                LOGGER.info("Query Results:");
                 for (Map<String, Object> row : rows) {
-                    System.out.println(row);
+                    LOGGER.info(row.toString());
                 }
             }
 
             client.executeQuery("COMMIT TRANSACTION");
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Client error: {0}", e.getMessage());
+            LOGGER.error("Client error: {}", e.getMessage());
             e.printStackTrace();
             try {
                 if (client.transactionId != null) {
                     client.executeQuery("ROLLBACK TRANSACTION");
                 }
             } catch (Exception rollbackEx) {
-                LOGGER.log(Level.SEVERE, "Rollback failed: {0}", rollbackEx.getMessage());
+                LOGGER.error("Rollback failed: {}", rollbackEx.getMessage());
             }
         } finally {
             client.disconnect();

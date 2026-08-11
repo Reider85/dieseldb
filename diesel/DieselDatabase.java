@@ -1,13 +1,16 @@
 package diesel;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.*;
-import java.util.logging.Logger;
-import java.util.logging.Level;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
+import java.util.UUID;
 
 public class DieselDatabase {
-    private static final Logger LOGGER = Logger.getLogger(DieselDatabase.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DieselDatabase.class);
     private static final String CONFIG_FILE = "config.properties";
 
     // Load configuration and return Properties object
@@ -15,13 +18,13 @@ public class DieselDatabase {
         Properties props = new Properties();
         try (InputStream input = DieselDatabase.class.getClassLoader().getResourceAsStream(CONFIG_FILE)) {
             if (input == null) {
-                LOGGER.log(Level.SEVERE, "Configuration file {0} not found", CONFIG_FILE);
+                LOGGER.error("Configuration file {} not found", CONFIG_FILE);
                 return props; // Return empty Properties
             }
             props.load(input);
             return props;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to load {0}: {1}", new Object[]{CONFIG_FILE, e.getMessage()});
+            LOGGER.error("Failed to load {}: {}", CONFIG_FILE, e.getMessage());
             return props; // Return empty Properties
         }
     }
@@ -32,7 +35,7 @@ public class DieselDatabase {
         try {
             return IsolationLevel.valueOf(isolationLevelStr);
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.SEVERE, "Invalid isolation level {0} in {1}, using default READ_UNCOMMITTED", new Object[]{isolationLevelStr, CONFIG_FILE});
+            LOGGER.error("Invalid isolation level {} in {}, using default READ_UNCOMMITTED", isolationLevelStr, CONFIG_FILE);
             return IsolationLevel.READ_UNCOMMITTED;
         }
     }
@@ -40,18 +43,18 @@ public class DieselDatabase {
     public static void main(String[] args) {
         // Load and log configuration parameters
         Properties config = loadConfig();
-        LOGGER.log(Level.INFO, "Configuration parameters loaded from {0}:", CONFIG_FILE);
+        LOGGER.info("Configuration parameters loaded from " + CONFIG_FILE + ":");
         if (config.isEmpty()) {
-            LOGGER.log(Level.WARNING, "No configuration parameters found in {0}", CONFIG_FILE);
+            LOGGER.warn("No configuration parameters found in {}", CONFIG_FILE);
         } else {
             config.forEach((key, value) ->
-                    LOGGER.log(Level.INFO, "Config: {0} = {1}", new Object[]{key, value}));
+                    LOGGER.info("Config: {} = {}", key, value));
         }
 
         // Initialize database and transaction
         Database db = new Database();
         IsolationLevel isolationLevel = getIsolationLevel(config);
-        LOGGER.log(Level.INFO, "Starting transaction with isolation level: {0}", isolationLevel);
+        LOGGER.info("Starting transaction with isolation level: {}", isolationLevel);
         UUID transactionId = db.beginTransaction(isolationLevel); // Start transaction with configured isolation level
         try {
             // Create table with types
@@ -69,25 +72,25 @@ public class DieselDatabase {
             // Update data via query
             String updateQuery = "UPDATE USERS SET INITIAL = 'C' WHERE AGE < 30";
             db.executeQuery(updateQuery, transactionId);
-            LOGGER.log(Level.INFO, "Update query executed: {0}", new Object[]{updateQuery});
+            LOGGER.info("Update query executed: {}", updateQuery);
 
             // Execute select query to verify update
             String selectQuery = "SELECT NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, LAST_ACTION, USER_SCORE, LEVEL, RANK, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID FROM USERS WHERE AGE > 25";
             List<Map<String, Object>> result = (List<Map<String, Object>>) db.executeQuery(selectQuery, transactionId);
-            LOGGER.log(Level.INFO, "Query Result: {0}", new Object[]{result});
-            System.out.println("Query Result after Update:");
+            LOGGER.info("Query Result: {}", result);
+            LOGGER.info("Query Result after Update:");
             for (Map<String, Object> row : result) {
-                System.out.println(row);
+                LOGGER.info(row.toString());
             }
 
             // Commit transaction
             db.executeQuery("COMMIT TRANSACTION", transactionId);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Main execution failed: {0}", new Object[]{e.getMessage()});
+            LOGGER.error("Main execution failed: {}", e.getMessage());
             try {
                 db.executeQuery("ROLLBACK TRANSACTION", transactionId);
             } catch (Exception rollbackEx) {
-                LOGGER.log(Level.SEVERE, "Rollback failed: {0}", rollbackEx.getMessage());
+                LOGGER.error("Rollback failed: {}", rollbackEx.getMessage());
             }
             e.printStackTrace();
         }

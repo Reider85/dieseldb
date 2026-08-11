@@ -1,11 +1,15 @@
 package diesel;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 public class SqlLexer {
+    private static final Logger LOGGER = LoggerFactory.getLogger(SqlLexer.class);
 
     public enum TokenType {
         KEYWORD,
@@ -214,15 +218,15 @@ public class SqlLexer {
                 "SELECT COUNT(*) FROM t WHERE name IS NULL"
         };
         for (String query : queries) {
-            System.out.println("Query: " + query);
+            LOGGER.info("Query: {}", query);
             try {
                 for (Token token : lexer.tokenize(query)) {
-                    System.out.println("  " + token);
+                    LOGGER.info("  {}", token);
                 }
             } catch (IllegalArgumentException e) {
-                System.out.println("  ERROR: " + e.getMessage());
+                LOGGER.error("  ERROR: {}", e.getMessage());
             }
-            System.out.println();
+            LOGGER.info("");
         }
     }
 }
