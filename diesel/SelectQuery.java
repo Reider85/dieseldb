@@ -156,6 +156,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
 
+        reorderJoinsForNestedLoop(tables);
+
         try {
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
             if (mainRows == null) {
@@ -172,6 +174,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
 
                 boolean useHashJoin = canUseHashJoin(join, combinedColumnTypes);
+                if (hasOrInOnConditions(join)) {
+                    LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
+                }
                 LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
 
                 if (useHashJoin) {
@@ -244,12 +249,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
 
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
+                        Map<String, Object> evalRow = flattenJoinedRow(currentJoin);
                         for (int j = 0; j < joinRows.size(); j++) {
                             Map<String, Object> rightRow = joinRows.get(j);
                             Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
                             newRow.put(join.tableName, rightRow);
 
-                            Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
                             if (join.joinType == QueryParser.JoinType.CROSS) {
                                 newJoinedRows.add(newRow);
                             } else if (join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null) {
@@ -261,7 +266,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 }
                                 newJoinedRows.add(newRow);
                             } else if (!join.onConditions.isEmpty()) {
-                                if (!evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
+                                flattenInto(evalRow, rightRow, join.tableName);
+                                if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
                                     continue;
                                 }
                                 newJoinedRows.add(newRow);
@@ -604,6 +610,43 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return hasEquality;
     }
 
+    /**
+     * Returns true when any ON condition of the join uses a logical OR
+     * conjunction. Such joins fall back to the nested loop and may produce
+     * a large (cross-product-like) result set.
+     *
+     * @param join the join clause to inspect
+     * @return true if an OR conjunction is present in the ON conditions
+     */
+    private boolean hasOrInOnConditions(QueryParser.JoinInfo join) {
+        if (join.onConditions == null) {
+            return false;
+        }
+        return join.onConditions.stream()
+                .anyMatch(c -> c.conjunction != null && "OR".equalsIgnoreCase(c.conjunction));
+    }
+
+    /**
+     * Reorders multi-join clauses so that smaller tables are joined first,
+     * keeping intermediate nested-loop results small. Only applied when every
+     * join is an inner-style join, where join order does not change the
+     * result set.
+     *
+     * @param tables the resolved table map (table name to table)
+     */
+    private void reorderJoinsForNestedLoop(Map<String, Table> tables) {
+        if (joins.size() <= 1) {
+            return;
+        }
+        boolean allInner = joins.stream().allMatch(j -> j.joinType == QueryParser.JoinType.INNER
+                || j.joinType == QueryParser.JoinType.LEFT_INNER
+                || j.joinType == QueryParser.JoinType.RIGHT_INNER);
+        if (!allInner) {
+            return;
+        }
+        joins.sort(Comparator.comparingInt(j -> tables.get(j.tableName).getRows().size()));
+    }
+
     private String resolveJoinColumn(QueryParser.Condition condition, String tableName) {
         String leftTable = normalizeColumnName(condition.column, mainTableName).split("\\.")[0];
         String rightTable = normalizeColumnName(condition.rightColumn, mainTableName).split("\\.")[0];
@@ -687,13 +730,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Map<String, Object> flattened = new HashMap<>();
         for (Map.Entry<String, Map<String, Object>> tableEntry : joinedRow.entrySet()) {
             String tableName = tableEntry.getKey();
-            Map<String, Object> row = tableEntry.getValue();
-            for (Map.Entry<String, Object> columnEntry : row.entrySet()) {
-                String columnName = tableName + "." + columnEntry.getKey();
-                flattened.put(columnName, columnEntry.getValue());
-            }
+            flattenInto(flattened, tableEntry.getValue(), tableName);
         }
         return flattened;
+    }
+
+    private void flattenInto(Map<String, Object> target, Map<String, Object> row, String tableName) {
+        for (Map.Entry<String, Object> columnEntry : row.entrySet()) {
+            target.put(tableName + "." + columnEntry.getKey(), columnEntry.getValue());
+        }
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
@@ -715,18 +760,38 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
             if (conjunction != null && conjunction.equalsIgnoreCase("OR")) {
-                if (ThreeValuedLogic.orIsDetermined(result)) {
-                    continue;
-                }
-                result = ThreeValuedLogic.or(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
+                result = shortCircuitOrCondition(result, condition, row, combinedColumnTypes, tables);
             } else if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
-                if (ThreeValuedLogic.andIsDetermined(result)) {
-                    continue;
-                }
-                result = ThreeValuedLogic.and(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
+                result = shortCircuitAndCondition(result, condition, row, combinedColumnTypes, tables);
             }
         }
         return result;
+    }
+
+    /**
+     * Short-circuits an OR-fold: once the accumulated result is TRUE the
+     * remaining operands are not evaluated, otherwise the next condition is
+     * folded in with three-valued OR semantics.
+     */
+    private Boolean shortCircuitOrCondition(Boolean result, QueryParser.Condition condition, Map<String, Object> row,
+                                            Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+        if (ThreeValuedLogic.orIsDetermined(result)) {
+            return result;
+        }
+        return ThreeValuedLogic.or(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
+    }
+
+    /**
+     * Short-circuits an AND-fold: once the accumulated result is FALSE the
+     * remaining operands are not evaluated, otherwise the next condition is
+     * folded in with three-valued AND semantics.
+     */
+    private Boolean shortCircuitAndCondition(Boolean result, QueryParser.Condition condition, Map<String, Object> row,
+                                             Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+        if (ThreeValuedLogic.andIsDetermined(result)) {
+            return result;
+        }
+        return ThreeValuedLogic.and(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
     }
 
     private Boolean evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
