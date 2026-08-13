@@ -11,6 +11,15 @@ import java.util.logging.Level;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * Executes a SELECT statement against a table: applies WHERE conditions
@@ -39,6 +48,36 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final Map<String, Object> scalarSubQueryCache = new HashMap<>();
     private final Map<String, List<Object>> inSubQueryCache = new HashMap<>();
     private final UUID transactionId; // Changed from String to UUID
+
+    /**
+     * Maximum number of result rows kept in memory before the engine spills
+     * overflow rows to temporary files on disk. Loaded once from
+     * {@code config.properties} ({@code max.inmemory.rows}), defaulting to 10000.
+     * Streaming (spill-to-disk joins and external sort) only kicks in when an
+     * estimated result set exceeds this threshold, so small queries keep their
+     * current in-memory behaviour unchanged.
+     */
+    private static final long MAX_IN_MEMORY_ROWS;
+
+    static {
+        long value = 10000;
+        try {
+            File configFile = new File("config.properties");
+            if (configFile.exists()) {
+                java.util.Properties props = new java.util.Properties();
+                try (FileInputStream fis = new FileInputStream(configFile)) {
+                    props.load(fis);
+                }
+                String raw = props.getProperty("max.inmemory.rows");
+                if (raw != null) {
+                    value = Long.parseLong(raw.trim());
+                }
+            }
+        } catch (Exception ignored) {
+            // Keep the default on any config error
+        }
+        MAX_IN_MEMORY_ROWS = value;
+    }
 
     /**
      * Creates a SELECT query over the given table, without subqueries in the
@@ -169,6 +208,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 joinedRows.add(new HashMap<>() {{ put(mainTableName, mainRow); }});
             }
 
+            boolean useStreaming = shouldUseStreaming(mainRows, tables);
+            StreamingResultIterator spill = null;
+            List<Map<String, Object>> spillFallback = null;
+            boolean[] spillActive = { false };
+            if (useStreaming) {
+                spillFallback = new ArrayList<>();
+                try {
+                    spill = new StreamingResultIterator(MAX_IN_MEMORY_ROWS);
+                    spillActive[0] = true;
+                } catch (IOException e) {
+                    spillActive[0] = false;
+                }
+            }
+
             for (QueryParser.JoinInfo join : joins) {
                 Table joinTable = tables.get(join.tableName);
                 List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
@@ -232,7 +285,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     newRow.put(buildTableName, buildRow);
                                     Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
                                     if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
-                                        newJoinedRows.add(newRow);
+                                        if (useStreaming && join == joins.get(joins.size() - 1)) {
+                                            spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                        } else {
+                                            newJoinedRows.add(newRow);
+                                        }
                                     }
                                 }
                             }
@@ -256,7 +313,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             newRow.put(join.tableName, rightRow);
 
                             if (join.joinType == QueryParser.JoinType.CROSS) {
-                                newJoinedRows.add(newRow);
+                                if (useStreaming && join == joins.get(joins.size() - 1)) {
+                                    spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                } else {
+                                    newJoinedRows.add(newRow);
+                                }
                             } else if (join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null) {
                                 Map<String, Object> leftRow = currentJoin.get(join.originalTable);
                                 Object leftValue = leftRow.get(normalizeColumnKey(join.leftColumn, join.originalTable));
@@ -264,13 +325,21 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 if (!valuesEqual(leftValue, rightValue)) {
                                     continue;
                                 }
-                                newJoinedRows.add(newRow);
+                                if (useStreaming && join == joins.get(joins.size() - 1)) {
+                                    spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                } else {
+                                    newJoinedRows.add(newRow);
+                                }
                             } else if (!join.onConditions.isEmpty()) {
                                 flattenInto(evalRow, rightRow, join.tableName);
                                 if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
                                     continue;
                                 }
-                                newJoinedRows.add(newRow);
+                                if (useStreaming && join == joins.get(joins.size() - 1)) {
+                                    spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                } else {
+                                    newJoinedRows.add(newRow);
+                                }
                                 LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
                                         new Object[]{join.tableName, join.onConditions});
                             } else {
@@ -286,11 +355,31 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 joinedRows = newJoinedRows;
             }
 
-            List<Map<String, Object>> filteredRows = new ArrayList<>();
-            for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
-                Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
-                if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes, tables)) {
-                    filteredRows.add(flattenedRow);
+            List<Map<String, Object>> filteredRows;
+            if (useStreaming) {
+                filteredRows = new ArrayList<>();
+                if (spillActive[0] && spill != null) {
+                    try {
+                        spill.finishWriting();
+                        while (spill.hasNext()) {
+                            filteredRows.add(spill.next());
+                        }
+                    } catch (IOException e) {
+                        spillActive[0] = false;
+                    } finally {
+                        spill.close();
+                    }
+                }
+                if (!spillActive[0] && spillFallback != null) {
+                    filteredRows = spillFallback;
+                }
+            } else {
+                filteredRows = new ArrayList<>();
+                for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
+                    Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
+                    if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes, tables)) {
+                        filteredRows.add(flattenedRow);
+                    }
                 }
             }
 
@@ -347,8 +436,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
 
             if (!orderBy.isEmpty()) {
-                finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
-                LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses", orderBy.size());
+                if (useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS) {
+                    finalRows = externalSort(finalRows, orderBy, MAX_IN_MEMORY_ROWS);
+                } else {
+                    finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
+                }
+                LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses (streaming={1})",
+                        new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
             }
 
             int rowsSkipped = (offset != null) ? offset : 0;
@@ -381,6 +475,385 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
                 lock.readLock().unlock();
+            }
+        }
+    }
+
+    private boolean shouldUseStreaming(List<Map<String, Object>> mainRows, Map<String, Table> tables) {
+        if (joins.isEmpty()) {
+            return false;
+        }
+        long estimate = mainRows.size();
+        for (QueryParser.JoinInfo join : joins) {
+            Table joinTable = tables.get(join.tableName);
+            if (joinTable == null) {
+                continue;
+            }
+            long joinTableSize = joinTable.getRows().size();
+            if (join.joinType == QueryParser.JoinType.CROSS || hasOrInOnConditions(join)) {
+                estimate *= joinTableSize;
+            }
+        }
+        return estimate > MAX_IN_MEMORY_ROWS;
+    }
+
+    private void spillFilteredRow(StreamingResultIterator spill, boolean[] spillActive,
+                                  List<Map<String, Object>> fallback,
+                                  Map<String, Map<String, Object>> newRow,
+                                  List<QueryParser.Condition> whereConditions,
+                                  Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+        Map<String, Object> flattened = flattenJoinedRow(newRow);
+        if (!whereConditions.isEmpty() && !evaluateConditions(flattened, whereConditions, combinedColumnTypes, tables)) {
+            return;
+        }
+        if (spillActive[0] && spill != null) {
+            try {
+                spill.add(flattened);
+                return;
+            } catch (IOException e) {
+                spillActive[0] = false;
+                try {
+                    spill.finishWriting();
+                    while (spill.hasNext()) {
+                        fallback.add(spill.next());
+                    }
+                } catch (IOException ignored) {
+                } finally {
+                    spill.close();
+                }
+            }
+        }
+        fallback.add(flattened);
+    }
+
+    private List<Map<String, Object>> externalSort(List<Map<String, Object>> rows,
+                                                   List<QueryParser.OrderByInfo> orderBy,
+                                                   long maxInMemoryRows) {
+        if (rows.size() <= maxInMemoryRows) {
+            rows.sort((r1, r2) -> compareRows(r1, r2, orderBy));
+            return rows;
+        }
+        Comparator<Map<String, Object>> comparator = (r1, r2) -> compareRows(r1, r2, orderBy);
+        int chunkSize = (int) maxInMemoryRows;
+        List<File> chunkFiles = new ArrayList<>();
+        try {
+            for (int start = 0; start < rows.size(); start += chunkSize) {
+                int end = Math.min(rows.size(), start + chunkSize);
+                List<Map<String, Object>> chunk = new ArrayList<>(rows.subList(start, end));
+                chunk.sort(comparator);
+                File chunkFile = Files.createTempFile("diesel-sort-", ".tmp").toFile();
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(chunkFile))) {
+                    for (Map<String, Object> row : chunk) {
+                        writer.write(serializeRow(row));
+                        writer.newLine();
+                    }
+                }
+                chunkFiles.add(chunkFile);
+            }
+            List<BufferedReader> readers = new ArrayList<>();
+            PriorityQueue<ChunkEntry> pq = new PriorityQueue<>(
+                    Comparator.comparing((ChunkEntry e) -> e.row, comparator).thenComparingInt(e -> e.chunkIndex));
+            for (int ci = 0; ci < chunkFiles.size(); ci++) {
+                BufferedReader reader = new BufferedReader(new FileReader(chunkFiles.get(ci)));
+                readers.add(reader);
+                String line = reader.readLine();
+                if (line != null) {
+                    pq.offer(new ChunkEntry(parseRowLine(line), ci, reader));
+                }
+            }
+            List<Map<String, Object>> sorted = new ArrayList<>(rows.size());
+            while (!pq.isEmpty()) {
+                ChunkEntry entry = pq.poll();
+                sorted.add(entry.row);
+                String line = entry.reader.readLine();
+                if (line != null) {
+                    pq.offer(new ChunkEntry(parseRowLine(line), entry.chunkIndex, entry.reader));
+                }
+            }
+            for (BufferedReader reader : readers) {
+                try {
+                    reader.close();
+                } catch (IOException ignored) {
+                }
+            }
+            return sorted;
+        } catch (IOException e) {
+            rows.sort(comparator);
+            return rows;
+        } finally {
+            for (File f : chunkFiles) {
+                try {
+                    Files.deleteIfExists(f.toPath());
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    private static String serializeRow(Map<String, Object> row) {
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append(entry.getKey()).append('=');
+            appendValue(sb, entry.getValue());
+        }
+        return sb.toString();
+    }
+
+    private static void appendValue(StringBuilder sb, Object value) {
+        if (value == null) {
+            sb.append('n');
+            return;
+        }
+        if (value instanceof String s) {
+            sb.append('s').append('"').append(s.replace("\"", "\"\"")).append('"');
+            return;
+        }
+        if (value instanceof Character c) {
+            sb.append('c').append('"').append(c.toString().replace("\"", "\"\"")).append('"');
+            return;
+        }
+        if (value instanceof Integer) {
+            sb.append('i').append(value);
+            return;
+        }
+        if (value instanceof Long) {
+            sb.append('l').append(value);
+            return;
+        }
+        if (value instanceof Boolean) {
+            sb.append('b').append(value.toString().toUpperCase());
+            return;
+        }
+        if (value instanceof BigDecimal) {
+            sb.append('m').append(value.toString());
+            return;
+        }
+        if (value instanceof Float) {
+            sb.append('f').append(value);
+            return;
+        }
+        if (value instanceof Double) {
+            sb.append('d').append(value);
+            return;
+        }
+        if (value instanceof LocalDate) {
+            sb.append('t').append(value.toString());
+            return;
+        }
+        if (value instanceof LocalDateTime) {
+            sb.append('z').append(value.toString());
+            return;
+        }
+        if (value instanceof UUID) {
+            sb.append('u').append(value.toString());
+            return;
+        }
+        sb.append('s').append('"').append(String.valueOf(value).replace("\"", "\"\"")).append('"');
+    }
+
+    private static Map<String, Object> parseRowLine(String line) {
+        Map<String, Object> row = new HashMap<>();
+        int i = 0;
+        int len = line.length();
+        while (i < len) {
+            int eq = line.indexOf('=', i);
+            if (eq < 0) {
+                break;
+            }
+            String key = line.substring(i, eq);
+            i = eq + 1;
+            char type = line.charAt(i);
+            i++;
+            String value;
+            if (type == 's' || type == 'c') {
+                i++;
+                StringBuilder vb = new StringBuilder();
+                while (i < len) {
+                    char c = line.charAt(i);
+                    if (c == '"') {
+                        if (i + 1 < len && line.charAt(i + 1) == '"') {
+                            vb.append('"');
+                            i += 2;
+                            continue;
+                        }
+                        i++;
+                        break;
+                    }
+                    vb.append(c);
+                    i++;
+                }
+                if (i < len && line.charAt(i) == ',') {
+                    i++;
+                }
+                value = vb.toString();
+            } else {
+                int comma = line.indexOf(',', i);
+                if (comma < 0) {
+                    value = line.substring(i);
+                    i = len;
+                } else {
+                    value = line.substring(i, comma);
+                    i = comma + 1;
+                }
+            }
+            row.put(key, decodeValue(type, value));
+        }
+        return row;
+    }
+
+    private static Object decodeValue(char type, String value) {
+        switch (type) {
+            case 'n':
+                return null;
+            case 's':
+                return value;
+            case 'c':
+                return value.isEmpty() ? ' ' : value.charAt(0);
+            case 'i':
+                return Integer.parseInt(value);
+            case 'l':
+                return Long.parseLong(value);
+            case 'b':
+                return Boolean.parseBoolean(value);
+            case 'm':
+                return new BigDecimal(value);
+            case 'f':
+                return Float.parseFloat(value);
+            case 'd':
+                return Double.parseDouble(value);
+            case 't':
+                return LocalDate.parse(value);
+            case 'z':
+                return LocalDateTime.parse(value);
+            case 'u':
+                return UUID.fromString(value);
+            default:
+                return value;
+        }
+    }
+
+    private static final class ChunkEntry {
+        private final Map<String, Object> row;
+        private final int chunkIndex;
+        private final BufferedReader reader;
+
+        ChunkEntry(Map<String, Object> row, int chunkIndex, BufferedReader reader) {
+            this.row = row;
+            this.chunkIndex = chunkIndex;
+            this.reader = reader;
+        }
+    }
+
+    private static final class StreamingResultIterator implements Iterator<Map<String, Object>>, AutoCloseable {
+        private final long maxInMemoryRows;
+        private final List<Map<String, Object>> inMemory = new ArrayList<>();
+        private File spillFile;
+        private BufferedWriter writer;
+        private BufferedReader reader;
+        private boolean spilled = false;
+        private boolean writing = true;
+        private int readIndex = 0;
+        private String peekedLine;
+        private boolean peeked = false;
+
+        StreamingResultIterator(long maxInMemoryRows) throws IOException {
+            this.maxInMemoryRows = maxInMemoryRows;
+        }
+
+        void add(Map<String, Object> row) throws IOException {
+            if (!writing) {
+                throw new IllegalStateException("iterator is closed for writing");
+            }
+            if (!spilled) {
+                if (inMemory.size() < maxInMemoryRows) {
+                    inMemory.add(row);
+                    return;
+                }
+                spillFile = Files.createTempFile("diesel-spill-", ".tmp").toFile();
+                writer = new BufferedWriter(new FileWriter(spillFile));
+                for (Map<String, Object> r : inMemory) {
+                    writer.write(serializeRow(r));
+                    writer.newLine();
+                }
+                inMemory.clear();
+                spilled = true;
+            }
+            writer.write(serializeRow(row));
+            writer.newLine();
+        }
+
+        void finishWriting() throws IOException {
+            if (writer != null) {
+                writer.flush();
+                writer.close();
+                writer = null;
+            }
+            if (spilled && reader == null && spillFile != null) {
+                reader = new BufferedReader(new FileReader(spillFile));
+            }
+            writing = false;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (writing) {
+                throw new IllegalStateException("iterator still writing");
+            }
+            if (!spilled) {
+                return readIndex < inMemory.size();
+            }
+            if (!peeked) {
+                try {
+                    peekedLine = reader.readLine();
+                } catch (IOException e) {
+                    peekedLine = null;
+                }
+                peeked = true;
+            }
+            return peekedLine != null;
+        }
+
+        @Override
+        public Map<String, Object> next() {
+            if (writing) {
+                throw new IllegalStateException("iterator still writing");
+            }
+            if (!spilled) {
+                return inMemory.get(readIndex++);
+            }
+            if (!peeked) {
+                hasNext();
+            }
+            String line = peekedLine;
+            peeked = false;
+            peekedLine = null;
+            return parseRowLine(line);
+        }
+
+        @Override
+        public void close() {
+            try {
+                if (writer != null) {
+                    writer.close();
+                }
+            } catch (IOException ignored) {
+            }
+            try {
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (IOException ignored) {
+            }
+            if (spillFile != null) {
+                try {
+                    Files.deleteIfExists(spillFile.toPath());
+                } catch (IOException ignored) {
+                }
             }
         }
     }
