@@ -4,16 +4,19 @@ import diesel.Database;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class InTest {
 
-    private static final int RECORD_COUNT = 10;
+    private static final int RECORD_COUNT = 600;
 
     private Database database;
 
@@ -38,6 +41,11 @@ public class InTest {
             database.executeQuery(query, null);
         }
         table.saveToFile("USERS");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> runSelect(String sql) {
+        return (List<Map<String, Object>>) database.executeQuery(sql, null);
     }
 
     @Test
@@ -353,5 +361,65 @@ public class InTest {
             database.executeQuery("DELETE FROM USERS WHERE ID IN (500, 501, 502) OR BALANCE > 5000", null);
             database.getTable("USERS").saveToFile("USERS");
         }, "deleteWithWhereInPrimaryKeyOrNonIndexed");
+    }
+
+    @Test
+    void selectWithWhereInSingleValueReturnsExpectedRows() {
+        // AGE = 18 + (i % 82) for i in 1..600 -> AGE 50 appears at i = 32,114,196,278,360,442,524 (7 rows)
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50)");
+        assertEquals(7, rows.size(), "AGE IN (50) must return exactly 7 rows");
+    }
+
+    @Test
+    void selectWithWhereInThreeValuesReturnsExpectedRows() {
+        // AGE 50, 51, 52 each appear 7 times -> 21 rows total
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50, 51, 52)");
+        assertEquals(21, rows.size(), "AGE IN (50, 51, 52) must return exactly 21 rows");
+    }
+
+    @Test
+    void selectWithWhereInTenValuesReturnsExpectedRows() {
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50, 51, 52, 200, 201, 202, 203, 204, 205, 206)");
+        assertEquals(21, rows.size(), "10-value IN list must return exactly 21 rows");
+    }
+
+    @Test
+    void selectWithWhereInHundredValuesReturnsExpectedRows() {
+        StringBuilder sb = new StringBuilder("50, 51, 52");
+        for (int v = 0; v < 97; v++) {
+            sb.append(", ").append(1000 + v);
+        }
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (" + sb + ")");
+        assertEquals(21, rows.size(), "100-value IN list must return exactly 21 rows");
+    }
+
+    @Test
+    void selectWithWhereInNullInList() {
+        // NULL in the IN list is skipped (SQL 3VL: x IN (50, NULL) -> true only for 50)
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50, NULL, 52)");
+        assertEquals(14, rows.size(), "IN list containing NULL must ignore the NULL and match 50 and 52");
+    }
+
+    @Test
+    void selectWithWhereNotInReturnsExpectedRows() {
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE NOT IN (50, 51, 52)");
+        assertEquals(579, rows.size(), "NOT IN (50, 51, 52) must return 600 - 21 = 579 rows");
+    }
+
+    @Test
+    void selectWithWhereInAndOrKeepsAllRows() {
+        // Two IN branches OR-ed together must keep every row that matches either branch
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50) OR AGE IN (51, 52)");
+        assertEquals(21, rows.size(), "IN (50) OR IN (51, 52) must return 21 rows");
+
+        List<Map<String, Object>> andRows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50, 51, 52) AND BALANCE > 100");
+        assertEquals(21, andRows.size(), "IN + AND must return 21 rows");
+    }
+
+    @Test
+    void selectWithWhereInValuesAreAllChecked() {
+        // The index pre-filter must not drop rows of a later OR branch: verify distinct result rows
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (52) OR AGE IN (51) OR AGE IN (50)");
+        assertEquals(21, rows.size(), "All three IN values must be checked, not just the first");
     }
 }

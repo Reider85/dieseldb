@@ -2,17 +2,17 @@
 
 | Operation            | Details                                      |   Avg (ms) |   Min (ms) |   Max (ms) | StdDev (ms) |
 |----------------------|----------------------------------------------|------------|------------|------------|-------------|
-| INSERT               | 10 records                                         |     15,354 |     11,919 |     25,454 |      3,813 |
-| UPDATE               | 10 records                                         |     31,536 |     24,072 |     41,741 |      4,927 |
-| TRANSACTION          | 10 records                                         |     61,665 |     53,170 |     84,862 |      9,108 |
-| READ_UNCOMMITTED     | 10 records                                         |     62,671 |     57,300 |     73,977 |      5,460 |
-| TRUE_CONDITION       | SELECT NAME, AGE FROM USERS WHERE ACTIVE = TRUE    |      0,631 |      0,419 |      2,149 |      0,508 |
-| SELECT               | SELECT NAME, AGE, ACTIVE FROM USERS WHERE AGE = .. |      0,489 |      0,363 |      0,875 |      0,190 |
-| SELECT               | SELECT NAME, AGE, SCORE FROM USERS WHERE SCORE >.. |      0,419 |      0,378 |      0,468 |      0,032 |
-| SELECT               | SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE <.. |      0,585 |      0,504 |      0,960 |      0,133 |
-| SELECT               | SELECT NAME, AGE, LEVEL FROM USERS WHERE AGE > 4.. |      0,684 |      0,507 |      1,348 |      0,247 |
-| SELECT               | SELECT NAME, AGE, RANK FROM USERS WHERE NOT AGE .. |      0,633 |      0,385 |      2,236 |      0,537 |
-| SELECT               | SELECT NAME, AGE, PRECISION FROM USERS WHERE (AG.. |      1,197 |      0,889 |      2,875 |      0,582 |
-| SELECT               | SELECT NAME, AGE, INITIAL FROM USERS WHERE (AGE .. |      0,880 |      0,837 |      0,960 |      0,033 |
-| SELECT               | SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'C.. |      0,760 |      0,427 |      2,626 |      0,656 |
-| SELECT               | SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'C.. |      0,831 |      0,527 |      3,339 |      0,836 |
+| INSERT               | 10 records                                         |     15,431 |     11,633 |     20,274 |      2,551 |
+| UPDATE               | 10 records                                         |     25,023 |     22,899 |     27,216 |      1,369 |
+| TRANSACTION          | 10 records                                         |     44,430 |     40,381 |     49,947 |      2,576 |
+| READ_UNCOMMITTED     | 10 records                                         |     60,639 |     57,313 |     62,549 |      1,605 |
+| TRUE_CONDITION       | SELECT NAME, AGE FROM USERS WHERE ACTIVE = TRUE    |      0,314 |      0,268 |      0,417 |      0,044 |
+| SELECT               | SELECT NAME, AGE, ACTIVE FROM USERS WHERE AGE = .. |      0,256 |      0,236 |      0,286 |      0,012 |
+| SELECT               | SELECT NAME, AGE, SCORE FROM USERS WHERE SCORE >.. |      0,431 |      0,300 |      0,852 |      0,161 |
+| SELECT               | SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE <.. |      0,460 |      0,362 |      0,681 |      0,100 |
+| SELECT               | SELECT NAME, AGE, LEVEL FROM USERS WHERE AGE > 4.. |      0,765 |      0,448 |      2,053 |      0,503 |
+| SELECT               | SELECT NAME, AGE, RANK FROM USERS WHERE NOT AGE .. |      0,300 |      0,282 |      0,371 |      0,025 |
+| SELECT               | SELECT NAME, AGE, PRECISION FROM USERS WHERE (AG.. |      0,606 |      0,593 |      0,641 |      0,015 |
+| SELECT               | SELECT NAME, AGE, INITIAL FROM USERS WHERE (AGE .. |      0,634 |      0,612 |      0,703 |      0,026 |
+| SELECT               | SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'C.. |      0,443 |      0,332 |      0,894 |      0,178 |
+| SELECT               | SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'C.. |      0,596 |      0,470 |      0,779 |      0,123 |

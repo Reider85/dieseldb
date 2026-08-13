@@ -1194,8 +1194,23 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return null;
         }
 
+        // An index pre-filter must never be applied when conditions are OR-combined:
+        // the pre-filter uses the first indexed condition only, so rows that match
+        // a later OR branch would be dropped before the WHERE evaluation runs.
+        for (QueryParser.Condition condition : conditions) {
+            if (condition.conjunction != null && "OR".equalsIgnoreCase(condition.conjunction)) {
+                return null;
+            }
+        }
+
         for (QueryParser.Condition condition : conditions) {
             if (condition.isGrouped() || condition.isColumnComparison()) {
+                continue;
+            }
+
+            // Negated conditions (NOT IN / NOT EQUALS / ...) must not use the index
+            // pre-filter: the index lookup returns the rows the condition rejects.
+            if (condition.not) {
                 continue;
             }
 
