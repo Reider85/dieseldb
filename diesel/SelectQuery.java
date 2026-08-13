@@ -11,13 +11,20 @@ import java.util.logging.Level;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -305,6 +312,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         joinRows = joinTable.getRows();
                     }
 
+                    String rightPrefix = join.tableName + ".";
+                    List<String> rightSrcKeys;
+                    List<String> rightTargetKeys;
+                    if (!joinRows.isEmpty()) {
+                        rightSrcKeys = new ArrayList<>(joinRows.get(0).keySet());
+                        rightTargetKeys = new ArrayList<>(rightSrcKeys.size());
+                        for (String sk : rightSrcKeys) {
+                            rightTargetKeys.add(rightPrefix + sk);
+                        }
+                    } else {
+                        rightSrcKeys = Collections.emptyList();
+                        rightTargetKeys = Collections.emptyList();
+                    }
+
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
                         Map<String, Object> evalRow = flattenJoinedRow(currentJoin);
                         for (int j = 0; j < joinRows.size(); j++) {
@@ -331,7 +352,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     newJoinedRows.add(newRow);
                                 }
                             } else if (!join.onConditions.isEmpty()) {
-                                flattenInto(evalRow, rightRow, join.tableName);
+                                for (int k = 0; k < rightSrcKeys.size(); k++) {
+                                    evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
+                                }
                                 if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
                                     continue;
                                 }
@@ -541,24 +564,25 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 List<Map<String, Object>> chunk = new ArrayList<>(rows.subList(start, end));
                 chunk.sort(comparator);
                 File chunkFile = Files.createTempFile("diesel-sort-", ".tmp").toFile();
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(chunkFile), 1024 * 1024)) {
+                try (DataOutputStream writer = new DataOutputStream(
+                        new BufferedOutputStream(new FileOutputStream(chunkFile), 1024 * 1024))) {
                     for (Map<String, Object> row : chunk) {
-                        writer.write(serializeRow(row));
-                        writer.newLine();
+                        writeBinaryRow(writer, row);
                     }
                 }
                 chunkFiles.add(chunkFile);
             }
             int numChunks = chunkFiles.size();
-            BufferedReader[] readers = new BufferedReader[numChunks];
+            DataInputStream[] readers = new DataInputStream[numChunks];
             ChunkEntry[] heap = new ChunkEntry[numChunks + 1];
             int heapSize = 0;
             for (int ci = 0; ci < numChunks; ci++) {
-                BufferedReader reader = new BufferedReader(new FileReader(chunkFiles.get(ci)), 1024 * 1024);
+                DataInputStream reader = new DataInputStream(
+                        new BufferedInputStream(new FileInputStream(chunkFiles.get(ci)), 1024 * 1024));
                 readers[ci] = reader;
-                String line = reader.readLine();
-                if (line != null) {
-                    heap[++heapSize] = new ChunkEntry(parseRowLine(line), ci, reader);
+                Map<String, Object> row = readBinaryRow(reader);
+                if (row != null) {
+                    heap[++heapSize] = new ChunkEntry(row, ci, reader);
                     siftUpHeap(heap, heapSize, comparator);
                 }
             }
@@ -566,9 +590,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             while (heapSize > 0) {
                 ChunkEntry min = heap[1];
                 sorted.add(min.row);
-                String line = min.reader.readLine();
-                if (line != null) {
-                    heap[1] = new ChunkEntry(parseRowLine(line), min.chunkIndex, min.reader);
+                Map<String, Object> row = readBinaryRow(min.reader);
+                if (row != null) {
+                    heap[1] = new ChunkEntry(row, min.chunkIndex, min.reader);
                     siftDownHeap(heap, heapSize, comparator);
                 } else {
                     heap[1] = heap[heapSize];
@@ -578,7 +602,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
                 }
             }
-            for (BufferedReader reader : readers) {
+            for (DataInputStream reader : readers) {
                 try {
                     reader.close();
                 } catch (IOException ignored) {
@@ -622,11 +646,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return;
         }
         if (value instanceof String s) {
-            sb.append('s').append('"').append(s.replace("\"", "\"\"")).append('"');
+            sb.append('s');
+            appendEscaped(sb, s);
             return;
         }
         if (value instanceof Character c) {
-            sb.append('c').append('"').append(c.toString().replace("\"", "\"\"")).append('"');
+            sb.append('c');
+            appendEscaped(sb, c.toString());
             return;
         }
         if (value instanceof Integer) {
@@ -665,13 +691,163 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             sb.append('u').append(value.toString());
             return;
         }
-        sb.append('s').append('"').append(String.valueOf(value).replace("\"", "\"\"")).append('"');
+        sb.append('s');
+        appendEscaped(sb, String.valueOf(value));
+    }
+
+    private static void appendEscaped(StringBuilder sb, String s) {
+        sb.append('"');
+        int q = s.indexOf('"');
+        if (q < 0) {
+            sb.append(s);
+        } else {
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '"') {
+                    sb.append('"').append('"');
+                } else {
+                    sb.append(c);
+                }
+            }
+        }
+        sb.append('"');
+    }
+
+    private static final byte BIN_NULL = 0;
+    private static final byte BIN_STRING = 1;
+    private static final byte BIN_CHAR = 2;
+    private static final byte BIN_INT = 3;
+    private static final byte BIN_LONG = 4;
+    private static final byte BIN_BOOL = 5;
+    private static final byte BIN_BIGDEC = 6;
+    private static final byte BIN_FLOAT = 7;
+    private static final byte BIN_DOUBLE = 8;
+    private static final byte BIN_DATE = 9;
+    private static final byte BIN_DATETIME = 10;
+    private static final byte BIN_UUID = 11;
+
+    private static void writeBinaryRow(DataOutputStream out, Map<String, Object> row) throws IOException {
+        out.writeInt(row.size());
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            out.writeUTF(entry.getKey());
+            Object v = entry.getValue();
+            if (v == null) {
+                out.writeByte(BIN_NULL);
+            } else if (v instanceof String s) {
+                out.writeByte(BIN_STRING);
+                writeBinaryUtf(out, s);
+            } else if (v instanceof Character c) {
+                out.writeByte(BIN_CHAR);
+                out.writeChar(c);
+            } else if (v instanceof Integer) {
+                out.writeByte(BIN_INT);
+                out.writeInt((Integer) v);
+            } else if (v instanceof Long) {
+                out.writeByte(BIN_LONG);
+                out.writeLong((Long) v);
+            } else if (v instanceof Boolean) {
+                out.writeByte(BIN_BOOL);
+                out.writeBoolean((Boolean) v);
+            } else if (v instanceof BigDecimal) {
+                out.writeByte(BIN_BIGDEC);
+                writeBinaryUtf(out, v.toString());
+            } else if (v instanceof Float) {
+                out.writeByte(BIN_FLOAT);
+                out.writeFloat((Float) v);
+            } else if (v instanceof Double) {
+                out.writeByte(BIN_DOUBLE);
+                out.writeDouble((Double) v);
+            } else if (v instanceof LocalDate) {
+                out.writeByte(BIN_DATE);
+                writeBinaryUtf(out, v.toString());
+            } else if (v instanceof LocalDateTime) {
+                out.writeByte(BIN_DATETIME);
+                writeBinaryUtf(out, v.toString());
+            } else if (v instanceof UUID) {
+                out.writeByte(BIN_UUID);
+                writeBinaryUtf(out, v.toString());
+            } else {
+                out.writeByte(BIN_STRING);
+                writeBinaryUtf(out, String.valueOf(v));
+            }
+        }
+    }
+
+    private static void writeBinaryUtf(DataOutputStream out, String s) throws IOException {
+        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        out.writeInt(b.length);
+        out.write(b);
+    }
+
+    private static Map<String, Object> readBinaryRow(DataInputStream in) throws IOException {
+        int n;
+        try {
+            n = in.readInt();
+        } catch (EOFException eof) {
+            return null;
+        }
+        Map<String, Object> row = new HashMap<>(n);
+        for (int k = 0; k < n; k++) {
+            String key = in.readUTF();
+            byte t = in.readByte();
+            Object v;
+            switch (t) {
+                case BIN_NULL:
+                    v = null;
+                    break;
+                case BIN_STRING:
+                    v = readBinaryUtf(in);
+                    break;
+                case BIN_CHAR:
+                    v = in.readChar();
+                    break;
+                case BIN_INT:
+                    v = in.readInt();
+                    break;
+                case BIN_LONG:
+                    v = in.readLong();
+                    break;
+                case BIN_BOOL:
+                    v = in.readBoolean();
+                    break;
+                case BIN_BIGDEC:
+                    v = new BigDecimal(readBinaryUtf(in));
+                    break;
+                case BIN_FLOAT:
+                    v = in.readFloat();
+                    break;
+                case BIN_DOUBLE:
+                    v = in.readDouble();
+                    break;
+                case BIN_DATE:
+                    v = LocalDate.parse(readBinaryUtf(in));
+                    break;
+                case BIN_DATETIME:
+                    v = LocalDateTime.parse(readBinaryUtf(in));
+                    break;
+                case BIN_UUID:
+                    v = UUID.fromString(readBinaryUtf(in));
+                    break;
+                default:
+                    v = readBinaryUtf(in);
+            }
+            row.put(key, v);
+        }
+        return row;
+    }
+
+    private static String readBinaryUtf(DataInputStream in) throws IOException {
+        int len = in.readInt();
+        byte[] b = new byte[len];
+        in.readFully(b);
+        return new String(b, StandardCharsets.UTF_8);
     }
 
     private static Map<String, Object> parseRowLine(String line) {
         Map<String, Object> row = new HashMap<>(Math.max(4, line.length() / 16));
         int len = line.length();
         int i = 0;
+        StringBuilder vb = new StringBuilder();
         while (i < len) {
             int eq = line.indexOf('=', i);
             if (eq < 0) {
@@ -681,10 +857,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             i = eq + 1;
             char type = line.charAt(i);
             i++;
-            String value;
             if (type == 's' || type == 'c') {
                 i++;
-                StringBuilder vb = new StringBuilder();
+                vb.setLength(0);
                 while (i < len) {
                     char c = line.charAt(i);
                     if (c == '"') {
@@ -702,51 +877,79 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 if (i < len && line.charAt(i) == ',') {
                     i++;
                 }
-                value = vb.toString();
+                if (type == 'c') {
+                    row.put(key, vb.length() == 0 ? ' ' : vb.charAt(0));
+                } else {
+                    row.put(key, vb.toString());
+                }
             } else {
                 int start = i;
                 while (i < len && line.charAt(i) != ',') {
                     i++;
                 }
-                value = line.substring(start, i);
+                int end = i;
                 if (i < len) {
                     i++;
                 }
+                row.put(key, decodeValue(type, line, start, end));
             }
-            row.put(key, decodeValue(type, value));
         }
         return row;
     }
 
-    private static Object decodeValue(char type, String value) {
+    private static Object decodeValue(char type, String line, int start, int end) {
         switch (type) {
             case 'n':
                 return null;
-            case 's':
-                return value;
-            case 'c':
-                return value.isEmpty() ? ' ' : value.charAt(0);
             case 'i':
-                return Integer.parseInt(value);
+                return parseIntRange(line, start, end);
             case 'l':
-                return Long.parseLong(value);
+                return parseLongRange(line, start, end);
             case 'b':
-                return Boolean.parseBoolean(value);
+                return Boolean.parseBoolean(line.substring(start, end));
             case 'm':
-                return new BigDecimal(value);
+                return new BigDecimal(line.substring(start, end));
             case 'f':
-                return Float.parseFloat(value);
+                return Float.parseFloat(line.substring(start, end));
             case 'd':
-                return Double.parseDouble(value);
+                return Double.parseDouble(line.substring(start, end));
             case 't':
-                return LocalDate.parse(value);
+                return LocalDate.parse(line.substring(start, end));
             case 'z':
-                return LocalDateTime.parse(value);
+                return LocalDateTime.parse(line.substring(start, end));
             case 'u':
-                return UUID.fromString(value);
+                return UUID.fromString(line.substring(start, end));
             default:
-                return value;
+                return line.substring(start, end);
         }
+    }
+
+    private static int parseIntRange(String s, int start, int end) {
+        int result = 0;
+        boolean neg = false;
+        int p = start;
+        if (p < end && s.charAt(p) == '-') {
+            neg = true;
+            p++;
+        }
+        for (; p < end; p++) {
+            result = result * 10 + (s.charAt(p) - '0');
+        }
+        return neg ? -result : result;
+    }
+
+    private static long parseLongRange(String s, int start, int end) {
+        long result = 0;
+        boolean neg = false;
+        int p = start;
+        if (p < end && s.charAt(p) == '-') {
+            neg = true;
+            p++;
+        }
+        for (; p < end; p++) {
+            result = result * 10 + (s.charAt(p) - '0');
+        }
+        return neg ? -result : result;
     }
 
     private static void siftUpHeap(ChunkEntry[] heap, int idx, Comparator<Map<String, Object>> comparator) {
@@ -787,9 +990,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final class ChunkEntry {
         private final Map<String, Object> row;
         private final int chunkIndex;
-        private final BufferedReader reader;
+        private final DataInputStream reader;
 
-        ChunkEntry(Map<String, Object> row, int chunkIndex, BufferedReader reader) {
+        ChunkEntry(Map<String, Object> row, int chunkIndex, DataInputStream reader) {
             this.row = row;
             this.chunkIndex = chunkIndex;
             this.reader = reader;
