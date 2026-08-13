@@ -428,6 +428,15 @@ class Table implements Serializable {
     }
 
     /**
+     * Returns the current number of rows without copying the row list.
+     *
+     * @return the row count
+     */
+    public int rowCount() {
+        return rows.size();
+    }
+
+    /**
      * Returns a copy of the table rows.
      *
      * @return the row list

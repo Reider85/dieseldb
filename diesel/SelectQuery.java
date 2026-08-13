@@ -57,6 +57,21 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final UUID transactionId; // Changed from String to UUID
 
     /**
+     * Memoizes {@code normalizeColumnName} results so the millions of
+     * repeated per-row normalizations in JOIN/WHERE hot loops collapse to a
+     * single hash lookup. The cache is cleared at the start of {@link #execute}
+     * because table aliases are resolved lazily during join setup.
+     */
+    private final Map<String, String> normalizeCache = new HashMap<>();
+
+    /**
+     * Pre-resolved row keys for each ORDER BY clause, so {@link #compareRows}
+     * never re-splits/rewrites column strings per comparison (external sort
+     * performs O(n log n) comparisons).
+     */
+    private final List<String> orderByKeys = new ArrayList<>();
+
+    /**
      * Maximum number of result rows kept in memory before the engine spills
      * overflow rows to temporary files on disk. Loaded once from
      * {@code config.properties} ({@code max.inmemory.rows}), defaulting to 10000.
@@ -203,6 +218,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         reorderJoinsForNestedLoop(tables);
+        normalizeCache.clear();
+        orderByKeys.clear();
+        orderByKeys.addAll(resolveOrderByKeys());
 
         try {
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
@@ -212,7 +230,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
             for (Map<String, Object> mainRow : mainRows) {
-                joinedRows.add(new HashMap<>() {{ put(mainTableName, mainRow); }});
+                Map<String, Map<String, Object>> wrapped = new HashMap<>(2);
+                wrapped.put(mainTableName, mainRow);
+                joinedRows.add(wrapped);
             }
 
             boolean useStreaming = shouldUseStreaming(mainRows, tables);
@@ -240,7 +260,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
 
                 if (useHashJoin) {
-                    Table buildTable = joinTable.getRows().size() <= mainRows.size() ? joinTable : tables.get(mainTableName);
+                    Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : tables.get(mainTableName);
                     Table probeTable = buildTable == joinTable ? tables.get(mainTableName) : joinTable;
                     String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
                     String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
@@ -263,9 +283,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     if (buildRows == null) {
                         buildRows = buildTable.getRows();
                     }
+                    String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
                     for (int i = 0; i < buildRows.size(); i++) {
                         Map<String, Object> row = buildRows.get(i);
-                        Object key = row.get(normalizeColumnKey(buildColumn, buildTableName));
+                        Object key = row.get(buildColumnKey);
                         if (key != null) {
                             hashTable.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
                             ReentrantReadWriteLock lock = buildTable.getRowLock(i);
@@ -281,21 +302,42 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         probeRows = probeTable.getRows();
                     }
 
+                    // When the ON clause is exactly one plain equality, the hash
+                    // match already guarantees the condition, so we skip the
+                    // flatten+evaluate round trip entirely.
+                    boolean onlyEquality = join.onConditions.size() == 1 && equalityCondition != null && !equalityCondition.not;
+                    boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
+                    String probeColumnKey = normalizeColumnKey(probeColumn, probeTableName);
+
                     for (Map<String, Object> probeRow : probeRows) {
-                        Object probeKey = probeRow.get(normalizeColumnKey(probeColumn, probeTableName));
+                        Object probeKey = probeRow.get(probeColumnKey);
                         if (probeKey != null) {
                             List<Map<String, Object>> matches = hashTable.get(probeKey);
                             if (matches != null) {
                                 for (Map<String, Object> buildRow : matches) {
-                                    Map<String, Map<String, Object>> newRow = new HashMap<>();
-                                    newRow.put(probeTableName, probeRow);
-                                    newRow.put(buildTableName, buildRow);
-                                    Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
-                                    if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
-                                        if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                            spillFilteredRow(spill, spillActive, spillFallback, flattenedRow, conditions, combinedColumnTypes, tables);
+                                    if (onlyEquality) {
+                                        if (lastStream) {
+                                            Map<String, Object> flatRow = new HashMap<>((probeRow.size() + buildRow.size()) * 4 / 3 + 1);
+                                            flattenInto(flatRow, probeRow, probeTableName);
+                                            flattenInto(flatRow, buildRow, buildTableName);
+                                            spillFilteredRow(spill, spillActive, spillFallback, flatRow, conditions, combinedColumnTypes, tables);
                                         } else {
+                                            Map<String, Map<String, Object>> newRow = new HashMap<>(2);
+                                            newRow.put(probeTableName, probeRow);
+                                            newRow.put(buildTableName, buildRow);
                                             newJoinedRows.add(newRow);
+                                        }
+                                    } else {
+                                        Map<String, Object> flattenedRow = flattenJoinedPair(probeRow, probeTableName, buildRow, buildTableName);
+                                        if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
+                                            if (lastStream) {
+                                                spillFilteredRow(spill, spillActive, spillFallback, flattenedRow, conditions, combinedColumnTypes, tables);
+                                            } else {
+                                                Map<String, Map<String, Object>> newRow = new HashMap<>(2);
+                                                newRow.put(probeTableName, probeRow);
+                                                newRow.put(buildTableName, buildRow);
+                                                newJoinedRows.add(newRow);
+                                            }
                                         }
                                     }
                                 }
@@ -326,52 +368,74 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         rightTargetKeys = Collections.emptyList();
                     }
 
+                    boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
+                    boolean equalsJoin = join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null;
+                    String leftJoinKey = equalsJoin ? normalizeColumnKey(join.leftColumn, join.originalTable) : null;
+                    String rightJoinKey = equalsJoin ? normalizeColumnKey(join.rightColumn, join.tableName) : null;
+
+                    // Row locks are keyed by row index, not by pair, so acquire
+                    // the whole join table's read locks once instead of once per
+                    // (outer x inner) pair.
+                    for (int j = 0; j < joinRows.size(); j++) {
+                        ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
+                        joinLock.readLock().lock();
+                        acquiredLocks.add(joinLock);
+                    }
+
                     for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
                         Map<String, Object> evalRow = flattenJoinedRow(currentJoin);
-                        for (int j = 0; j < joinRows.size(); j++) {
-                            Map<String, Object> rightRow = joinRows.get(j);
-                            Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
-                            newRow.put(join.tableName, rightRow);
-
-                            if (join.joinType == QueryParser.JoinType.CROSS) {
-                                if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                    spillFilteredRow(spill, spillActive, spillFallback, flattenJoinedRow(newRow), conditions, combinedColumnTypes, tables);
-                                } else {
-                                    newJoinedRows.add(newRow);
-                                }
-                            } else if (join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null) {
-                                Map<String, Object> leftRow = currentJoin.get(join.originalTable);
-                                Object leftValue = leftRow.get(normalizeColumnKey(join.leftColumn, join.originalTable));
-                                Object rightValue = rightRow.get(normalizeColumnKey(join.rightColumn, join.tableName));
-                                if (!valuesEqual(leftValue, rightValue)) {
-                                    continue;
-                                }
-                                if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                    spillFilteredRow(spill, spillActive, spillFallback, flattenJoinedRow(newRow), conditions, combinedColumnTypes, tables);
-                                } else {
-                                    newJoinedRows.add(newRow);
-                                }
-                            } else if (!join.onConditions.isEmpty()) {
+                        if (lastStream) {
+                            Map<String, Object> leftRow = equalsJoin ? currentJoin.get(join.originalTable) : null;
+                            Object leftValue = equalsJoin ? leftRow.get(leftJoinKey) : null;
+                            for (int j = 0; j < joinRows.size(); j++) {
+                                Map<String, Object> rightRow = joinRows.get(j);
+                                Map<String, Object> flatRow = new HashMap<>(evalRow.size() + rightSrcKeys.size() + 1);
+                                flatRow.putAll(evalRow);
                                 for (int k = 0; k < rightSrcKeys.size(); k++) {
-                                    evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
+                                    flatRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
                                 }
-                                if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
-                                    continue;
-                                }
-                                if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                    spillFilteredRow(spill, spillActive, spillFallback, evalRow, conditions, combinedColumnTypes, tables);
+                                boolean matches;
+                                if (join.joinType == QueryParser.JoinType.CROSS) {
+                                    matches = true;
+                                } else if (equalsJoin) {
+                                    matches = valuesEqual(leftValue, rightRow.get(rightJoinKey));
+                                } else if (!join.onConditions.isEmpty()) {
+                                    matches = evaluateConditions(flatRow, join.onConditions, combinedColumnTypes, tables);
                                 } else {
-                                    newJoinedRows.add(newRow);
+                                    throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
                                 }
-                                LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
-                                        new Object[]{join.tableName, join.onConditions});
-                            } else {
-                                throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
+                                if (matches) {
+                                    spillFilteredRow(spill, spillActive, spillFallback, flatRow, conditions, combinedColumnTypes, tables);
+                                }
                             }
+                        } else {
+                            for (int j = 0; j < joinRows.size(); j++) {
+                                Map<String, Object> rightRow = joinRows.get(j);
+                                Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
+                                newRow.put(join.tableName, rightRow);
 
-                            ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
-                            joinLock.readLock().lock();
-                            acquiredLocks.add(joinLock);
+                                if (join.joinType == QueryParser.JoinType.CROSS) {
+                                    newJoinedRows.add(newRow);
+                                } else if (equalsJoin) {
+                                    Map<String, Object> leftRow = currentJoin.get(join.originalTable);
+                                    if (!valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
+                                        continue;
+                                    }
+                                    newJoinedRows.add(newRow);
+                                } else if (!join.onConditions.isEmpty()) {
+                                    for (int k = 0; k < rightSrcKeys.size(); k++) {
+                                        evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
+                                    }
+                                    if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
+                                        continue;
+                                    }
+                                    newJoinedRows.add(newRow);
+                                    LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
+                                            new Object[]{join.tableName, join.onConditions});
+                                } else {
+                                    throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
+                                }
+                            }
                         }
                     }
                 }
@@ -512,7 +576,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (joinTable == null) {
                 continue;
             }
-            long joinTableSize = joinTable.getRows().size();
+            long joinTableSize = joinTable.rowCount();
             if (join.joinType == QueryParser.JoinType.CROSS || hasOrInOnConditions(join)) {
                 estimate *= joinTableSize;
             }
@@ -655,12 +719,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             appendEscaped(sb, c.toString());
             return;
         }
-        if (value instanceof Integer) {
-            sb.append('i').append(value);
+        if (value instanceof Integer i) {
+            sb.append('i').append(i.intValue());
             return;
         }
-        if (value instanceof Long) {
-            sb.append('l').append(value);
+        if (value instanceof Long l) {
+            sb.append('l').append(l.longValue());
             return;
         }
         if (value instanceof Boolean) {
@@ -1279,36 +1343,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
-        for (QueryParser.OrderByInfo order : orderBy) {
-            String column = order.column;
-            String normalizedColumn = null;
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-
-            for (String selectColumn : columns) {
-                String[] parts = selectColumn.trim().split("\\s+AS\\s+|\\s+", 2);
-                String columnAlias = parts.length > 1 ? parts[1].trim() : normalizeColumnKey(selectColumn, mainTableName);
-                if (unqualifiedColumn.equalsIgnoreCase(columnAlias)) {
-                    normalizedColumn = columnAlias;
-                    break;
-                }
-            }
-
-            if (normalizedColumn == null) {
-                for (String alias : tableAliases.keySet()) {
-                    if (column.equalsIgnoreCase(alias + "." + unqualifiedColumn)) {
-                        String tableName = tableAliases.get(alias);
-                        normalizedColumn = tableName + "." + unqualifiedColumn;
-                        break;
-                    }
-                }
-            }
-
-            if (normalizedColumn == null) {
-                normalizedColumn = normalizeColumnName(column, mainTableName);
-            }
-
-            Object value1 = row1.get(normalizedColumn);
-            Object value2 = row2.get(normalizedColumn);
+        for (int i = 0; i < orderBy.size(); i++) {
+            QueryParser.OrderByInfo order = orderBy.get(i);
+            Object value1 = row1.get(orderByKeys.get(i));
+            Object value2 = row2.get(orderByKeys.get(i));
 
             if (value1 == null && value2 == null) {
                 continue;
@@ -1326,6 +1364,46 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         return 0;
+    }
+
+    /**
+     * Resolves the flattened row key each ORDER BY clause reads, so the hot
+     * comparator never re-does alias/select-column resolution per comparison.
+     * Must be called after all table aliases have been registered.
+     *
+     * @return the resolved row keys, aligned with {@code orderBy}
+     */
+    private List<String> resolveOrderByKeys() {
+        List<String> keys = new ArrayList<>(orderBy.size());
+        for (QueryParser.OrderByInfo order : orderBy) {
+            String column = order.column;
+            String normalizedColumn = null;
+            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+
+            for (String selectColumn : columns) {
+                String[] parts = selectColumn.trim().split("\\s+AS\\s+|\\s+", 2);
+                String columnAlias = parts.length > 1 ? parts[1].trim() : normalizeColumnKey(selectColumn, mainTableName);
+                if (unqualifiedColumn.equalsIgnoreCase(columnAlias)) {
+                    normalizedColumn = columnAlias;
+                    break;
+                }
+            }
+
+            if (normalizedColumn == null) {
+                for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
+                    if (column.equalsIgnoreCase(aliasEntry.getKey() + "." + unqualifiedColumn)) {
+                        normalizedColumn = aliasEntry.getValue() + "." + unqualifiedColumn;
+                        break;
+                    }
+                }
+            }
+
+            if (normalizedColumn == null) {
+                normalizedColumn = normalizeColumnName(column, mainTableName);
+            }
+            keys.add(normalizedColumn);
+        }
+        return keys;
     }
 
     private boolean canUseHashJoin(QueryParser.JoinInfo join, Map<String, Class<?>> combinedColumnTypes) {
@@ -1380,7 +1458,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (!allInner) {
             return;
         }
-        joins.sort(Comparator.comparingInt(j -> tables.get(j.tableName).getRows().size()));
+        joins.sort(Comparator.comparingInt(j -> tables.get(j.tableName).rowCount()));
     }
 
     private String resolveJoinColumn(QueryParser.Condition condition, String tableName) {
@@ -1435,8 +1513,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                 if (!rowIndices.isEmpty()) {
                     List<Map<String, Object>> indexedRows = new ArrayList<>();
+                    int tableSize = table.rowCount();
                     for (int idx : rowIndices) {
-                        if (idx >= 0 && idx < table.getRows().size()) {
+                        if (idx >= 0 && idx < tableSize) {
                             indexedRows.add(table.getRows().get(idx));
                         }
                     }
@@ -1458,6 +1537,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return Math.abs(((Double) left) - ((Double) right)) < 1e-7;
         } else if (left instanceof BigDecimal && right instanceof BigDecimal) {
             return ((BigDecimal) left).compareTo((BigDecimal) right) == 0;
+        } else if (left.getClass() == right.getClass()) {
+            return left.equals(right);
         }
         return String.valueOf(left).equals(String.valueOf(right));
     }
@@ -1469,6 +1550,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             flattenInto(flattened, tableEntry.getValue(), tableName);
         }
         return flattened;
+    }
+
+    /**
+     * Flattens two plain table rows under their table prefixes into a single
+     * row map in one allocation. Used by the hash-join probe loop, which only
+     * ever deals with a (probe, build) pair.
+     */
+    private Map<String, Object> flattenJoinedPair(Map<String, Object> leftRow, String leftTable,
+                                                  Map<String, Object> rightRow, String rightTable) {
+        Map<String, Object> flat = new HashMap<>((leftRow.size() + rightRow.size()) * 4 / 3 + 1);
+        flattenInto(flat, leftRow, leftTable);
+        flattenInto(flat, rightRow, rightTable);
+        return flat;
     }
 
     private void flattenInto(Map<String, Object> target, Map<String, Object> row, String tableName) {
@@ -1657,6 +1751,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (left instanceof BigDecimal && right instanceof BigDecimal) {
                 return ((BigDecimal) left).compareTo((BigDecimal) right);
             }
+            // Fast paths for the common integral types: exact and allocation-free.
+            // Mixed integral types compare as long, matching decimal ordering.
+            if (isIntegral(left) && isIntegral(right)) {
+                return Long.compare(((Number) left).longValue(), ((Number) right).longValue());
+            }
             BigDecimal leftBD = new BigDecimal(left.toString());
             BigDecimal rightBD = new BigDecimal(right.toString());
             return leftBD.compareTo(rightBD);
@@ -1675,6 +1774,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         } else {
             throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
         }
+    }
+
+    private static boolean isIntegral(Object value) {
+        return value instanceof Integer || value instanceof Long
+                || value instanceof Short || value instanceof Byte;
     }
 
     private boolean likeComparison(Object value, Object pattern) {
@@ -1727,6 +1831,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private String normalizeColumnName(String column, String defaultTable) {
+        String cacheKey = defaultTable + "|" + column;
+        String cached = normalizeCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        String result = computeNormalizeColumnName(column, defaultTable);
+        normalizeCache.put(cacheKey, result);
+        return result;
+    }
+
+    private String computeNormalizeColumnName(String column, String defaultTable) {
         if (column.contains(".")) {
             String[] parts = column.split("\\.", 2);
             String prefix = parts[0].trim();
