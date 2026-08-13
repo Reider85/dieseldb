@@ -9,9 +9,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Date;
 import java.text.SimpleDateFormat;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class GroupByTest {
 
@@ -287,5 +290,49 @@ public class GroupByTest {
     @Test
     void selectSumCountBigDecimalJoinGroupByStringDate() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.NAME, PROFILES.PROFILE_DATE, SUM(USERS.BALANCE), COUNT(USERS.BALANCE) FROM USERS INNER JOIN PROFILES ON USERS.ID = PROFILES.USER_ID GROUP BY USERS.NAME, PROFILES.PROFILE_DATE ORDER BY PROFILES.PROFILE_DATE DESC", null), "selectSumCountBigDecimalJoinGroupByStringDate");
+    }
+
+    @Test
+    void groupByPrimaryKeyReturnsNUniqueGroups() {
+        List<?> result = (List<?>) database.executeQuery("SELECT ID FROM USERS GROUP BY ID", null);
+        assertEquals(RECORD_COUNT, result.size(), "GROUP BY primary key must return N rows (one per unique key)");
+        for (Object rowObj : result) {
+            Map<?, ?> row = (Map<?, ?>) rowObj;
+            assertEquals(true, row.containsKey("ID"), "GROUP BY result row must contain the group key column ID");
+        }
+    }
+
+    @Test
+    void groupByPrimaryKeyWithAggregatesReturnsNUniqueGroups() {
+        List<?> result = (List<?>) database.executeQuery("SELECT ID, COUNT(*) FROM USERS GROUP BY ID", null);
+        assertEquals(RECORD_COUNT, result.size(), "GROUP BY primary key with aggregates must return N rows");
+        for (Object rowObj : result) {
+            Map<?, ?> row = (Map<?, ?>) rowObj;
+            assertEquals(1L, row.get("COUNT(*)"), "each unique-ID group must aggregate exactly one row");
+        }
+    }
+
+    @Test
+    void groupByUniqueStringColumnReturnsNUniqueGroups() {
+        List<?> result = (List<?>) database.executeQuery("SELECT NAME FROM USERS GROUP BY NAME", null);
+        assertEquals(RECORD_COUNT, result.size(), "GROUP BY unique NAME column must return N rows");
+    }
+
+    @Test
+    void aggregatesAreComputedPerGroup() {
+        database.executeQuery("INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE, BYTE_FIELD, SHORT_FIELD, FLOAT_FIELD, DOUBLE_FIELD, CHAR_FIELD, DATE_FIELD) " +
+                "VALUES ('CODE99', 'User1', 99, 500.00, 1, 1, 1.0, 1.0, 'Z', '2020-01-01')", null);
+
+        List<?> result = (List<?>) database.executeQuery("SELECT NAME, COUNT(*), SUM(AGE), MIN(AGE), MAX(AGE) FROM USERS GROUP BY NAME ORDER BY NAME", null);
+        assertEquals(RECORD_COUNT, result.size(), "one duplicate NAME collapses two rows into one group");
+        for (Object rowObj : result) {
+            Map<?, ?> row = (Map<?, ?>) rowObj;
+            if ("User1".equals(row.get("NAME"))) {
+                assertEquals(2L, row.get("COUNT(*)"), "User1 group must contain the two inserted rows");
+                assertEquals(118, row.get("SUM(AGE)"), "User1 group SUM(AGE) must sum both rows (19 + 99)");
+                assertEquals(19, row.get("MIN(AGE)"), "User1 group MIN(AGE) must be the smallest age");
+                assertEquals(99, row.get("MAX(AGE)"), "User1 group MAX(AGE) must be the largest age");
+            }
+        }
     }
 }

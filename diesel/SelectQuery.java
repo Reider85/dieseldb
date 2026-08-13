@@ -81,6 +81,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<String> orderByKeys = new ArrayList<>();
 
     /**
+     * Aggregate result keys produced by the GROUP BY path (aggregate alias or
+     * canonical name, e.g. {@code "COUNT(*)"}). They are not part of the plain
+     * column projection, so they must be copied onto the final output rows
+     * after {@link #filterColumns}.
+     */
+    private final List<String> groupAggregateKeys = new ArrayList<>();
+
+    /**
      * Maximum number of result rows kept in memory before the engine spills
      * overflow rows to temporary files on disk. Loaded once from
      * {@code config.properties} ({@code max.inmemory.rows}), defaulting to 10000.
@@ -229,6 +237,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         reorderJoinsForNestedLoop(tables);
         normalizeCache.clear();
         likePatternCache.clear();
+        groupAggregateKeys.clear();
         orderByKeys.clear();
         orderByKeys.addAll(resolveOrderByKeys());
         projectionPlan = buildProjectionPlan();
@@ -490,6 +499,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                         : row.get(normalizeColumnName(col, mainTableName)))
                                 .collect(Collectors.toList())));
 
+                groupAggregateKeys.clear();
+                for (QueryParser.AggregateFunction agg : aggregates) {
+                    String resultKey = agg.alias != null ? agg.alias : agg.toString();
+                    groupAggregateKeys.add(resultKey);
+                }
+
                 finalRows = new ArrayList<>();
                 for (List<Object> groupKey : groupedRows.keySet()) {
                     List<Map<String, Object>> group = groupedRows.get(groupKey);
@@ -497,8 +512,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                     for (int i = 0; i < groupBy.size(); i++) {
                         String column = groupBy.get(i);
-                        String columnAlias = normalizeColumnKey(column, mainTableName);
-                        resultRow.put(columnAlias, groupKey.get(i));
+                        String normalizedColumn = normalizeColumnName(column, mainTableName);
+                        resultRow.put(normalizedColumn, groupKey.get(i));
                     }
 
                     for (QueryParser.AggregateFunction agg : aggregates) {
@@ -511,11 +526,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
 
                     for (String column : columns) {
-                        if (!resultRow.containsKey(normalizeColumnKey(column, mainTableName))) {
-                            String normalizedColumn = normalizeColumnName(column, mainTableName);
-                            String unqualifiedColumn = normalizeColumnKey(normalizedColumn, mainTableName);
+                        String normalizedColumn = normalizeColumnName(column, mainTableName);
+                        if (!resultRow.containsKey(normalizedColumn)) {
                             Object value = group.get(0).get(normalizedColumn);
-                            resultRow.put(unqualifiedColumn, value);
+                            resultRow.put(normalizedColumn, value);
                         }
                     }
 
@@ -558,8 +572,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 result.add(resultRow);
             } else {
-                for (Map<String, Object> row : selectedRows) {
-                    result.add(filterColumns(row, columns));
+                if (groupAggregateKeys.isEmpty()) {
+                    for (Map<String, Object> row : selectedRows) {
+                        result.add(filterColumns(row, columns));
+                    }
+                } else {
+                    for (Map<String, Object> row : selectedRows) {
+                        Map<String, Object> filteredRow = filterColumns(row, columns);
+                        for (String aggregateKey : groupAggregateKeys) {
+                            if (row.containsKey(aggregateKey)) {
+                                filteredRow.put(aggregateKey, row.get(aggregateKey));
+                            }
+                        }
+                        result.add(filteredRow);
+                    }
                 }
             }
 
