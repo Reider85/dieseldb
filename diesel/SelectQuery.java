@@ -13,20 +13,15 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 
 /**
  * Executes a SELECT statement against a table: applies WHERE conditions
@@ -63,6 +58,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * because table aliases are resolved lazily during join setup.
      */
     private final Map<String, String> normalizeCache = new HashMap<>();
+
+    /**
+     * Caches the compiled {@link Pattern}s produced by {@link #likeComparison},
+     * so a LIKE predicate evaluated once per joined pair (e.g. 360k pairs) no
+     * longer re-compiles the same regex on every row. Cleared per execution.
+     */
+    private final Map<String, Pattern> likePatternCache = new HashMap<>();
+
+    /**
+     * Pre-resolved SELECT projection, built once per execution so the hot
+     * per-row {@link #filterColumns} loop never re-splits/re-matches column
+     * strings (the old code ran a regex split + alias match per column per row).
+     */
+    private List<ColumnProjection> projectionPlan;
 
     /**
      * Pre-resolved row keys for each ORDER BY clause, so {@link #compareRows}
@@ -219,8 +228,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         reorderJoinsForNestedLoop(tables);
         normalizeCache.clear();
+        likePatternCache.clear();
         orderByKeys.clear();
         orderByKeys.addAll(resolveOrderByKeys());
+        projectionPlan = buildProjectionPlan();
 
         try {
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
@@ -523,11 +534,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
 
             if (!orderBy.isEmpty()) {
-                if (useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS) {
-                    finalRows = externalSort(finalRows, orderBy, MAX_IN_MEMORY_ROWS);
-                } else {
-                    finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
-                }
+                finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
                 LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses (streaming={1})",
                         new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
             }
@@ -610,171 +617,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         fallback.add(flattenedRow);
-    }
-
-    private List<Map<String, Object>> externalSort(List<Map<String, Object>> rows,
-                                                   List<QueryParser.OrderByInfo> orderBy,
-                                                   long maxInMemoryRows) {
-        if (rows.size() <= maxInMemoryRows) {
-            rows.sort((r1, r2) -> compareRows(r1, r2, orderBy));
-            return rows;
-        }
-        Comparator<Map<String, Object>> comparator = (r1, r2) -> compareRows(r1, r2, orderBy);
-        int chunkSize = (int) maxInMemoryRows;
-        List<File> chunkFiles = new ArrayList<>();
-        try {
-            for (int start = 0; start < rows.size(); start += chunkSize) {
-                int end = Math.min(rows.size(), start + chunkSize);
-                List<Map<String, Object>> chunk = new ArrayList<>(rows.subList(start, end));
-                chunk.sort(comparator);
-                File chunkFile = Files.createTempFile("diesel-sort-", ".tmp").toFile();
-                try (DataOutputStream writer = new DataOutputStream(
-                        new BufferedOutputStream(new FileOutputStream(chunkFile), 1024 * 1024))) {
-                    for (Map<String, Object> row : chunk) {
-                        writeBinaryRow(writer, row);
-                    }
-                }
-                chunkFiles.add(chunkFile);
-            }
-            int numChunks = chunkFiles.size();
-            DataInputStream[] readers = new DataInputStream[numChunks];
-            ChunkEntry[] heap = new ChunkEntry[numChunks + 1];
-            int heapSize = 0;
-            for (int ci = 0; ci < numChunks; ci++) {
-                DataInputStream reader = new DataInputStream(
-                        new BufferedInputStream(new FileInputStream(chunkFiles.get(ci)), 1024 * 1024));
-                readers[ci] = reader;
-                Map<String, Object> row = readBinaryRow(reader);
-                if (row != null) {
-                    heap[++heapSize] = new ChunkEntry(row, ci, reader);
-                    siftUpHeap(heap, heapSize, comparator);
-                }
-            }
-            List<Map<String, Object>> sorted = new ArrayList<>(rows.size());
-            while (heapSize > 0) {
-                ChunkEntry min = heap[1];
-                sorted.add(min.row);
-                Map<String, Object> row = readBinaryRow(min.reader);
-                if (row != null) {
-                    heap[1] = new ChunkEntry(row, min.chunkIndex, min.reader);
-                    siftDownHeap(heap, heapSize, comparator);
-                } else {
-                    heap[1] = heap[heapSize];
-                    heapSize--;
-                    if (heapSize > 0) {
-                        siftDownHeap(heap, heapSize, comparator);
-                    }
-                }
-            }
-            for (DataInputStream reader : readers) {
-                try {
-                    reader.close();
-                } catch (IOException ignored) {
-                }
-            }
-            return sorted;
-        } catch (IOException e) {
-            rows.sort(comparator);
-            return rows;
-        } finally {
-            for (File f : chunkFiles) {
-                try {
-                    Files.deleteIfExists(f.toPath());
-                } catch (IOException ignored) {
-                }
-            }
-        }
-    }
-
-    private static String serializeRow(Map<String, Object> row) {
-        StringBuilder sb = new StringBuilder(row.size() * 24);
-        serializeRow(sb, row);
-        return sb.toString();
-    }
-
-    private static void serializeRow(StringBuilder sb, Map<String, Object> row) {
-        boolean first = true;
-        for (Map.Entry<String, Object> entry : row.entrySet()) {
-            if (!first) {
-                sb.append(',');
-            }
-            first = false;
-            sb.append(entry.getKey()).append('=');
-            appendValue(sb, entry.getValue());
-        }
-    }
-
-    private static void appendValue(StringBuilder sb, Object value) {
-        if (value == null) {
-            sb.append('n');
-            return;
-        }
-        if (value instanceof String s) {
-            sb.append('s');
-            appendEscaped(sb, s);
-            return;
-        }
-        if (value instanceof Character c) {
-            sb.append('c');
-            appendEscaped(sb, c.toString());
-            return;
-        }
-        if (value instanceof Integer i) {
-            sb.append('i').append(i.intValue());
-            return;
-        }
-        if (value instanceof Long l) {
-            sb.append('l').append(l.longValue());
-            return;
-        }
-        if (value instanceof Boolean) {
-            sb.append('b').append(value.toString().toUpperCase());
-            return;
-        }
-        if (value instanceof BigDecimal) {
-            sb.append('m').append(value.toString());
-            return;
-        }
-        if (value instanceof Float) {
-            sb.append('f').append(value);
-            return;
-        }
-        if (value instanceof Double) {
-            sb.append('d').append(value);
-            return;
-        }
-        if (value instanceof LocalDate) {
-            sb.append('t').append(value.toString());
-            return;
-        }
-        if (value instanceof LocalDateTime) {
-            sb.append('z').append(value.toString());
-            return;
-        }
-        if (value instanceof UUID) {
-            sb.append('u').append(value.toString());
-            return;
-        }
-        sb.append('s');
-        appendEscaped(sb, String.valueOf(value));
-    }
-
-    private static void appendEscaped(StringBuilder sb, String s) {
-        sb.append('"');
-        int q = s.indexOf('"');
-        if (q < 0) {
-            sb.append(s);
-        } else {
-            for (int i = 0; i < s.length(); i++) {
-                char c = s.charAt(i);
-                if (c == '"') {
-                    sb.append('"').append('"');
-                } else {
-                    sb.append(c);
-                }
-            }
-        }
-        sb.append('"');
     }
 
     private static final byte BIN_NULL = 0;
@@ -907,159 +749,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return new String(b, StandardCharsets.UTF_8);
     }
 
-    private static Map<String, Object> parseRowLine(String line) {
-        Map<String, Object> row = new HashMap<>(Math.max(4, line.length() / 16));
-        int len = line.length();
-        int i = 0;
-        StringBuilder vb = new StringBuilder();
-        while (i < len) {
-            int eq = line.indexOf('=', i);
-            if (eq < 0) {
-                break;
-            }
-            String key = line.substring(i, eq);
-            i = eq + 1;
-            char type = line.charAt(i);
-            i++;
-            if (type == 's' || type == 'c') {
-                i++;
-                vb.setLength(0);
-                while (i < len) {
-                    char c = line.charAt(i);
-                    if (c == '"') {
-                        if (i + 1 < len && line.charAt(i + 1) == '"') {
-                            vb.append('"');
-                            i += 2;
-                            continue;
-                        }
-                        i++;
-                        break;
-                    }
-                    vb.append(c);
-                    i++;
-                }
-                if (i < len && line.charAt(i) == ',') {
-                    i++;
-                }
-                if (type == 'c') {
-                    row.put(key, vb.length() == 0 ? ' ' : vb.charAt(0));
-                } else {
-                    row.put(key, vb.toString());
-                }
-            } else {
-                int start = i;
-                while (i < len && line.charAt(i) != ',') {
-                    i++;
-                }
-                int end = i;
-                if (i < len) {
-                    i++;
-                }
-                row.put(key, decodeValue(type, line, start, end));
-            }
-        }
-        return row;
-    }
+    /**
+     * One entry of the pre-resolved SELECT projection plan used by
+     * {@link #filterColumns}. {@code normalized} is the row key read on the
+     * fast path; when it is absent the alias fallback keys are tried.
+     */
+    private static final class ColumnProjection {
+        final String normalized;
+        final String alias;
+        final List<String> fallbackKeys;
 
-    private static Object decodeValue(char type, String line, int start, int end) {
-        switch (type) {
-            case 'n':
-                return null;
-            case 'i':
-                return parseIntRange(line, start, end);
-            case 'l':
-                return parseLongRange(line, start, end);
-            case 'b':
-                return Boolean.parseBoolean(line.substring(start, end));
-            case 'm':
-                return new BigDecimal(line.substring(start, end));
-            case 'f':
-                return Float.parseFloat(line.substring(start, end));
-            case 'd':
-                return Double.parseDouble(line.substring(start, end));
-            case 't':
-                return LocalDate.parse(line.substring(start, end));
-            case 'z':
-                return LocalDateTime.parse(line.substring(start, end));
-            case 'u':
-                return UUID.fromString(line.substring(start, end));
-            default:
-                return line.substring(start, end);
-        }
-    }
-
-    private static int parseIntRange(String s, int start, int end) {
-        int result = 0;
-        boolean neg = false;
-        int p = start;
-        if (p < end && s.charAt(p) == '-') {
-            neg = true;
-            p++;
-        }
-        for (; p < end; p++) {
-            result = result * 10 + (s.charAt(p) - '0');
-        }
-        return neg ? -result : result;
-    }
-
-    private static long parseLongRange(String s, int start, int end) {
-        long result = 0;
-        boolean neg = false;
-        int p = start;
-        if (p < end && s.charAt(p) == '-') {
-            neg = true;
-            p++;
-        }
-        for (; p < end; p++) {
-            result = result * 10 + (s.charAt(p) - '0');
-        }
-        return neg ? -result : result;
-    }
-
-    private static void siftUpHeap(ChunkEntry[] heap, int idx, Comparator<Map<String, Object>> comparator) {
-        while (idx > 1) {
-            int parent = idx >>> 1;
-            if (comparator.compare(heap[idx].row, heap[parent].row) >= 0) {
-                break;
-            }
-            ChunkEntry tmp = heap[idx];
-            heap[idx] = heap[parent];
-            heap[parent] = tmp;
-            idx = parent;
-        }
-    }
-
-    private static void siftDownHeap(ChunkEntry[] heap, int size, Comparator<Map<String, Object>> comparator) {
-        int idx = 1;
-        while (true) {
-            int left = idx << 1;
-            if (left > size) {
-                break;
-            }
-            int right = left + 1;
-            int smallest = left;
-            if (right <= size && comparator.compare(heap[right].row, heap[left].row) < 0) {
-                smallest = right;
-            }
-            if (comparator.compare(heap[idx].row, heap[smallest].row) <= 0) {
-                break;
-            }
-            ChunkEntry tmp = heap[idx];
-            heap[idx] = heap[smallest];
-            heap[smallest] = tmp;
-            idx = smallest;
-        }
-    }
-
-    private static final class ChunkEntry {
-        private final Map<String, Object> row;
-        private final int chunkIndex;
-        private final DataInputStream reader;
-
-        ChunkEntry(Map<String, Object> row, int chunkIndex, DataInputStream reader) {
-            this.row = row;
-            this.chunkIndex = chunkIndex;
-            this.reader = reader;
+        ColumnProjection(String normalized, String alias, List<String> fallbackKeys) {
+            this.normalized = normalized;
+            this.alias = alias;
+            this.fallbackKeys = fallbackKeys;
         }
     }
 
@@ -1067,15 +770,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         private final long maxInMemoryRows;
         private final List<Map<String, Object>> inMemory = new ArrayList<>();
         private File spillFile;
-        private BufferedWriter writer;
-        private BufferedReader reader;
+        private DataOutputStream writer;
+        private DataInputStream reader;
         private boolean spilled = false;
         private boolean writing = true;
         private int readIndex = 0;
-        private String peekedLine;
+        private Map<String, Object> peekedRow;
         private boolean peeked = false;
-        private final StringBuilder writeBuffer = new StringBuilder(64 * 1024);
-        private static final int WRITE_BUFFER_LIMIT = 64 * 1024;
 
         StreamingResultIterator(long maxInMemoryRows) throws IOException {
             this.maxInMemoryRows = maxInMemoryRows;
@@ -1091,37 +792,26 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     return;
                 }
                 spillFile = Files.createTempFile("diesel-spill-", ".tmp").toFile();
-                writer = new BufferedWriter(new FileWriter(spillFile), 1024 * 1024);
+                writer = new DataOutputStream(
+                        new BufferedOutputStream(new FileOutputStream(spillFile), 1024 * 1024));
                 for (Map<String, Object> r : inMemory) {
-                    writer.write(serializeRow(r));
-                    writer.newLine();
+                    writeBinaryRow(writer, r);
                 }
                 inMemory.clear();
                 spilled = true;
             }
-            serializeRow(writeBuffer, row);
-            writeBuffer.append('\n');
-            if (writeBuffer.length() >= WRITE_BUFFER_LIMIT) {
-                flushWriteBuffer();
-            }
-        }
-
-        private void flushWriteBuffer() throws IOException {
-            if (writeBuffer.length() > 0) {
-                writer.write(writeBuffer.toString());
-                writeBuffer.setLength(0);
-            }
+            writeBinaryRow(writer, row);
         }
 
         void finishWriting() throws IOException {
             if (writer != null) {
-                flushWriteBuffer();
                 writer.flush();
                 writer.close();
                 writer = null;
             }
             if (spilled && reader == null && spillFile != null) {
-                reader = new BufferedReader(new FileReader(spillFile), 1024 * 1024);
+                reader = new DataInputStream(
+                        new BufferedInputStream(new FileInputStream(spillFile), 1024 * 1024));
             }
             writing = false;
         }
@@ -1136,13 +826,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
             if (!peeked) {
                 try {
-                    peekedLine = reader.readLine();
+                    peekedRow = readBinaryRow(reader);
                 } catch (IOException e) {
-                    peekedLine = null;
+                    peekedRow = null;
                 }
                 peeked = true;
             }
-            return peekedLine != null;
+            return peekedRow != null;
         }
 
         @Override
@@ -1156,10 +846,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (!peeked) {
                 hasNext();
             }
-            String line = peekedLine;
+            Map<String, Object> row = peekedRow;
             peeked = false;
-            peekedLine = null;
-            return parseRowLine(line);
+            peekedRow = null;
+            return row;
         }
 
         @Override
@@ -1787,14 +1477,52 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         String valueStr = value.toString();
         String patternStr = pattern.toString();
-        patternStr = patternStr.replace("%", ".*").replace("_", ".");
-        return Pattern.compile(patternStr).matcher(valueStr).matches();
+        Pattern compiled = likePatternCache.get(patternStr);
+        if (compiled == null) {
+            compiled = Pattern.compile(patternStr.replace("%", ".*").replace("_", "."));
+            likePatternCache.put(patternStr, compiled);
+        }
+        return compiled.matcher(valueStr).matches();
+    }
+
+    private List<ColumnProjection> buildProjectionPlan() {
+        List<ColumnProjection> plan = new ArrayList<>(columns.size());
+        for (String column : columns) {
+            String trimmed = column.trim();
+            if (trimmed.equals("*")) {
+                plan.add(new ColumnProjection(null, null, Collections.emptyList()));
+                continue;
+            }
+            String normalizedColumn = normalizeColumnName(column, mainTableName);
+            String columnAlias = normalizeColumnKey(column, mainTableName);
+            String[] parts = trimmed.split("\\s+AS\\s+|\\s+", 2);
+            if (parts.length > 1) {
+                columnAlias = parts[1].trim();
+                if (!columnAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+                    columnAlias = normalizeColumnKey(column, mainTableName);
+                }
+            }
+            List<String> fallbackKeys = new ArrayList<>();
+            if (!column.contains(".")) {
+                String unqualifiedColumn = column.trim();
+                for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
+                    fallbackKeys.add(aliasEntry.getValue() + "." + unqualifiedColumn);
+                }
+            }
+            plan.add(new ColumnProjection(normalizedColumn, columnAlias, fallbackKeys));
+        }
+        return plan;
     }
 
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
+        List<ColumnProjection> plan = projectionPlan;
+        if (plan == null) {
+            plan = buildProjectionPlan();
+        }
         Map<String, Object> filtered = new HashMap<>();
-        for (String column : columns) {
-            if (column.trim().equals("*")) {
+        for (int ci = 0; ci < columns.size(); ci++) {
+            ColumnProjection proj = plan.get(ci);
+            if (proj.normalized == null) {
                 for (Map.Entry<String, Object> entry : row.entrySet()) {
                     String key = entry.getKey();
                     String unqualifiedKey = key.contains(".") ? key.split("\\.", 2)[1].trim() : key.trim();
@@ -1802,26 +1530,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 continue;
             }
-            String normalizedColumn = normalizeColumnName(column, mainTableName);
-            String columnAlias = normalizeColumnKey(column, mainTableName);
-            String[] parts = column.trim().split("\\s+AS\\s+|\\s+", 2);
-            if (parts.length > 1) {
-                columnAlias = parts[1].trim();
-                if (columnAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-                    LOGGER.log(Level.FINE, "Using column alias: {0} -> {1}", new Object[]{normalizedColumn, columnAlias});
-                } else {
-                    columnAlias = normalizeColumnKey(column, mainTableName);
-                }
-            }
-            if (row.containsKey(normalizedColumn)) {
-                filtered.put(columnAlias, row.get(normalizedColumn));
+            if (row.containsKey(proj.normalized)) {
+                filtered.put(proj.alias, row.get(proj.normalized));
             } else {
-                String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column.trim();
-                for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
-                    String tableName = aliasEntry.getValue();
-                    String possibleKey = tableName + "." + unqualifiedColumn;
-                    if (row.containsKey(possibleKey)) {
-                        filtered.put(columnAlias, row.get(possibleKey));
+                for (String candidate : proj.fallbackKeys) {
+                    if (row.containsKey(candidate)) {
+                        filtered.put(proj.alias, row.get(candidate));
                         break;
                     }
                 }
