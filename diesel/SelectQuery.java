@@ -286,7 +286,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     Map<String, Object> flattenedRow = flattenJoinedRow(newRow);
                                     if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
                                         if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                            spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                            spillFilteredRow(spill, spillActive, spillFallback, flattenedRow, conditions, combinedColumnTypes, tables);
                                         } else {
                                             newJoinedRows.add(newRow);
                                         }
@@ -314,7 +314,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                             if (join.joinType == QueryParser.JoinType.CROSS) {
                                 if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                    spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                    spillFilteredRow(spill, spillActive, spillFallback, flattenJoinedRow(newRow), conditions, combinedColumnTypes, tables);
                                 } else {
                                     newJoinedRows.add(newRow);
                                 }
@@ -326,7 +326,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     continue;
                                 }
                                 if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                    spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                    spillFilteredRow(spill, spillActive, spillFallback, flattenJoinedRow(newRow), conditions, combinedColumnTypes, tables);
                                 } else {
                                     newJoinedRows.add(newRow);
                                 }
@@ -336,7 +336,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     continue;
                                 }
                                 if (useStreaming && join == joins.get(joins.size() - 1)) {
-                                    spillFilteredRow(spill, spillActive, spillFallback, newRow, conditions, combinedColumnTypes, tables);
+                                    spillFilteredRow(spill, spillActive, spillFallback, evalRow, conditions, combinedColumnTypes, tables);
                                 } else {
                                     newJoinedRows.add(newRow);
                                 }
@@ -499,16 +499,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     private void spillFilteredRow(StreamingResultIterator spill, boolean[] spillActive,
                                   List<Map<String, Object>> fallback,
-                                  Map<String, Map<String, Object>> newRow,
+                                  Map<String, Object> flattenedRow,
                                   List<QueryParser.Condition> whereConditions,
                                   Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
-        Map<String, Object> flattened = flattenJoinedRow(newRow);
-        if (!whereConditions.isEmpty() && !evaluateConditions(flattened, whereConditions, combinedColumnTypes, tables)) {
+        if (!whereConditions.isEmpty() && !evaluateConditions(flattenedRow, whereConditions, combinedColumnTypes, tables)) {
             return;
         }
         if (spillActive[0] && spill != null) {
             try {
-                spill.add(flattened);
+                spill.add(flattenedRow);
                 return;
             } catch (IOException e) {
                 spillActive[0] = false;
@@ -523,7 +522,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
         }
-        fallback.add(flattened);
+        fallback.add(flattenedRow);
     }
 
     private List<Map<String, Object>> externalSort(List<Map<String, Object>> rows,
@@ -542,7 +541,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 List<Map<String, Object>> chunk = new ArrayList<>(rows.subList(start, end));
                 chunk.sort(comparator);
                 File chunkFile = Files.createTempFile("diesel-sort-", ".tmp").toFile();
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(chunkFile))) {
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(chunkFile), 1024 * 1024)) {
                     for (Map<String, Object> row : chunk) {
                         writer.write(serializeRow(row));
                         writer.newLine();
@@ -550,24 +549,33 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 chunkFiles.add(chunkFile);
             }
-            List<BufferedReader> readers = new ArrayList<>();
-            PriorityQueue<ChunkEntry> pq = new PriorityQueue<>(
-                    Comparator.comparing((ChunkEntry e) -> e.row, comparator).thenComparingInt(e -> e.chunkIndex));
-            for (int ci = 0; ci < chunkFiles.size(); ci++) {
-                BufferedReader reader = new BufferedReader(new FileReader(chunkFiles.get(ci)));
-                readers.add(reader);
+            int numChunks = chunkFiles.size();
+            BufferedReader[] readers = new BufferedReader[numChunks];
+            ChunkEntry[] heap = new ChunkEntry[numChunks + 1];
+            int heapSize = 0;
+            for (int ci = 0; ci < numChunks; ci++) {
+                BufferedReader reader = new BufferedReader(new FileReader(chunkFiles.get(ci)), 1024 * 1024);
+                readers[ci] = reader;
                 String line = reader.readLine();
                 if (line != null) {
-                    pq.offer(new ChunkEntry(parseRowLine(line), ci, reader));
+                    heap[++heapSize] = new ChunkEntry(parseRowLine(line), ci, reader);
+                    siftUpHeap(heap, heapSize, comparator);
                 }
             }
             List<Map<String, Object>> sorted = new ArrayList<>(rows.size());
-            while (!pq.isEmpty()) {
-                ChunkEntry entry = pq.poll();
-                sorted.add(entry.row);
-                String line = entry.reader.readLine();
+            while (heapSize > 0) {
+                ChunkEntry min = heap[1];
+                sorted.add(min.row);
+                String line = min.reader.readLine();
                 if (line != null) {
-                    pq.offer(new ChunkEntry(parseRowLine(line), entry.chunkIndex, entry.reader));
+                    heap[1] = new ChunkEntry(parseRowLine(line), min.chunkIndex, min.reader);
+                    siftDownHeap(heap, heapSize, comparator);
+                } else {
+                    heap[1] = heap[heapSize];
+                    heapSize--;
+                    if (heapSize > 0) {
+                        siftDownHeap(heap, heapSize, comparator);
+                    }
                 }
             }
             for (BufferedReader reader : readers) {
@@ -591,7 +599,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private static String serializeRow(Map<String, Object> row) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder(row.size() * 24);
+        serializeRow(sb, row);
+        return sb.toString();
+    }
+
+    private static void serializeRow(StringBuilder sb, Map<String, Object> row) {
         boolean first = true;
         for (Map.Entry<String, Object> entry : row.entrySet()) {
             if (!first) {
@@ -601,7 +614,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             sb.append(entry.getKey()).append('=');
             appendValue(sb, entry.getValue());
         }
-        return sb.toString();
     }
 
     private static void appendValue(StringBuilder sb, Object value) {
@@ -657,9 +669,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private static Map<String, Object> parseRowLine(String line) {
-        Map<String, Object> row = new HashMap<>();
-        int i = 0;
+        Map<String, Object> row = new HashMap<>(Math.max(4, line.length() / 16));
         int len = line.length();
+        int i = 0;
         while (i < len) {
             int eq = line.indexOf('=', i);
             if (eq < 0) {
@@ -692,13 +704,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 value = vb.toString();
             } else {
-                int comma = line.indexOf(',', i);
-                if (comma < 0) {
-                    value = line.substring(i);
-                    i = len;
-                } else {
-                    value = line.substring(i, comma);
-                    i = comma + 1;
+                int start = i;
+                while (i < len && line.charAt(i) != ',') {
+                    i++;
+                }
+                value = line.substring(start, i);
+                if (i < len) {
+                    i++;
                 }
             }
             row.put(key, decodeValue(type, value));
@@ -737,6 +749,41 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
+    private static void siftUpHeap(ChunkEntry[] heap, int idx, Comparator<Map<String, Object>> comparator) {
+        while (idx > 1) {
+            int parent = idx >>> 1;
+            if (comparator.compare(heap[idx].row, heap[parent].row) >= 0) {
+                break;
+            }
+            ChunkEntry tmp = heap[idx];
+            heap[idx] = heap[parent];
+            heap[parent] = tmp;
+            idx = parent;
+        }
+    }
+
+    private static void siftDownHeap(ChunkEntry[] heap, int size, Comparator<Map<String, Object>> comparator) {
+        int idx = 1;
+        while (true) {
+            int left = idx << 1;
+            if (left > size) {
+                break;
+            }
+            int right = left + 1;
+            int smallest = left;
+            if (right <= size && comparator.compare(heap[right].row, heap[left].row) < 0) {
+                smallest = right;
+            }
+            if (comparator.compare(heap[idx].row, heap[smallest].row) <= 0) {
+                break;
+            }
+            ChunkEntry tmp = heap[idx];
+            heap[idx] = heap[smallest];
+            heap[smallest] = tmp;
+            idx = smallest;
+        }
+    }
+
     private static final class ChunkEntry {
         private final Map<String, Object> row;
         private final int chunkIndex;
@@ -760,6 +807,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         private int readIndex = 0;
         private String peekedLine;
         private boolean peeked = false;
+        private final StringBuilder writeBuffer = new StringBuilder(64 * 1024);
+        private static final int WRITE_BUFFER_LIMIT = 64 * 1024;
 
         StreamingResultIterator(long maxInMemoryRows) throws IOException {
             this.maxInMemoryRows = maxInMemoryRows;
@@ -775,7 +824,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     return;
                 }
                 spillFile = Files.createTempFile("diesel-spill-", ".tmp").toFile();
-                writer = new BufferedWriter(new FileWriter(spillFile));
+                writer = new BufferedWriter(new FileWriter(spillFile), 1024 * 1024);
                 for (Map<String, Object> r : inMemory) {
                     writer.write(serializeRow(r));
                     writer.newLine();
@@ -783,18 +832,29 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 inMemory.clear();
                 spilled = true;
             }
-            writer.write(serializeRow(row));
-            writer.newLine();
+            serializeRow(writeBuffer, row);
+            writeBuffer.append('\n');
+            if (writeBuffer.length() >= WRITE_BUFFER_LIMIT) {
+                flushWriteBuffer();
+            }
+        }
+
+        private void flushWriteBuffer() throws IOException {
+            if (writeBuffer.length() > 0) {
+                writer.write(writeBuffer.toString());
+                writeBuffer.setLength(0);
+            }
         }
 
         void finishWriting() throws IOException {
             if (writer != null) {
+                flushWriteBuffer();
                 writer.flush();
                 writer.close();
                 writer = null;
             }
             if (spilled && reader == null && spillFile != null) {
-                reader = new BufferedReader(new FileReader(spillFile));
+                reader = new BufferedReader(new FileReader(spillFile), 1024 * 1024);
             }
             writing = false;
         }
