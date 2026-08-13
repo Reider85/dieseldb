@@ -10,8 +10,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Java 17 - быстрые тесты
-  java17-quick:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,138 +23,13 @@ jobs:
           java-version: 17
           cache: maven
       
-      - name: Build and Test (Java 17 Quick)
-        run: mvn -B clean verify -P java17-quick
+      - name: Build and Test
+        run: mvn -B clean verify -P ci
       
       - name: Upload test reports
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-reports-java17-quick
-          path: target/surefire-reports/
-          retention-days: 7
-
-  # Java 17 - все тесты
-  java17-all:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-          cache: maven
-      
-      - name: Build and Test (Java 17 All)
-        run: mvn -B clean verify -P java17-all
-      
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-reports-java17-all
-          path: target/surefire-reports/
-          retention-days: 7
-
-  # Java 21 - быстрые тесты
-  java21-quick:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-      
-      - name: Build and Test (Java 21 Quick)
-        run: mvn -B clean verify -P java21-quick
-      
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-reports-java21-quick
-          path: target/surefire-reports/
-          retention-days: 7
-
-  # Java 21 - все тесты
-  java21-all:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-      
-      - name: Build and Test (Java 21 All)
-        run: mvn -B clean verify -P java21-all
-      
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-reports-java21-all
-          path: target/surefire-reports/
-          retention-days: 7
-
-  # Java 25 - быстрые тесты
-  java25-quick:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 25
-          cache: maven
-      
-      - name: Build and Test (Java 25 Quick)
-        run: mvn -B clean verify -P java25-quick
-      
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-reports-java25-quick
-          path: target/surefire-reports/
-          retention-days: 7
-
-  # Java 25 - все тесты
-  java25-all:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 25
-          cache: maven
-      
-      - name: Build and Test (Java 25 All)
-        run: mvn -B clean verify -P java25-all
-      
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-reports-java25-all
+          name: test-reports
           path: target/surefire-reports/
           retention-days: 7
