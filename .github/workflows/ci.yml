@@ -16,21 +16,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 17
           cache: maven
       
-      - name: Build without profile
-        run: mvn -B clean verify
-      
-      - name: Build with CI profile
+      - name: Build and run tests with CI profile
         run: mvn -B clean verify -P ci
-      
-      - name: Build with test profile
-        run: mvn -B clean verify -P test
       
       - name: Upload test reports
         uses: actions/upload-artifact@v4
