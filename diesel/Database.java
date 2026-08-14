@@ -259,10 +259,16 @@ class Database {
      * applying the transaction view, auto-commit DML and persistence rules.
      */
     private Object executeDataQuery(Query<?> parsedQuery, String query, Transaction currentTransaction) {
-        String tableName = extractTableName(query);
-        Table table = getTableForQuery(tableName, currentTransaction);
-        if (table == null) {
-            throw new IllegalArgumentException("Table " + tableName + " does not exist");
+        String tableName = null;
+        Table table;
+        if (parsedQuery instanceof SelectQuery && ((SelectQuery) parsedQuery).getDerivedMainTable() != null) {
+            table = ((SelectQuery) parsedQuery).getDerivedMainTable();
+        } else {
+            tableName = extractTableName(query);
+            table = getTableForQuery(tableName, currentTransaction);
+            if (table == null) {
+                throw new IllegalArgumentException("Table " + tableName + " does not exist");
+            }
         }
 
         boolean isDml = parsedQuery instanceof InsertQuery

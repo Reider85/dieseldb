@@ -447,14 +447,21 @@ class QueryParser {
         List<JoinInfo> joins;
         Map<String, String> tableAliases;
         Map<String, Class<?>> combinedColumnTypes;
+        Table derivedMainTable;
 
         TableJoins(String tableName, String tableAlias, List<JoinInfo> joins, Map<String, String> tableAliases,
                    Map<String, Class<?>> combinedColumnTypes) {
+            this(tableName, tableAlias, joins, tableAliases, combinedColumnTypes, null);
+        }
+
+        TableJoins(String tableName, String tableAlias, List<JoinInfo> joins, Map<String, String> tableAliases,
+                   Map<String, Class<?>> combinedColumnTypes, Table derivedMainTable) {
             this.tableName = tableName;
             this.tableAlias = tableAlias;
             this.joins = joins;
             this.tableAliases = tableAliases;
             this.combinedColumnTypes = combinedColumnTypes;
+            this.derivedMainTable = derivedMainTable;
         }
     }
 

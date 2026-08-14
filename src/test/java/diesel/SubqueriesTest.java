@@ -7,8 +7,11 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class SubqueriesTest {
 
@@ -149,5 +152,46 @@ public class SubqueriesTest {
     @Test
     void selectWithSubqueryInColumnWhereOrderByWithAggregates() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT ID, (SELECT MAX(NAME) FROM USERS WHERE ID = u.ID LIMIT 1) AS max_name FROM USERS u WHERE AGE > (SELECT AVG(AGE) FROM USERS LIMIT 1) ORDER BY (SELECT MAX(NAME) FROM USERS WHERE ID = u.ID LIMIT 1) LIMIT 10", null), "selectWithSubqueryInColumnWhereOrderByWithAggregates");
+    }
+
+    @Test
+    void selectFromDerivedTableWithLimit() {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT ID, NAME FROM USERS WHERE AGE > 0 LIMIT 5) AS subq", null);
+        assertEquals(5, result.size(), "LIMIT 5 inside derived table must return 5 rows");
+        assertEquals(1L, result.get(0).get("ID"), "derived row must carry projected ID");
+    }
+
+    @Test
+    void selectFromDerivedTableWithoutAlias() {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT ID FROM USERS WHERE AGE > 0 LIMIT 3)", null);
+        assertEquals(3, result.size(), "derived table without alias must work");
+    }
+
+    @Test
+    void selectFromNestedDerivedTableTwoLevels() {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT ID FROM (SELECT ID, NAME FROM USERS WHERE AGE > 0 LIMIT 8) AS inner_sub LIMIT 3) AS outer_sub", null);
+        assertEquals(3, result.size(), "nested derived tables must apply the innermost LIMIT");
+    }
+
+    @Test
+    void selectFromDerivedTableWithWhereOnAlias() {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT ID FROM (SELECT ID, AGE FROM USERS WHERE AGE > 0 LIMIT 5) AS subq WHERE subq.ID > 3 LIMIT 10", null);
+        assertEquals(2, result.size(), "outer WHERE on derived alias must work (IDs 4,5 of 1..5)");
+    }
+
+    @Test
+    void selectFromDerivedTableWithOrderByAndLimit() {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT ID FROM (SELECT ID FROM USERS WHERE AGE > 0) AS subq ORDER BY subq.ID DESC LIMIT 3", null);
+        assertEquals(3, result.size(), "outer ORDER BY + LIMIT over a derived table must work");
     }
 }

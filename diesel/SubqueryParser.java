@@ -164,9 +164,11 @@ public class SubqueryParser {
         LOGGER.log(Level.INFO, "Parsed SELECT query: table={0}, columns={1}, aggregates={2}, joins={3}, conditions={4}",
                 new Object[]{tableName, columns, aggregates, joins, conditions});
 
-        return new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions,
+        SelectQuery selectQuery = new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions,
                 groupBy, havingConditions, orderBy, limit, offset, subQueries, columnAliases, tableAliases,
                 combinedColumnTypes, clauses.groupBySubQueries);
+        selectQuery.setDerivedMainTable(tableJoins.derivedMainTable);
+        return selectQuery;
     }
 
     private int findMainFromClause(String query) {
@@ -330,22 +332,38 @@ public class SubqueryParser {
         joinParts.add(normalized.substring(lastEnd).trim());
 
         String mainTablePart = joinParts.get(0).trim();
-        String[] mainTableTokens = mainTablePart.split("\\s+");
-        tableName = unquoteIdentifier(mainTableTokens[0].trim());
-        if (mainTableTokens.length > 1) {
-            tableAlias = unquoteIdentifier(mainTableTokens[mainTableTokens.length - 1].trim());
-        }
-        if (tableAlias != null) {
-            tableAliases.put(tableAlias, tableName);
-        }
+        Table derivedMainTable = null;
+        Map<String, Class<?>> combinedColumnTypes;
 
-        Table mainTable = database.getTable(tableName);
-        if (mainTable == null) {
-            throw new IllegalArgumentException("Table not found: " + tableName);
-        }
+        if (isDerivedTablePart(mainTablePart)) {
+            String[] derived = parseDerivedTablePart(mainTablePart);
+            String subQueryStr = derived[0];
+            String alias = derived[1];
+            LOGGER.log(Level.INFO, "Parsed derived main table: subquery={0}, alias={1}", new Object[]{subQueryStr, alias});
+            Table virtualTable = materializeDerivedTable(subQueryStr, alias, database);
+            tableName = alias != null ? alias : virtualTable.getName();
+            tableAlias = tableName;
+            tableAliases.put(tableName, tableName);
+            combinedColumnTypes = new HashMap<>(virtualTable.getColumnTypes());
+            derivedMainTable = virtualTable;
+        } else {
+            String[] mainTableTokens = mainTablePart.split("\\s+");
+            tableName = unquoteIdentifier(mainTableTokens[0].trim());
+            if (mainTableTokens.length > 1) {
+                tableAlias = unquoteIdentifier(mainTableTokens[mainTableTokens.length - 1].trim());
+            }
+            if (tableAlias != null) {
+                tableAliases.put(tableAlias, tableName);
+            }
 
-        Map<String, Class<?>> combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
-        tableAliases.put(tableName, tableName);
+            Table mainTable = database.getTable(tableName);
+            if (mainTable == null) {
+                throw new IllegalArgumentException("Table not found: " + tableName);
+            }
+
+            combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());
+            tableAliases.put(tableName, tableName);
+        }
 
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
@@ -390,7 +408,104 @@ public class SubqueryParser {
             tableName = joinTableName;
         }
 
-        return new QueryParser.TableJoins(tableName, tableAlias, joins, tableAliases, combinedColumnTypes);
+        return new QueryParser.TableJoins(tableName, tableAlias, joins, tableAliases, combinedColumnTypes, derivedMainTable);
+    }
+
+    /**
+     * Returns whether the main-table part of the FROM clause is a derived
+     * table, i.e. a parenthesized {@code (SELECT ...)} expression.
+     *
+     * @param mainTablePart the trimmed first FROM element
+     * @return true when the element opens with a parenthesized SELECT
+     */
+    private boolean isDerivedTablePart(String mainTablePart) {
+        String trimmed = mainTablePart.trim();
+        return trimmed.startsWith("(") && trimmed.substring(1).trim().toUpperCase().startsWith("SELECT");
+    }
+
+    /**
+     * Splits a derived-table FROM element into the inner subquery text and its
+     * alias (or null when no alias was given).
+     *
+     * @param mainTablePart the trimmed first FROM element
+     * @return a two-element array {@code [subQuery, alias]}
+     */
+    private String[] parseDerivedTablePart(String mainTablePart) {
+        int closeParen = findMatchingClosingParen(mainTablePart, 1);
+        if (closeParen == -1) {
+            throw new IllegalArgumentException("Invalid derived table: unbalanced parentheses in " + mainTablePart);
+        }
+        String subQuery = mainTablePart.substring(1, closeParen).trim();
+        String rest = mainTablePart.substring(closeParen + 1).trim();
+        String alias = null;
+        if (!rest.isEmpty()) {
+            String[] tokens = rest.split("\\s+");
+            if (tokens[0].equalsIgnoreCase("AS") && tokens.length > 1) {
+                alias = unquoteIdentifier(tokens[1]);
+            } else {
+                alias = unquoteIdentifier(tokens[tokens.length - 1]);
+            }
+        }
+        return new String[]{subQuery, alias};
+    }
+
+    /**
+     * Executes a derived-table subquery and materializes its result into an
+     * in-memory virtual table that the outer query can scan like a real table.
+     * Column names come from the result rows; column types are inferred from
+     * the first non-null value of each column.
+     *
+     * @param subQuery the inner SELECT text
+     * @param alias    the derived table alias, or null
+     * @param database the owning database
+     * @return the populated virtual table
+     */
+    private Table materializeDerivedTable(String subQuery, String alias, Database database) {
+        Object result = database.executeQuery(subQuery, null);
+        if (!(result instanceof List<?>)) {
+            throw new IllegalArgumentException("Derived table subquery must return a row set: " + subQuery);
+        }
+        List<?> rawRows = (List<?>) result;
+        List<Map<String, Object>> rows = new ArrayList<>();
+        Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (Object raw : rawRows) {
+            if (!(raw instanceof Map<?, ?>)) {
+                throw new IllegalArgumentException("Derived table subquery returned a non-row result: " + subQuery);
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> row = (Map<String, Object>) raw;
+            rows.add(row);
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                Class<?> type = columnTypes.get(entry.getKey());
+                if (type == null && entry.getValue() != null) {
+                    columnTypes.put(entry.getKey(), entry.getValue().getClass());
+                }
+            }
+        }
+
+        String tableName = alias != null ? alias : "DERIVED_" + Math.abs(subQuery.hashCode());
+        List<String> columns = new ArrayList<>();
+        if (!rows.isEmpty()) {
+            columns.addAll(rows.get(0).keySet());
+        }
+        for (String column : new ArrayList<>(columns)) {
+            if (!columnTypes.containsKey(column)) {
+                columnTypes.put(column, String.class);
+            }
+        }
+        for (String column : new ArrayList<>(columnTypes.keySet())) {
+            if (!columns.contains(column)) {
+                columns.add(column);
+            }
+        }
+
+        Table virtualTable = new Table(database, tableName, columns, columnTypes, null, null);
+        for (Map<String, Object> row : rows) {
+            virtualTable.addRow(row);
+        }
+        LOGGER.log(Level.INFO, "Materialized derived table {0} with {1} rows and columns {2}",
+                new Object[]{tableName, rows.size(), columns});
+        return virtualTable;
     }
 
     private QueryParser.JoinType parseJoinType(String joinTypeStr) {

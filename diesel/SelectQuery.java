@@ -35,6 +35,7 @@ import java.nio.file.Files;
 class SelectQuery implements Query<List<Map<String, Object>>> {
     private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
     private final List<String> columns;
+    private Table derivedMainTable;
     private final List<QueryParser.AggregateFunction> aggregates;
     private final List<QueryParser.Condition> conditions;
     private final List<QueryParser.JoinInfo> joins;
@@ -201,6 +202,25 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (extraTableAliases != null) {
             this.tableAliases.putAll(extraTableAliases);
         }
+    }
+
+    /**
+     * Sets the in-memory virtual table produced by a derived table
+     * ({@code SELECT ... FROM (SELECT ...) AS subq}). When present, execution
+     * scans this table instead of looking up a table by name.
+     *
+     * @param derivedMainTable the materialized derived table, or null
+     */
+    public void setDerivedMainTable(Table derivedMainTable) {
+        this.derivedMainTable = derivedMainTable;
+    }
+
+    /**
+     * @return the virtual table backing a derived main table, or null when this
+     *         query scans a real table
+     */
+    public Table getDerivedMainTable() {
+        return derivedMainTable;
     }
 
     /**

@@ -145,7 +145,7 @@ class Table implements Serializable {
         }
 
         LOGGER.log(Level.INFO, "Created table: {0} with columns {1}, types {2}, primary key: {3}, sequences: {4}",
-                new Object[]{name, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
+                new Object[]{name, columns, columnTypes, primaryKeyColumn, this.sequences.keySet()});
     }
 
     /**
