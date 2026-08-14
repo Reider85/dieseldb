@@ -553,25 +553,33 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
             }
 
-            int rowsSkipped = (offset != null) ? offset : 0;
-            int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
-            List<Map<String, Object>> selectedRows = new ArrayList<>();
-            for (int i = 0; i < finalRows.size() && selectedRows.size() < maxRows; i++) {
-                if (rowsSkipped > 0) {
-                    rowsSkipped--;
-                    continue;
-                }
-                selectedRows.add(finalRows.get(i));
-            }
-
             if (!aggregates.isEmpty() && groupBy.isEmpty()) {
+                // Aggregates without GROUP BY produce a single row. The aggregate
+                // must be computed over ALL (filtered and sorted) rows; LIMIT/OFFSET
+                // then applies to that single result row, so
+                // SELECT COUNT(*) FROM t LIMIT 1 returns the full count and
+                // SELECT COUNT(*) FROM t LIMIT 0 returns an empty result.
                 Map<String, Object> resultRow = new HashMap<>();
                 for (QueryParser.AggregateFunction agg : aggregates) {
                     String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                    resultRow.put(resultKey, computeAggregate(agg, selectedRows, combinedColumnTypes));
+                    resultRow.put(resultKey, computeAggregate(agg, finalRows, combinedColumnTypes));
                 }
-                result.add(resultRow);
+                int rowsSkipped = (offset != null) ? offset : 0;
+                int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
+                if (rowsSkipped == 0 && maxRows > 0) {
+                    result.add(resultRow);
+                }
             } else {
+                int rowsSkipped = (offset != null) ? offset : 0;
+                int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
+                List<Map<String, Object>> selectedRows = new ArrayList<>();
+                for (int i = 0; i < finalRows.size() && selectedRows.size() < maxRows; i++) {
+                    if (rowsSkipped > 0) {
+                        rowsSkipped--;
+                        continue;
+                    }
+                    selectedRows.add(finalRows.get(i));
+                }
                 if (groupAggregateKeys.isEmpty()) {
                     for (Map<String, Object> row : selectedRows) {
                         result.add(filterColumns(row, columns));
@@ -1098,9 +1106,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             for (String selectColumn : columns) {
                 String[] parts = selectColumn.trim().split("\\s+AS\\s+|\\s+", 2);
-                String columnAlias = parts.length > 1 ? parts[1].trim() : normalizeColumnKey(selectColumn, mainTableName);
-                if (unqualifiedColumn.equalsIgnoreCase(columnAlias)) {
-                    normalizedColumn = columnAlias;
+                String selectBase = parts[0].trim();
+                String selectAlias = parts.length > 1 ? parts[1].trim() : null;
+                String baseUnqualified = selectBase.contains(".") ? selectBase.split("\\.")[1].trim() : selectBase;
+                if (unqualifiedColumn.equalsIgnoreCase(selectAlias == null ? baseUnqualified : selectAlias)) {
+                    normalizedColumn = normalizeColumnName(selectBase, mainTableName);
                     break;
                 }
             }

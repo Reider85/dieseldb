@@ -1372,6 +1372,20 @@ class QueryParser {
         if (orderByIndex != -1) {
             String beforeOrderBy = tableAndJoinsOriginal.substring(0, orderByIndex).trim();
             String orderByClause = tableAndJoinsOriginal.substring(orderByIndex + 8).trim();
+            // The trailing LIMIT (and OFFSET) clause must be stripped from the
+            // ORDER BY text before parsing, otherwise "ID DESC LIMIT 3" is
+            // rejected as an invalid ORDER BY item. Subqueries may still contain
+            // their own LIMIT, so only a clause anchored at the very end is removed.
+            // The stripped clause is re-appended to the remaining text so the
+            // LIMIT/OFFSET parsing below still sees it (it would otherwise be
+            // discarded when the ORDER BY section is cut off).
+            Pattern orderByLimitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+            Matcher orderByLimitMatcher = orderByLimitPattern.matcher(orderByClause);
+            if (orderByLimitMatcher.find()) {
+                String trailingLimit = orderByClause.substring(orderByLimitMatcher.start()).trim();
+                orderByClause = orderByClause.substring(0, orderByLimitMatcher.start()).trim();
+                beforeOrderBy = (beforeOrderBy + " " + trailingLimit).trim();
+            }
             orderBy = parseOrderByClause(orderByClause, tableName, combinedColumnTypes, tableAliases, columnAliases, subQueries); // Updated call
             tableAndJoinsOriginal = beforeOrderBy;
             LOGGER.log(Level.FINE, "Разобранная клауза ORDER BY: {0}", orderBy);
