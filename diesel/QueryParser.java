@@ -1372,14 +1372,15 @@ class QueryParser {
         if (orderByIndex != -1) {
             String beforeOrderBy = tableAndJoinsOriginal.substring(0, orderByIndex).trim();
             String orderByClause = tableAndJoinsOriginal.substring(orderByIndex + 8).trim();
-            // The trailing LIMIT (and OFFSET) clause must be stripped from the
-            // ORDER BY text before parsing, otherwise "ID DESC LIMIT 3" is
-            // rejected as an invalid ORDER BY item. Subqueries may still contain
-            // their own LIMIT, so only a clause anchored at the very end is removed.
-            // The stripped clause is re-appended to the remaining text so the
-            // LIMIT/OFFSET parsing below still sees it (it would otherwise be
-            // discarded when the ORDER BY section is cut off).
-            Pattern orderByLimitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+            // The trailing LIMIT (and OFFSET) or a standalone OFFSET clause
+            // must be stripped from the ORDER BY text before parsing, otherwise
+            // "ID DESC LIMIT 3" or "ID DESC OFFSET 3" is rejected as an invalid
+            // ORDER BY item. Subqueries may still contain their own LIMIT, so
+            // only a clause anchored at the very end is removed. The stripped
+            // clause is re-appended to the remaining text so the LIMIT/OFFSET
+            // parsing below still sees it (it would otherwise be discarded when
+            // the ORDER BY section is cut off).
+            Pattern orderByLimitPattern = Pattern.compile("(?i)\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?|OFFSET\\s+\\d+)\\s*$", Pattern.DOTALL);
             Matcher orderByLimitMatcher = orderByLimitPattern.matcher(orderByClause);
             if (orderByLimitMatcher.find()) {
                 String trailingLimit = orderByClause.substring(orderByLimitMatcher.start()).trim();
@@ -1415,6 +1416,26 @@ class QueryParser {
                 throw new IllegalArgumentException("Недопустимый формат LIMIT: " + afterLimit);
             }
             tableAndJoinsOriginal = beforeLimit;
+        }
+
+        // Standalone OFFSET without LIMIT: "SELECT ... FROM t OFFSET n".
+        // When LIMIT is present its branch already consumed "LIMIT n" and any
+        // trailing "OFFSET m", so this only applies to an OFFSET that appears
+        // without a preceding LIMIT.
+        int offsetIndex = limitIndex == -1 ? findClauseOutsideSubquery(tableAndJoinsOriginal, "OFFSET") : -1;
+        if (offsetIndex != -1) {
+            String beforeOffset = tableAndJoinsOriginal.substring(0, offsetIndex).trim();
+            String afterOffset = tableAndJoinsOriginal.substring(offsetIndex + 6).trim();
+            Pattern offsetPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s*;\\s*$)");
+            Matcher offsetMatcher = offsetPattern.matcher(afterOffset);
+            if (offsetMatcher.find()) {
+                offset = Integer.parseInt(offsetMatcher.group(1));
+                LOGGER.log(Level.FINE, "Разобранное значение OFFSET: {0}", offset);
+            } else {
+                LOGGER.log(Level.SEVERE, "Недопустимый формат OFFSET: {0}", afterOffset);
+                throw new IllegalArgumentException("Недопустимый формат OFFSET: " + afterOffset);
+            }
+            tableAndJoinsOriginal = beforeOffset;
         }
 
         int whereIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "WHERE");

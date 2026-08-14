@@ -193,4 +193,89 @@ public class LimitOffsetTest {
             assertEquals(10, rows.size(), "WHERE AGE > 20 ORDER BY AGE DESC LIMIT 10 must return exactly ten rows");
         }, "limitWithFilterAndOrderBy");
     }
+
+    @Test
+    void offsetZeroReturnsAllRows() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID OFFSET 0");
+            assertEquals(RECORD_COUNT, rows.size(), "OFFSET 0 must return all rows");
+            assertEquals(1L, ((Number) rows.get(0).get("ID")).longValue(), "first row must have the smallest ID");
+        }, "offsetZeroReturnsAllRows");
+    }
+
+    @Test
+    void offsetFiveWithoutLimitSkipsFirstFive() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID OFFSET 5");
+            assertEquals(RECORD_COUNT - 5, rows.size(), "OFFSET 5 must return all rows after the first five");
+            assertEquals(6L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 5 must have ID 6");
+        }, "offsetFiveWithoutLimitSkipsFirstFive");
+    }
+
+    @Test
+    void offsetAppliedAfterDescendingOrderBy() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS ORDER BY ID DESC OFFSET 3");
+            assertEquals(RECORD_COUNT - 3, rows.size(), "ORDER BY ID DESC OFFSET 3 must return all rows after the top three");
+            assertEquals(27L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 3 on ID DESC must have ID 27");
+        }, "offsetAppliedAfterDescendingOrderBy");
+    }
+
+    @Test
+    void offsetGreaterThanTotalRowsReturnsEmpty() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID OFFSET 100");
+            assertEquals(0, rows.size(), "OFFSET 100 must return an empty result, not an error");
+        }, "offsetGreaterThanTotalRowsReturnsEmpty");
+    }
+
+    @Test
+    void offsetEqualToTotalRowsReturnsEmpty() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID OFFSET 30");
+            assertEquals(0, rows.size(), "OFFSET equal to total row count must return an empty result");
+        }, "offsetEqualToTotalRowsReturnsEmpty");
+    }
+
+    @Test
+    void offsetWithoutLimitAndOrderByUsesInsertionOrder() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS OFFSET 5");
+            assertEquals(RECORD_COUNT - 5, rows.size(), "OFFSET 5 without ORDER BY must return all rows after the first five");
+            assertEquals(6L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 5 in insertion order must have ID 6");
+        }, "offsetWithoutLimitAndOrderByUsesInsertionOrder");
+    }
+
+    @Test
+    void offsetZeroWithoutOrderByReturnsAllRows() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS OFFSET 0");
+            assertEquals(RECORD_COUNT, rows.size(), "OFFSET 0 without ORDER BY must return all rows");
+        }, "offsetZeroWithoutOrderByReturnsAllRows");
+    }
+
+    @Test
+    void offsetWithWhereWithoutLimit() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE > 20 OFFSET 5");
+            assertEquals(5, rows.size(), "WHERE AGE > 20 (10 rows) OFFSET 5 must return the remaining five rows");
+            assertEquals(6L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 5 of the filtered rows must have ID 6");
+            assertEquals(10L, ((Number) rows.get(4).get("ID")).longValue(),
+                    "last remaining row must have ID 10");
+        }, "offsetWithWhereWithoutLimit");
+    }
+
+    @Test
+    void offsetAppliedAfterGroupByOrder() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT AGE, COUNT(*) AS CNT FROM USERS GROUP BY AGE ORDER BY AGE OFFSET 5");
+            assertEquals(RECORD_COUNT - 5, rows.size(), "GROUP BY AGE (30 groups) ORDER BY AGE OFFSET 5 must return the remaining 25 groups");
+            assertEquals(6L, ((Number) rows.get(0).get("AGE")).longValue(),
+                    "first group after OFFSET 5 must have AGE 6");
+        }, "offsetAppliedAfterGroupByOrder");
+    }
 }

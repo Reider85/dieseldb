@@ -553,6 +553,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
             }
 
+            if (offset != null && limit == null) {
+                LOGGER.warning("OFFSET without LIMIT may be inefficient");
+            }
+
             if (!aggregates.isEmpty() && groupBy.isEmpty()) {
                 // Aggregates without GROUP BY produce a single row. The aggregate
                 // must be computed over ALL (filtered and sorted) rows; LIMIT/OFFSET
