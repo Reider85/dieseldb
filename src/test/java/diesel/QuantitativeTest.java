@@ -850,7 +850,7 @@ public class QuantitativeTest {
         }
         String javaBin = System.getProperty("java.home") + File.separator + "bin" + File.separator
                 + (isWindows ? "java.exe" : "java");
-        String classpath = System.getProperty("java.class.path");
+        String classpath = resolveSubprocessClasspath();
         ProcessBuilder pb = new ProcessBuilder(javaBin, "-cp", classpath, "diesel.DatabaseServer", String.valueOf(port));
         pb.redirectErrorStream(true);
         pb.directory(tempDir);
@@ -973,6 +973,18 @@ public class QuantitativeTest {
         out.writeObject(message);
         out.flush();
         return in.readObject();
+    }
+
+    private static String resolveSubprocessClasspath() {
+        String separator = File.pathSeparator;
+        StringBuilder sb = new StringBuilder();
+        for (String entry : System.getProperty("java.class.path").split(java.util.regex.Pattern.quote(separator))) {
+            if (sb.length() > 0) {
+                sb.append(separator);
+            }
+            sb.append(new File(entry).getAbsolutePath());
+        }
+        return sb.toString();
     }
 
     private void waitForPrompt70Server(int port) {

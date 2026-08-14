@@ -119,6 +119,7 @@ class QueryParser {
         Object value;
         String rightColumn;
         List<Object> inValues;
+        Set<Object> inValueSet;
         SubQuery subQuery;
         Operator operator;
         String conjunction;
@@ -130,6 +131,7 @@ class QueryParser {
             this.value = value;
             this.rightColumn = null;
             this.inValues = null;
+            this.inValueSet = null;
             this.subQuery = null;
             this.operator = operator;
             this.conjunction = conjunction;
@@ -142,6 +144,7 @@ class QueryParser {
             this.value = null;
             this.rightColumn = null;
             this.inValues = inValues;
+            this.inValueSet = inValues == null ? null : new HashSet<>(inValues);
             this.subQuery = null;
             this.operator = Operator.IN;
             this.conjunction = conjunction;
@@ -154,6 +157,7 @@ class QueryParser {
             this.value = null;
             this.rightColumn = null;
             this.inValues = null;
+            this.inValueSet = null;
             this.subQuery = null;
             this.operator = null;
             this.conjunction = conjunction;
@@ -166,6 +170,7 @@ class QueryParser {
             this.value = null;
             this.rightColumn = rightColumn;
             this.inValues = null;
+            this.inValueSet = null;
             this.subQuery = null;
             this.operator = operator;
             this.conjunction = conjunction;
@@ -178,6 +183,7 @@ class QueryParser {
             this.value = null;
             this.rightColumn = null;
             this.inValues = null;
+            this.inValueSet = null;
             this.subQuery = null;
             this.operator = operator;
             this.conjunction = conjunction;
@@ -190,6 +196,7 @@ class QueryParser {
             this.value = null;
             this.rightColumn = null;
             this.inValues = null;
+            this.inValueSet = null;
             this.subQuery = subQuery;
             this.operator = operator;
             this.conjunction = conjunction;
@@ -202,6 +209,7 @@ class QueryParser {
             this.value = null;
             this.rightColumn = null;
             this.inValues = null;
+            this.inValueSet = null;
             this.subQuery = subQuery;
             this.operator = Operator.IN;
             this.conjunction = conjunction;

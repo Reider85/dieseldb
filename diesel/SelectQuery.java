@@ -1438,7 +1438,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 throw new IllegalStateException("IN condition has no values or subquery results");
             }
 
-            boolean inResult = inValues.stream().anyMatch(v -> valuesEqual(v, value));
+            // Fast path: exact-equals lookup in a pre-built HashSet (built once at
+            // parse time). If the row value equals some list value, valuesEqual is
+            // guaranteed to agree (same class + equals -> valuesEqual true), so a hit
+            // is definitive. Only on a miss do we fall back to the linear
+            // valuesEqual scan, which preserves the epsilon (Float/Double) and
+            // scale-insensitive (BigDecimal) semantics that a HashSet cannot express.
+            boolean inResult = condition.inValueSet != null && condition.inValueSet.contains(value)
+                    || inValues.stream().anyMatch(v -> valuesEqual(v, value));
             boolean result = condition.not ? !inResult : inResult;
             return Boolean.valueOf(result);
         }
