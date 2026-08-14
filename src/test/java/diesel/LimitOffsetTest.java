@@ -278,4 +278,94 @@ public class LimitOffsetTest {
                     "first group after OFFSET 5 must have AGE 6");
         }, "offsetAppliedAfterGroupByOrder");
     }
+
+    @Test
+    void limitTenOffsetFiveReturnsTenRowsAfterOffset() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID LIMIT 10 OFFSET 5");
+            assertEquals(10, rows.size(), "LIMIT 10 OFFSET 5 must return exactly ten rows");
+            assertEquals(6L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 5 must have ID 6");
+            assertEquals(15L, ((Number) rows.get(9).get("ID")).longValue(),
+                    "tenth row must have ID 15");
+        }, "limitTenOffsetFiveReturnsTenRowsAfterOffset");
+    }
+
+    @Test
+    void limitTenOffsetFiveWithoutOrderByUsesInsertionOrder() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS LIMIT 10 OFFSET 5");
+            assertEquals(10, rows.size(), "LIMIT 10 OFFSET 5 without ORDER BY must return exactly ten rows");
+            assertEquals(6L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 5 in insertion order must have ID 6");
+        }, "limitTenOffsetFiveWithoutOrderByUsesInsertionOrder");
+    }
+
+    @Test
+    void limitOneOffsetNinetyNineReturnsNoRows() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID LIMIT 1 OFFSET 99");
+            assertEquals(0, rows.size(), "LIMIT 1 OFFSET 99 (offset > total) must return an empty result, not an error");
+        }, "limitOneOffsetNinetyNineReturnsNoRows");
+    }
+
+    @Test
+    void limitHundredOffsetZeroReturnsAllRows() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID LIMIT 100 OFFSET 0");
+            assertEquals(RECORD_COUNT, rows.size(), "LIMIT 100 OFFSET 0 must return all rows");
+            assertEquals(1L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row must have the smallest ID");
+        }, "limitHundredOffsetZeroReturnsAllRows");
+    }
+
+    @Test
+    void limitZeroWithOffsetReturnsNoRows() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID LIMIT 0 OFFSET 5");
+            assertEquals(0, rows.size(), "LIMIT 0 OFFSET 5 must return no rows");
+        }, "limitZeroWithOffsetReturnsNoRows");
+    }
+
+    @Test
+    void limitOffsetSumExceedingTotalReturnsRemainder() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS ORDER BY ID LIMIT 20 OFFSET 25");
+            assertEquals(5, rows.size(), "LIMIT 20 OFFSET 25 must return the remaining five rows, not twenty");
+            assertEquals(26L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 25 must have ID 26");
+            assertEquals(30L, ((Number) rows.get(4).get("ID")).longValue(),
+                    "last remaining row must have ID 30");
+        }, "limitOffsetSumExceedingTotalReturnsRemainder");
+    }
+
+    @Test
+    void limitOffsetAppliedAfterWhereAndOrderBy() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, AGE FROM USERS WHERE AGE > 20 ORDER BY AGE DESC LIMIT 5 OFFSET 3");
+            assertEquals(5, rows.size(), "WHERE AGE > 20 (10 rows) ORDER BY AGE DESC LIMIT 5 OFFSET 3 must return exactly five rows");
+            assertEquals(4L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "after OFFSET 3 of the AGE DESC ordering (IDs 1,2,3,4,5 have the top five ages) the first row must have ID 4");
+        }, "limitOffsetAppliedAfterWhereAndOrderBy");
+    }
+
+    @Test
+    void limitOffsetAfterGroupByOrder() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT AGE, COUNT(*) AS CNT FROM USERS GROUP BY AGE ORDER BY AGE LIMIT 5 OFFSET 10");
+            assertEquals(5, rows.size(), "GROUP BY AGE (30 groups) ORDER BY AGE LIMIT 5 OFFSET 10 must return exactly five groups");
+            assertEquals(11L, ((Number) rows.get(0).get("AGE")).longValue(),
+                    "first group after OFFSET 10 must have AGE 11");
+        }, "limitOffsetAfterGroupByOrder");
+    }
+
+    @Test
+    void aggregateWithoutGroupByLimitOffset() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT COUNT(*) AS CNT FROM USERS LIMIT 1 OFFSET 0");
+            assertEquals(1, rows.size(), "aggregate with LIMIT 1 OFFSET 0 must return exactly one row");
+            assertEquals(RECORD_COUNT, ((Number) rows.get(0).get("CNT")).longValue(),
+                    "COUNT(*) must be computed over all rows, not limited rows");
+        }, "aggregateWithoutGroupByLimitOffset");
+    }
 }
