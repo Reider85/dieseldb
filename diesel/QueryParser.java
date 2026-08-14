@@ -2226,12 +2226,7 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
                     continue;
                 }
-                if (condStr.toUpperCase().contains(" IN ")) {
-                    Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
-                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
-                } else if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                if (condStr.startsWith("(") && condStr.endsWith(")")) {
                     int endParen = findMatchingParenthesis(condStr, 0);
                     if (endParen == condStr.length() - 1) {
                         String subCondStr = condStr.substring(1, endParen).trim();
@@ -2243,6 +2238,11 @@ class QueryParser {
                     } else {
                         throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
                     }
+                } else if (condStr.toUpperCase().contains(" IN ")) {
+                    Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
+                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    conditions.add(condition);
+                    LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
                 } else {
                     Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
                             isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, condStr);

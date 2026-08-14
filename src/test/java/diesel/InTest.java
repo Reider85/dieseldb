@@ -422,4 +422,64 @@ public class InTest {
         List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (52) OR AGE IN (51) OR AGE IN (50)");
         assertEquals(21, rows.size(), "All three IN values must be checked, not just the first");
     }
+
+    @Test
+    void selectWithWhereInAndOrCombined() {
+        // (AGE IN (50, 51, 52) AND BALANCE > 100) OR NAME = 'User600'
+        // AGE IN → 21 rows, all have BALANCE > 100. OR adds User600 (AGE=44, not in IN). Total: 22
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50, 51, 52) AND BALANCE > 100 OR NAME = 'User600'");
+        assertEquals(22, rows.size(), "IN + AND + OR must return 22 rows (21 from IN+AND, 1 from OR)");
+    }
+
+    @Test
+    void selectWithWhereNotInAndReturnsExpectedRows() {
+        // AGE NOT IN (50, 51, 52) → 600 - 21 = 579 rows, all have BALANCE > 100
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE NOT IN (50, 51, 52) AND BALANCE > 100");
+        assertEquals(579, rows.size(), "NOT IN + AND must return 579 rows");
+    }
+
+    @Test
+    void selectWithWhereNotInAndOrCombined() {
+        // (AGE NOT IN (50, 51, 52) AND BALANCE > 5000) → 0 rows (no BALANCE > 5000)
+        // OR NAME = 'User600' → 1 row. Total: 1
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE NOT IN (50, 51, 52) AND BALANCE > 5000 OR NAME = 'User600'");
+        assertEquals(1, rows.size(), "NOT IN + AND + OR must return 1 row (only OR branch)");
+    }
+
+    @Test
+    void selectWithWhereInAndAndName() {
+        // AGE IN (50, 51, 52) AND BALANCE > 100 AND NAME = 'User524' → 1 row (User524, AGE=50)
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50, 51, 52) AND BALANCE > 100 AND NAME = 'User524'");
+        assertEquals(1, rows.size(), "IN + AND + AND must return 1 row (User524)");
+    }
+
+    @Test
+    void selectWithWhereNotInAndAndName() {
+        // AGE NOT IN (50, 51, 52) AND BALANCE > 100 AND NAME = 'User600' → 1 row (User600, AGE=44)
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE NOT IN (50, 51, 52) AND BALANCE > 100 AND NAME = 'User600'");
+        assertEquals(1, rows.size(), "NOT IN + AND + AND must return 1 row (User600)");
+    }
+
+    @Test
+    void selectWithWhereInOrAndOr() {
+        // AGE IN (50, 51, 52) OR BALANCE > 5000 AND NAME = 'User600' → AND binds tighter
+        // (AGE IN (50, 51, 52)) OR (BALANCE > 5000 AND NAME = 'User600')
+        // BALANCE > 5000 → 0 rows, so second group is empty. AGE IN → 21 rows. Total: 21
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE AGE IN (50, 51, 52) OR BALANCE > 5000 AND NAME = 'User600'");
+        assertEquals(21, rows.size(), "IN OR AND must return 21 rows (only IN branch)");
+    }
+
+    @Test
+    void selectWithWhereInParenthesizedAndOr() {
+        // (AGE IN (50, 51, 52) AND BALANCE > 100) OR NAME = 'User600' → 22 rows
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE (AGE IN (50, 51, 52) AND BALANCE > 100) OR NAME = 'User600'");
+        assertEquals(22, rows.size(), "Parenthesized IN+AND OR must return 22 rows");
+    }
+
+    @Test
+    void selectWithWhereNotInParenthesizedAnd() {
+        // (AGE NOT IN (50, 51, 52)) AND BALANCE > 100 → 579 rows
+        List<Map<String, Object>> rows = runSelect("SELECT ID FROM USERS WHERE (AGE NOT IN (50, 51, 52)) AND BALANCE > 100");
+        assertEquals(579, rows.size(), "Parenthesized NOT IN AND must return 579 rows");
+    }
 }

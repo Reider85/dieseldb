@@ -1316,43 +1316,71 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (conditions.isEmpty()) {
             return Boolean.TRUE;
         }
-        Boolean result = evaluateCondition3vl(row, conditions.get(0), combinedColumnTypes, tables);
-        for (int i = 1; i < conditions.size(); i++) {
+        logConditionEvaluation(conditions);
+
+        // SQL precedence: AND binds tighter than OR, so the flat condition list
+        // is evaluated as a disjunction of AND-segments. Each segment short-
+        // circuits: FALSE AND anything = FALSE (skip the rest of the segment)
+        // and TRUE OR anything = TRUE (skip the remaining segments). A null
+        // (UNKNOWN) result must not be conflated with an uninitialized
+        // accumulator, hence the explicit initialized flags.
+        Boolean orResult = null;
+        boolean orInitialized = false;
+        Boolean andResult = null;
+        boolean andInitialized = false;
+
+        for (int i = 0; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
-            if (conjunction != null && conjunction.equalsIgnoreCase("OR")) {
-                result = shortCircuitOrCondition(result, condition, row, combinedColumnTypes, tables);
-            } else if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
-                result = shortCircuitAndCondition(result, condition, row, combinedColumnTypes, tables);
+            boolean orBoundary = i > 0 && conjunction != null && conjunction.equalsIgnoreCase("OR");
+
+            if (orBoundary) {
+                orResult = orInitialized ? ThreeValuedLogic.or(orResult, andResult) : andResult;
+                orInitialized = true;
+                if (ThreeValuedLogic.orIsDetermined(orResult)) {
+                    return orResult;
+                }
+                andResult = null;
+                andInitialized = false;
             }
+
+            if (!andInitialized) {
+                andResult = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
+                andInitialized = true;
+                continue;
+            }
+
+            if (ThreeValuedLogic.andIsDetermined(andResult)) {
+                while (i + 1 < conditions.size()) {
+                    String nextConj = conditions.get(i + 1).conjunction;
+                    if (nextConj != null && nextConj.equalsIgnoreCase("OR")) {
+                        break;
+                    }
+                    i++;
+                }
+                continue;
+            }
+
+            Boolean value = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
+            andResult = ThreeValuedLogic.and(andResult, value);
         }
-        return result;
+
+        return orInitialized ? ThreeValuedLogic.or(orResult, andResult) : andResult;
     }
 
-    /**
-     * Short-circuits an OR-fold: once the accumulated result is TRUE the
-     * remaining operands are not evaluated, otherwise the next condition is
-     * folded in with three-valued OR semantics.
-     */
-    private Boolean shortCircuitOrCondition(Boolean result, QueryParser.Condition condition, Map<String, Object> row,
-                                            Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
-        if (ThreeValuedLogic.orIsDetermined(result)) {
-            return result;
+    private void logConditionEvaluation(List<QueryParser.Condition> conditions) {
+        if (!LOGGER.isLoggable(Level.FINE)) {
+            return;
         }
-        return ThreeValuedLogic.or(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
-    }
-
-    /**
-     * Short-circuits an AND-fold: once the accumulated result is FALSE the
-     * remaining operands are not evaluated, otherwise the next condition is
-     * folded in with three-valued AND semantics.
-     */
-    private Boolean shortCircuitAndCondition(Boolean result, QueryParser.Condition condition, Map<String, Object> row,
-                                             Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
-        if (ThreeValuedLogic.andIsDetermined(result)) {
-            return result;
+        StringBuilder sb = new StringBuilder("Evaluating WHERE: ");
+        for (int i = 0; i < conditions.size(); i++) {
+            if (i > 0) {
+                String conjunction = conditions.get(i).conjunction;
+                sb.append(' ').append(conjunction != null ? conjunction : "AND").append(' ');
+            }
+            sb.append(conditions.get(i));
         }
-        return ThreeValuedLogic.and(result, evaluateCondition3vl(row, condition, combinedColumnTypes, tables));
+        LOGGER.fine(sb.toString());
     }
 
     private Boolean evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
