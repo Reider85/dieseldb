@@ -17,6 +17,26 @@ class InsertQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(InsertQuery.class.getName());
     private final List<String> columns;
     private final List<Object> values;
+    private long lastAffectedRows;
+
+    /**
+     * Returns the columns being inserted into.
+     *
+     * @return the unmodifiable column list
+     */
+    public List<String> getColumns() {
+        return Collections.unmodifiableList(columns);
+    }
+
+    /**
+     * Returns the number of rows the last {@link #execute} inserted (always 1
+     * on success), exposed for EXPLAIN ANALYZE metrics.
+     *
+     * @return the affected row count of the last execution
+     */
+    long getLastAffectedRows() {
+        return lastAffectedRows;
+    }
 
     /**
      * Creates an insert query for the given columns and values.
@@ -141,6 +161,7 @@ class InsertQuery implements Query<Void> {
         }
         try {
             table.addRow(row);
+            lastAffectedRows = 1;
             LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{table.getName(), row});
         } catch (IllegalStateException e) {
             LOGGER.log(Level.SEVERE, "Insert failed due to unique constraint violation: {0}", e.getMessage());

@@ -19,6 +19,35 @@ class UpdateQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(UpdateQuery.class.getName());
     private final Map<String, Object> updates;
     private final List<QueryParser.Condition> conditions;
+    private long lastAffectedRows;
+
+    /**
+     * Returns the SET column to new-value assignments.
+     *
+     * @return the unmodifiable updates map
+     */
+    public Map<String, Object> getUpdates() {
+        return Collections.unmodifiableMap(updates);
+    }
+
+    /**
+     * Returns the WHERE conditions, empty for updating all rows.
+     *
+     * @return the unmodifiable condition list
+     */
+    public List<QueryParser.Condition> getConditions() {
+        return Collections.unmodifiableList(conditions);
+    }
+
+    /**
+     * Returns the number of rows the last {@link #execute} matched, exposed
+     * for EXPLAIN ANALYZE metrics.
+     *
+     * @return the affected row count of the last execution
+     */
+    long getLastAffectedRows() {
+        return lastAffectedRows;
+    }
 
     /**
      * Creates an update query with the given SET assignments and conditions.
@@ -86,6 +115,7 @@ class UpdateQuery implements Query<Void> {
             }
 
             LOGGER.log(Level.INFO, "Updated {0} rows in table {1}", new Object[]{rowsToUpdate.size(), table.getName()});
+            lastAffectedRows = rowsToUpdate.size();
             return null;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {

@@ -2195,6 +2195,185 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     /**
+     * Builds a textual execution-plan tree for EXPLAIN. Analysis-only: never
+     * executes the query, so no table rows are read or mutated. It reports the
+     * table scans, the join algorithm actually chosen at runtime (In-Memory
+     * Hash Join / Partitioned Hash Join / Nested Loop), the estimated rows,
+     * the indexes the WHERE/ON conditions would use, and the remaining clauses
+     * (filter, group by, having, order by, limit/offset).
+     *
+     * @param mainTable the resolved main table (real or derived)
+     * @return the multi-line plan text
+     */
+    String describePlan(Table mainTable) {
+        Database database = mainTable.getDatabase();
+        for (QueryParser.JoinInfo join : joins) {
+            tableAliases.putIfAbsent(join.tableName, join.tableName);
+            if (join.alias != null) {
+                tableAliases.put(join.alias, join.tableName);
+            }
+        }
+
+        String scanName = derivedMainTable != null ? mainTable.getName() : mainTableName;
+        StringBuilder sb = new StringBuilder("Execution Plan\n");
+        sb.append("  Operation: SELECT\n");
+        sb.append("  Scan ").append(scanName).append(" (estimated rows: ").append(mainTable.rowCount()).append(")\n");
+        sb.append("  Index: ").append(describeScanIndex(mainTable, mainTableName, conditions)).append('\n');
+
+        if (!joins.isEmpty()) {
+            List<QueryParser.JoinInfo> ordered = new ArrayList<>(joins);
+            if (ordered.size() > 1) {
+                boolean allInner = ordered.stream().allMatch(j -> j.joinType == QueryParser.JoinType.INNER
+                        || j.joinType == QueryParser.JoinType.LEFT_INNER
+                        || j.joinType == QueryParser.JoinType.RIGHT_INNER);
+                if (allInner) {
+                    ordered.sort(Comparator.comparingInt(j -> database.getTable(j.tableName).rowCount()));
+                }
+            }
+            for (QueryParser.JoinInfo join : ordered) {
+                Table joinTable = database.getTable(join.tableName);
+                sb.append("  Join ").append(join.joinType).append('\n');
+                sb.append("    tables: ").append(scanName);
+                if (join.alias != null) {
+                    sb.append(" AS ").append(join.alias);
+                }
+                sb.append(" <-> ").append(join.tableName).append('\n');
+                sb.append("    estimated rows: ").append(joinTable != null ? joinTable.rowCount() : 0).append('\n');
+                sb.append("    algorithm: ").append(describeJoinAlgorithm(join, joinTable, mainTable)).append('\n');
+                QueryParser.Condition equality = findHashEquality(join);
+                if (equality != null) {
+                    sb.append("    keys: ").append(normalizeColumnName(equality.column, mainTableName))
+                            .append(" = ").append(normalizeColumnName(equality.rightColumn, mainTableName)).append('\n');
+                }
+                if (join.onConditions != null && !join.onConditions.isEmpty()) {
+                    sb.append("    on: ").append(join.onConditions.stream()
+                            .map(QueryParser.Condition::toString)
+                            .collect(Collectors.joining(" "))).append('\n');
+                }
+            }
+        }
+
+        if (!conditions.isEmpty()) {
+            sb.append("  Filter (WHERE): ").append(conditions.stream()
+                    .map(QueryParser.Condition::toString)
+                    .collect(Collectors.joining(" "))).append('\n');
+        }
+        if (!groupBy.isEmpty()) {
+            sb.append("  Group By: ").append(String.join(", ", groupBy)).append('\n');
+        }
+        if (!havingConditions.isEmpty()) {
+            sb.append("  Having: ").append(havingConditions.stream()
+                    .map(QueryParser.HavingCondition::toString)
+                    .collect(Collectors.joining(" "))).append('\n');
+        }
+        if (!orderBy.isEmpty()) {
+            sb.append("  Order By: ").append(orderBy.stream()
+                    .map(QueryParser.OrderByInfo::toString)
+                    .collect(Collectors.joining(", "))).append('\n');
+        }
+        if (limit != null || offset != null) {
+            sb.append("  Limit: ").append(limit == null ? "none" : limit)
+                    .append(", Offset: ").append(offset == null ? "none" : offset).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Returns the single equality condition a hash join would key on, or null
+     * when the join cannot use a hash join.
+     */
+    private QueryParser.Condition findHashEquality(QueryParser.JoinInfo join) {
+        if (!canUseHashJoin(join, null)) {
+            return null;
+        }
+        return join.onConditions.stream()
+                .filter(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison())
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * Reports which join algorithm the engine would pick at runtime for this
+     * join, mirroring the strategy branch of {@link #execute}: a hash join is
+     * only possible for inner-style joins with a plain equality key and no OR
+     * in the ON clause, and when the estimated hash table would exceed the
+     * memory budget the plan shows the spill-to-disk partitioned variant.
+     */
+    private String describeJoinAlgorithm(QueryParser.JoinInfo join, Table joinTable, Table mainTable) {
+        if (join.joinType == QueryParser.JoinType.CROSS) {
+            return "Nested Loop (cross join)";
+        }
+        if (!canUseHashJoin(join, null)) {
+            if (hasOrInOnConditions(join)) {
+                return "Nested Loop (OR condition may produce a large result set)";
+            }
+            return "Nested Loop";
+        }
+        Table buildTable = joinTable != null && joinTable.rowCount() <= mainTable.rowCount() ? joinTable : mainTable;
+        long estimatedRows = buildTable.rowCount();
+        long estimatedBytes = estimateHashTableSizeBytes(buildTable.getRows(), buildTable);
+        if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+            return "Partitioned Hash Join (spill to disk)";
+        }
+        return "In-Memory Hash Join";
+    }
+
+    /**
+     * Reports which index (if any) the engine would use to pre-filter the main
+     * table scan for the given WHERE conditions, mirroring {@link #getIndexedRows}.
+     */
+    private String describeScanIndex(Table table, String tableName, List<QueryParser.Condition> conditions) {
+        if (conditions == null || conditions.isEmpty()) {
+            return "none (full scan)";
+        }
+        for (QueryParser.Condition condition : conditions) {
+            if (condition.conjunction != null && "OR".equalsIgnoreCase(condition.conjunction)) {
+                return "none (OR conditions disable the index pre-filter)";
+            }
+        }
+        for (QueryParser.Condition condition : conditions) {
+            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) {
+                continue;
+            }
+            String unqualifiedColumn = normalizeColumnKey(normalizeColumnName(condition.column, tableName), tableName);
+            Index index = table.getIndex(unqualifiedColumn);
+            if (index == null && table.hasClusteredIndex() && unqualifiedColumn.equals(table.getClusteredIndexColumn())) {
+                index = table.getClusteredIndex();
+            }
+            if (index == null) {
+                continue;
+            }
+            if (condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator()) {
+                return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn;
+            }
+            if (index instanceof BTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN
+                    || condition.operator == QueryParser.Operator.GREATER_THAN)) {
+                return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
+            }
+        }
+        return "none (full scan)";
+    }
+
+    /**
+     * Human-readable name of an index implementation for EXPLAIN output.
+     */
+    static String indexTypeName(Index index) {
+        if (index instanceof HashIndex) {
+            return "Hash";
+        }
+        if (index instanceof BTreeIndex) {
+            return "B-tree";
+        }
+        if (index instanceof UniqueIndex) {
+            return "Unique";
+        }
+        if (index instanceof BTreeClusteredIndex) {
+            return "Clustered";
+        }
+        return index.getClass().getSimpleName().replace("Index", "");
+    }
+
+    /**
      * Renders the query back to its SQL form.
      *
      * @return the SQL representation

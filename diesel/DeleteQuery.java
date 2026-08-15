@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 class DeleteQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(DeleteQuery.class.getName());
     private final List<QueryParser.Condition> conditions;
+    private long lastAffectedRows;
 
     /**
      * Creates a delete query with the given conditions.
@@ -25,6 +26,25 @@ class DeleteQuery implements Query<Void> {
      */
     public DeleteQuery(List<QueryParser.Condition> conditions) {
         this.conditions = conditions;
+    }
+
+    /**
+     * Returns the WHERE conditions, empty for deleting all rows.
+     *
+     * @return the unmodifiable condition list
+     */
+    public List<QueryParser.Condition> getConditions() {
+        return Collections.unmodifiableList(conditions);
+    }
+
+    /**
+     * Returns the number of rows the last {@link #execute} deleted, exposed
+     * for EXPLAIN ANALYZE metrics.
+     *
+     * @return the affected row count of the last execution
+     */
+    long getLastAffectedRows() {
+        return lastAffectedRows;
     }
 
     /**
@@ -130,6 +150,7 @@ class DeleteQuery implements Query<Void> {
             }
 
             LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
+            lastAffectedRows = rowsToDelete.size();
             return null;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {

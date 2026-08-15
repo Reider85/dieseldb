@@ -157,6 +157,9 @@ class Database {
             if (parsedQuery instanceof CreateIndexQueryBase) {
                 return executeCreateIndex((CreateIndexQueryBase) parsedQuery, currentTransaction);
             }
+            if (parsedQuery instanceof ExplainQuery) {
+                return executeExplain((ExplainQuery) parsedQuery, currentTransaction);
+            }
             return executeDataQuery(parsedQuery, query, currentTransaction);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
@@ -165,6 +168,13 @@ class Database {
     }
 
     private Query<?> parse(String query) {
+        // EXPLAIN must be handled before the subquery check: SubqueryParser would
+        // mistake the inner statement's (SELECT ...) for its own input, whereas
+        // QueryParser.parseExplainQuery parses the inner statement with the full
+        // subquery-aware pipeline.
+        if (QueryParser.isExplainQuery(query)) {
+            return new QueryParser().parse(query, this);
+        }
         SubqueryParser subqueryParser = new SubqueryParser();
         return subqueryParser.containsSubquery(query)
                 ? subqueryParser.parse(query, this)
@@ -252,6 +262,29 @@ class Database {
             return "Unique clustered index";
         }
         throw new IllegalArgumentException("Unsupported index query type: " + indexQuery.getClass().getSimpleName());
+    }
+
+    /**
+     * Executes an EXPLAIN statement: resolves the table the inner statement
+     * operates on (a derived-table virtual table when the inner SELECT scans
+     * one) and delegates to {@link ExplainQuery#execute}, which renders the
+     * plan tree and, for EXPLAIN ANALYZE, runs the statement and appends the
+     * actual metrics. ANALYZE runs the statement against the resolved table
+     * directly, so the in-memory mutation is not persisted.
+     */
+    private Object executeExplain(ExplainQuery explainQuery, Transaction currentTransaction) {
+        Query<?> inner = explainQuery.getInnerQuery();
+        Table table;
+        if (inner instanceof SelectQuery && ((SelectQuery) inner).getDerivedMainTable() != null) {
+            table = ((SelectQuery) inner).getDerivedMainTable();
+        } else {
+            String tableName = extractTableName(explainQuery.getInnerSql());
+            table = getTableForQuery(tableName, currentTransaction);
+            if (table == null) {
+                throw new IllegalArgumentException("Table " + tableName + " does not exist");
+            }
+        }
+        return explainQuery.execute(table);
     }
 
     /**

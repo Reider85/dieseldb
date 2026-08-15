@@ -580,6 +580,9 @@ class QueryParser {
             if (lexerResult != null) {
                 return lexerResult;
             }
+            if (normalized.startsWith("EXPLAIN")) {
+                return parseExplainQuery(normalized, query, database);
+            }
             if (normalized.startsWith("SELECT")) {
                 return parseSelectQuery(normalized, query, database);
             } else if (normalized.startsWith("INSERT INTO")) {
@@ -680,6 +683,54 @@ class QueryParser {
                     new Object[]{originalQuery, e.getMessage()});
             return null;
         }
+    }
+
+    /**
+     * Returns whether the query is an EXPLAIN statement (case-insensitive).
+     * {@link Database#parse} uses this to route EXPLAIN to {@link QueryParser}
+     * even when the inner statement contains subqueries, so that SubqueryParser
+     * does not mistake the inner {@code (SELECT ...)} for its own input.
+     *
+     * @param query the SQL query to inspect
+     * @return true when the query starts with the EXPLAIN keyword
+     */
+    static boolean isExplainQuery(String query) {
+        return toUpperCasePreservingQuotedIdentifiers(query.trim()).startsWith("EXPLAIN");
+    }
+
+    /**
+     * Parses an EXPLAIN statement: strips the EXPLAIN (and optional ANALYZE)
+     * keyword, parses the inner SELECT / INSERT / UPDATE / DELETE statement
+     * with the full pipeline (subqueries included) and wraps it into an
+     * {@link ExplainQuery}. EXPLAIN supports only data statements, so DDL and
+     * transaction commands are rejected.
+     */
+    private Query<?> parseExplainQuery(String normalized, String original, Database database) {
+        String rest = stripLeadingKeyword(original, "EXPLAIN");
+        boolean analyze = false;
+        if (rest.toUpperCase().startsWith("ANALYZE")) {
+            analyze = true;
+            rest = stripLeadingKeyword(rest, "ANALYZE");
+        }
+        String inner = rest.trim();
+        String innerNormalized = toUpperCasePreservingQuotedIdentifiers(inner);
+        if (!(innerNormalized.startsWith("SELECT") || innerNormalized.startsWith("INSERT")
+                || innerNormalized.startsWith("UPDATE") || innerNormalized.startsWith("DELETE"))) {
+            throw new IllegalArgumentException("EXPLAIN supports only SELECT, INSERT, UPDATE and DELETE statements");
+        }
+        SubqueryParser subqueryParser = new SubqueryParser();
+        Query<?> innerQuery = subqueryParser.containsSubquery(inner)
+                ? subqueryParser.parse(inner, database)
+                : new QueryParser().parse(inner, database);
+        return new ExplainQuery(innerQuery, analyze, inner);
+    }
+
+    private String stripLeadingKeyword(String text, String keyword) {
+        String trimmed = text.trim();
+        if (trimmed.toUpperCase().startsWith(keyword)) {
+            return trimmed.substring(keyword.length()).trim();
+        }
+        return trimmed;
     }
 
     /**
