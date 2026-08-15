@@ -217,6 +217,32 @@ public class DatabaseServer {
             }
         }
 
+        /**
+         * Reports an OutOfMemoryError thrown while running a query: logs the
+         * query text together with the query's own peak-memory and row metrics
+         * ({@link SelectQuery}) plus the current heap usage, then answers the
+         * client with a short, actionable error message instead of dropping the
+         * connection.
+         */
+        private void handleOutOfMemory(String query, OutOfMemoryError e) {
+            long usedBytes = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+            LOGGER.log(Level.SEVERE, "OutOfMemoryError while executing query: {0}", query);
+            LOGGER.log(Level.SEVERE, "  Query context: rows produced={0}, peak memory used={1} bytes at {2} rows, heap used now={3} bytes, cause={4}",
+                    new Object[]{
+                            SelectQuery.getLastQueryRowCount(),
+                            SelectQuery.getLastQueryPeakMemoryBytes(),
+                            SelectQuery.getLastQueryRowsAtPeak(),
+                            usedBytes,
+                            String.valueOf(e.getMessage())
+                    });
+            try {
+                out.writeObject("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.");
+                out.flush();
+            } catch (IOException io) {
+                LOGGER.log(Level.SEVERE, "Error sending OOM response to client: {0}", io.getMessage());
+            }
+        }
+
         @Override
         public void run() {
             try {
@@ -250,6 +276,8 @@ public class DatabaseServer {
                         Object result = database.executeQuery(query, transactionId);
                         out.writeObject(result);
                         out.flush();
+                    } catch (OutOfMemoryError e) {
+                        handleOutOfMemory(query, e);
                     } catch (Exception e) {
                         out.writeObject("Error: " + e.getMessage());
                         out.flush();
