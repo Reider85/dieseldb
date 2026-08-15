@@ -513,6 +513,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
 
+                // Prompt 15: when a JOIN equality column has no index, one is
+                // auto-created (in-memory B-tree) so later joins and lookups on
+                // that column can use it, with an advisory warning. Idempotent
+                // (existing indexes and the clustered PK are skipped) and never
+                // fatal: any failure only degrades to a log record.
+                ensureJoinColumnIndexes(tables, join);
+
                 if (useHashJoin) {
                     Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : tables.get(mainTableName);
                     Table probeTable = buildTable == joinTable ? tables.get(mainTableName) : joinTable;
@@ -1760,6 +1767,59 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return condition.rightColumn;
         }
         return null;
+    }
+
+    /**
+     * Prompt 15: ensures both sides of a JOIN equality condition carry an index.
+     * Handles both the legacy {@code leftColumn/rightColumn} form and the
+     * {@code onConditions} form with an EQUALS column comparison. The check is a
+     * constant-time index-map lookup, and the auto-creation is a one-time
+     * O(n log n) build per (table, column) that later joins reuse, so this never
+     * re-runs for the same column. Best effort: unresolved sides (e.g. a
+     * three-table chain where the condition references an intermediate table)
+     * are simply skipped.
+     */
+    private void ensureJoinColumnIndexes(Map<String, Table> tables, QueryParser.JoinInfo join) {
+        if (join.leftColumn != null && join.rightColumn != null) {
+            ensureJoinColumnIndex(tables.get(join.originalTable), join.originalTable, join.leftColumn);
+            ensureJoinColumnIndex(tables.get(join.tableName), join.tableName, join.rightColumn);
+            return;
+        }
+        for (QueryParser.Condition condition : join.onConditions) {
+            if (condition.operator != QueryParser.Operator.EQUALS || !condition.isColumnComparison() || condition.not) {
+                continue;
+            }
+            ensureJoinColumnIndex(tables.get(mainTableName), mainTableName, resolveJoinColumn(condition, mainTableName));
+            ensureJoinColumnIndex(tables.get(join.tableName), join.tableName, resolveJoinColumn(condition, join.tableName));
+        }
+    }
+
+    /**
+     * Auto-creates an in-memory B-tree index over {@code column} on
+     * {@code table} when no index covers it yet, logging the advisory warning
+     * "Consider creating index on TABLE.COLUMN for faster JOIN". Clustered
+     * (primary-key) columns are already indexed and are skipped. Never throws:
+     * indexing failures only produce a FINE log record so the query always
+     * proceeds.
+     */
+    private void ensureJoinColumnIndex(Table table, String tableName, String column) {
+        if (table == null || column == null) {
+            return;
+        }
+        String unqualified = normalizeColumnKey(column, tableName);
+        if (table.getIndex(unqualified) != null) {
+            return;
+        }
+        if (table.hasClusteredIndex() && unqualified.equals(table.getClusteredIndexColumn())) {
+            return;
+        }
+        try {
+            table.createBTreeIndex(unqualified);
+            LOGGER.warning("Consider creating index on " + tableName + "." + unqualified + " for faster JOIN");
+        } catch (RuntimeException e) {
+            LOGGER.log(Level.FINE, "Skipped auto-creating index on {0}.{1}: {2}",
+                    new Object[]{tableName, unqualified, e.getMessage()});
+        }
     }
 
     private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
