@@ -132,7 +132,10 @@ class Database {
      */
     public Object executeQuery(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
-        Query<?> parsedQuery = parse(query);
+        Long maxRowsHint = parseMaxRowsHint(query);
+        String cleanQuery = stripMaxRowsHint(query);
+        Query<?> parsedQuery = parse(cleanQuery);
+        applyMaxRowsHint(parsedQuery, maxRowsHint);
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
         try {
@@ -160,7 +163,7 @@ class Database {
             if (parsedQuery instanceof ExplainQuery) {
                 return executeExplain((ExplainQuery) parsedQuery, currentTransaction);
             }
-            return executeDataQuery(parsedQuery, query, currentTransaction);
+            return executeDataQuery(parsedQuery, cleanQuery, currentTransaction);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
             throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
@@ -179,6 +182,54 @@ class Database {
         return subqueryParser.containsSubquery(query)
                 ? subqueryParser.parse(query, this)
                 : new QueryParser().parse(query, this);
+    }
+
+    /** Matches the {@code /* MAX_ROWS=N *&#47;} result-limit override hint. */
+    private static final java.util.regex.Pattern MAX_ROWS_HINT_PATTERN =
+            java.util.regex.Pattern.compile("(?i)/\\*\\s*MAX_ROWS\\s*=\\s*(\\d+)\\s*\\*/");
+
+    /**
+     * Extracts the {@code /* MAX_ROWS=N *&#47;} hint value from a query string,
+     * or returns null when the query carries no hint.
+     */
+    private static Long parseMaxRowsHint(String query) {
+        if (query == null) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = MAX_ROWS_HINT_PATTERN.matcher(query);
+        if (matcher.find()) {
+            return Long.parseLong(matcher.group(1));
+        }
+        return null;
+    }
+
+    /**
+     * Removes any {@code /* MAX_ROWS=N *&#47;} hint comments from a query string so
+     * the parser never sees them.
+     */
+    private static String stripMaxRowsHint(String query) {
+        if (query == null) {
+            return query;
+        }
+        return MAX_ROWS_HINT_PATTERN.matcher(query).replaceAll("");
+    }
+
+    /**
+     * Applies a parsed {@code /* MAX_ROWS=N *&#47;} hint to the query that executes
+     * the SELECT (or, for EXPLAIN, to its inner SELECT).
+     */
+    private void applyMaxRowsHint(Query<?> parsedQuery, Long maxRowsHint) {
+        if (maxRowsHint == null) {
+            return;
+        }
+        if (parsedQuery instanceof SelectQuery) {
+            ((SelectQuery) parsedQuery).setMaxResultRows(maxRowsHint);
+        } else if (parsedQuery instanceof ExplainQuery) {
+            Query<?> inner = ((ExplainQuery) parsedQuery).getInnerQuery();
+            if (inner instanceof SelectQuery) {
+                ((SelectQuery) inner).setMaxResultRows(maxRowsHint);
+            }
+        }
     }
 
     private Object executeSetIsolationLevel(SetIsolationLevelQuery isolationQuery) {

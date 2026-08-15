@@ -140,18 +140,31 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     private static long MAX_HASH_TABLE_SIZE_BYTES = 512L * 1024L * 1024L;
 
+    /**
+     * Maximum number of rows a single SELECT result (or an intermediate join /
+     * filter / group-by stage of it) may produce before execution aborts with an
+     * exception. Guards against an accidental cross join silently generating
+     * billions of rows and exhausting memory. Loaded from
+     * {@code config.properties} ({@code max.result.rows}, defaulting to 1000000)
+     * and overridable per query with the MAX_ROWS SQL comment hint
+     * (&#47;* MAX_ROWS=N *&#47;), or disabled entirely with {@code /* MAX_ROWS=0 *&#47;}.
+     */
+    private static long MAX_RESULT_ROWS = 1_000_000;
+
     static {
         loadHashJoinConfig();
     }
 
     /**
-     * (Re)loads {@code MAX_IN_MEMORY_ROWS} and {@code MAX_HASH_TABLE_SIZE_BYTES}
-     * from {@code config.properties}. Package-private so tests can force the
-     * low-memory hash-join paths by pointing the thresholds at tiny values.
+     * (Re)loads {@code MAX_IN_MEMORY_ROWS}, {@code MAX_HASH_TABLE_SIZE_BYTES} and
+     * {@code MAX_RESULT_ROWS} from {@code config.properties}. Package-private so
+     * tests can force the low-memory hash-join paths by pointing the thresholds
+     * at tiny values.
      */
     static void loadHashJoinConfig() {
         long inMemoryRows = 10000;
         long hashMb = 512;
+        long maxResultRows = 1_000_000;
         try {
             File configFile = new File("config.properties");
             if (configFile.exists()) {
@@ -167,12 +180,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 if (rawHash != null) {
                     hashMb = Long.parseLong(rawHash.trim());
                 }
+                String rawResult = props.getProperty("max.result.rows");
+                if (rawResult != null) {
+                    maxResultRows = Long.parseLong(rawResult.trim());
+                }
             }
         } catch (Exception ignored) {
             // Keep the defaults on any config error
         }
         MAX_IN_MEMORY_ROWS = inMemoryRows;
         MAX_HASH_TABLE_SIZE_BYTES = hashMb * 1024L * 1024L;
+        MAX_RESULT_ROWS = maxResultRows;
     }
 
     /**
@@ -184,6 +202,118 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     static void setHashJoinConfigForTest(long maxInMemoryRows, long maxHashTableSizeMb) {
         MAX_IN_MEMORY_ROWS = maxInMemoryRows;
         MAX_HASH_TABLE_SIZE_BYTES = maxHashTableSizeMb * 1024L * 1024L;
+    }
+
+    /**
+     * Test override for the maximum result row limit.
+     *
+     * @param maxResultRows new value for {@code max.result.rows}, or 0 for unlimited
+     */
+    static void setMaxResultRowsForTest(long maxResultRows) {
+        MAX_RESULT_ROWS = maxResultRows;
+    }
+
+    /** @return the configured default result row limit (0 means unlimited) */
+    static long getMaxResultRows() {
+        return MAX_RESULT_ROWS;
+    }
+
+    /** Per-query row limit, taken from {@link #MAX_RESULT_ROWS} unless overridden
+     * by the MAX_ROWS SQL hint. A value of 0 (or less) disables the limit. */
+    private long maxResultRows = MAX_RESULT_ROWS;
+
+    /** True once the 80%-of-limit warning has been logged for this query. */
+    private boolean resultLimitWarningLogged;
+
+    /** Rows produced between two consecutive heap-memory samples. */
+    private static final long MEMORY_SAMPLE_INTERVAL = 4096;
+
+    /**
+     * Per-thread snapshot of the peak memory and row-count metrics of the most
+     * recently executed SELECT on that thread. Keyed by thread so that a server
+     * worker can report the metrics of its own query after an OutOfMemoryError.
+     */
+    private static final ThreadLocal<QueryMemoryTracker> QUERY_MEMORY =
+            ThreadLocal.withInitial(QueryMemoryTracker::new);
+
+    /**
+     * Tracks the peak heap usage observed while a SELECT grows its result rows.
+     * Sampled periodically (every {@link #MEMORY_SAMPLE_INTERVAL} rows) and at
+     * pipeline boundaries, so the values are approximate but cheap: sampling
+     * adds no per-row overhead.
+     */
+    private static final class QueryMemoryTracker {
+        long peakBytes;
+        long rowsAtPeak;
+        long rowCount;
+
+        void sample(long rows) {
+            rowCount = rows;
+            long usedBytes = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+            if (usedBytes > peakBytes) {
+                peakBytes = usedBytes;
+                rowsAtPeak = rows;
+            }
+        }
+
+        void reset() {
+            peakBytes = 0;
+            rowsAtPeak = 0;
+            rowCount = 0;
+        }
+    }
+
+    /** @return peak heap bytes used by the last SELECT on this thread (0 = none yet) */
+    static long getLastQueryPeakMemoryBytes() {
+        return QUERY_MEMORY.get().peakBytes;
+    }
+
+    /** @return number of rows produced when the peak heap usage was observed */
+    static long getLastQueryRowsAtPeak() {
+        return QUERY_MEMORY.get().rowsAtPeak;
+    }
+
+    /** @return rows produced by the last SELECT on this thread */
+    static long getLastQueryRowCount() {
+        return QUERY_MEMORY.get().rowCount;
+    }
+
+    /**
+     * Overrides the result row limit for this query with the value of the
+     * MAX_ROWS SQL comment hint. Called by {@link Database} after parsing.
+     *
+     * @param maxRows the limit, or 0 to disable
+     */
+    void setMaxResultRows(long maxRows) {
+        maxResultRows = maxRows;
+    }
+
+    /**
+     * Enforces {@link #maxResultRows} on a growing row collection: logs a single
+     * warning once the collection reaches 80% of the limit, and aborts the query
+     * with an explanatory exception as soon as the limit is exceeded. Also keeps
+     * the {@link #QUERY_MEMORY} metrics fresh with a cheap periodic heap sample.
+     *
+     * @param size   the current number of rows already materialised
+     * @param stage  a short label for the pipeline stage in the error message
+     * @throws IllegalArgumentException when {@code size} reaches the row limit
+     */
+    private void checkResultRowLimit(long size, String stage) {
+        if ((size & (MEMORY_SAMPLE_INTERVAL - 1)) == 0) {
+            QUERY_MEMORY.get().sample(size);
+        }
+        if (maxResultRows <= 0) {
+            return;
+        }
+        if (!resultLimitWarningLogged && size >= maxResultRows - maxResultRows / 5) {
+            LOGGER.warning("WARNING: query result is approaching the maximum allowed row limit: " + size
+                    + " of " + maxResultRows + " rows (80%). Consider adding LIMIT or a MAX_ROWS hint.");
+            resultLimitWarningLogged = true;
+        }
+        if (size >= maxResultRows) {
+            throw new IllegalArgumentException("Query result exceeds the maximum allowed row limit of "
+                    + maxResultRows + " rows at stage '" + stage + "'. Add LIMIT or a /* MAX_ROWS=N */ hint to override.");
+        }
     }
 
     /**
@@ -331,6 +461,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         lastHashJoinBuildTimeMs = 0;
         lastHashJoinProbeTimeMs = 0;
         lastJoinUsedPartitioning = false;
+        resultLimitWarningLogged = false;
+        QUERY_MEMORY.get().reset();
+        QUERY_MEMORY.get().sample(0);
         projectionPlan = buildProjectionPlan();
 
         try {
@@ -341,6 +474,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
             for (Map<String, Object> mainRow : mainRows) {
+                checkResultRowLimit(joinedRows.size(), "main scan");
                 Map<String, Map<String, Object>> wrapped = new HashMap<>(2);
                 wrapped.put(mainTableName, mainRow);
                 joinedRows.add(wrapped);
@@ -452,6 +586,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     try {
                         spill.finishWriting();
                         while (spill.hasNext()) {
+                            checkResultRowLimit(filteredRows.size(), "filter");
                             filteredRows.add(spill.next());
                         }
                     } catch (IOException e) {
@@ -468,6 +603,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
                     Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
                     if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes, tables)) {
+                        checkResultRowLimit(filteredRows.size(), "filter");
                         filteredRows.add(flattenedRow);
                     }
                 }
@@ -522,6 +658,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         }
                     }
 
+                    checkResultRowLimit(finalRows.size(), "group by");
                     finalRows.add(resultRow);
                 }
                 LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
@@ -554,6 +691,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 int rowsSkipped = (offset != null) ? offset : 0;
                 int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
                 if (rowsSkipped == 0 && maxRows > 0) {
+                    checkResultRowLimit(result.size(), "result");
                     result.add(resultRow);
                 }
             } else {
@@ -569,6 +707,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 if (groupAggregateKeys.isEmpty()) {
                     for (Map<String, Object> row : selectedRows) {
+                        checkResultRowLimit(result.size(), "result");
                         result.add(filterColumns(row, columns));
                     }
                 } else {
@@ -579,6 +718,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                 filteredRow.put(aggregateKey, row.get(aggregateKey));
                             }
                         }
+                        checkResultRowLimit(result.size(), "result");
                         result.add(filteredRow);
                     }
                 }
@@ -586,6 +726,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, having={5}, limit={6}, offset={7}, orderBy={8}",
                     new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
+            QUERY_MEMORY.get().sample(result.size());
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -629,6 +770,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 try {
                     spill.finishWriting();
                     while (spill.hasNext()) {
+                        checkResultRowLimit(fallback.size(), "join spill fallback");
                         fallback.add(spill.next());
                     }
                 } catch (IOException ignored) {
@@ -637,6 +779,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
         }
+        checkResultRowLimit(fallback.size(), "join spill fallback");
         fallback.add(flattenedRow);
     }
 
@@ -850,6 +993,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 Map<String, Map<String, Object>> newRow = new HashMap<>(2);
                 newRow.put(probeTableName, probeRow);
                 newRow.put(buildTableName, buildRow);
+                checkResultRowLimit(newJoinedRows.size(), "join");
                 newJoinedRows.add(newRow);
             }
         } else {
@@ -861,6 +1005,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     Map<String, Map<String, Object>> newRow = new HashMap<>(2);
                     newRow.put(probeTableName, probeRow);
                     newRow.put(buildTableName, buildRow);
+                    checkResultRowLimit(newJoinedRows.size(), "join");
                     newJoinedRows.add(newRow);
                 }
             }
@@ -947,12 +1092,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     newRow.put(join.tableName, rightRow);
 
                     if (join.joinType == QueryParser.JoinType.CROSS) {
+                        checkResultRowLimit(newJoinedRows.size(), "join");
                         newJoinedRows.add(newRow);
                     } else if (equalsJoin) {
                         Map<String, Object> leftRow = currentJoin.get(join.originalTable);
                         if (!valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
                             continue;
                         }
+                        checkResultRowLimit(newJoinedRows.size(), "join");
                         newJoinedRows.add(newRow);
                     } else if (!join.onConditions.isEmpty()) {
                         for (int k = 0; k < rightSrcKeys.size(); k++) {
@@ -961,6 +1108,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
                             continue;
                         }
+                        checkResultRowLimit(newJoinedRows.size(), "join");
                         newJoinedRows.add(newRow);
                         LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
                                 new Object[]{join.tableName, join.onConditions});
