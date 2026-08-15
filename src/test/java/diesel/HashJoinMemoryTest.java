@@ -108,14 +108,16 @@ public class HashJoinMemoryTest {
     }
 
     @Test
-    void blockNestedLoopFallbackUsedWhenRowsExceedMaxInMemory() {
+    void partitionedHashJoinUsedWhenRowsExceedMaxInMemory() {
         SelectQuery.setHashJoinConfigForTest(5, 1024);
         List<Map<String, Object>> result = runSelect(
                 "SELECT USERS.ID, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID");
-        assertEquals(RECORD_COUNT, result.size(), "block nested loop fallback must return the same rows as the hash join");
+        assertEquals(RECORD_COUNT, result.size(), "partitioned hash join must return the same rows as the in-memory hash join");
 
         SelectQuery selectQuery = runJoin();
-        assertFalse(selectQuery.isLastJoinUsedPartitioning(), "BNL fallback must not mark the join as partitioned");
-        assertEquals(0, selectQuery.getLastHashJoinTableSize(), "BNL fallback does not build a hash table");
+        assertTrue(selectQuery.isLastJoinUsedPartitioning(), "row budget overflow must route to the partitioned hash join, not the O(n x m) nested loop");
+        assertEquals(RECORD_COUNT, selectQuery.getLastHashJoinTableSize(), "partitioned hash join must cover every distinct key");
+        assertTrue(selectQuery.getLastHashJoinBuildTimeMs() >= 0, "partitioned build time metric must be recorded");
+        assertTrue(selectQuery.getLastHashJoinProbeTimeMs() >= 0, "partitioned probe time metric must be recorded");
     }
 }

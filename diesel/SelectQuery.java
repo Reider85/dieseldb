@@ -403,11 +403,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                     // Estimate the hash table size before building it, so a huge
                     // build side never materialises an in-memory hash table that
-                    // could cause an OutOfMemoryError (see Prompt 10).
+                    // could cause an OutOfMemoryError (see Prompt 10). When either
+                    // the estimated row count or the estimated byte size exceeds
+                    // its budget, the partitioned hash join is used: it spills
+                    // partition files to disk and keeps peak memory bounded by a
+                    // single partition, so it stays O(build + probe + result)
+                    // instead of falling back to the O(n x m) nested loop.
                     long estimatedRows = buildRows.size();
                     long estimatedBytes = estimateHashTableSizeBytes(buildRows, buildTable);
 
-                    if (estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+                    if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
                         // Build side estimated above the memory budget: use the
                         // partitioned hash join, which spills partition files to
                         // disk and keeps peak memory bounded by a single partition.
@@ -424,13 +429,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
                                     spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
                         }
-                    } else if (estimatedRows > MAX_IN_MEMORY_ROWS) {
-                        // Estimated hash table too large to hold in memory: fall
-                        // back to the block nested loop join instead.
-                        LOGGER.log(Level.WARNING, "Hash join estimated {0} rows exceeds max.inmemory.rows={1}, falling back to block nested loop join",
-                                new Object[]{estimatedRows, MAX_IN_MEMORY_ROWS});
-                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
-                                spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
                     } else {
                         newJoinedRows = runInMemoryHashJoin(buildRows, buildTable, probeTable,
                                 buildTableName, probeTableName, buildColumnKey,
