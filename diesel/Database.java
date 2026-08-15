@@ -163,6 +163,9 @@ class Database {
             if (parsedQuery instanceof ExplainQuery) {
                 return executeExplain((ExplainQuery) parsedQuery, currentTransaction);
             }
+            if (parsedQuery instanceof AnalyzeTableQuery) {
+                return executeAnalyzeTable((AnalyzeTableQuery) parsedQuery);
+            }
             return executeDataQuery(parsedQuery, cleanQuery, currentTransaction);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
@@ -336,6 +339,18 @@ class Database {
             }
         }
         return explainQuery.execute(table);
+    }
+
+    /**
+     * Executes an {@code ANALYZE TABLE} statement: forces a synchronous
+     * recalculation of the table's statistics and returns the status message.
+     *
+     * @param analyzeQuery the parsed ANALYZE TABLE query
+     * @return the status message describing the fresh statistics
+     */
+    private Object executeAnalyzeTable(AnalyzeTableQuery analyzeQuery) {
+        Table table = getTable(analyzeQuery.getTableName());
+        return analyzeQuery.execute(table);
     }
 
     /**

@@ -634,6 +634,8 @@ class QueryParser {
                 } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
                     return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
                 }
+            } else if (normalized.startsWith("ANALYZE")) {
+                return parseAnalyzeTableQuery(normalized);
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
@@ -747,6 +749,31 @@ class QueryParser {
         }
         String value = matcher.group(1);
         return new SetAutoCommitQuery(value.equals("ON") || value.equals("TRUE") || value.equals("1"));
+    }
+
+    /**
+     * Parses an {@code ANALYZE TABLE <name>} statement (case-insensitive) into
+     * an {@link AnalyzeTableQuery} that forces a synchronous statistics
+     * recalculation. A trailing semicolon is tolerated; anything other than a
+     * single table name is rejected with a descriptive error.
+     *
+     * @param normalized the uppercased query text
+     * @return the parsed analyze query
+     * @throws IllegalArgumentException on malformed ANALYZE TABLE input
+     */
+    private Query<?> parseAnalyzeTableQuery(String normalized) {
+        String rest = normalized.substring("ANALYZE".length()).trim();
+        if (!rest.toUpperCase().startsWith("TABLE")) {
+            throw new IllegalArgumentException("Invalid ANALYZE TABLE syntax: expected 'ANALYZE TABLE <table name>'");
+        }
+        String tableName = rest.substring("TABLE".length()).trim();
+        if (tableName.endsWith(";")) {
+            tableName = tableName.substring(0, tableName.length() - 1).trim();
+        }
+        if (tableName.isEmpty() || tableName.matches(".*\\s+.*") || tableName.contains("(")) {
+            throw new IllegalArgumentException("Invalid ANALYZE TABLE syntax: expected 'ANALYZE TABLE <table name>'");
+        }
+        return new AnalyzeTableQuery(tableName.toUpperCase());
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

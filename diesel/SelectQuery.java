@@ -151,6 +151,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     private static long MAX_RESULT_ROWS = 1_000_000;
 
+    /**
+     * Fixed per-row-unit overhead of building and probing an in-memory hash
+     * table, used by the statistics-based cost model in
+     * {@link #preferNestedLoopByStatistics}: the hash join allocates the build
+     * table and hashes every key, which only pays off once the inputs are
+     * large enough that the nested-loop row product exceeds this constant.
+     */
+    private static final long HASH_JOIN_OVERHEAD_ROWS = 1000;
+
     static {
         loadHashJoinConfig();
     }
@@ -546,7 +555,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     long estimatedRows = buildRows.size();
                     long estimatedBytes = estimateHashTableSizeBytes(buildRows, buildTable);
 
-                    if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+                    if (preferNestedLoopByStatistics(buildTable, probeTable)) {
+                        // Statistics say the row-count product is too small for
+                        // the hash table build/probe overhead to pay off, so a
+                        // nested loop is cheaper (see Prompt 14).
+                        LOGGER.log(Level.FINE, "Statistics prefer nested loop over hash join for join on {0} ({1} x {2} rows)",
+                                new Object[]{join.tableName, buildTable.getStatistics().getRowCount(), probeTable.getStatistics().getRowCount()});
+                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
+                                spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
+                    } else if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
                         // Build side estimated above the memory budget: use the
                         // partitioned hash join, which spills partition files to
                         // disk and keeps peak memory bounded by a single partition.
@@ -1650,6 +1667,34 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return keys;
     }
 
+    /**
+     * Decides between a hash join and a nested loop join using the stored table
+     * statistics ({@link Table.TableStatistics}, refreshed by ANALYZE TABLE and
+     * asynchronously after INSERT/DELETE). The nested-loop cost is the row-count
+     * product (every outer row rescans the inner table), while the hash join
+     * costs are linear in both sides plus a fixed overhead for allocating and
+     * hashing the build table; larger average row sizes weigh the nested loop a
+     * bit more, because each repeated inner-scan comparison walks bigger values.
+     * Inputs below the crossover use the nested loop, above it the hash join
+     * wins - the classic optimizer trade-off, now driven by statistics instead
+     * of hardcoded table sizes.
+     *
+     * @param buildTable the smaller table, chosen as the hash-build side
+     * @param probeTable the other table, used as the probe side
+     * @return true when the statistics say a nested loop is cheaper
+     */
+    private boolean preferNestedLoopByStatistics(Table buildTable, Table probeTable) {
+        Table.TableStatistics buildStats = buildTable.getStatistics();
+        Table.TableStatistics probeStats = probeTable.getStatistics();
+        long buildRows = Math.max(1, buildStats.getRowCount());
+        long probeRows = Math.max(1, probeStats.getRowCount());
+        long avgSize = Math.max(1, (buildStats.getAvgRowSizeBytes() + probeStats.getAvgRowSizeBytes()) / 2);
+        double sizeWeight = 1.0 + avgSize / 10000.0;
+        double nestedLoopCost = buildRows * (double) probeRows * sizeWeight;
+        double hashJoinCost = (buildRows + probeRows) * sizeWeight + HASH_JOIN_OVERHEAD_ROWS;
+        return nestedLoopCost < hashJoinCost;
+    }
+
     private boolean canUseHashJoin(QueryParser.JoinInfo join, Map<String, Class<?>> combinedColumnTypes) {
         if (join.joinType != QueryParser.JoinType.INNER &&
                 join.joinType != QueryParser.JoinType.LEFT_INNER &&
@@ -2458,6 +2503,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return "Nested Loop";
         }
         Table buildTable = joinTable != null && joinTable.rowCount() <= mainTable.rowCount() ? joinTable : mainTable;
+        Table probeTable = buildTable == joinTable ? mainTable : joinTable;
+        if (probeTable != null && preferNestedLoopByStatistics(buildTable, probeTable)) {
+            return "Nested Loop (chosen by statistics)";
+        }
         long estimatedRows = buildTable.rowCount();
         long estimatedBytes = estimateHashTableSizeBytes(buildTable.getRows(), buildTable);
         if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {

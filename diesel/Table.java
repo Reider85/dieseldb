@@ -10,9 +10,13 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -21,6 +25,10 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 import java.util.logging.Logger;
@@ -106,6 +114,40 @@ class Table implements Serializable {
     private int formatVersion = CURRENT_FORMAT_VERSION;
 
     /**
+     * Table statistics used by the optimizer (see {@link #getStatistics()} and
+     * {@link #analyze()}). {@code rowCount} is kept exactly in sync with the
+     * row list (O(1) maintenance on INSERT/DELETE); {@code avgRowSizeBytes}
+     * starts as a schema-only estimate and is refined by the full O(rows)
+     * pass that runs asynchronously after mutations and synchronously on
+     * {@code ANALYZE TABLE}, together with {@code lastAnalyzedMillis}.
+     */
+    private long rowCount;
+    private long avgRowSizeBytes;
+    private long lastAnalyzedMillis;
+    private transient Object statsLock = new Object();
+    private transient volatile boolean statsDirty;
+    private transient volatile boolean statsRefreshScheduled;
+
+    /**
+     * Daemon scheduler for the asynchronous statistics refresh. Daemon threads
+     * never keep the JVM alive, so the refresh never blocks Maven/JUnit exit.
+     * Mutations coalesce into a single refresh because {@code markStatsDirty}
+     * only schedules while no refresh is already pending.
+     */
+    private static final ScheduledExecutorService STATS_SCHEDULER =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "table-stats-refresh");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    /** Delay before a dirty statistics refresh runs, coalescing insert bursts. */
+    private static final long STATS_REFRESH_DELAY_MILLIS = 150;
+
+    private static final DateTimeFormatter STATS_TIMESTAMP_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /**
      * Creates a table with the given schema. When {@code primaryKeyColumn} is
      * not null it must be part of the schema, and a unique clustered index is
      * built over it.
@@ -134,6 +176,9 @@ class Table implements Serializable {
         this.hasClusteredIndex = false;
         this.clusteredIndexColumn = null;
         this.clusteredIndex = null;
+        this.rowCount = 0;
+        this.avgRowSizeBytes = estimateAverageRowSizeBytes();
+        this.lastAnalyzedMillis = 0;
 
         validateSchema(columns, columnTypes);
 
@@ -437,6 +482,273 @@ class Table implements Serializable {
     }
 
     /**
+     * Immutable snapshot of the table statistics used by the optimizer: the
+     * exact row count, the average row size in bytes (measured, or a schema
+     * estimate before the first analysis) and the timestamp of the last
+     * analysis ({@code 0} when never analyzed). See {@link Table#analyze()}.
+     */
+    public static final class TableStatistics {
+        private final long rowCount;
+        private final long avgRowSizeBytes;
+        private final long lastAnalyzedMillis;
+
+        TableStatistics(long rowCount, long avgRowSizeBytes, long lastAnalyzedMillis) {
+            this.rowCount = rowCount;
+            this.avgRowSizeBytes = avgRowSizeBytes;
+            this.lastAnalyzedMillis = lastAnalyzedMillis;
+        }
+
+        /**
+         * Returns the exact number of rows in the table.
+         *
+         * @return the row count
+         */
+        public long getRowCount() {
+            return rowCount;
+        }
+
+        /**
+         * Returns the average row size in bytes, or a schema-based estimate
+         * when the table has never been analyzed.
+         *
+         * @return the average row size in bytes
+         */
+        public long getAvgRowSizeBytes() {
+            return avgRowSizeBytes;
+        }
+
+        /**
+         * Returns the epoch-millis timestamp of the last analysis, or {@code 0}
+         * when the table has never been analyzed.
+         *
+         * @return the last-analyzed timestamp in epoch millis
+         */
+        public long getLastAnalyzedMillis() {
+            return lastAnalyzedMillis;
+        }
+    }
+
+    /**
+     * Returns an immutable snapshot of the table statistics: the exact row
+     * count, the average row size in bytes and the last-analyzed timestamp.
+     * Reads never mutate the table: when the average row size has not been
+     * measured yet it is reported as the cheap schema-based estimate.
+     *
+     * @return the statistics snapshot
+     */
+    public TableStatistics getStatistics() {
+        synchronized (statsLock) {
+            long avg = avgRowSizeBytes;
+            if (avg <= 0) {
+                avg = estimateAverageRowSizeBytes();
+            }
+            return new TableStatistics(Math.max(0, rowCount), avg, lastAnalyzedMillis);
+        }
+    }
+
+    /**
+     * Synchronously recomputes the statistics (exact row count, measured
+     * average row size and the last-analyzed timestamp) and returns them. This
+     * is the forced recalculation behind the {@code ANALYZE TABLE} command and
+     * the deterministic counterpart of the asynchronous INSERT/DELETE refresh.
+     *
+     * @return the freshly computed statistics snapshot
+     */
+    public TableStatistics analyze() {
+        synchronized (statsLock) {
+            rowCount = rows.size();
+            avgRowSizeBytes = measureAverageRowSizeBytes();
+            lastAnalyzedMillis = System.currentTimeMillis();
+            statsDirty = false;
+        }
+        LOGGER.log(Level.INFO, "Table {0} analyzed: {1} rows, avg row size {2} bytes",
+                new Object[]{name, rowCount, avgRowSizeBytes});
+        return getStatistics();
+    }
+
+    /** Marks the statistics dirty and schedules the asynchronous refresh. */
+    private void markStatsDirty() {
+        statsDirty = true;
+        if (!statsRefreshScheduled) {
+            statsRefreshScheduled = true;
+            try {
+                STATS_SCHEDULER.schedule(this::refreshStats, STATS_REFRESH_DELAY_MILLIS, TimeUnit.MILLISECONDS);
+            } catch (RejectedExecutionException e) {
+                // Scheduler shut down (JVM exit): the statistics stay approximate.
+                statsRefreshScheduled = false;
+            }
+        }
+    }
+
+    /**
+     * Background statistics refresh: recomputes the average row size and the
+     * last-analyzed timestamp after a mutation, coalescing the burst into a
+     * single pass. When the row list was mutated while measuring, the refresh
+     * is rescheduled so the numbers never claim precision they lack.
+     */
+    private void refreshStats() {
+        boolean reschedule;
+        synchronized (statsLock) {
+            statsRefreshScheduled = false;
+            if (!statsDirty) {
+                return;
+            }
+            int rowsAtStart = rows.size();
+            long measured = measureAverageRowSizeBytes();
+            reschedule = rowsAtStart != rows.size();
+            if (!reschedule) {
+                rowCount = rowsAtStart;
+                avgRowSizeBytes = measured;
+                lastAnalyzedMillis = System.currentTimeMillis();
+                statsDirty = false;
+            }
+        }
+        if (reschedule) {
+            markStatsDirty();
+        }
+    }
+
+    /**
+     * Measures the actual average row size by summing the estimated byte size
+     * of every stored value. O(rows), so it only runs asynchronously after
+     * mutations or synchronously on ANALYZE TABLE. Concurrent mutations during
+     * the pass are tolerated: on a {@link ConcurrentModificationException} the
+     * measurement is retried and finally falls back to the schema estimate.
+     */
+    private long measureAverageRowSizeBytes() {
+        int n = rows.size();
+        if (n == 0) {
+            return estimateAverageRowSizeBytes();
+        }
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                long total = 0;
+                for (int i = 0; i < n && i < rows.size(); i++) {
+                    Map<String, Object> row = rows.get(i);
+                    long rowBytes = 0;
+                    for (String column : columns) {
+                        rowBytes += estimatedValueBytes(row.get(column), columnTypes.get(column));
+                    }
+                    total += rowBytes;
+                }
+                return Math.max(1, total / Math.min(n, rows.size()));
+            } catch (ConcurrentModificationException ignored) {
+                // Rows changed while measuring; retry.
+            }
+        }
+        return estimateAverageRowSizeBytes();
+    }
+
+    /**
+     * Schema-only estimate of the average row size, used before the first
+     * analysis. Cost: O(columns), never touches the rows.
+     */
+    private long estimateAverageRowSizeBytes() {
+        long perRow = 0;
+        for (String column : columns) {
+            Class<?> type = columnTypes.get(column);
+            if (type != null) {
+                perRow += estimatedColumnBaseSize(type);
+            }
+        }
+        return Math.max(1, perRow);
+    }
+
+    /** Approximate in-memory byte size of a stored value, used for statistics. */
+    private static long estimatedValueBytes(Object value, Class<?> type) {
+        if (value == null) {
+            return 0;
+        }
+        if (type == Integer.class || type == Float.class) {
+            return 4;
+        }
+        if (type == Long.class || type == Double.class) {
+            return 8;
+        }
+        if (type == Short.class) {
+            return 2;
+        }
+        if (type == Byte.class) {
+            return 1;
+        }
+        if (type == Character.class) {
+            return 2;
+        }
+        if (type == Boolean.class) {
+            return 1;
+        }
+        if (type == BigDecimal.class) {
+            return 48;
+        }
+        if (type == LocalDate.class) {
+            return 16;
+        }
+        if (type == LocalDateTime.class) {
+            return 24;
+        }
+        if (type == UUID.class) {
+            return 16;
+        }
+        if (type == String.class) {
+            String text = value.toString();
+            return 40 + 2L * text.length();
+        }
+        return 32;
+    }
+
+    /** Approximate byte size of a column value with the given type, value-free. */
+    private static long estimatedColumnBaseSize(Class<?> type) {
+        if (type == Integer.class || type == Float.class) {
+            return 4;
+        }
+        if (type == Long.class || type == Double.class) {
+            return 8;
+        }
+        if (type == Short.class) {
+            return 2;
+        }
+        if (type == Byte.class) {
+            return 1;
+        }
+        if (type == Character.class) {
+            return 2;
+        }
+        if (type == Boolean.class) {
+            return 1;
+        }
+        if (type == BigDecimal.class) {
+            return 48;
+        }
+        if (type == LocalDate.class) {
+            return 16;
+        }
+        if (type == LocalDateTime.class) {
+            return 24;
+        }
+        if (type == UUID.class) {
+            return 16;
+        }
+        if (type == String.class) {
+            return 64;
+        }
+        return 32;
+    }
+
+    /**
+     * Formats an epoch-millis timestamp for the ANALYZE TABLE status message.
+     *
+     * @param epochMillis the timestamp, or {@code 0} for "never analyzed"
+     * @return the formatted local timestamp text
+     */
+    static String formatTimestamp(long epochMillis) {
+        if (epochMillis <= 0) {
+            return "never";
+        }
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.systemDefault())
+                .format(STATS_TIMESTAMP_FORMAT);
+    }
+
+    /**
      * Returns a copy of the table rows.
      *
      * @return the row list
@@ -461,6 +773,8 @@ class Table implements Serializable {
         for (int i = rowIndex; i <= rows.size(); i++) {
             rowLocks.remove(i);
         }
+        rowCount--;
+        markStatsDirty();
     }
 
     private void writeObject(ObjectOutputStream oos) throws IOException {
@@ -520,6 +834,13 @@ class Table implements Serializable {
             }
         }
         this.database = null;
+        this.statsLock = new Object();
+        // Restore statistics: old serialized files carry zeroed stats fields.
+        this.rowCount = rows.size();
+        if (this.lastAnalyzedMillis == 0 && this.avgRowSizeBytes == 0) {
+            this.avgRowSizeBytes = estimateAverageRowSizeBytes();
+        }
+        markStatsDirty();
     }
 
     /**
@@ -577,6 +898,8 @@ class Table implements Serializable {
         } else {
             insertAtEnd(validatedRow);
         }
+        rowCount++;
+        markStatsDirty();
         LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
     }
 
