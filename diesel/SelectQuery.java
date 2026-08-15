@@ -90,17 +90,68 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<String> groupAggregateKeys = new ArrayList<>();
 
     /**
+     * Hash-join metrics from the last executed join: the hash table size
+     * (number of distinct keys), the build time and the probe time in
+     * milliseconds, and whether the partitioned (spill-to-disk) variant was
+     * used. Reset at the start of {@link #execute}.
+     */
+    private long lastHashJoinTableSize;
+    private long lastHashJoinBuildTimeMs;
+    private long lastHashJoinProbeTimeMs;
+    private boolean lastJoinUsedPartitioning;
+
+    long getLastHashJoinTableSize() {
+        return lastHashJoinTableSize;
+    }
+
+    long getLastHashJoinBuildTimeMs() {
+        return lastHashJoinBuildTimeMs;
+    }
+
+    long getLastHashJoinProbeTimeMs() {
+        return lastHashJoinProbeTimeMs;
+    }
+
+    boolean isLastJoinUsedPartitioning() {
+        return lastJoinUsedPartitioning;
+    }
+
+    /**
      * Maximum number of result rows kept in memory before the engine spills
-     * overflow rows to temporary files on disk. Loaded once from
+     * overflow rows to temporary files on disk. Loaded from
      * {@code config.properties} ({@code max.inmemory.rows}), defaulting to 10000.
      * Streaming (spill-to-disk joins and external sort) only kicks in when an
      * estimated result set exceeds this threshold, so small queries keep their
      * current in-memory behaviour unchanged.
+     *
+     * <p>Also used as the hash-join memory guard: when the build side of a hash
+     * join is estimated to exceed this many rows, the engine falls back to the
+     * block nested loop join instead of materialising a large hash table.
      */
-    private static final long MAX_IN_MEMORY_ROWS;
+    private static long MAX_IN_MEMORY_ROWS = 10000;
+
+    /**
+     * Estimated upper bound (in bytes) of the in-memory hash table the engine
+     * is willing to build for a hash join. When the estimate exceeds this,
+     * the engine switches to the spill-to-disk partitioned hash join so a very
+     * large build side cannot trigger an OutOfMemoryError. Loaded from
+     * {@code config.properties} ({@code max.hash.table.size.mb}, defaulting
+     * to 512 MB).
+     */
+    private static long MAX_HASH_TABLE_SIZE_BYTES = 512L * 1024L * 1024L;
 
     static {
-        long value = 10000;
+        loadHashJoinConfig();
+    }
+
+    /**
+     * (Re)loads {@code MAX_IN_MEMORY_ROWS} and {@code MAX_HASH_TABLE_SIZE_BYTES}
+     * from {@code config.properties}. Package-private so tests can force the
+     * low-memory hash-join paths by pointing the thresholds at tiny values.
+     */
+    static void loadHashJoinConfig() {
+        long inMemoryRows = 10000;
+        long hashMb = 512;
         try {
             File configFile = new File("config.properties");
             if (configFile.exists()) {
@@ -110,13 +161,29 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 String raw = props.getProperty("max.inmemory.rows");
                 if (raw != null) {
-                    value = Long.parseLong(raw.trim());
+                    inMemoryRows = Long.parseLong(raw.trim());
+                }
+                String rawHash = props.getProperty("max.hash.table.size.mb");
+                if (rawHash != null) {
+                    hashMb = Long.parseLong(rawHash.trim());
                 }
             }
         } catch (Exception ignored) {
-            // Keep the default on any config error
+            // Keep the defaults on any config error
         }
-        MAX_IN_MEMORY_ROWS = value;
+        MAX_IN_MEMORY_ROWS = inMemoryRows;
+        MAX_HASH_TABLE_SIZE_BYTES = hashMb * 1024L * 1024L;
+    }
+
+    /**
+     * Test override for the hash-join memory thresholds.
+     *
+     * @param maxInMemoryRows new value for {@code max.inmemory.rows}
+     * @param maxHashTableSizeMb new value for {@code max.hash.table.size.mb}
+     */
+    static void setHashJoinConfigForTest(long maxInMemoryRows, long maxHashTableSizeMb) {
+        MAX_IN_MEMORY_ROWS = maxInMemoryRows;
+        MAX_HASH_TABLE_SIZE_BYTES = maxHashTableSizeMb * 1024L * 1024L;
     }
 
     /**
@@ -260,6 +327,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         groupAggregateKeys.clear();
         orderByKeys.clear();
         orderByKeys.addAll(resolveOrderByKeys());
+        lastHashJoinTableSize = 0;
+        lastHashJoinBuildTimeMs = 0;
+        lastHashJoinProbeTimeMs = 0;
+        lastJoinUsedPartitioning = false;
         projectionPlan = buildProjectionPlan();
 
         try {
@@ -318,166 +389,60 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
                     }
 
-                    Map<Object, List<Map<String, Object>>> hashTable = new HashMap<>();
                     List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, combinedColumnTypes);
                     if (buildRows == null) {
                         buildRows = buildTable.getRows();
                     }
                     String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
-                    for (int i = 0; i < buildRows.size(); i++) {
-                        Map<String, Object> row = buildRows.get(i);
-                        Object key = row.get(buildColumnKey);
-                        if (key != null) {
-                            hashTable.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
-                            ReentrantReadWriteLock lock = buildTable.getRowLock(i);
-                            lock.readLock().lock();
-                            acquiredLocks.add(lock);
-                        }
-                    }
-
-                    // Remove the redundant declaration and clear the existing newJoinedRows
-                    newJoinedRows.clear(); // Clear the list to reuse it
-                    List<Map<String, Object>> probeRows = getIndexedRows(probeTable, join.onConditions, probeTableName, combinedColumnTypes);
-                    if (probeRows == null) {
-                        probeRows = probeTable.getRows();
-                    }
 
                     // When the ON clause is exactly one plain equality, the hash
                     // match already guarantees the condition, so we skip the
                     // flatten+evaluate round trip entirely.
                     boolean onlyEquality = join.onConditions.size() == 1 && equalityCondition != null && !equalityCondition.not;
                     boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
-                    String probeColumnKey = normalizeColumnKey(probeColumn, probeTableName);
 
-                    for (Map<String, Object> probeRow : probeRows) {
-                        Object probeKey = probeRow.get(probeColumnKey);
-                        if (probeKey != null) {
-                            List<Map<String, Object>> matches = hashTable.get(probeKey);
-                            if (matches != null) {
-                                for (Map<String, Object> buildRow : matches) {
-                                    if (onlyEquality) {
-                                        if (lastStream) {
-                                            Map<String, Object> flatRow = new HashMap<>((probeRow.size() + buildRow.size()) * 4 / 3 + 1);
-                                            flattenInto(flatRow, probeRow, probeTableName);
-                                            flattenInto(flatRow, buildRow, buildTableName);
-                                            spillFilteredRow(spill, spillActive, spillFallback, flatRow, conditions, combinedColumnTypes, tables);
-                                        } else {
-                                            Map<String, Map<String, Object>> newRow = new HashMap<>(2);
-                                            newRow.put(probeTableName, probeRow);
-                                            newRow.put(buildTableName, buildRow);
-                                            newJoinedRows.add(newRow);
-                                        }
-                                    } else {
-                                        Map<String, Object> flattenedRow = flattenJoinedPair(probeRow, probeTableName, buildRow, buildTableName);
-                                        if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
-                                            if (lastStream) {
-                                                spillFilteredRow(spill, spillActive, spillFallback, flattenedRow, conditions, combinedColumnTypes, tables);
-                                            } else {
-                                                Map<String, Map<String, Object>> newRow = new HashMap<>(2);
-                                                newRow.put(probeTableName, probeRow);
-                                                newRow.put(buildTableName, buildRow);
-                                                newJoinedRows.add(newRow);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                    // Estimate the hash table size before building it, so a huge
+                    // build side never materialises an in-memory hash table that
+                    // could cause an OutOfMemoryError (see Prompt 10).
+                    long estimatedRows = buildRows.size();
+                    long estimatedBytes = estimateHashTableSizeBytes(buildRows, buildTable);
+
+                    if (estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+                        // Build side estimated above the memory budget: use the
+                        // partitioned hash join, which spills partition files to
+                        // disk and keeps peak memory bounded by a single partition.
+                        try {
+                            newJoinedRows = runPartitionedHashJoin(buildRows, buildTable, probeTable,
+                                    buildTableName, probeTableName, buildColumnKey,
+                                    normalizeColumnKey(probeColumn, probeTableName),
+                                    join, onlyEquality, lastStream, spill, spillActive, spillFallback,
+                                    conditions, combinedColumnTypes, tables, acquiredLocks);
+                            LOGGER.log(Level.INFO, "Partitioned hash join completed: {0} rows produced for join on {1}",
+                                    new Object[]{newJoinedRows.size(), join.tableName});
+                        } catch (IOException e) {
+                            LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
+                            newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
+                                    spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
                         }
-                    }
-
-                    joinedRows = newJoinedRows;
-                    LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
-                            new Object[]{newJoinedRows.size(), join.tableName});
-                } else {
-                    List<Map<String, Object>> joinRows = getIndexedRows(joinTable, join.onConditions, join.tableName, combinedColumnTypes);
-                    if (joinRows == null) {
-                        joinRows = joinTable.getRows();
-                    }
-
-                    String rightPrefix = join.tableName + ".";
-                    List<String> rightSrcKeys;
-                    List<String> rightTargetKeys;
-                    if (!joinRows.isEmpty()) {
-                        rightSrcKeys = new ArrayList<>(joinRows.get(0).keySet());
-                        rightTargetKeys = new ArrayList<>(rightSrcKeys.size());
-                        for (String sk : rightSrcKeys) {
-                            rightTargetKeys.add(rightPrefix + sk);
-                        }
+                    } else if (estimatedRows > MAX_IN_MEMORY_ROWS) {
+                        // Estimated hash table too large to hold in memory: fall
+                        // back to the block nested loop join instead.
+                        LOGGER.log(Level.WARNING, "Hash join estimated {0} rows exceeds max.inmemory.rows={1}, falling back to block nested loop join",
+                                new Object[]{estimatedRows, MAX_IN_MEMORY_ROWS});
+                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
+                                spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
                     } else {
-                        rightSrcKeys = Collections.emptyList();
-                        rightTargetKeys = Collections.emptyList();
+                        newJoinedRows = runInMemoryHashJoin(buildRows, buildTable, probeTable,
+                                buildTableName, probeTableName, buildColumnKey,
+                                normalizeColumnKey(probeColumn, probeTableName),
+                                join, onlyEquality, lastStream, spill, spillActive, spillFallback,
+                                conditions, combinedColumnTypes, tables, acquiredLocks);
+                        LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
+                                new Object[]{newJoinedRows.size(), join.tableName});
                     }
-
-                    boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
-                    boolean equalsJoin = join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null;
-                    String leftJoinKey = equalsJoin ? normalizeColumnKey(join.leftColumn, join.originalTable) : null;
-                    String rightJoinKey = equalsJoin ? normalizeColumnKey(join.rightColumn, join.tableName) : null;
-
-                    // Row locks are keyed by row index, not by pair, so acquire
-                    // the whole join table's read locks once instead of once per
-                    // (outer x inner) pair.
-                    for (int j = 0; j < joinRows.size(); j++) {
-                        ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
-                        joinLock.readLock().lock();
-                        acquiredLocks.add(joinLock);
-                    }
-
-                    for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
-                        Map<String, Object> evalRow = flattenJoinedRow(currentJoin);
-                        if (lastStream) {
-                            Map<String, Object> leftRow = equalsJoin ? currentJoin.get(join.originalTable) : null;
-                            Object leftValue = equalsJoin ? leftRow.get(leftJoinKey) : null;
-                            for (int j = 0; j < joinRows.size(); j++) {
-                                Map<String, Object> rightRow = joinRows.get(j);
-                                Map<String, Object> flatRow = new HashMap<>(evalRow.size() + rightSrcKeys.size() + 1);
-                                flatRow.putAll(evalRow);
-                                for (int k = 0; k < rightSrcKeys.size(); k++) {
-                                    flatRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
-                                }
-                                boolean matches;
-                                if (join.joinType == QueryParser.JoinType.CROSS) {
-                                    matches = true;
-                                } else if (equalsJoin) {
-                                    matches = valuesEqual(leftValue, rightRow.get(rightJoinKey));
-                                } else if (!join.onConditions.isEmpty()) {
-                                    matches = evaluateConditions(flatRow, join.onConditions, combinedColumnTypes, tables);
-                                } else {
-                                    throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
-                                }
-                                if (matches) {
-                                    spillFilteredRow(spill, spillActive, spillFallback, flatRow, conditions, combinedColumnTypes, tables);
-                                }
-                            }
-                        } else {
-                            for (int j = 0; j < joinRows.size(); j++) {
-                                Map<String, Object> rightRow = joinRows.get(j);
-                                Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
-                                newRow.put(join.tableName, rightRow);
-
-                                if (join.joinType == QueryParser.JoinType.CROSS) {
-                                    newJoinedRows.add(newRow);
-                                } else if (equalsJoin) {
-                                    Map<String, Object> leftRow = currentJoin.get(join.originalTable);
-                                    if (!valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
-                                        continue;
-                                    }
-                                    newJoinedRows.add(newRow);
-                                } else if (!join.onConditions.isEmpty()) {
-                                    for (int k = 0; k < rightSrcKeys.size(); k++) {
-                                        evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
-                                    }
-                                    if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
-                                        continue;
-                                    }
-                                    newJoinedRows.add(newRow);
-                                    LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
-                                            new Object[]{join.tableName, join.onConditions});
-                                } else {
-                                    throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
-                                }
-                            }
-                        }
-                    }
+                } else {
+                    newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
+                            spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
                 }
                 joinedRows = newJoinedRows;
             }
@@ -675,6 +640,389 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         fallback.add(flattenedRow);
+    }
+
+    /**
+     * Runs a classic in-memory hash join: build a hash table over
+     * {@code buildRows} keyed by the join column, then probe it with the rows
+     * of {@code probeTable}. Records the hash table size and the build/probe
+     * times as metrics.
+     */
+    private List<Map<String, Map<String, Object>>> runInMemoryHashJoin(
+            List<Map<String, Object>> buildRows, Table buildTable, Table probeTable,
+            String buildTableName, String probeTableName,
+            String buildColumnKey, String probeColumnKey,
+            QueryParser.JoinInfo join, boolean onlyEquality, boolean lastStream,
+            StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
+            List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
+            Map<String, Table> tables, List<ReentrantReadWriteLock> acquiredLocks) {
+
+        long buildStart = System.nanoTime();
+        Map<Object, List<Map<String, Object>>> hashTable = new HashMap<>();
+        for (int i = 0; i < buildRows.size(); i++) {
+            Map<String, Object> row = buildRows.get(i);
+            Object key = row.get(buildColumnKey);
+            if (key != null) {
+                hashTable.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+                ReentrantReadWriteLock lock = buildTable.getRowLock(i);
+                lock.readLock().lock();
+                acquiredLocks.add(lock);
+            }
+        }
+        long buildTimeMs = (System.nanoTime() - buildStart) / 1_000_000;
+
+        long probeStart = System.nanoTime();
+        List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, join.onConditions, probeTableName, combinedColumnTypes);
+        if (probeRows == null) {
+            probeRows = probeTable.getRows();
+        }
+        for (Map<String, Object> probeRow : probeRows) {
+            Object probeKey = probeRow.get(probeColumnKey);
+            if (probeKey != null) {
+                List<Map<String, Object>> matches = hashTable.get(probeKey);
+                if (matches != null) {
+                    for (Map<String, Object> buildRow : matches) {
+                        emitHashJoinMatch(probeRow, buildRow, onlyEquality, lastStream,
+                                probeTableName, buildTableName, join, spill, spillActive, spillFallback,
+                                whereConditions, combinedColumnTypes, tables, newJoinedRows);
+                    }
+                }
+            }
+        }
+        long probeTimeMs = (System.nanoTime() - probeStart) / 1_000_000;
+
+        lastHashJoinTableSize = hashTable.size();
+        lastHashJoinBuildTimeMs = buildTimeMs;
+        lastHashJoinProbeTimeMs = probeTimeMs;
+        lastJoinUsedPartitioning = false;
+        LOGGER.log(Level.FINE, "Hash join metrics: hashTableSize={0}, buildTime={1} ms, probeTime={2} ms",
+                new Object[]{hashTable.size(), buildTimeMs, probeTimeMs});
+        return newJoinedRows;
+    }
+
+    /**
+     * Runs a partitioned (grace) hash join for build sides whose estimated hash
+     * table exceeds {@code max.hash.table.size.mb}. The build and probe rows
+     * are split by join-key hash into {@code partitionCount} partitions that
+     * are spilled to temporary files, then joined one partition at a time, so
+     * peak memory is bounded by a single partition instead of the whole table.
+     *
+     * @throws IOException if the temporary partition files cannot be written
+     */
+    private List<Map<String, Map<String, Object>>> runPartitionedHashJoin(
+            List<Map<String, Object>> buildRows, Table buildTable, Table probeTable,
+            String buildTableName, String probeTableName,
+            String buildColumnKey, String probeColumnKey,
+            QueryParser.JoinInfo join, boolean onlyEquality, boolean lastStream,
+            StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
+            List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
+            Map<String, Table> tables, List<ReentrantReadWriteLock> acquiredLocks) throws IOException {
+
+        int partitionCount = choosePartitionCount(buildRows.size());
+        File tempDir = Files.createTempDirectory("diesel-hj-" + System.nanoTime() + "-").toFile();
+
+        long buildStart = System.nanoTime();
+        DataOutputStream[] buildWriters = new DataOutputStream[partitionCount];
+        for (int i = 0; i < buildRows.size(); i++) {
+            Map<String, Object> row = buildRows.get(i);
+            Object key = row.get(buildColumnKey);
+            if (key == null) {
+                continue;
+            }
+            int p = (key.hashCode() & 0x7fffffff) % partitionCount;
+            if (buildWriters[p] == null) {
+                buildWriters[p] = new DataOutputStream(new BufferedOutputStream(
+                        new FileOutputStream(new File(tempDir, "build-" + p + ".bin")), 1 << 20));
+            }
+            writeBinaryRow(buildWriters[p], row);
+            ReentrantReadWriteLock lock = buildTable.getRowLock(i);
+            lock.readLock().lock();
+            acquiredLocks.add(lock);
+        }
+        for (DataOutputStream writer : buildWriters) {
+            if (writer != null) {
+                writer.flush();
+                writer.close();
+            }
+        }
+
+        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, join.onConditions, probeTableName, combinedColumnTypes);
+        if (probeRows == null) {
+            probeRows = probeTable.getRows();
+        }
+        DataOutputStream[] probeWriters = new DataOutputStream[partitionCount];
+        for (Map<String, Object> row : probeRows) {
+            Object key = row.get(probeColumnKey);
+            if (key == null) {
+                continue;
+            }
+            int p = (key.hashCode() & 0x7fffffff) % partitionCount;
+            if (probeWriters[p] == null) {
+                probeWriters[p] = new DataOutputStream(new BufferedOutputStream(
+                        new FileOutputStream(new File(tempDir, "probe-" + p + ".bin")), 1 << 20));
+            }
+            writeBinaryRow(probeWriters[p], row);
+        }
+        for (DataOutputStream writer : probeWriters) {
+            if (writer != null) {
+                writer.flush();
+                writer.close();
+            }
+        }
+        long buildTimeMs = (System.nanoTime() - buildStart) / 1_000_000;
+
+        long probeStart = System.nanoTime();
+        List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+        long totalHashEntries = 0;
+        for (int p = 0; p < partitionCount; p++) {
+            File buildFile = new File(tempDir, "build-" + p + ".bin");
+            File probeFile = new File(tempDir, "probe-" + p + ".bin");
+            if (!buildFile.exists() || !probeFile.exists()) {
+                continue;
+            }
+
+            Map<Object, List<Map<String, Object>>> partitionHash = new HashMap<>();
+            try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(buildFile), 1 << 20))) {
+                Map<String, Object> row;
+                while ((row = readBinaryRow(in)) != null) {
+                    Object key = row.get(buildColumnKey);
+                    if (key != null) {
+                        partitionHash.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+                    }
+                }
+            }
+            totalHashEntries += partitionHash.size();
+
+            try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(probeFile), 1 << 20))) {
+                Map<String, Object> probeRow;
+                while ((probeRow = readBinaryRow(in)) != null) {
+                    Object probeKey = probeRow.get(probeColumnKey);
+                    if (probeKey != null) {
+                        List<Map<String, Object>> matches = partitionHash.get(probeKey);
+                        if (matches != null) {
+                            for (Map<String, Object> buildRow : matches) {
+                                emitHashJoinMatch(probeRow, buildRow, onlyEquality, lastStream,
+                                        probeTableName, buildTableName, join, spill, spillActive, spillFallback,
+                                        whereConditions, combinedColumnTypes, tables, newJoinedRows);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        long probeTimeMs = (System.nanoTime() - probeStart) / 1_000_000;
+
+        File[] tempFiles = tempDir.listFiles();
+        if (tempFiles != null) {
+            for (File tempFile : tempFiles) {
+                tempFile.delete();
+            }
+        }
+        tempDir.delete();
+
+        lastHashJoinTableSize = totalHashEntries;
+        lastHashJoinBuildTimeMs = buildTimeMs;
+        lastHashJoinProbeTimeMs = probeTimeMs;
+        lastJoinUsedPartitioning = true;
+        LOGGER.log(Level.INFO, "Partitioned hash join metrics: partitions={0}, hashTableSize={1}, buildTime={2} ms, probeTime={3} ms",
+                new Object[]{partitionCount, totalHashEntries, buildTimeMs, probeTimeMs});
+        return newJoinedRows;
+    }
+
+    /**
+     * Emits one matching (probe, build) pair the same way for both the
+     * in-memory and the partitioned hash join: either flattened straight into
+     * the streaming spill, or wrapped as a joined row.
+     */
+    private void emitHashJoinMatch(Map<String, Object> probeRow, Map<String, Object> buildRow,
+                                   boolean onlyEquality, boolean lastStream,
+                                   String probeTableName, String buildTableName,
+                                   QueryParser.JoinInfo join,
+                                   StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
+                                   List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
+                                   Map<String, Table> tables, List<Map<String, Map<String, Object>>> newJoinedRows) {
+        if (onlyEquality) {
+            if (lastStream) {
+                Map<String, Object> flatRow = new HashMap<>((probeRow.size() + buildRow.size()) * 4 / 3 + 1);
+                flattenInto(flatRow, probeRow, probeTableName);
+                flattenInto(flatRow, buildRow, buildTableName);
+                spillFilteredRow(spill, spillActive, spillFallback, flatRow, whereConditions, combinedColumnTypes, tables);
+            } else {
+                Map<String, Map<String, Object>> newRow = new HashMap<>(2);
+                newRow.put(probeTableName, probeRow);
+                newRow.put(buildTableName, buildRow);
+                newJoinedRows.add(newRow);
+            }
+        } else {
+            Map<String, Object> flattenedRow = flattenJoinedPair(probeRow, probeTableName, buildRow, buildTableName);
+            if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
+                if (lastStream) {
+                    spillFilteredRow(spill, spillActive, spillFallback, flattenedRow, whereConditions, combinedColumnTypes, tables);
+                } else {
+                    Map<String, Map<String, Object>> newRow = new HashMap<>(2);
+                    newRow.put(probeTableName, probeRow);
+                    newRow.put(buildTableName, buildRow);
+                    newJoinedRows.add(newRow);
+                }
+            }
+        }
+    }
+
+    /**
+     * Runs the nested-loop join (also used as the block nested loop fallback
+     * when a hash join would exceed the in-memory row budget). Iterates every
+     * (outer x inner) pair and applies CROSS / key-equality / ON-condition
+     * matching, streaming flattened results when the last join is streaming.
+     */
+    private List<Map<String, Map<String, Object>>> runBlockNestedLoopJoin(
+            List<Map<String, Map<String, Object>>> joinedRows, QueryParser.JoinInfo join, Table joinTable,
+            Map<String, Table> tables, boolean useStreaming,
+            StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
+            List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
+            List<ReentrantReadWriteLock> acquiredLocks) {
+
+        List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+        List<Map<String, Object>> joinRows = getIndexedRows(joinTable, join.onConditions, join.tableName, combinedColumnTypes);
+        if (joinRows == null) {
+            joinRows = joinTable.getRows();
+        }
+
+        String rightPrefix = join.tableName + ".";
+        List<String> rightSrcKeys;
+        List<String> rightTargetKeys;
+        if (!joinRows.isEmpty()) {
+            rightSrcKeys = new ArrayList<>(joinRows.get(0).keySet());
+            rightTargetKeys = new ArrayList<>(rightSrcKeys.size());
+            for (String sk : rightSrcKeys) {
+                rightTargetKeys.add(rightPrefix + sk);
+            }
+        } else {
+            rightSrcKeys = Collections.emptyList();
+            rightTargetKeys = Collections.emptyList();
+        }
+
+        boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
+        boolean equalsJoin = join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null;
+        String leftJoinKey = equalsJoin ? normalizeColumnKey(join.leftColumn, join.originalTable) : null;
+        String rightJoinKey = equalsJoin ? normalizeColumnKey(join.rightColumn, join.tableName) : null;
+
+        // Row locks are keyed by row index, not by pair, so acquire
+        // the whole join table's read locks once instead of once per
+        // (outer x inner) pair.
+        for (int j = 0; j < joinRows.size(); j++) {
+            ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
+            joinLock.readLock().lock();
+            acquiredLocks.add(joinLock);
+        }
+
+        for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
+            Map<String, Object> evalRow = flattenJoinedRow(currentJoin);
+            if (lastStream) {
+                Map<String, Object> leftRow = equalsJoin ? currentJoin.get(join.originalTable) : null;
+                Object leftValue = equalsJoin ? leftRow.get(leftJoinKey) : null;
+                for (int j = 0; j < joinRows.size(); j++) {
+                    Map<String, Object> rightRow = joinRows.get(j);
+                    Map<String, Object> flatRow = new HashMap<>(evalRow.size() + rightSrcKeys.size() + 1);
+                    flatRow.putAll(evalRow);
+                    for (int k = 0; k < rightSrcKeys.size(); k++) {
+                        flatRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
+                    }
+                    boolean matches;
+                    if (join.joinType == QueryParser.JoinType.CROSS) {
+                        matches = true;
+                    } else if (equalsJoin) {
+                        matches = valuesEqual(leftValue, rightRow.get(rightJoinKey));
+                    } else if (!join.onConditions.isEmpty()) {
+                        matches = evaluateConditions(flatRow, join.onConditions, combinedColumnTypes, tables);
+                    } else {
+                        throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
+                    }
+                    if (matches) {
+                        spillFilteredRow(spill, spillActive, spillFallback, flatRow, whereConditions, combinedColumnTypes, tables);
+                    }
+                }
+            } else {
+                for (int j = 0; j < joinRows.size(); j++) {
+                    Map<String, Object> rightRow = joinRows.get(j);
+                    Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
+                    newRow.put(join.tableName, rightRow);
+
+                    if (join.joinType == QueryParser.JoinType.CROSS) {
+                        newJoinedRows.add(newRow);
+                    } else if (equalsJoin) {
+                        Map<String, Object> leftRow = currentJoin.get(join.originalTable);
+                        if (!valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
+                            continue;
+                        }
+                        newJoinedRows.add(newRow);
+                    } else if (!join.onConditions.isEmpty()) {
+                        for (int k = 0; k < rightSrcKeys.size(); k++) {
+                            evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
+                        }
+                        if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
+                            continue;
+                        }
+                        newJoinedRows.add(newRow);
+                        LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
+                                new Object[]{join.tableName, join.onConditions});
+                    } else {
+                        throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
+                    }
+                }
+            }
+        }
+        return newJoinedRows;
+    }
+
+    /**
+     * Rough estimate of the in-memory hash table size (in bytes) that would be
+     * built from {@code buildRows}, based on the build table's column types
+     * plus the per-entry {@link HashMap} overhead.
+     */
+    private long estimateHashTableSizeBytes(List<Map<String, Object>> buildRows, Table buildTable) {
+        if (buildRows == null || buildRows.isEmpty()) {
+            return 0;
+        }
+        long avgRowBytes = 0;
+        Map<String, Class<?>> columnTypes = buildTable.getColumnTypes();
+        if (columnTypes.isEmpty()) {
+            avgRowBytes = 64;
+        } else {
+            for (Class<?> type : columnTypes.values()) {
+                if (type == Long.class) {
+                    avgRowBytes += 8;
+                } else if (type == Integer.class) {
+                    avgRowBytes += 4;
+                } else if (type == Double.class) {
+                    avgRowBytes += 8;
+                } else if (type == Float.class) {
+                    avgRowBytes += 4;
+                } else if (type == Boolean.class) {
+                    avgRowBytes += 1;
+                } else if (type == BigDecimal.class) {
+                    avgRowBytes += 16;
+                } else {
+                    // String/Character/LocalDate/LocalDateTime/UUID/other objects
+                    avgRowBytes += 32;
+                }
+            }
+        }
+        return buildRows.size() * (avgRowBytes + 48L);
+    }
+
+    /**
+     * Chooses the number of partitions for the partitioned hash join so that
+     * each partition holds at most roughly {@code max.inmemory.rows} rows,
+     * bounded to [1, 256].
+     */
+    private int choosePartitionCount(long buildRowCount) {
+        if (buildRowCount <= 0) {
+            return 1;
+        }
+        long perPartition = Math.max(1, MAX_IN_MEMORY_ROWS);
+        int byRows = (int) Math.max(1, Math.ceil((double) buildRowCount / perPartition));
+        return Math.max(1, Math.min(256, byRows));
     }
 
     private static final byte BIN_NULL = 0;
