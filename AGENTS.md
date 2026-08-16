@@ -1,6 +1,6 @@
 # AGENTS.md
 
-DieselDB: an experimental file-persisted SQL database in Java (package-private engine, ~38 classes in `diesel/`), driven prompt-by-prompt from `prompt2.md` (stage-1, 100 prompts). Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Reider85/dieseldb.git`.
+DieselDB: an experimental file-persisted SQL database in Java (package-private engine, ~39 classes in `diesel/`), driven prompt-by-prompt from `prompt2.md` (stage-1, 100 prompts). Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Reider85/dieseldb.git`.
 
 ## AI Agent Quick Start (opencode/kilocode)
 
@@ -58,7 +58,7 @@ DieselDB: an experimental file-persisted SQL database in Java (package-private e
 
 ## Commit conventions
 
-- Append ONE long single-paragraph entry to `Changelog.md` (entries are appended, not sorted), e.g. `2.9.15 prompt 15 ...`: what changed, per-class test results, timing summary (aggregate + degraded/improved/stable + noise justification), complexity check. Next number: increment the latest 2.9.N (currently 2.9.15).
+- Append ONE long single-paragraph entry to `Changelog.md` (entries are appended, not sorted), e.g. `2.9.15 prompt 15 ...`: what changed, per-class test results, timing summary (aggregate + degraded/improved/stable + noise justification), complexity check. Next number: increment the latest 2.9.N (currently 2.9.20).
 - Commit message = the changelog text (use `git commit -F <file>` for the long message on Windows). Push to `origin/main`.
 - Stage only intended files with explicit `git add <paths>` — NEVER `git add -A`/`.`.
 
@@ -75,7 +75,8 @@ DieselDB: an experimental file-persisted SQL database in Java (package-private e
 - Entrypoints: `diesel/Database.java` (`executeQuery(String, UUID txnId)` dispatch), `DatabaseServer.java`, `DatabaseClient.java`, `CliRepl.java` (`CliRepl [host] [port]` / `--local [dataDir]`), root `start-server.bat/.sh`, `start-client.bat/.sh`.
 - Parsing chain: `QueryParser` (main) + `SqlLexer` + `SubqueryParser` (derived tables/subqueries); `ExplainQuery` (EXPLAIN / EXPLAIN ANALYZE); `AnalyzeTableQuery` (ANALYZE TABLE, 2.9.14). New statement types implement `Query<T>` in `diesel/`.
 - Persistence: each table saved as `<NAME>.csv` (data) + `<NAME>.table` (serialized metadata) in the Database `dataDir` (default `.` = repo root). `config.properties` is read from the CWD.
-- Config keys (`config.properties`, tracked): `max.inmemory.rows=10000` (streaming/spill threshold), `max.hash.table.size.mb=512` (hash-join budget → partitioned spill join), `max.result.rows=1000000` (result-row limit, prompt 12), `server.socket.timeout=30000`, `transaction.isolation.level=SERIALIZABLE`.
+- Config keys (`config.properties`, tracked): `max.inmemory.rows=10000` (streaming/spill threshold), `max.hash.table.size.mb=512` (hash-join budget → partitioned spill join), `max.result.rows=1000000` (result-row limit, prompt 12), `server.socket.timeout=30000`, `transaction.isolation.level=SERIALIZABLE`, `diesel.profile.slow.threshold.ms=1000` (slow-query profiling threshold, prompt 18; overridable via `-Ddiesel.profile.slow.threshold.ms`).
+- Profiling (prompt 18): `diesel/QueryProfiler.java` is a static singleton that records each query's parse/plan/execute/sort breakdown and logs `"Slow query breakdown: ..."` (SLF4J WARN) when the total reaches the threshold. Registered as a read-only DynamicMBean `diesel:type=QueryProfiler` on the platform MBean server (package stays package-private). `Database.executeQuery` measures parse time and execution wall time; `SelectQuery.execute` measures the plan/sort phases (fields `lastPlanNanos`/`lastExecuteNanos`/`lastSortNanos`).
 - Join strategy: byte/row budget estimate + (since 2.9.14) table statistics (`preferNestedLoopByStatistics`, ~10-row tables → nested loop, larger → hash join). Index types: B-tree, hash, unique, clustered.
 
 ## Common Mistakes (avoid these!)

@@ -153,6 +153,7 @@ class Database {
         // hint is excluded because it mutates the parsed AST per execution.
         QueryCache.NormalizedSql normalizedSelect = null;
         Query<?> parsedQuery = null;
+        long parseNanos = 0;
         if (maxRowsHint == null) {
             String trimmed = cleanQuery.trim();
             if (QueryParser.toUpperCasePreservingQuotedIdentifiers(trimmed).startsWith("SELECT")) {
@@ -167,7 +168,7 @@ class Database {
         if (parsedQuery == null) {
             long parseStart = System.nanoTime();
             parsedQuery = parse(cleanQuery);
-            long parseNanos = System.nanoTime() - parseStart;
+            parseNanos = System.nanoTime() - parseStart;
             // Derived tables materialize their inner SELECT at parse time, so
             // their plans are never reused (a later hit would scan stale rows).
             if (normalizedSelect != null && parsedQuery instanceof SelectQuery
@@ -178,39 +179,79 @@ class Database {
         applyMaxRowsHint(parsedQuery, maxRowsHint);
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
+        // Prompt 18: the execution phase is timed around the dispatch and the
+        // phase breakdown is reported to the QueryProfiler (parse time is known
+        // above; plan/sort time come from the SelectQuery that just executed).
+        long execStart = System.nanoTime();
         try {
-            if (parsedQuery instanceof SetIsolationLevelQuery) {
-                return executeSetIsolationLevel((SetIsolationLevelQuery) parsedQuery);
-            }
-            if (parsedQuery instanceof SetAutoCommitQuery) {
-                return executeSetAutoCommit((SetAutoCommitQuery) parsedQuery);
-            }
-            if (parsedQuery instanceof BeginTransactionQuery) {
-                return executeBeginTransaction((BeginTransactionQuery) parsedQuery, currentTransaction);
-            }
-            if (parsedQuery instanceof CommitTransactionQuery) {
-                return executeCommit(currentTransaction, transactionId);
-            }
-            if (parsedQuery instanceof RollbackTransactionQuery) {
-                return executeRollback(currentTransaction, transactionId);
-            }
-            if (parsedQuery instanceof CreateTableQuery) {
-                return executeCreateTable((CreateTableQuery) parsedQuery);
-            }
-            if (parsedQuery instanceof CreateIndexQueryBase) {
-                return executeCreateIndex((CreateIndexQueryBase) parsedQuery, currentTransaction);
-            }
-            if (parsedQuery instanceof ExplainQuery) {
-                return executeExplain((ExplainQuery) parsedQuery, currentTransaction);
-            }
-            if (parsedQuery instanceof AnalyzeTableQuery) {
-                return executeAnalyzeTable((AnalyzeTableQuery) parsedQuery);
-            }
-            return executeDataQuery(parsedQuery, cleanQuery, currentTransaction);
+            Object result = dispatch(parsedQuery, cleanQuery, currentTransaction, transactionId);
+            recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
+            return result;
         } catch (Exception e) {
+            recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
             throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Routes a parsed query to its execution path. Extracted from
+     * {@link #executeQuery} so the execution phase can be timed as a unit for
+     * the query profiler.
+     */
+    private Object dispatch(Query<?> parsedQuery, String cleanQuery, Transaction currentTransaction, UUID transactionId) {
+        if (parsedQuery instanceof SetIsolationLevelQuery) {
+            return executeSetIsolationLevel((SetIsolationLevelQuery) parsedQuery);
+        }
+        if (parsedQuery instanceof SetAutoCommitQuery) {
+            return executeSetAutoCommit((SetAutoCommitQuery) parsedQuery);
+        }
+        if (parsedQuery instanceof BeginTransactionQuery) {
+            return executeBeginTransaction((BeginTransactionQuery) parsedQuery, currentTransaction);
+        }
+        if (parsedQuery instanceof CommitTransactionQuery) {
+            return executeCommit(currentTransaction, transactionId);
+        }
+        if (parsedQuery instanceof RollbackTransactionQuery) {
+            return executeRollback(currentTransaction, transactionId);
+        }
+        if (parsedQuery instanceof CreateTableQuery) {
+            return executeCreateTable((CreateTableQuery) parsedQuery);
+        }
+        if (parsedQuery instanceof CreateIndexQueryBase) {
+            return executeCreateIndex((CreateIndexQueryBase) parsedQuery, currentTransaction);
+        }
+        if (parsedQuery instanceof ExplainQuery) {
+            return executeExplain((ExplainQuery) parsedQuery, currentTransaction);
+        }
+        if (parsedQuery instanceof AnalyzeTableQuery) {
+            return executeAnalyzeTable((AnalyzeTableQuery) parsedQuery);
+        }
+        return executeDataQuery(parsedQuery, cleanQuery, currentTransaction);
+    }
+
+    /**
+     * Reports a query's phase breakdown to the query profiler: parse time is
+     * measured in {@link #executeQuery}, while the plan and sort phases come
+     * from the {@link SelectQuery} instance that just executed (EXPLAIN is
+     * unwrapped to its inner statement). The execute phase is the measured
+     * execution wall time minus the plan and sort phases, clamped at zero so
+     * a failed early dispatch cannot report negative time.
+     */
+    private void recordQueryProfiling(Query<?> parsedQuery, String sql, long parseNanos, long execTotalNanos) {
+        Query<?> profiled = parsedQuery;
+        if (profiled instanceof ExplainQuery) {
+            profiled = ((ExplainQuery) profiled).getInnerQuery();
+        }
+        long planNanos = 0;
+        long sortNanos = 0;
+        if (profiled instanceof SelectQuery) {
+            SelectQuery select = (SelectQuery) profiled;
+            planNanos = select.getLastPlanNanos();
+            sortNanos = select.getLastSortNanos();
+        }
+        long executeNanos = Math.max(0, execTotalNanos - planNanos - sortNanos);
+        QueryProfiler.getInstance().record(sql, parseNanos, planNanos, executeNanos, sortNanos);
     }
 
     private Query<?> parse(String query) {

@@ -100,6 +100,32 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private long lastHashJoinProbeTimeMs;
     private boolean lastJoinUsedPartitioning;
 
+    /**
+     * Phase timings of the most recently executed query (Prompt 18): the plan
+     * phase (join reordering, ORDER BY key resolution, projection plan), the
+     * sort phase (the ORDER BY sort itself) and the execute phase (everything
+     * else: scan, join, filter, grouping, projection). The values are in
+     * nanoseconds and are reset at the start of {@link #execute}, so they are
+     * meaningful only after a successful execution. {@link Database} combines
+     * them with its own parse-time measurement and reports the breakdown to
+     * {@link QueryProfiler}.
+     */
+    private long lastPlanNanos;
+    private long lastExecuteNanos;
+    private long lastSortNanos;
+
+    long getLastPlanNanos() {
+        return lastPlanNanos;
+    }
+
+    long getLastExecuteNanos() {
+        return lastExecuteNanos;
+    }
+
+    long getLastSortNanos() {
+        return lastSortNanos;
+    }
+
     long getLastHashJoinTableSize() {
         return lastHashJoinTableSize;
     }
@@ -439,6 +465,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     @Override
     public List<Map<String, Object>> execute(Table table) {
+        // Prompt 18: per-query phase timing. The plan phase covers the setup
+        // below (join reordering, ORDER BY key resolution, projection plan);
+        // the execute phase covers everything between the main scan and the
+        // result projection minus the ORDER BY sort, which is timed separately.
+        long planStart = System.nanoTime();
+        long execStart;
+        long beforeSort;
+        long sortStart;
+        lastPlanNanos = 0;
+        lastExecuteNanos = 0;
+        lastSortNanos = 0;
         Database database = table.getDatabase();
         List<Map<String, Object>> result = new ArrayList<>();
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
@@ -474,6 +511,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         QUERY_MEMORY.get().reset();
         QUERY_MEMORY.get().sample(0);
         projectionPlan = buildProjectionPlan();
+        lastPlanNanos = System.nanoTime() - planStart;
+        execStart = System.nanoTime();
 
         try {
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
@@ -691,11 +730,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 finalRows = filteredRows;
             }
 
+            beforeSort = System.nanoTime();
+            lastExecuteNanos += beforeSort - execStart;
             if (!orderBy.isEmpty()) {
                 finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
                 LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses (streaming={1})",
                         new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
             }
+            sortStart = System.nanoTime();
+            lastSortNanos = sortStart - beforeSort;
+            execStart = sortStart;
 
             if (offset != null && limit == null) {
                 LOGGER.warning("OFFSET without LIMIT may be inefficient");
@@ -750,6 +794,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, having={5}, limit={6}, offset={7}, orderBy={8}",
                     new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
+            lastExecuteNanos += System.nanoTime() - execStart;
             QUERY_MEMORY.get().sample(result.size());
             return result;
         } finally {
