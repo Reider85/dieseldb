@@ -71,6 +71,11 @@ public class SubqueryParser {
      * @throws IllegalArgumentException if the query is unsupported
      */
     public Query<?> parse(String query, Database database) {
+        // Prompt 22 (java:S2259): a null query would NPE inside the delegated
+        // QueryParser.parse call; reject it here with the same contract.
+        if (query == null) {
+            throw new IllegalArgumentException("Query must not be null");
+        }
         LOGGER.log(Level.INFO, "Parsing query: {0}", query);
         String normalizedQuery = normalizeQueryString(query).trim();
 
@@ -110,6 +115,10 @@ public class SubqueryParser {
      * @return true when the query contains a {@code (SELECT ...)} subquery
      */
     public boolean containsSubquery(String query) {
+        // Prompt 22 (java:S2259): a null query cannot contain a subquery.
+        if (query == null) {
+            return false;
+        }
         Pattern subqueryPattern = Pattern.compile("(?i)\\(\\s*SELECT\\b", Pattern.DOTALL);
         Matcher matcher = subqueryPattern.matcher(query);
         return matcher.find();

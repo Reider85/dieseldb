@@ -569,6 +569,12 @@ class QueryParser {
      * @throws IllegalArgumentException if the query is null, empty or unsupported
      */
     public Query<?> parse(String query, Database database) {
+        // Prompt 22 (java:S2259): the Javadoc contract below promises an
+        // IllegalArgumentException for a null query, but query.trim() would
+        // NPE first; guard the parameter explicitly.
+        if (query == null) {
+            throw new IllegalArgumentException("Query must not be null");
+        }
         try {
             // Normalize and remove surrounding parentheses
             String normalized = toUpperCasePreservingQuotedIdentifiers(query.trim());
@@ -697,6 +703,10 @@ class QueryParser {
      * @return true when the query starts with the EXPLAIN keyword
      */
     static boolean isExplainQuery(String query) {
+        // Prompt 22 (java:S2259): a null query has no EXPLAIN prefix.
+        if (query == null) {
+            return false;
+        }
         return toUpperCasePreservingQuotedIdentifiers(query.trim()).startsWith("EXPLAIN");
     }
 

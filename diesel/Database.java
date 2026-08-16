@@ -143,6 +143,12 @@ class Database {
      * @throws RuntimeException when the query cannot be parsed or executed
      */
     public Object executeQuery(String query, UUID transactionId) {
+        // Prompt 22 (java:S2259): a null query would NPE below on
+        // cleanQuery.trim() before the try-block that formats execution
+        // errors; reject it up front with a clear IllegalArgumentException.
+        if (query == null) {
+            throw new IllegalArgumentException("Query must not be null");
+        }
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
         Long maxRowsHint = parseMaxRowsHint(query);
         String cleanQuery = stripMaxRowsHint(query);

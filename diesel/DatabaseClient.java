@@ -73,6 +73,12 @@ public class DatabaseClient {
      *                          communication breaks
      */
     public Object executeQuery(String query) {
+        // Prompt 22 (java:S2259): out/in are only assigned by connect(); a
+        // query before connect() would NPE on out.writeObject below and mask
+        // the real cause, so fail with a clear message instead.
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
         try {
             String normalizedQuery = query.trim();
             out.writeObject(new QueryMessage(normalizedQuery, transactionId));
@@ -103,8 +109,10 @@ public class DatabaseClient {
      */
     public void disconnect() {
         try {
-            out.writeObject("EXIT");
-            out.flush();
+            if (out != null) {
+                out.writeObject("EXIT");
+                out.flush();
+            }
             if (in != null) in.close();
             if (out != null) out.close();
             if (socket != null) socket.close();

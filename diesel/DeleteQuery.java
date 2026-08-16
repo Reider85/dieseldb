@@ -294,6 +294,12 @@ class DeleteQuery implements Query<Void> {
         if (value == null) {
             return null;
         }
+        // Prompt 22 (java:S2259): columnTypes.get(column) may be null when the
+        // table schema lacks the column; pass the value through rather than
+        // NPE on targetType.isAssignableFrom below.
+        if (targetType == null) {
+            return value;
+        }
 
         Class<?> valueType = value.getClass();
         if (targetType.isAssignableFrom(valueType)) {

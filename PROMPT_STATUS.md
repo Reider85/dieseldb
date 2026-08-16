@@ -45,7 +45,7 @@
 | № | Статус | Название | Приоритет |
 |---|--------|----------|-----------|
 | 21 | ✔ DONE (2026-08-16) | StackOverflow в regex (S5998) | HIGH |
-| 22 | ❌ TODO | Null Pointer Dereference (S2259) | HIGH |
+| 22 | ✔ DONE (2026-08-16) | Null Pointer Dereference (S2259) | HIGH |
 | 23 | ❌ TODO | Удаление мёртвого кода (S2583, S108, S1144, S1068) | LOW |
 | 24 | ❌ TODO | Double Brace Initialization (S3599) | LOW |
 | 25 | ❌ TODO | Игнорирование возвращаемых значений (S899) | MEDIUM |

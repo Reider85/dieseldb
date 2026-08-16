@@ -465,6 +465,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     @Override
     public List<Map<String, Object>> execute(Table table) {
+        // Prompt 22 (java:S2259): guard the public parameter and the
+        // documented-nullable owning database before either is dereferenced
+        // (a JOIN would NPE on database.getTable below).
+        Objects.requireNonNull(table, "Main table must not be null");
+        Database database = Objects.requireNonNull(table.getDatabase(),
+                "Table " + mainTableName + " is not attached to a database");
         // Prompt 18: per-query phase timing. The plan phase covers the setup
         // below (join reordering, ORDER BY key resolution, projection plan);
         // the execute phase covers everything between the main scan and the
@@ -476,7 +482,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         lastPlanNanos = 0;
         lastExecuteNanos = 0;
         lastSortNanos = 0;
-        Database database = table.getDatabase();
         List<Map<String, Object>> result = new ArrayList<>();
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
         Map<String, Table> tables = new HashMap<>();
@@ -2083,7 +2088,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             List<Object> inValues;
             if (condition.subQuery != null) {
-                Database database = tables.get(mainTableName).getDatabase();
+                Database database = Objects.requireNonNull(tables.get(mainTableName).getDatabase(),
+                        "Table " + mainTableName + " is not attached to a database");
                 String subQueryString = condition.subQuery.toString().trim();
                 if (subQueryString.startsWith("(") && subQueryString.endsWith(")")) {
                     subQueryString = subQueryString.substring(1, subQueryString.length() - 1).trim();
@@ -2137,7 +2143,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         String column = normalizeColumnName(condition.column, mainTableName);
         Object rowValue = row.get(column);
         if (condition.subQuery != null) {
-            Database database = tables.get(mainTableName).getDatabase();
+            Database database = Objects.requireNonNull(tables.get(mainTableName).getDatabase(),
+                    "Table " + mainTableName + " is not attached to a database");
             String subQueryString = condition.subQuery.toString();
             String resolvedKey = substituteOuterReferences(subQueryString, row);
             Object subQueryValue = scalarSubQueryCache.computeIfAbsent(resolvedKey,
@@ -2327,6 +2334,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private Object evaluateGroupBySubQuery(String subQueryString, Map<String, Object> outerRow, Database database) {
+        // Prompt 22 (java:S2259): the database argument must be non-null.
+        Objects.requireNonNull(database, "Subquery needs a database");
         String s = subQueryString.trim();
         if (s.startsWith("(") && s.endsWith(")")) {
             s = s.substring(1, s.length() - 1).trim();
@@ -2502,7 +2511,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @return the multi-line plan text
      */
     String describePlan(Table mainTable) {
-        Database database = mainTable.getDatabase();
+        // Prompt 22 (java:S2259): the owning database is documented-nullable
+        // and is dereferenced for every join table below.
+        Objects.requireNonNull(mainTable, "Main table must not be null");
+        Database database = Objects.requireNonNull(mainTable.getDatabase(),
+                "Table " + mainTableName + " is not attached to a database");
         for (QueryParser.JoinInfo join : joins) {
             tableAliases.putIfAbsent(join.tableName, join.tableName);
             if (join.alias != null) {
