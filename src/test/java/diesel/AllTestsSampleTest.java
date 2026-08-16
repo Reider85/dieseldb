@@ -2,7 +2,13 @@ package diesel;
 
 import diesel.Database;
 
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestMethodOrder;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -32,6 +38,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class AllTestsSampleTest {
     private static final Logger LOGGER = Logger.getLogger(AllTestsSampleTest.class.getName());
     private static final int RECORD_COUNT = 600;
@@ -45,7 +53,9 @@ public class AllTestsSampleTest {
         this.database = new Database();
     }
 
-    @Test
+    /**
+     * Orchestration for manual runs ({@code main}), mirroring the JUnit order.
+     */
     public void runTests() {
         try {
             setup();
@@ -56,6 +66,11 @@ public class AllTestsSampleTest {
             runJoinTestQueries();
             runLikeTestQueries();
             runOrderByTestQueries();
+            if (Boolean.getBoolean(LargeTest.LARGE_TESTS_PROPERTY)) {
+                runHeavyOrderByJoins();
+            } else {
+                LOGGER.log(Level.INFO, "SKIPPED heavy ORDER BY joins (enable with -D" + LargeTest.LARGE_TESTS_PROPERTY + "=true)");
+            }
             runPerformanceTestQueries();
             runPersistenceTestQueries();
             runSubqueriesTestQueries();
@@ -79,6 +94,150 @@ public class AllTestsSampleTest {
         writeTimingReport();
         if (failed > 0) {
             throw new RuntimeException("AllTestsSampleTest failed: " + failed + " tests");
+        }
+    }
+
+    @Test
+    @Order(1)
+    public void advancedGroup() {
+        runGroupAsTest("AdvancedTest", this::runAdvancedTestQueries);
+    }
+
+    @Test
+    @Order(2)
+    public void aliasesGroup() {
+        runGroupAsTest("AliasesTest", this::runAliasesTestQueries);
+    }
+
+    @Test
+    @Order(3)
+    public void groupByGroup() {
+        runGroupAsTest("GroupByTest", this::runGroupByTestQueries);
+    }
+
+    @Test
+    @Order(4)
+    public void inGroup() {
+        runGroupAsTest("InTest", this::runInTestQueries);
+    }
+
+    @Test
+    @Order(5)
+    public void joinGroup() {
+        runGroupAsTest("JoinTest", this::runJoinTestQueries);
+    }
+
+    @Test
+    @Order(6)
+    public void likeGroup() {
+        runGroupAsTest("LikeTest", this::runLikeTestQueries);
+    }
+
+    @Test
+    @Order(7)
+    public void orderByGroup() {
+        runGroupAsTest("OrderByTest", this::runOrderByTestQueries);
+    }
+
+    @LargeTest
+    @Order(8)
+    public void heavyOrderByJoinsGroup() {
+        runGroupAsTest("OrderByHeavyTest", this::runHeavyOrderByJoins);
+    }
+
+    @Test
+    @Order(9)
+    public void performanceGroup() {
+        runGroupAsTest("PerformanceTest", this::runPerformanceTestQueries);
+    }
+
+    @Test
+    @Order(10)
+    public void persistenceGroup() {
+        runGroupAsTest("PersistenceTest", this::runPersistenceTestQueries);
+    }
+
+    @Test
+    @Order(11)
+    public void subqueriesGroup() {
+        runGroupAsTest("SubqueriesTest", this::runSubqueriesTestQueries);
+    }
+
+    @Test
+    @Order(12)
+    public void trueFalseNullGroup() {
+        runGroupAsTest("TrueFalseNullTest", this::runTrueFalseNullTestQueries);
+    }
+
+    @Test
+    @Order(13)
+    public void caseSensitivityGroup() {
+        runGroupAsTest("CaseSensitivityTest", this::runCaseSensitivityTestQueries);
+    }
+
+    @Test
+    @Order(14)
+    public void transactionGroup() {
+        runGroupAsTest("TransactionTest", this::runTransactionTestQueries);
+    }
+
+    @Test
+    @Order(15)
+    public void prompt62Group() {
+        runGroupAsTest("Prompt62Test", this::runPrompt62TestQueries);
+    }
+
+    @Test
+    @Order(16)
+    public void prompt65Group() {
+        runGroupAsTest("Prompt65Test", this::runPrompt65TestQueries);
+    }
+
+    @Test
+    @Order(17)
+    public void prompt66Group() {
+        runGroupAsTest("Prompt66Test", this::runPrompt66TestQueries);
+    }
+
+    @Test
+    @Order(18)
+    public void prompt67Group() {
+        runGroupAsTest("Prompt67Test", this::runPrompt67TestQueries);
+    }
+
+    @Test
+    @Order(19)
+    public void prompt68Group() {
+        runGroupAsTest("Prompt68Test", this::runPrompt68TestQueries);
+    }
+
+    @Test
+    @Order(20)
+    public void prompt69Group() {
+        runGroupAsTest("Prompt69Test", this::runPrompt69TestQueries);
+    }
+
+    @Test
+    @Order(21)
+    public void prompt70Group() {
+        runGroupAsTest("Prompt70Test", this::runPrompt70TestQueries);
+    }
+
+    private void runGroupAsTest(String group, Runnable body) {
+        int startPassed = passed;
+        int startFailed = failed;
+        try {
+            body.run();
+        } catch (Exception e) {
+            failed++;
+            LOGGER.log(Level.SEVERE, "{0} group FAILED: {1}", new Object[]{group, e.getMessage()});
+            e.printStackTrace();
+        }
+        int groupPassed = passed - startPassed;
+        int groupFailed = failed - startFailed;
+        LOGGER.log(Level.INFO, "AllTestsSampleTest / {0}: {1} passed, {2} failed", new Object[]{group, groupPassed, groupFailed});
+        if (groupFailed > 0) {
+            throw new RuntimeException(group + " failed: " + groupFailed + " checks");
         }
     }
 
@@ -107,6 +266,11 @@ public class AllTestsSampleTest {
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to write timing.md: {0}", e.getMessage());
         }
+    }
+
+    @AfterAll
+    void afterAllWriteTimingReport() {
+        writeTimingReport();
     }
 
     private String nextTimingFileName() {
@@ -202,7 +366,8 @@ public class AllTestsSampleTest {
         }
     }
 
-    private void setup() {
+    @BeforeAll
+    void setup() {
         dropTable("USERS");
         dropTable("PROFILES");
         dropTable("TRANSACTIONS");
@@ -327,10 +492,12 @@ public class AllTestsSampleTest {
     private void runOrderByTestQueries() {
         runSelectCount("OrderByTest", "simple order by name", "SELECT ID, NAME FROM USERS ORDER BY NAME", RECORD_COUNT);
         runSelectCount("OrderByTest", "simple order by age desc", "SELECT ID, AGE FROM USERS ORDER BY AGE DESC", RECORD_COUNT);
-        // Re-enabled via streaming result iterator + external sort (no OOM on 600x600 cross join -> 360000 rows)
-        runSelectCount("OrderByTest", "complex join order by primary key",
+    }
+
+    private void runHeavyOrderByJoins() {
+        runSelectCount("OrderByHeavyTest", "complex join order by primary key",
                 "SELECT USERS.ID, USERS.NAME, PROFILES.PROFILE_NAME FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.USER_ID > 0 OR PROFILES.USER_ID IS NOT NULL ORDER BY USERS.ID", RECORD_COUNT * RECORD_COUNT);
-        runSelectCount("OrderByTest", "complex join order by non indexed",
+        runSelectCount("OrderByHeavyTest", "complex join order by non indexed",
                 "SELECT USERS.ID, USERS.BALANCE, PROFILES.NON_INDEXED FROM USERS JOIN PROFILES ON USERS.ID = PROFILES.USER_ID AND PROFILES.NON_INDEXED LIKE 'Non%' OR PROFILES.NON_INDEXED IS NOT NULL ORDER BY USERS.BALANCE", RECORD_COUNT * RECORD_COUNT);
     }
 

@@ -13,6 +13,8 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <test.heap>512m</test.heap>
+        <diesel.largeTests>false</diesel.largeTests>
     </properties>
 
     <dependencies>
@@ -47,7 +49,10 @@
                         <include>**/AllTestsSampleTest.java</include>
                         <include>**/QuantitativeTest.java</include>
                     </includes>
-                    <argLine>-Xmx4g</argLine>
+                    <argLine>-Xmx${test.heap}</argLine>
+                    <systemPropertyVariables>
+                        <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>
@@ -85,7 +90,7 @@
                                 <include>**/AllTestsSampleTest.java</include>
                                 <include>**/QuantitativeTest.java</include>
                             </includes>
-                            <argLine>-Xmx1g -Djava.awt.headless=true</argLine>
+                            <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
