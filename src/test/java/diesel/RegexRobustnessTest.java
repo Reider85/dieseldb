@@ -1,0 +1,180 @@
+package diesel;
+
+import diesel.Database;
+
+import java.io.File;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+
+/**
+ * Regression tests for the prompt-21 regex hardening: SQL inputs that used to
+ * cause exponential backtracking or StackOverflowError inside java.util.regex
+ * (Sonar java:S5998) must now parse in linear time, and genuinely deep nesting
+ * (100+ levels) must still work end-to-end.
+ */
+public class RegexRobustnessTest {
+
+    private static final String TABLE = "RX_REGEX_T";
+
+    private Database database;
+
+    @BeforeEach
+    void setUp() {
+        new File(TABLE + ".csv").delete();
+        new File(TABLE + ".table").delete();
+        database = new Database();
+        database.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY, NAME STRING, TAG STRING, SCORE INTEGER)", null);
+        database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, TAG, SCORE) VALUES (1, 'Alice', 'x', 10)", null);
+        database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, TAG, SCORE) VALUES (2, 'Bob', 'y', 20)", null);
+        database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, TAG, SCORE) VALUES (3, 'Carol', 'z', 30)", null);
+    }
+
+    private List<Map<String, Object>> select(String sql) {
+        return (List<Map<String, Object>>) database.executeQuery(sql, null);
+    }
+
+    /**
+     * Runs the executable and requires it to finish within the timeout and NOT
+     * throw a StackOverflowError. Wrapped parse errors (RuntimeException) are
+     * acceptable for pathological inputs and are swallowed.
+     */
+    private void assertNoStackOverflow(String label, long timeoutSeconds, Executable exec) {
+        assertTimeoutPreemptively(Duration.ofSeconds(timeoutSeconds), () -> {
+            try {
+                exec.execute();
+            } catch (Throwable t) {
+                assertFalse(t instanceof StackOverflowError, label + " threw StackOverflowError: " + t);
+            }
+        }, label + " must finish within " + timeoutSeconds + "s (no catastrophic regex backtracking)");
+    }
+
+    @Test
+    void deeplyNestedParens150LevelsInWhere() {
+        List<Map<String, Object>> rows = select("SELECT ID FROM " + TABLE + " WHERE "
+                + "(".repeat(150) + "NAME = 'Alice' AND SCORE > 0" + ")".repeat(150));
+        assertEquals(1, rows.size());
+        assertEquals(1L, ((Number) rows.get(0).get("ID")).longValue());
+    }
+
+    @Test
+    void deeplyNestedParensWithQuotedStringsInside() {
+        List<Map<String, Object>> rows = select("SELECT ID FROM " + TABLE + " WHERE "
+                + "(".repeat(120) + "NAME = 'A,B' OR (TAG = 'x' AND SCORE = 10)" + ")".repeat(120));
+        assertEquals(1, rows.size());
+        assertEquals(1L, ((Number) rows.get(0).get("ID")).longValue());
+    }
+
+    @Test
+    void deeplyNestedParensWithLikeInside() {
+        List<Map<String, Object>> rows = select("SELECT ID FROM " + TABLE + " WHERE "
+                + "(".repeat(100) + "NAME LIKE '%lice' AND TAG NOT LIKE 'q%'" + ")".repeat(100));
+        assertEquals(1, rows.size());
+    }
+
+    @Test
+    void unterminatedQuoteWithManyBackslashesInWhereDoesNotOverflowStack() {
+        String value = "'" + "\\".repeat(10000) + "x";
+        assertNoStackOverflow("unterminated-quote-where", 15,
+                () -> database.executeQuery("SELECT ID FROM " + TABLE + " WHERE NAME = " + value, null));
+    }
+
+    @Test
+    void unterminatedQuoteWithManyBackslashesInLikeDoesNotOverflowStack() {
+        String value = "'" + "\\".repeat(10000) + "x";
+        assertNoStackOverflow("unterminated-quote-like", 15,
+                () -> database.executeQuery("SELECT ID FROM " + TABLE + " WHERE NAME LIKE " + value, null));
+    }
+
+    @Test
+    void insertWithManyEscapedQuotesInValueDoesNotOverflowStack() {
+        String sqlValue = "'" + "''x".repeat(5000) + "'";
+        database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, TAG, SCORE) VALUES (99, " + sqlValue + ", 'x', 1)", null);
+        List<Map<String, Object>> rows = select("SELECT NAME FROM " + TABLE + " WHERE ID = 99");
+        assertEquals(1, rows.size());
+        assertEquals("'x".repeat(5000), rows.get(0).get("NAME"));
+    }
+
+    @Test
+    void updateWithManyEscapedQuotesInSetValueDoesNotOverflowStack() {
+        String sqlValue = "'" + "''y".repeat(5000) + "'";
+        database.executeQuery("UPDATE " + TABLE + " SET NAME = " + sqlValue + " WHERE ID = 2", null);
+        List<Map<String, Object>> rows = select("SELECT NAME FROM " + TABLE + " WHERE ID = 2");
+        assertEquals(1, rows.size());
+        assertEquals("'y".repeat(5000), rows.get(0).get("NAME"));
+    }
+
+    @Test
+    void insertValuesWithCommasAndParensInsideQuotedStrings() {
+        database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, TAG, SCORE) VALUES (7, 'a,b', 'c(d),e''f', 1)", null);
+        List<Map<String, Object>> rows = select("SELECT NAME, TAG FROM " + TABLE + " WHERE ID = 7");
+        assertEquals(1, rows.size());
+        assertEquals("a,b", rows.get(0).get("NAME"));
+        assertEquals("c(d),e'f", rows.get(0).get("TAG"));
+    }
+
+    @Test
+    void longInListOfTenThousandValues() {
+        StringBuilder sb = new StringBuilder("SELECT ID FROM " + TABLE + " WHERE ID IN (");
+        for (int i = 1; i <= 10000; i++) {
+            if (i > 1) {
+                sb.append(',');
+            }
+            sb.append(i);
+        }
+        sb.append(')');
+        List<Map<String, Object>> rows = select(sb.toString());
+        assertEquals(3, rows.size());
+    }
+
+    @Test
+    void qualifiedColumnAccessWithPossessiveIdentifier() {
+        List<Map<String, Object>> rows = select("SELECT " + TABLE + ".ID, " + TABLE + ".NAME FROM " + TABLE
+                + " WHERE " + TABLE + ".ID = 1 ORDER BY " + TABLE + ".ID");
+        assertEquals(1, rows.size());
+
+        rows = select("SELECT t.ID, t.NAME FROM " + TABLE + " t WHERE t.ID = 2 ORDER BY t.ID");
+        assertEquals(1, rows.size());
+
+        rows = select("SELECT \"" + TABLE + "\".\"ID\" FROM " + TABLE + " WHERE \"" + TABLE + "\".\"ID\" = 3");
+        assertEquals(1, rows.size());
+    }
+
+    @Test
+    void selectItemsWithAliasesStillSplit() {
+        List<Map<String, Object>> rows = select("SELECT ID, NAME AS N, SCORE FROM " + TABLE + " WHERE ID = 1");
+        assertEquals(1, rows.size());
+        assertEquals("Alice", rows.get(0).get("NAME"));
+        assertEquals(10, ((Number) rows.get(0).get("SCORE")).intValue());
+    }
+
+    @Test
+    void havingWithGroupedCondition() {
+        List<Map<String, Object>> rows = select("SELECT SCORE, COUNT(*) AS C FROM " + TABLE
+                + " GROUP BY SCORE HAVING (COUNT(*) > 0)");
+        assertEquals(3, rows.size());
+    }
+
+    @Test
+    void twoLevelNestedInSubqueryStillWorks() {
+        List<Map<String, Object>> rows = select("SELECT ID FROM " + TABLE
+                + " WHERE ID IN (SELECT ID FROM " + TABLE + " WHERE ID IN (SELECT ID FROM " + TABLE + " WHERE ID > 0))");
+        assertEquals(3, rows.size());
+    }
+
+    @Test
+    void likeWithEscapedQuoteInsidePattern() {
+        database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, TAG, SCORE) VALUES (50, 'Ali''s', 'w', 1)", null);
+        List<Map<String, Object>> rows = select("SELECT ID FROM " + TABLE + " WHERE NAME LIKE 'Ali''%'");
+        assertEquals(1, rows.size());
+        assertEquals(50L, ((Number) rows.get(0).get("ID")).longValue());
+    }
+}

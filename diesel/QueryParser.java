@@ -80,7 +80,7 @@ class QueryParser {
     private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
     private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_][a-zA-Z0-9_]*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
-    private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*";
+    private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
     private String originalQuery;
     private static final String[] OPERATORS = {"!=", "<>", ">=", "<=", "=", "<", ">", "LIKE", "NOT LIKE"};
 
@@ -940,10 +940,7 @@ class QueryParser {
         }
 
         List<String> columnDefs = new ArrayList<>();
-        String regex = "(?=([^']*'[^']*')*[^']*$)(?![^()]*\\)),\\s*";
-        String[] parts = columnsPart.split(regex);
-
-        for (String part : parts) {
+        for (String part : splitTopLevelComma(columnsPart)) {
             String trimmed = part.trim();
             if (!trimmed.isEmpty()) {
                 columnDefs.add(trimmed);
@@ -951,6 +948,63 @@ class QueryParser {
         }
 
         return columnDefs;
+    }
+
+    /**
+     * Splits a string on commas that are outside single-quoted string literals
+     * and outside parenthesized groups. Quoted strings may contain doubled
+     * quotes ({@code ''}) and backslash escapes, neither of which ends the
+     * literal. A linear single-pass scan replaces the previous catastrophic
+     * {@code (?=([^']*'[^']*')*[^']*$)} lookahead split, which could backtrack
+     * exponentially (and overflow the regex stack) on long inputs with quotes.
+     */
+    private List<String> splitTopLevelComma(String input) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        int parenDepth = 0;
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (inQuotes) {
+                if (c == '\\' && i + 1 < input.length()) {
+                    current.append(c);
+                    current.append(input.charAt(++i));
+                    continue;
+                }
+                if (c == '\'') {
+                    if (i + 1 < input.length() && input.charAt(i + 1) == '\'') {
+                        current.append('\'');
+                        current.append('\'');
+                        i++;
+                        continue;
+                    }
+                    inQuotes = false;
+                }
+                current.append(c);
+                continue;
+            }
+            if (c == '\'') {
+                inQuotes = true;
+                current.append(c);
+                continue;
+            }
+            if (c == '(') {
+                parenDepth++;
+            } else if (c == ')') {
+                if (parenDepth > 0) {
+                    parenDepth--;
+                }
+            } else if (c == ',' && parenDepth == 0) {
+                parts.add(current.toString());
+                current = new StringBuilder();
+                continue;
+            }
+            current.append(c);
+        }
+
+        parts.add(current.toString());
+        return parts;
     }
 
     private int indexOfIgnoreCase(String source, String target) {
@@ -967,7 +1021,7 @@ class QueryParser {
         }
 
         // Регулярные выражения для разных типов токенов
-        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'", Pattern.DOTALL);
+        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+'", Pattern.DOTALL);
         Pattern quotedIdentifierPattern = Pattern.compile("\"[^\"]*\"");
         Pattern openParenPattern = Pattern.compile("\\(");
         Pattern closeParenPattern = Pattern.compile("\\)");
@@ -1540,7 +1594,7 @@ class QueryParser {
         }
 
         // Регулярные выражения для разных типов токенов
-        Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'");
+        Pattern quotedStringPattern = Pattern.compile("'([^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+)'");
         Pattern openParenPattern = Pattern.compile("\\(");
         Pattern closeParenPattern = Pattern.compile("\\)");
         Pattern clausePattern = Pattern.compile("\\b" + Pattern.quote(clause.toUpperCase()) + "\\b");
@@ -1646,11 +1700,11 @@ class QueryParser {
             return new ArrayList<>();
         }
 
+        // Split on top-level commas (outside quotes and parentheses). The previous
+        // regex split {@code (?=([^']*'[^']*')*[^']*$)(?![^()]*\\)),\\s*} could overflow
+        // the regex stack on long inputs with many quotes.
         List<String> selectItems = new ArrayList<>();
-        String regex = "(?=([^']*'[^']*')*[^']*$)(?![^()]*\\)),\\s*";
-        String[] parts = selectPart.split(regex);
-
-        for (String part : parts) {
+        for (String part : splitTopLevelComma(selectPart)) {
             String trimmed = part.trim();
             if (!trimmed.isEmpty()) {
                 selectItems.add(trimmed);
@@ -1917,10 +1971,10 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid VALUES syntax");
         }
         valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
-        String[] valueStrings = valuesPart.split(",(?=([^']*'[^']*')*[^']*$)");
+        List<String> valueStrings = splitTopLevelComma(valuesPart);
         List<Object> values = new ArrayList<>();
-        for (int i = 0; i < valueStrings.length; i++) {
-            String val = valueStrings[i].trim();
+        for (int i = 0; i < valueStrings.size(); i++) {
+            String val = valueStrings.get(i).trim();
             String column = columns.get(i);
             Class<?> columnType = columnTypes.get(column);
             if (columnType == null) {
@@ -1980,7 +2034,7 @@ class QueryParser {
             setPart = setAndWhere;
         }
 
-        String[] assignments = setPart.split(",(?=([^']*'[^']*')*[^']*$)");
+        List<String> assignments = splitTopLevelComma(setPart);
         Map<String, Object> updates = new HashMap<>();
         for (String assignment : assignments) {
             String[] kv = assignment.split("=");
@@ -2157,11 +2211,11 @@ class QueryParser {
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
 
         // 1. Строковые литералы (в кавычках)
-        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:''|\\\\.|[^'\\\\])*'")));
+        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:''|\\\\.|[^'\\\\])*+'")));
 
         // 2. Условия LIKE и NOT LIKE
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*'")));
+                Pattern.compile("(?i)" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*+'")));
 
         // 3. Подзапросы
         patterns.add(Map.entry("SubQuery",
@@ -2177,7 +2231,7 @@ class QueryParser {
 
         // 6. Условия сравнения (строки, числа, столбцы)
         patterns.add(Map.entry("Comparison String Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*')")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*+')")));
         patterns.add(Map.entry("Comparison Number Condition",
                 Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
         patterns.add(Map.entry("Comparison Column Condition",
@@ -2191,7 +2245,7 @@ class QueryParser {
 
         // 9. Некорректные токены (исключая строковые литералы и quoted-идентификаторы)
         patterns.add(Map.entry("Invalid Token",
-                Pattern.compile("(?i)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?(?:LIKE|IN|IS)\\b)(?!'(?:''|\\\\.|[^'\\\\])*')(?!" + QUOTED_IDENTIFIER_PATTERN + ")[^\\s()'\"]+")));
+                Pattern.compile("(?i)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:=|>|<|>=|<=|!=|<>)\\s*)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?(?:LIKE|IN|IS)\\b)(?!'(?:''|\\\\.|[^'\\\\])*+')(?!" + QUOTED_IDENTIFIER_PATTERN + ")[^\\s()'\"]+")));
 
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
@@ -2269,7 +2323,7 @@ class QueryParser {
                     LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
                 } else if (matchedPatternName.equals("Like Condition")) {
                     Matcher likeMatcher = Pattern.compile(
-                                    "(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:\\\\'|''|[^'])*')")
+                                    "(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:''|\\\\.|[^'\\\\])*+')")
                             .matcher(matchedToken);
                     if (likeMatcher.matches()) {
                         String column = likeMatcher.group(1);
@@ -2450,10 +2504,12 @@ class QueryParser {
         }
 
         // Improved regex pattern to better handle nested parentheses and subqueries
+        // Possessive quantifiers (++/*+) keep matching linear on deeply nested
+        // parentheses and on backslash-heavy strings (java:S5998).
         Pattern tokenPattern = Pattern.compile(
-                "(?s)(?:'(?:''|\\\\.|[^'])*'|" +               // Match quoted strings
-                        "\\((?:[^()']+|'(?:''|\\\\.|[^'])*')*\\)|" +   // Match balanced parentheses (including nested ones)
-                        "[^\\s()']+)"                                // Match other tokens
+                "(?s)(?:'(?:''|\\\\.|[^'\\\\])*+'|" +              // Match quoted strings
+                        "\\((?:[^()']++|'(?:''|\\\\.|[^'\\\\])*+')*+\\)|" +   // Match balanced parentheses (including nested ones)
+                        "[^\\s()']++)"                               // Match other tokens
         );
 
         // Find tokens starting from the given index
@@ -2498,7 +2554,7 @@ class QueryParser {
         }
 
         // Проверка на корректность шаблона LIKE
-        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT LIKE)\\s*('(?:''|[^'])*')");
+        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT LIKE)\\s*('(?:''|[^'])*+')");
         Matcher likeMatcher = likePattern.matcher(normalizedCondStr);
         if (likeMatcher.matches()) {
             String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());

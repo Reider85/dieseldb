@@ -26,7 +26,7 @@ public class SubqueryParser {
     private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
     private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_][a-zA-Z0-9_]*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
-    private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*";
+    private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
     private final QueryParser queryParser;
 
     /**
@@ -84,7 +84,7 @@ public class SubqueryParser {
             if (normalizedQuery.toUpperCase().startsWith("SELECT")) {
                 // Проверяем, является ли весь запрос подзапросом в IN
                 Pattern inSubqueryPattern = Pattern.compile(
-                        "(?i)^SELECT\\s+.*?\\s+WHERE\\s+.*?\\s+IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                        "(?i)^SELECT\\s+.*?\\s+WHERE\\s+.*?\\s+IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
                         Pattern.DOTALL);
                 Matcher inMatcher = inSubqueryPattern.matcher(normalizedQuery);
                 if (inMatcher.matches()) {
@@ -172,7 +172,7 @@ public class SubqueryParser {
     }
 
     private int findMainFromClause(String query) {
-        Pattern quotedStringPattern = Pattern.compile("'(?:\\\\.|[^'\\\\])*'");
+        Pattern quotedStringPattern = Pattern.compile("'(?:\\\\.|[^'\\\\])*+'");
         Pattern quotedIdentifierPattern = Pattern.compile("\"[^\"]*\"");
         Pattern subqueryPattern = Pattern.compile("\\(\\s*SELECT\\b", Pattern.DOTALL);
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
@@ -714,7 +714,7 @@ public class SubqueryParser {
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
-        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
+        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+'");
         Pattern openParenPattern = Pattern.compile("\\(");
         Pattern closeParenPattern = Pattern.compile("\\)");
         Pattern clausePattern = Pattern.compile("(?i)\\b" + Pattern.quote(clause) + "\\b");
@@ -968,17 +968,18 @@ public class SubqueryParser {
         LOGGER.log(Level.FINEST, "After preprocessing for LIMIT: {0}", processedStr);
         List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
 
-        // Обновленные паттерны
-        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*'")));
-        patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*')*\\)")));
+        // Обновленные паттерны (possessive quantifiers keep matching linear on
+        // deeply nested parentheses and backslash-heavy strings, java:S5998)
+        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*+'")));
+        patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+')*+\\)")));
         patterns.add(Map.entry("In Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\((?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Comparison",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Like",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*'")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*+'")));
         patterns.add(Map.entry("Null Condition",
                 Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
         patterns.add(Map.entry("Comparison Condition",
@@ -1121,7 +1122,7 @@ public class SubqueryParser {
                                                    Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
                                                    Map<String, String> columnAliases, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']+|'(?:\\\\.|[^'\\\\])*'|\\([^()]*\\))*?)\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
                 Pattern.DOTALL);
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
@@ -1323,7 +1324,7 @@ public class SubqueryParser {
         condStr = condStr.replaceAll("([=><!])", " $1 ").replaceAll("\\s+", " ").trim();
         LOGGER.log(Level.FINEST, "Normalized condition: {0}", condStr);
 
-        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:[^']|)*')");
+        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:[^']|)*+')");
         Matcher likeMatcher = likePattern.matcher(condStr);
         if (likeMatcher.matches()) {
             String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());
@@ -1725,7 +1726,7 @@ public class SubqueryParser {
     }
 
     private String getNextToken(String str, int startIndex) {
-        Pattern tokenPattern = Pattern.compile("(?s)(?:'(?:\\\\.|[^'])*'|[^\\s()']+)");
+        Pattern tokenPattern = Pattern.compile("(?s)(?:'(?:\\\\.|[^'\\\\])*+'|[^\\s()']++)");
         Matcher matcher = tokenPattern.matcher(str).region(startIndex, str.length());
         if (matcher.find()) {
             return matcher.group().trim();
