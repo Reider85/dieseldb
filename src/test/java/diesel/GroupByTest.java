@@ -51,6 +51,7 @@ public class GroupByTest {
         try {
             database.dropTable("USERS");
         } catch (IllegalArgumentException ignored) {
+            // Table may not exist if a previous test failed before creating it
         }
     }
 
@@ -58,6 +59,7 @@ public class GroupByTest {
         try {
             database.dropTable("PROFILES");
         } catch (IllegalArgumentException ignored) {
+            // Table may not exist if a previous test failed before creating it
         }
     }
 

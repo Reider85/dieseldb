@@ -46,7 +46,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final List<String> groupBy;
     private final List<QueryParser.HavingCondition> havingConditions;
     private final Map<String, String> tableAliases;
-    private final List<QueryParser.SubQuery> subQueries;
     private final Map<String, String> groupBySubQueries;
     private final Map<String, Object> scalarSubQueryCache = new HashMap<>();
     private final Map<String, List<Object>> inSubQueryCache = new HashMap<>();
@@ -366,7 +365,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param orderBy           the ORDER BY list
      * @param limit             the LIMIT, or null
      * @param offset            the OFFSET, or null
-     * @param subQueries        the scalar subqueries in the SELECT clause
      * @param tableAliases      the alias to table name mapping
      * @param extraTableAliases extra aliases from joins
      * @param columnTypes       the combined column types
@@ -375,11 +373,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                        List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
                        List<QueryParser.Condition> conditions, List<String> groupBy,
                        List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
-                       Integer limit, Integer offset, List<QueryParser.SubQuery> subQueries,
+                       Integer limit, Integer offset,
                        Map<String, String> tableAliases, Map<String, String> extraTableAliases,
                        Map<String, Class<?>> columnTypes) {
         this(tableName, tableAlias, columns, aggregates, joins, conditions, groupBy, havingConditions, orderBy,
-                limit, offset, subQueries, tableAliases, extraTableAliases, columnTypes, new HashMap<>());
+                limit, offset, tableAliases, extraTableAliases, columnTypes, new HashMap<>());
     }
 
     /**
@@ -397,7 +395,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param orderBy           the ORDER BY list
      * @param limit             the LIMIT, or null
      * @param offset            the OFFSET, or null
-     * @param subQueries        the scalar subqueries in the SELECT clause
      * @param tableAliases      the alias to table name mapping
      * @param extraTableAliases extra aliases from joins
      * @param columnTypes       the combined column types
@@ -407,7 +404,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                        List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
                        List<QueryParser.Condition> conditions, List<String> groupBy,
                        List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
-                       Integer limit, Integer offset, List<QueryParser.SubQuery> subQueries,
+                       Integer limit, Integer offset,
                        Map<String, String> tableAliases, Map<String, String> extraTableAliases,
                        Map<String, Class<?>> columnTypes, Map<String, String> groupBySubQueries) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
@@ -421,7 +418,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
         this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
         this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
-        this.subQueries = subQueries != null ? new ArrayList<>(subQueries) : new ArrayList<>();
         this.groupBySubQueries = groupBySubQueries != null ? new HashMap<>(groupBySubQueries) : new HashMap<>();
         this.transactionId = UUID.randomUUID(); // Генерируем UUID, если он не передан
         // Добавляем tableAlias в tableAliases, если он не null

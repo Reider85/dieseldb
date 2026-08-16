@@ -81,8 +81,6 @@ class QueryParser {
     private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_][a-zA-Z0-9_]*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
     private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
-    private String originalQuery;
-    private static final String[] OPERATORS = {"!=", "<>", ">=", "<=", "=", "<", ">", "LIKE", "NOT LIKE"};
 
     enum Operator {
         EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN_OR_EQUALS,
@@ -1180,7 +1178,7 @@ class QueryParser {
                 new Object[]{tableName, columns, aggregates, joins, conditions});
 
         return new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions,
-                groupBy, havingConditions, orderBy, limit, offset, subQueries, columnAliases, tableAliases, tableJoins.combinedColumnTypes);
+                groupBy, havingConditions, orderBy, limit, offset, columnAliases, tableAliases, tableJoins.combinedColumnTypes);
     }
 
 
@@ -1839,66 +1837,6 @@ class QueryParser {
             }
         }
         return groupBy;
-    }
-
-    private String[] splitOrderByClause(String orderByClause) {
-        List<String> parts = new ArrayList<>();
-        StringBuilder currentPart = new StringBuilder();
-        boolean inQuotes = false;
-        int parenDepth = 0;
-
-        for (int i = 0; i < orderByClause.length(); i++) {
-            char c = orderByClause.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentPart.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentPart.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentPart.append(c);
-                    continue;
-                } else if (c == ',' && parenDepth == 0) {
-                    String part = currentPart.toString().trim();
-                    if (!part.isEmpty()) {
-                        parts.add(part);
-                    }
-                    currentPart = new StringBuilder();
-                    continue;
-                }
-            }
-            currentPart.append(c);
-        }
-
-        String lastPart = currentPart.toString().trim();
-        if (!lastPart.isEmpty()) {
-            parts.add(lastPart);
-        }
-
-        return parts.toArray(new String[0]);
-    }
-
-    private Integer parseLimitClause(String clause) {
-        Pattern limitPattern = Pattern.compile("(?i)^LIMIT\\s*(\\d+)\\s*$");
-        Matcher matcher = limitPattern.matcher(clause.trim());
-        if (matcher.matches()) {
-            String limitValue = matcher.group(1);
-            try {
-                Integer limit = Integer.parseInt(limitValue);
-                LOGGER.log(Level.FINE, "Спарсенное значение LIMIT: {0}", limitValue);
-                return limit;
-            } catch (NumberFormatException e) {
-                LOGGER.log(Level.SEVERE, "Неверное значение LIMIT: {0}", limitValue);
-                throw new IllegalArgumentException("Неверное значение LIMIT: " + limitValue);
-            }
-        }
-        LOGGER.log(Level.SEVERE, "Неверный формат предложения LIMIT: {0}", clause);
-        throw new IllegalArgumentException("Неверный формат предложения LIMIT: " + clause);
     }
 
     private Integer parseOffsetClause(String offsetClause) {
@@ -3197,59 +3135,6 @@ class QueryParser {
         LOGGER.log(Level.SEVERE, "Парная закрывающая скобка не найдена: str={0}, startIndex={1}",
                 new Object[]{str, startIndex});
         throw new IllegalArgumentException("Парная закрывающая скобка не найдена в строке: " + str.substring(startIndex));
-    }
-
-    private boolean areSubQueriesEquivalent(String subQuery1, String subQuery2) {
-        String norm1 = normalizeQueryString(subQuery1).replaceAll("\\s+", " ").trim();
-        String norm2 = normalizeQueryString(subQuery2).replaceAll("\\s+", " ").trim();
-
-        norm1 = norm1.replace("LIMIT1", "LIMIT 1").replace(" = ", "=").replace("( ", "(").replace(" )", ")");
-        norm2 = norm2.replace("LIMIT1", "LIMIT 1").replace(" = ", "=").replace("( ", "(").replace(" )", ")");
-
-        LOGGER.log(Level.FINEST, "Comparing normalized subqueries: norm1='{0}', norm2='{1}'", new Object[]{norm1, norm2});
-
-        if (norm1.equalsIgnoreCase(norm2)) {
-            LOGGER.log(Level.FINE, "Subqueries match by normalized string: {0}", norm1);
-            return true;
-        }
-
-        try {
-            Pattern selectPattern = Pattern.compile(
-                    "(?i)^\\(\\s*SELECT\\s+([^\\s]+)\\s+FROM\\s+([^\\s]+)(?:\\s+WHERE\\s+(.+?))?(?:\\s+LIMIT\\s+(\\d+))?\\s*\\)$"
-            );
-            Matcher matcher1 = selectPattern.matcher(norm1);
-            Matcher matcher2 = selectPattern.matcher(norm2);
-
-            if (!matcher1.matches() || !matcher2.matches()) {
-                LOGGER.log(Level.FINE, "Subquery pattern mismatch: {0} vs {1}", new Object[]{norm1, norm2});
-                return false;
-            }
-
-            String select1 = matcher1.group(1).trim();
-            String select2 = matcher2.group(1).trim();
-            String from1 = matcher1.group(2).trim();
-            String from2 = matcher2.group(2).trim();
-            String where1 = matcher1.group(3) != null ? normalizeQueryString(matcher1.group(3).trim()).replaceAll("\\s+", " ") : "";
-            String where2 = matcher2.group(3) != null ? normalizeQueryString(matcher2.group(3).trim()).replaceAll("\\s+", " ") : "";
-            String limit1 = matcher1.group(4) != null ? matcher1.group(4).trim() : "";
-            String limit2 = matcher2.group(4) != null ? matcher2.group(4).trim() : "";
-
-            where1 = where1.replace("ID=U.ID", "ID = U.ID").replace("U.ID=ID", "ID = U.ID");
-            where2 = where2.replace("ID=U.ID", "ID = U.ID").replace("U.ID=ID", "ID = U.ID");
-
-            boolean selectMatch = select1.equalsIgnoreCase(select2);
-            boolean fromMatch = from1.equalsIgnoreCase(from2);
-            boolean whereMatch = where1.equalsIgnoreCase(where2);
-            boolean limitMatch = limit1.equalsIgnoreCase(limit2);
-
-            LOGGER.log(Level.FINEST, "Subquery comparison: select={0}, from={1}, where={2}, limit={3}, where1='{4}', where2='{5}'",
-                    new Object[]{selectMatch, fromMatch, whereMatch, limitMatch, where1, where2});
-
-            return selectMatch && fromMatch && whereMatch && limitMatch;
-        } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Failed to compare subquery structures: {0}", e.getMessage());
-            return false;
-        }
     }
 
     private String normalizeCondition(String condition) {

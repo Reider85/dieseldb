@@ -42,7 +42,7 @@ public class ServerConnectionLimitTest {
     @AfterEach
     void tearDown() {
         for (Socket s : clientSockets) {
-            try { s.close(); } catch (IOException ignored) {}
+            try { s.close(); } catch (IOException ignored) { /* socket already closed */ }
         }
         clientSockets.clear();
         
@@ -107,7 +107,7 @@ public class ServerConnectionLimitTest {
                 LOGGER.log(Level.INFO, "Probe " + i + " rejected as expected: " + e.getClass().getSimpleName());
             } finally {
                 if (probe != null) {
-                    try { probe.close(); } catch (IOException ignored) {}
+                    try { probe.close(); } catch (IOException ignored) { /* socket already closed */ }
                 }
             }
         }

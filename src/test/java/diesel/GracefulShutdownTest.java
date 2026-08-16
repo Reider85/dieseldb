@@ -45,6 +45,7 @@ public class GracefulShutdownTest {
                     }
                 }
             } catch (IOException ignored) {
+                // Process stream closed while the server is shutting down
             }
         }, "graceful-shutdown-output-pump");
         outputPump.setDaemon(true);

@@ -39,6 +39,7 @@ public class SubqueriesTest {
         try {
             database.dropTable("USERS");
         } catch (IllegalArgumentException ignored) {
+            // Table may not exist if a previous test failed before creating it
         }
     }
 

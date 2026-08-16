@@ -44,6 +44,7 @@ public class AliasesTest {
         try {
             database.dropTable(tableName);
         } catch (IllegalArgumentException ignored) {
+            // Table may not exist if a previous test failed before creating it
         }
     }
 

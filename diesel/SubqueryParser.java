@@ -174,7 +174,7 @@ public class SubqueryParser {
                 new Object[]{tableName, columns, aggregates, joins, conditions});
 
         SelectQuery selectQuery = new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions,
-                groupBy, havingConditions, orderBy, limit, offset, subQueries, columnAliases, tableAliases,
+                groupBy, havingConditions, orderBy, limit, offset, columnAliases, tableAliases,
                 combinedColumnTypes, clauses.groupBySubQueries);
         selectQuery.setDerivedMainTable(tableJoins.derivedMainTable);
         return selectQuery;
@@ -1025,12 +1025,12 @@ public class SubqueryParser {
                         nextPos = matcher.end();
                         matched = true;
                         LOGGER.log(Level.FINEST, "Applied pattern {0}: Matched token='{1}', End position={2}, Remaining string='{3}'",
-                                new Object[]{matchedPatternName, tokenValue, nextPos, currentPos < stringLength ? processedStr.substring(nextPos) : "<end>"});
+                                new Object[]{matchedPatternName, tokenValue, nextPos, processedStr.substring(nextPos)});
                         break;
                     }
                 } else {
                     LOGGER.log(Level.FINEST, "Applied pattern {0}: No match at position {1}, Current string='{2}'",
-                            new Object[]{entry.getKey(), currentPos, currentPos < stringLength ? processedStr.substring(currentPos) : "<end>"});
+                            new Object[]{entry.getKey(), currentPos, processedStr.substring(currentPos)});
                 }
             }
 
@@ -1044,7 +1044,7 @@ public class SubqueryParser {
                 LOGGER.log(Level.FINEST, "Tokenized: {0}, type: {1}, position: {2}", new Object[]{matchedToken, type, currentPos});
                 currentPos = nextPos;
             } else {
-                String remaining = currentPos < stringLength ? processedStr.substring(currentPos) : "<end>";
+                String remaining = processedStr.substring(currentPos);
                 LOGGER.log(Level.SEVERE, "Failed to match token at position {0}: {1}", new Object[]{currentPos, remaining});
                 throw new IllegalArgumentException("Invalid token at position " + currentPos + ": " + remaining);
             }

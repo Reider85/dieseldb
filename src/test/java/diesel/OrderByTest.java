@@ -49,6 +49,7 @@ public class OrderByTest {
         try {
             database.dropTable("USERS");
         } catch (IllegalArgumentException ignored) {
+            // Table may not exist if a previous test failed before creating it
         }
     }
 
@@ -56,6 +57,7 @@ public class OrderByTest {
         try {
             database.dropTable("PROFILES");
         } catch (IllegalArgumentException ignored) {
+            // Table may not exist if a previous test failed before creating it
         }
     }
 
