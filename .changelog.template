@@ -1,0 +1,84 @@
+# Changelog Entry Template
+
+## Template for Single Prompt
+
+```markdown
+{version} prompt {n} - {краткое описание}
+
+Изменения: {класс1.java: метод}, {класс2.java: функция}
+Тесты: {N passed, 0 failed}
+Timing: aggregate={ratio}, degraded={count} (noise justification)
+Complexity: no new O(n²)/O(n!)
+
+{Опционально: детали реализации}
+```
+
+## Examples
+
+### Example 1: Bug Fix
+
+```markdown
+1.0.1 prompt 1 - JOIN with OR condition OOM fix
+
+Изменения: SelectQuery.java: execute(), QueryParser.java: parseJoinCondition()
+Тесты: 45 passed, 0 failed
+Timing: aggregate=1.02x, degraded=0 (within noise threshold)
+Complexity: no new O(n²)/O(n!), reduced memory from O(n²) to O(n)
+
+Fixed Cartesian product issue in JOIN ... ON ... OR ... queries.
+Added Hash Join enforcement for OR conditions and early termination at 100K rows.
+Added warning log for potentially large result sets.
+```
+
+### Example 2: Performance Optimization
+
+```markdown
+1.0.2 prompt 41 - Index update optimization
+
+Изменения: Table.java: updateIndicesAfterInsert(), Index.java: bulkInsert()
+Тесты: 52 passed, 0 failed
+Timing: aggregate=0.65x (35% faster), degraded=0
+Complexity: reduced from O(n × m × log n) to O(m × log n)
+
+Optimized batch index updates during INSERT operations.
+Changed from per-row index update to bulk insert after all rows added.
+```
+
+### Example 3: New Feature
+
+```markdown
+1.1.0 prompt 61 - Apache Parquet integration
+
+Изменения: Database.java, ParquetStorage.java (new), pom.xml
+Тесты: 67 passed, 0 failed
+Timing: aggregate=0.45x (55% faster for analytical queries)
+Complexity: no new O(n²)/O(n!)
+
+Added columnar Parquet storage backend for analytical workloads.
+Integrated Apache Parquet library with automatic format detection.
+Supports compression codecs: SNAPPY, GZIP, ZSTD.
+```
+
+## Quick Fill Script Usage
+
+```bash
+# After implementing a prompt:
+./generate-changelog.sh 1 "JOIN OR fix" > changelog_entry.txt
+
+# Review and edit if needed:
+nano changelog_entry.txt
+
+# Use in commit:
+git commit -F changelog_entry.txt
+```
+
+## Fields Description
+
+- **{version}**: Semantic version (e.g., 1.0.1, 1.1.0)
+- **{n}**: Prompt number from prompt2.md
+- **{краткое описание}**: 3-6 word summary
+- **Изменения**: Modified files and methods
+- **Тесты**: Test results summary
+- **Timing**: Performance impact vs baseline (timing.md)
+- **Complexity**: Confirmation of no algorithmic degradation
+- **Details**: Optional implementation notes
