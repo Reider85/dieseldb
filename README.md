@@ -36,6 +36,12 @@ READ_UNCOMMITTED、READ_COMMITTED、REPEATABLE_READ、SERIALIZABLE
 
 未来计划实现查询中的数学函数、类似于 PG_ADMIN 的可视化界面，以及高级 DDL 查询。
 
+## Known limitations / Известные ограничения
+
+Known limitations and workarounds are documented in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
+Известные ограничения и обходные пути описаны в [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
 ## Build / Сборка
 
 Requirements:
