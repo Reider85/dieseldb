@@ -1021,10 +1021,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         File[] tempFiles = tempDir.listFiles();
         if (tempFiles != null) {
             for (File tempFile : tempFiles) {
-                tempFile.delete();
+                try {
+                    Files.deleteIfExists(tempFile.toPath());
+                } catch (IOException ignored) {
+                    // Temp spill files are best-effort; leftover files are cleaned on the next run
+                }
             }
         }
-        tempDir.delete();
+        try {
+            Files.deleteIfExists(tempDir.toPath());
+        } catch (IOException ignored) {
+            // Temp spill dir is best-effort; leftover dirs are cleaned on the next run
+        }
 
         lastHashJoinTableSize = totalHashEntries;
         lastHashJoinBuildTimeMs = buildTimeMs;

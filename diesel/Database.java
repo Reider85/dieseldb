@@ -1,6 +1,9 @@
 package diesel;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -676,8 +679,18 @@ class Database {
     }
 
     private void deleteTableFiles(String tableName) {
-        new File(dataDir + File.separator + tableName + ".csv").delete();
-        new File(dataDir + File.separator + tableName + ".table").delete();
+        try {
+            Files.deleteIfExists(Path.of(dataDir, tableName + ".csv"));
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to delete CSV file for table {0}: {1}",
+                    new Object[]{tableName, e.getMessage()});
+        }
+        try {
+            Files.deleteIfExists(Path.of(dataDir, tableName + ".table"));
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to delete serialized file for table {0}: {1}",
+                    new Object[]{tableName, e.getMessage()});
+        }
     }
 
     /**
