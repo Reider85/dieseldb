@@ -34,6 +34,7 @@ import java.util.logging.Logger;
 class Database {
     private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
+    private final QueryCache queryCache = new QueryCache();
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
@@ -73,6 +74,16 @@ class Database {
     }
 
     /**
+     * Returns this database's query-plan cache (Prompt 16), which serves
+     * repeated SELECTs from the cached AST and tracks hit/miss metrics.
+     *
+     * @return the query cache, never null
+     */
+    QueryCache getQueryCache() {
+        return queryCache;
+    }
+
+    /**
      * Changes the directory used for the CSV and serialized table files,
      * creating it when it does not exist yet.
      *
@@ -106,6 +117,7 @@ class Database {
         }
         Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
         tables.put(tableName, newTable);
+        queryCache.invalidateAll();
         for (Transaction transaction : activeTransactions.values()) {
             if (transaction.isActive()) {
                 transaction.updateTable(tableName, newTable);
@@ -134,7 +146,35 @@ class Database {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
         Long maxRowsHint = parseMaxRowsHint(query);
         String cleanQuery = stripMaxRowsHint(query);
-        Query<?> parsedQuery = parse(cleanQuery);
+
+        // Prompt 16: plain SELECTs are served from the query-plan cache when
+        // the normalized (literal-free) structure and the actual literal
+        // values match an entry from the current schema epoch; the MAX_ROWS
+        // hint is excluded because it mutates the parsed AST per execution.
+        QueryCache.NormalizedSql normalizedSelect = null;
+        Query<?> parsedQuery = null;
+        if (maxRowsHint == null) {
+            String trimmed = cleanQuery.trim();
+            if (QueryParser.toUpperCasePreservingQuotedIdentifiers(trimmed).startsWith("SELECT")) {
+                try {
+                    normalizedSelect = QueryCache.normalize(trimmed);
+                    parsedQuery = queryCache.get(normalizedSelect, queryCache.currentEpoch());
+                } catch (IllegalArgumentException e) {
+                    normalizedSelect = null;
+                }
+            }
+        }
+        if (parsedQuery == null) {
+            long parseStart = System.nanoTime();
+            parsedQuery = parse(cleanQuery);
+            long parseNanos = System.nanoTime() - parseStart;
+            // Derived tables materialize their inner SELECT at parse time, so
+            // their plans are never reused (a later hit would scan stale rows).
+            if (normalizedSelect != null && parsedQuery instanceof SelectQuery
+                    && ((SelectQuery) parsedQuery).getDerivedMainTable() == null) {
+                queryCache.put(normalizedSelect, parsedQuery, parseNanos, queryCache.currentEpoch());
+            }
+        }
         applyMaxRowsHint(parsedQuery, maxRowsHint);
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
 
@@ -295,6 +335,7 @@ class Database {
     private Object executeCreateIndex(CreateIndexQueryBase indexQuery, Transaction currentTransaction) {
         Table table = getTable(indexQuery.getTableName());
         indexQuery.execute(table);
+        queryCache.invalidateAll();
         if (currentTransaction != null && currentTransaction.isActive()) {
             currentTransaction.updateTable(indexQuery.getTableName(), table);
         }
@@ -350,7 +391,9 @@ class Database {
      */
     private Object executeAnalyzeTable(AnalyzeTableQuery analyzeQuery) {
         Table table = getTable(analyzeQuery.getTableName());
-        return analyzeQuery.execute(table);
+        Object result = analyzeQuery.execute(table);
+        queryCache.invalidateAll();
+        return result;
     }
 
     /**
@@ -535,6 +578,7 @@ class Database {
         if (tables.remove(tableName) == null) {
             throw new IllegalArgumentException("Table " + tableName + " does not exist");
         }
+        queryCache.invalidateAll();
         deleteTableFiles(tableName);
         for (Transaction transaction : activeTransactions.values()) {
             if (transaction.isActive()) {
@@ -581,6 +625,7 @@ class Database {
                         new Object[]{tableName, table.getRows().size()});
             }
         }
+        queryCache.invalidateAll();
     }
 
     private void deleteTableFiles(String tableName) {
