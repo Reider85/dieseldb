@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Pre-commit hook for DieselDB
+# Automatically checks timing regression before commit
+# Install: cp .githooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+echo "🔍 Running pre-commit checks..."
+
+# Check 1: Ensure no test artifacts are staged
+STAGED_CSV=$(git diff --cached --name-only | grep -E '\.(csv|table)$' || true)
+if [ -n "$STAGED_CSV" ]; then
+    echo "❌ Error: Test artifacts staged for commit:"
+    echo "$STAGED_CSV"
+    echo ""
+    echo "Remove them with: git reset HEAD $STAGED_CSV"
+    exit 1
+fi
+
+# Check 2: Ensure timing.md is not modified (it's the baseline)
+MODIFIED_TIMING=$(git diff --cached --name-only | grep '^timing\.md$' || true)
+if [ -n "$MODIFIED_TIMING" ]; then
+    echo "⚠️  Warning: timing.md (baseline) is being modified"
+    echo "   Make sure this is intentional!"
+    read -p "Continue anyway? (y/N): " confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "Commit aborted."
+        exit 1
+    fi
+fi
+
+# Check 3: Run timing check if timingN.md exists
+if [ -f "timingN.md" ] && [ -f "timing.md" ]; then
+    echo "⏱️  Checking timing regression..."
+    ./compare-timing.sh timing.md timingN.md
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ Pre-commit failed: Performance regression detected"
+        echo "   Fix regressions or update baseline with: mv timingN.md timing.md"
+        exit 1
+    fi
+fi
+
+# Check 4: Ensure changelog entry format in commit message
+COMMIT_MSG_FILE=$(git rev-parse --git-path COMMIT_EDITMSG)
+if [ -f "$COMMIT_MSG_FILE" ]; then
+    COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+    if ! echo "$COMMIT_MSG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+ prompt [0-9]+'; then
+        echo "⚠️  Warning: Commit message doesn't follow changelog format"
+        echo "   Expected: '{version} prompt {n} - {description}'"
+        echo "   Example: '1.0.1 prompt 1 - JOIN OR OOM fix'"
+        echo ""
+        read -p "Continue anyway? (y/N): " confirm
+        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+            echo "Commit aborted. Please use .changelog.template"
+            exit 1
+        fi
+    fi
+fi
+
+echo "✅ All pre-commit checks passed"
+exit 0
