@@ -291,7 +291,7 @@ public class DatabaseServer {
                 try {
                     // Rollback any active transaction for this client
                     if (transactionId != null && database.isInTransaction(transactionId)) {
-                        database.executeQuery("ROLLBACK TRANSACTION", transactionId);
+                        database.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION, transactionId);
                     }
                     if (out != null) out.close();
                     if (in != null) in.close();

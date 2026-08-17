@@ -56,14 +56,14 @@ public class SqlLexer {
     }
 
     private static final Set<String> KEYWORDS = new HashSet<>(Set.of(
-            "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
-            "CREATE", "TABLE", "INDEX", "HASH", "UNIQUE", "CLUSTERED", "PRIMARY", "KEY", "SEQUENCE",
-            "AND", "OR", "NOT", "LIKE", "IN", "IS", "AS", "JOIN",
-            "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON", "GROUP", "BY", "ORDER",
-            "HAVING", "LIMIT", "ASC", "DESC", "DISTINCT", "BEGIN", "TRANSACTION", "COMMIT",
+            SqlKeywords.SELECT, "FROM", SqlKeywords.WHERE, SqlKeywords.INSERT, "INTO", SqlKeywords.VALUES, SqlKeywords.UPDATE, SqlKeywords.SET, SqlKeywords.DELETE,
+            "CREATE", SqlKeywords.TABLE, "INDEX", "HASH", "UNIQUE", "CLUSTERED", "PRIMARY", "KEY", "SEQUENCE",
+            SqlKeywords.AND, SqlKeywords.OR, SqlKeywords.NOT, SqlKeywords.LIKE, "IN", "IS", SqlKeywords.AS, SqlKeywords.JOIN,
+            "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", SqlKeywords.ON, "GROUP", "BY", "ORDER",
+            SqlKeywords.HAVING, SqlKeywords.LIMIT, SqlKeywords.ASC, "DESC", "DISTINCT", "BEGIN", "TRANSACTION", "COMMIT",
             "ROLLBACK", "ISOLATION", "LEVEL", "AUTOCOMMIT"));
 
-    private static final Set<String> LITERALS = new HashSet<>(Set.of("TRUE", "FALSE", "NULL"));
+    private static final Set<String> LITERALS = new HashSet<>(Set.of(SqlKeywords.TRUE, SqlKeywords.FALSE, SqlKeywords.NULL));
 
     private static final String[] OPERATORS = {">=", "<=", "!=", "<>", "=", "<", ">"};
     private static final String PUNCTUATION_CHARS = "(),;.*+-/%[]?:" + "'";

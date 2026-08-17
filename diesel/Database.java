@@ -165,7 +165,7 @@ class Database {
         long parseNanos = 0;
         if (maxRowsHint == null) {
             String trimmed = cleanQuery.trim();
-            if (QueryParser.toUpperCasePreservingQuotedIdentifiers(trimmed).startsWith("SELECT")) {
+            if (QueryParser.toUpperCasePreservingQuotedIdentifiers(trimmed).startsWith(SqlKeywords.SELECT)) {
                 try {
                     normalizedSelect = QueryCache.normalize(trimmed);
                     parsedQuery = queryCache.get(normalizedSelect, queryCache.currentEpoch());
@@ -332,7 +332,7 @@ class Database {
 
     private Object executeSetAutoCommit(SetAutoCommitQuery autoCommitQuery) {
         setAutoCommit(autoCommitQuery.isAutoCommit());
-        return "AUTOCOMMIT set to " + (autoCommitQuery.isAutoCommit() ? "ON" : "OFF");
+        return "AUTOCOMMIT set to " + (autoCommitQuery.isAutoCommit() ? SqlKeywords.ON : "OFF");
     }
 
     private Object executeBeginTransaction(BeginTransactionQuery beginQuery, Transaction currentTransaction) {
@@ -546,7 +546,7 @@ class Database {
     /** Extracts the name of the table a query operates on from the normalized query text. */
     private String extractTableName(String query) {
         String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
-        if (normalized.startsWith("SELECT")) {
+        if (normalized.startsWith(SqlKeywords.SELECT)) {
             String[] parts = normalized.split("(?i)FROM\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid SELECT format");
@@ -554,14 +554,14 @@ class Database {
             // The first table appears before any INNER JOIN or WHERE clause and may carry an alias.
             return firstIdentifier(parts[1].split("(?i)(INNER JOIN|WHERE)\\s")[0].trim().split("\\s+")[0]);
         }
-        if (normalized.startsWith("INSERT INTO")) {
+        if (normalized.startsWith(SqlKeywords.INSERT_INTO)) {
             String[] parts = normalized.split("(?i)INSERT INTO\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid INSERT format");
             }
             return firstIdentifier(parts[1].split("\\s+|\\(")[0]);
         }
-        if (normalized.startsWith("UPDATE")) {
+        if (normalized.startsWith(SqlKeywords.UPDATE)) {
             String[] parts = normalized.split("(?i)UPDATE\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid UPDATE format");
@@ -575,15 +575,15 @@ class Database {
             }
             return firstIdentifier(parts[1].split("(?i)WHERE\\s*", 2)[0]);
         }
-        if (normalized.startsWith("CREATE TABLE")) {
+        if (normalized.startsWith(SqlKeywords.CREATE_TABLE)) {
             String[] parts = normalized.split("(?i)CREATE TABLE\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE TABLE format");
             }
             return firstIdentifier(parts[1].split("\\s+")[0]);
         }
-        if (normalized.startsWith("CREATE INDEX") || normalized.startsWith("CREATE HASH INDEX")
-                || normalized.startsWith("CREATE UNIQUE INDEX") || normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
+        if (normalized.startsWith(SqlKeywords.CREATE_INDEX) || normalized.startsWith(SqlKeywords.CREATE_HASH_INDEX)
+                || normalized.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX) || normalized.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX)) {
             String[] parts = normalized.split("(?i)ON\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE INDEX format");

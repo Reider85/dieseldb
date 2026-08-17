@@ -1569,9 +1569,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             QueryParser.HavingCondition condition = havingConditions.get(i);
             boolean conditionResult = evaluateHavingCondition(row, condition);
             String conjunction = condition.conjunction;
-            if (conjunction == null || conjunction.equals("AND")) {
+            if (conjunction == null || conjunction.equals(SqlKeywords.AND)) {
                 result = result && conditionResult;
-            } else if (conjunction.equals("OR")) {
+            } else if (conjunction.equals(SqlKeywords.OR)) {
                 result = result || conditionResult;
             }
         }
@@ -1621,7 +1621,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     private Object computeAggregate(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows,
                                     Map<String, Class<?>> combinedColumnTypes) {
-        if (agg.functionName.equals("COUNT")) {
+        if (agg.functionName.equals(SqlKeywords.COUNT)) {
             long count;
             if (agg.column == null) {
                 count = rows.size();
@@ -1630,21 +1630,21 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 count = rows.stream().filter(row -> row.get(columnKey) != null).count();
             }
             return count;
-        } else if (agg.functionName.equals("MIN")) {
+        } else if (agg.functionName.equals(SqlKeywords.MIN)) {
             if (agg.column == null) {
                 throw new IllegalArgumentException("MIN requires a column argument");
             }
             String columnKey = normalizeColumnName(agg.column, mainTableName);
             return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
                     .min(this::compareValues).orElse(null);
-        } else if (agg.functionName.equals("MAX")) {
+        } else if (agg.functionName.equals(SqlKeywords.MAX)) {
             if (agg.column == null) {
                 throw new IllegalArgumentException("MAX requires a column argument");
             }
             String columnKey = normalizeColumnName(agg.column, mainTableName);
             return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
                     .max(this::compareValues).orElse(null);
-        } else if (agg.functionName.equals("AVG")) {
+        } else if (agg.functionName.equals(SqlKeywords.AVG)) {
             if (agg.column == null) {
                 throw new IllegalArgumentException("AVG requires a column argument");
             }
@@ -1681,7 +1681,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 return avg.byteValue();
             }
             return avg;
-        } else if (agg.functionName.equals("SUM")) {
+        } else if (agg.functionName.equals(SqlKeywords.SUM)) {
             if (agg.column == null) {
                 throw new IllegalArgumentException("SUM requires a column argument");
             }
@@ -1819,7 +1819,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         boolean hasEquality = false;
         for (QueryParser.Condition condition : join.onConditions) {
-            if ("OR".equalsIgnoreCase(condition.conjunction)) {
+            if (SqlKeywords.OR.equalsIgnoreCase(condition.conjunction)) {
                 return false;
             }
             if (condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison()) {
@@ -1842,7 +1842,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return false;
         }
         return join.onConditions.stream()
-                .anyMatch(c -> c.conjunction != null && "OR".equalsIgnoreCase(c.conjunction));
+                .anyMatch(c -> c.conjunction != null && SqlKeywords.OR.equalsIgnoreCase(c.conjunction));
     }
 
     /**
@@ -1940,7 +1940,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // the pre-filter uses the first indexed condition only, so rows that match
         // a later OR branch would be dropped before the WHERE evaluation runs.
         for (QueryParser.Condition condition : conditions) {
-            if (condition.conjunction != null && "OR".equalsIgnoreCase(condition.conjunction)) {
+            if (condition.conjunction != null && SqlKeywords.OR.equalsIgnoreCase(condition.conjunction)) {
                 return null;
             }
         }
@@ -2078,7 +2078,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (int i = 0; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
-            boolean orBoundary = i > 0 && conjunction != null && conjunction.equalsIgnoreCase("OR");
+            boolean orBoundary = i > 0 && conjunction != null && conjunction.equalsIgnoreCase(SqlKeywords.OR);
 
             if (orBoundary) {
                 orResult = orInitialized ? ThreeValuedLogic.or(orResult, andResult) : andResult;
@@ -2099,7 +2099,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (ThreeValuedLogic.andIsDetermined(andResult)) {
                 while (i + 1 < conditions.size()) {
                     String nextConj = conditions.get(i + 1).conjunction;
-                    if (nextConj != null && nextConj.equalsIgnoreCase("OR")) {
+                    if (nextConj != null && nextConj.equalsIgnoreCase(SqlKeywords.OR)) {
                         break;
                     }
                     i++;
@@ -2122,7 +2122,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (int i = 0; i < conditions.size(); i++) {
             if (i > 0) {
                 String conjunction = conditions.get(i).conjunction;
-                sb.append(' ').append(conjunction != null ? conjunction : "AND").append(' ');
+                sb.append(' ').append(conjunction != null ? conjunction : SqlKeywords.AND).append(' ');
             }
             sb.append(conditions.get(i));
         }
@@ -2451,7 +2451,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     private String formatLiteralValue(Object value) {
         if (value == null) {
-            return "NULL";
+            return SqlKeywords.NULL;
         }
         if (value instanceof String) {
             return "'" + ((String) value).replace("'", "''") + "'";
@@ -2705,7 +2705,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return "none (full scan)";
         }
         for (QueryParser.Condition condition : conditions) {
-            if (condition.conjunction != null && "OR".equalsIgnoreCase(condition.conjunction)) {
+            if (condition.conjunction != null && SqlKeywords.OR.equalsIgnoreCase(condition.conjunction)) {
                 return "none (OR conditions disable the index pre-filter)";
             }
         }
@@ -2758,7 +2758,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder("SELECT ");
+        StringBuilder sb = new StringBuilder(SqlKeywords.SELECT + " ");
         List<String> selectItems = new ArrayList<>();
         selectItems.addAll(columns);
         selectItems.addAll(aggregates.stream().map(QueryParser.AggregateFunction::toString).toList());

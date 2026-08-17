@@ -141,12 +141,12 @@ class UpdateQuery implements Query<Void> {
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
-            if (conjunction != null && conjunction.equalsIgnoreCase("OR")) {
+            if (conjunction != null && conjunction.equalsIgnoreCase(SqlKeywords.OR)) {
                 if (ThreeValuedLogic.orIsDetermined(result)) {
                     continue;
                 }
                 result = ThreeValuedLogic.or(result, evaluateCondition3vl(row, condition, columnTypes));
-            } else if (conjunction == null || conjunction.equalsIgnoreCase("AND")) {
+            } else if (conjunction == null || conjunction.equalsIgnoreCase(SqlKeywords.AND)) {
                 if (ThreeValuedLogic.andIsDetermined(result)) {
                     continue;
                 }

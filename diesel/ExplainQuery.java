@@ -74,11 +74,11 @@ class ExplainQuery implements Query<String> {
     private String executeDml(Table table) {
         String operation;
         if (innerQuery instanceof InsertQuery) {
-            operation = "INSERT";
+            operation = SqlKeywords.INSERT;
         } else if (innerQuery instanceof UpdateQuery) {
-            operation = "UPDATE";
+            operation = SqlKeywords.UPDATE;
         } else {
-            operation = "DELETE";
+            operation = SqlKeywords.DELETE;
         }
         StringBuilder sb = new StringBuilder("Execution Plan\n");
         sb.append("  Operation: ").append(operation).append('\n');

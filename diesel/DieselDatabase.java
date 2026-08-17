@@ -99,11 +99,11 @@ public class DieselDatabase {
             }
 
             // Commit transaction
-            db.executeQuery("COMMIT TRANSACTION", transactionId);
+            db.executeQuery(SqlKeywords.COMMIT_TRANSACTION, transactionId);
         } catch (Exception e) {
             LOGGER.error("Main execution failed: {}", e.getMessage());
             try {
-                db.executeQuery("ROLLBACK TRANSACTION", transactionId);
+                db.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION, transactionId);
             } catch (Exception rollbackEx) {
                 LOGGER.error("Rollback failed: {}", rollbackEx.getMessage());
             }

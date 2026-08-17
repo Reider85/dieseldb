@@ -86,7 +86,7 @@ public class SubqueryParser {
 
         LOGGER.log(Level.FINE, "Subqueries detected, parsing with SubqueryParser: {0}", query);
         try {
-            if (normalizedQuery.toUpperCase().startsWith("SELECT")) {
+            if (normalizedQuery.toUpperCase().startsWith(SqlKeywords.SELECT)) {
                 // Проверяем, является ли весь запрос подзапросом в IN
                 Pattern inSubqueryPattern = Pattern.compile(
                         "(?i)^SELECT\\s+.*?\\s+WHERE\\s+.*?\\s+IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
@@ -145,7 +145,7 @@ public class SubqueryParser {
             throw new IllegalArgumentException("Invalid SELECT query: missing FROM clause");
         }
 
-        String selectPartOriginal = originalQuery.substring(originalQuery.toUpperCase().indexOf("SELECT") + 6, fromIndex).trim();
+        String selectPartOriginal = originalQuery.substring(originalQuery.toUpperCase().indexOf(SqlKeywords.SELECT) + 6, fromIndex).trim();
         String tableAndJoinsOriginal = originalQuery.substring(fromIndex + 4).trim();
 
         QueryParser.SelectItems selectItems = parseSelectItems(selectPartOriginal, database);
@@ -293,7 +293,7 @@ public class SubqueryParser {
                 String funcName = aggMatcher.group(1);
                 String arg = aggMatcher.group(2);
                 String alias = unquoteIdentifier(aggMatcher.group(3));
-                if (arg.toUpperCase().startsWith("(") && arg.toUpperCase().contains("SELECT")) {
+                if (arg.toUpperCase().startsWith("(") && arg.toUpperCase().contains(SqlKeywords.SELECT)) {
                     String subQueryStr = arg.substring(1, arg.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);
@@ -429,7 +429,7 @@ public class SubqueryParser {
      */
     private boolean isDerivedTablePart(String mainTablePart) {
         String trimmed = mainTablePart.trim();
-        return trimmed.startsWith("(") && trimmed.substring(1).trim().toUpperCase().startsWith("SELECT");
+        return trimmed.startsWith("(") && trimmed.substring(1).trim().toUpperCase().startsWith(SqlKeywords.SELECT);
     }
 
     /**
@@ -449,7 +449,7 @@ public class SubqueryParser {
         String alias = null;
         if (!rest.isEmpty()) {
             String[] tokens = rest.split("\\s+");
-            if (tokens[0].equalsIgnoreCase("AS") && tokens.length > 1) {
+            if (tokens[0].equalsIgnoreCase(SqlKeywords.AS) && tokens.length > 1) {
                 alias = unquoteIdentifier(tokens[1]);
             } else {
                 alias = unquoteIdentifier(tokens[tokens.length - 1]);
@@ -519,9 +519,9 @@ public class SubqueryParser {
 
     private QueryParser.JoinType parseJoinType(String joinTypeStr) {
         return switch (joinTypeStr.toUpperCase()) {
-            case "JOIN", "INNER JOIN" -> QueryParser.JoinType.INNER;
-            case "LEFT JOIN" -> QueryParser.JoinType.LEFT_OUTER;
-            case "RIGHT JOIN" -> QueryParser.JoinType.RIGHT_OUTER;
+            case SqlKeywords.JOIN, SqlKeywords.INNER_JOIN -> QueryParser.JoinType.INNER;
+            case SqlKeywords.LEFT_JOIN -> QueryParser.JoinType.LEFT_OUTER;
+            case SqlKeywords.RIGHT_JOIN -> QueryParser.JoinType.RIGHT_OUTER;
             case "FULL JOIN" -> QueryParser.JoinType.FULL_OUTER;
             case "CROSS JOIN" -> QueryParser.JoinType.CROSS;
             default -> throw new IllegalArgumentException("Unsupported join type: " + joinTypeStr);
@@ -545,7 +545,7 @@ public class SubqueryParser {
                 } else if (c == ')') {
                     parenDepth--;
                 } else if (parenDepth == 0 && i + 2 < joinPart.length() &&
-                        joinPart.substring(i, i + 2).toUpperCase().equals("ON")) {
+                        joinPart.substring(i, i + 2).toUpperCase().equals(SqlKeywords.ON)) {
                     onIndex = i;
                     i += 2;
                 }
@@ -630,10 +630,10 @@ public class SubqueryParser {
         Map<String, String> groupBySubQueries = new HashMap<>();
 
         // Найти индексы всех клауз
-        int whereIndex = findClauseOutsideSubquery(tableAndJoins, "WHERE");
-        int groupByIndex = findClauseOutsideSubquery(tableAndJoins, "GROUP BY");
-        int orderByIndex = findClauseOutsideSubquery(tableAndJoins, "ORDER BY");
-        int limitIndex = findClauseOutsideSubquery(tableAndJoins, "LIMIT");
+        int whereIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.WHERE);
+        int groupByIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.GROUP_BY);
+        int orderByIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.ORDER_BY);
+        int limitIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.LIMIT);
 
         // Обработка WHERE
         if (whereIndex != -1) {
@@ -679,7 +679,7 @@ public class SubqueryParser {
                 }
             }
             String groupByClause = tableAndJoins.substring(groupByIndex + 8, groupByEndIndex).trim();
-            int havingIndex = findClauseOutsideSubquery(groupByClause, "HAVING");
+            int havingIndex = findClauseOutsideSubquery(groupByClause, SqlKeywords.HAVING);
             String havingClause = null;
             if (havingIndex != -1) {
                 havingClause = groupByClause.substring(havingIndex + 6).trim();
@@ -826,9 +826,9 @@ public class SubqueryParser {
             if (columnMatcher.matches()) {
                 String columnOrSubQuery = columnMatcher.group(1);
                 String direction = columnMatcher.group(2);
-                boolean ascending = direction == null || direction.equalsIgnoreCase("ASC");
+                boolean ascending = direction == null || direction.equalsIgnoreCase(SqlKeywords.ASC);
 
-                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
+                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains(SqlKeywords.SELECT)) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);
@@ -859,7 +859,7 @@ public class SubqueryParser {
             Matcher columnMatcher = columnPattern.matcher(trimmedItem);
             if (columnMatcher.matches()) {
                 String columnOrSubQuery = columnMatcher.group(1);
-                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
+                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains(SqlKeywords.SELECT)) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     queryParser.parse(subQueryStr, database);
@@ -1082,7 +1082,7 @@ public class SubqueryParser {
             String condStr = token.value;
             String effectiveTableName = lastAlias != null ? tableAliases.getOrDefault(lastAlias, lastAlias) : defaultTableName;
 
-            if (condStr.equalsIgnoreCase("NOT")) {
+            if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
                 not = true;
                 LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
                 continue;
@@ -1090,7 +1090,7 @@ public class SubqueryParser {
 
             if (condStr.startsWith("(") && condStr.endsWith(")")) {
                 String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
-                if (subCondStr.toUpperCase().startsWith("SELECT")) {
+                if (subCondStr.toUpperCase().startsWith(SqlKeywords.SELECT)) {
                     validateSubQuery(subCondStr);
                     Query<?> subQuery = queryParser.parse(subCondStr, database);
                     String columnName = effectiveTableName + ".unknown";
@@ -1104,7 +1104,7 @@ public class SubqueryParser {
             } else if (condStr.toUpperCase().contains(" IN ")) {
                 conditions.add(parseInCondition(condStr, effectiveTableName, database, originalQuery,
                         combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
-            } else if (condStr.toUpperCase().contains("SELECT")) {
+            } else if (condStr.toUpperCase().contains(SqlKeywords.SELECT)) {
                 LOGGER.log(Level.FINEST, "Attempting to parse subquery condition: {0}", condStr);
                 conditions.add(parseSubQueryCondition(condStr, effectiveTableName, database, originalQuery,
                         combinedColumnTypes, tableAliases, columnAliases, currentConjunction, not));
@@ -1294,7 +1294,7 @@ public class SubqueryParser {
     }
 
     private void validateSubQuery(String subQueryStr) {
-        if (!subQueryStr.toUpperCase().startsWith("SELECT")) {
+        if (!subQueryStr.toUpperCase().startsWith(SqlKeywords.SELECT)) {
             throw new IllegalArgumentException("Invalid subquery: must start with SELECT: " + subQueryStr);
         }
         if (!subQueryStr.toUpperCase().contains(" FROM ")) {
@@ -1341,7 +1341,7 @@ public class SubqueryParser {
             String value = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1);
             String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
             validateColumn(normalizedColumn, combinedColumnTypes);
-            QueryParser.Operator operator = operatorStr.equals("LIKE") ? QueryParser.Operator.LIKE : QueryParser.Operator.NOT_LIKE;
+            QueryParser.Operator operator = operatorStr.equals(SqlKeywords.LIKE) ? QueryParser.Operator.LIKE : QueryParser.Operator.NOT_LIKE;
             Object parsedValue = parseConditionValue(normalizedColumn, "'" + value + "'", getColumnType(normalizedColumn, combinedColumnTypes));
             return new QueryParser.Condition(normalizedColumn, parsedValue, operator, conjunction, not);
         }
@@ -1374,9 +1374,9 @@ public class SubqueryParser {
         Object value = null;
 
         String upperRightPart = rightPart.toUpperCase();
-        if (upperRightPart.equals("TRUE") || upperRightPart.equals("FALSE") || upperRightPart.equals("NULL")) {
+        if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
             Class<?> literalColumnType = getColumnType(normalizedColumn, combinedColumnTypes);
-            if (upperRightPart.equals("NULL")) {
+            if (upperRightPart.equals(SqlKeywords.NULL)) {
                 value = null;
             } else if (literalColumnType == Boolean.class) {
                 value = Boolean.parseBoolean(rightPart);
@@ -1412,8 +1412,8 @@ public class SubqueryParser {
             case ">" -> QueryParser.Operator.GREATER_THAN;
             case "<=" -> QueryParser.Operator.LESS_THAN_OR_EQUALS;
             case ">=" -> QueryParser.Operator.GREATER_THAN_OR_EQUALS;
-            case "LIKE" -> QueryParser.Operator.LIKE;
-            case "NOT LIKE" -> QueryParser.Operator.NOT_LIKE;
+            case SqlKeywords.LIKE -> QueryParser.Operator.LIKE;
+            case SqlKeywords.NOT_LIKE -> QueryParser.Operator.NOT_LIKE;
             default -> throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
         };
     }
@@ -1584,7 +1584,7 @@ public class SubqueryParser {
                     continue;
                 } else if (parenDepth == 0 && c == ' ') {
                     String nextToken = getNextToken(havingClause, i + 1);
-                    if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
+                    if (nextToken.equalsIgnoreCase(SqlKeywords.AND) || nextToken.equalsIgnoreCase(SqlKeywords.OR)) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
                             QueryParser.HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
@@ -1596,7 +1596,7 @@ public class SubqueryParser {
                             i += nextToken.length();
                         }
                         continue;
-                    } else if (nextToken.equalsIgnoreCase("NOT")) {
+                    } else if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
                         not = true;
                         currentCondition.append(c);
                         i += nextToken.length();
@@ -1689,7 +1689,7 @@ public class SubqueryParser {
                 String funcName = aggMatcher.group(1);
                 String columnOrSubQuery = aggMatcher.group(2);
                 String alias = unquoteIdentifier(aggMatcher.group(3));
-                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
+                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains(SqlKeywords.SELECT)) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);
@@ -1705,10 +1705,10 @@ public class SubqueryParser {
             }
         }
 
-        Class<?> valueType = aggregate.functionName.equals("COUNT") ? Long.class :
+        Class<?> valueType = aggregate.functionName.equals(SqlKeywords.COUNT) ? Long.class :
                 (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes) : Double.class);
         Object value;
-        if (rightPart.startsWith("(") && rightPart.toUpperCase().contains("SELECT")) {
+        if (rightPart.startsWith("(") && rightPart.toUpperCase().contains(SqlKeywords.SELECT)) {
             String cleanRightPart = rightPart.replaceFirst("(?i)\\s+AS\\s+" + IDENTIFIER_PATTERN + "\\s*$", "").trim();
             if (!(cleanRightPart.startsWith("(") && cleanRightPart.endsWith(")"))) {
                 throw new IllegalArgumentException("Invalid HAVING subquery on right side: " + rightPart);

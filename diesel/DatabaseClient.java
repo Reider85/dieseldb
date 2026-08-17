@@ -186,13 +186,13 @@ public class DatabaseClient {
                 }
             }
 
-            client.executeQuery("COMMIT TRANSACTION");
+            client.executeQuery(SqlKeywords.COMMIT_TRANSACTION);
         } catch (Exception e) {
             LOGGER.error("Client error: {}", e.getMessage());
             e.printStackTrace();
             try {
                 if (client.transactionId != null) {
-                    client.executeQuery("ROLLBACK TRANSACTION");
+                    client.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION);
                 }
             } catch (Exception rollbackEx) {
                 LOGGER.error("Rollback failed: {}", rollbackEx.getMessage());

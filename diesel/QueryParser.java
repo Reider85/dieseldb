@@ -254,8 +254,8 @@ class QueryParser {
             }
             if (isColumnComparison()) {
                 String operatorStr = switch (operator) {
-                    case LIKE -> "LIKE";
-                    case NOT_LIKE -> "NOT LIKE";
+                    case LIKE -> SqlKeywords.LIKE;
+                    case NOT_LIKE -> SqlKeywords.NOT_LIKE;
                     default -> operator.toString();
                 };
                 return (not ? "NOT " : "") + column + " " + operatorStr + " " + rightColumn + (conjunction != null ? " " + conjunction : "");
@@ -266,15 +266,15 @@ class QueryParser {
             }
             if (isSubQueryCondition()) {
                 String operatorStr = switch (operator) {
-                    case LIKE -> "LIKE";
-                    case NOT_LIKE -> "NOT LIKE";
+                    case LIKE -> SqlKeywords.LIKE;
+                    case NOT_LIKE -> SqlKeywords.NOT_LIKE;
                     default -> operator.toString();
                 };
                 return (not ? "NOT " : "") + column + " " + operatorStr + " " + subQuery.toString() + (conjunction != null ? " " + conjunction : "");
             }
             String operatorStr = switch (operator) {
-                case LIKE -> "LIKE";
-                case NOT_LIKE -> "NOT LIKE";
+                case LIKE -> SqlKeywords.LIKE;
+                case NOT_LIKE -> SqlKeywords.NOT_LIKE;
                 default -> operator.toString();
             };
             return (not ? "NOT " : "") + column + " " + operatorStr + " " + (value instanceof String ? "'" + value + "'" : value) + (conjunction != null ? " " + conjunction : "");
@@ -574,7 +574,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("EXPLAIN");
+                return n.startsWith(SqlKeywords.EXPLAIN);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -584,7 +584,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("SELECT");
+                return n.startsWith(SqlKeywords.SELECT);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -594,7 +594,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("INSERT INTO");
+                return n.startsWith(SqlKeywords.INSERT_INTO);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -604,7 +604,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("UPDATE");
+                return n.startsWith(SqlKeywords.UPDATE);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -624,7 +624,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("CREATE TABLE");
+                return n.startsWith(SqlKeywords.CREATE_TABLE);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -634,7 +634,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("CREATE UNIQUE CLUSTERED INDEX");
+                return n.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -644,7 +644,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("CREATE UNIQUE INDEX");
+                return n.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -654,7 +654,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("CREATE HASH INDEX");
+                return n.startsWith(SqlKeywords.CREATE_HASH_INDEX);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -664,7 +664,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("CREATE INDEX");
+                return n.startsWith(SqlKeywords.CREATE_INDEX);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -697,7 +697,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.equals("COMMIT TRANSACTION") || n.equals("COMMIT");
+                return n.equals(SqlKeywords.COMMIT_TRANSACTION) || n.equals("COMMIT");
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -707,7 +707,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.equals("ROLLBACK TRANSACTION") || n.equals("ROLLBACK");
+                return n.equals(SqlKeywords.ROLLBACK_TRANSACTION) || n.equals("ROLLBACK");
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -717,7 +717,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("SET");
+                return n.startsWith(SqlKeywords.SET);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -739,7 +739,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("ANALYZE");
+                return n.startsWith(SqlKeywords.ANALYZE);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -811,13 +811,13 @@ class QueryParser {
                 return null;
             }
             switch (statementType) {
-                case "SELECT":
+                case SqlKeywords.SELECT:
                     return parseSelectQuery(normalizedQuery, originalQuery, database);
-                case "INSERT":
+                case SqlKeywords.INSERT:
                     return parseInsertQuery(normalizedQuery, originalQuery, database);
-                case "UPDATE":
+                case SqlKeywords.UPDATE:
                     return parseUpdateQuery(normalizedQuery, originalQuery, database);
-                case "DELETE":
+                case SqlKeywords.DELETE:
                     return parseDeleteQuery(normalizedQuery, originalQuery, database);
                 default:
                     return null;
@@ -843,7 +843,7 @@ class QueryParser {
         if (query == null) {
             return false;
         }
-        return toUpperCasePreservingQuotedIdentifiers(query.trim()).startsWith("EXPLAIN");
+        return toUpperCasePreservingQuotedIdentifiers(query.trim()).startsWith(SqlKeywords.EXPLAIN);
     }
 
     /**
@@ -854,16 +854,16 @@ class QueryParser {
      * transaction commands are rejected.
      */
     private Query<?> parseExplainQuery(String normalized, String original, Database database) {
-        String rest = stripLeadingKeyword(original, "EXPLAIN");
+        String rest = stripLeadingKeyword(original, SqlKeywords.EXPLAIN);
         boolean analyze = false;
-        if (rest.toUpperCase().startsWith("ANALYZE")) {
+        if (rest.toUpperCase().startsWith(SqlKeywords.ANALYZE)) {
             analyze = true;
-            rest = stripLeadingKeyword(rest, "ANALYZE");
+            rest = stripLeadingKeyword(rest, SqlKeywords.ANALYZE);
         }
         String inner = rest.trim();
         String innerNormalized = toUpperCasePreservingQuotedIdentifiers(inner);
-        if (!(innerNormalized.startsWith("SELECT") || innerNormalized.startsWith("INSERT")
-                || innerNormalized.startsWith("UPDATE") || innerNormalized.startsWith("DELETE"))) {
+        if (!(innerNormalized.startsWith(SqlKeywords.SELECT) || innerNormalized.startsWith(SqlKeywords.INSERT)
+                || innerNormalized.startsWith(SqlKeywords.UPDATE) || innerNormalized.startsWith(SqlKeywords.DELETE))) {
             throw new IllegalArgumentException("EXPLAIN supports only SELECT, INSERT, UPDATE and DELETE statements");
         }
         SubqueryParser subqueryParser = new SubqueryParser();
@@ -894,7 +894,7 @@ class QueryParser {
             return null;
         }
         String value = matcher.group(1);
-        return new SetAutoCommitQuery(value.equals("ON") || value.equals("TRUE") || value.equals("1"));
+        return new SetAutoCommitQuery(value.equals(SqlKeywords.ON) || value.equals(SqlKeywords.TRUE) || value.equals("1"));
     }
 
     /**
@@ -908,11 +908,11 @@ class QueryParser {
      * @throws IllegalArgumentException on malformed ANALYZE TABLE input
      */
     private Query<?> parseAnalyzeTableQuery(String normalized) {
-        String rest = normalized.substring("ANALYZE".length()).trim();
-        if (!rest.toUpperCase().startsWith("TABLE")) {
+        String rest = normalized.substring(SqlKeywords.ANALYZE.length()).trim();
+        if (!rest.toUpperCase().startsWith(SqlKeywords.TABLE)) {
             throw new IllegalArgumentException("Invalid ANALYZE TABLE syntax: expected 'ANALYZE TABLE <table name>'");
         }
-        String tableName = rest.substring("TABLE".length()).trim();
+        String tableName = rest.substring(SqlKeywords.TABLE.length()).trim();
         if (tableName.endsWith(";")) {
             tableName = tableName.substring(0, tableName.length() - 1).trim();
         }
@@ -923,11 +923,11 @@ class QueryParser {
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {
-        String[] parts = normalized.split("ON");
+        String[] parts = normalized.split(SqlKeywords.ON);
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE INDEX query format");
         }
-        String indexPart = parts[0].replace("CREATE INDEX", "").trim();
+        String indexPart = parts[0].replace(SqlKeywords.CREATE_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -935,11 +935,11 @@ class QueryParser {
     }
 
     private Query<Void> parseCreateHashIndexQuery(String normalized) {
-        String[] parts = normalized.split("ON");
+        String[] parts = normalized.split(SqlKeywords.ON);
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE HASH INDEX query format");
         }
-        String indexPart = parts[0].replace("CREATE HASH INDEX", "").trim();
+        String indexPart = parts[0].replace(SqlKeywords.CREATE_HASH_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -947,11 +947,11 @@ class QueryParser {
     }
 
     private Query<Void> parseCreateUniqueIndexQuery(String normalized) {
-        String[] parts = normalized.split("ON");
+        String[] parts = normalized.split(SqlKeywords.ON);
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE UNIQUE INDEX query format");
         }
-        String indexPart = parts[0].replace("CREATE UNIQUE INDEX", "").trim();
+        String indexPart = parts[0].replace(SqlKeywords.CREATE_UNIQUE_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -959,11 +959,11 @@ class QueryParser {
     }
 
     private Query<Void> parseCreateUniqueDurableClusteredIndexQuery(String normalized) {
-        String[] parts = normalized.split("ON");
+        String[] parts = normalized.split(SqlKeywords.ON);
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE UNIQUE CLUSTERED INDEX query format");
         }
-        String indexPart = parts[0].replace("CREATE UNIQUE CLUSTERED INDEX", "").trim();
+        String indexPart = parts[0].replace(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -977,7 +977,7 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid CREATE TABLE query format: missing or mismatched parentheses");
         }
 
-        String tableName = unquoteIdentifier(original.substring(0, firstParen).replace("CREATE TABLE", "").trim());
+        String tableName = unquoteIdentifier(original.substring(0, firstParen).replace(SqlKeywords.CREATE_TABLE, "").trim());
         String columnsPart = original.substring(firstParen + 1, lastParen).trim();
 
         List<String> columnDefs = splitColumnDefinitions(columnsPart);
@@ -1280,7 +1280,7 @@ class QueryParser {
         }
 
         // Извлекаем части запроса
-        int selectIndex = indexOfIgnoreCase(original, "SELECT");
+        int selectIndex = indexOfIgnoreCase(original, SqlKeywords.SELECT);
         if (selectIndex == -1) {
             throw new IllegalArgumentException("Недопустимый формат SELECT-запроса: отсутствует SELECT");
         }
@@ -1352,11 +1352,11 @@ class QueryParser {
                 if (countArg.startsWith("(") && countArg.endsWith(")")) {
                     String subQueryStr = countArg.substring(1, countArg.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction("COUNT", new SubQuery(subQuery, null), alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.COUNT, new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: COUNT(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
                     String column = countArg.equals("*") ? null : unquoteQualifiedIdentifier(countArg);
-                    aggregates.add(new AggregateFunction("COUNT", column, alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.COUNT, column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: COUNT({0}){1}",
                             new Object[]{column == null ? "*" : column, alias != null ? " AS " + alias : ""});
                 }
@@ -1366,11 +1366,11 @@ class QueryParser {
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction("MIN", new SubQuery(subQuery, null), alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.MIN, new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MIN(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
                     column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction("MIN", column, alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.MIN, column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MIN({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
@@ -1380,11 +1380,11 @@ class QueryParser {
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction("MAX", new SubQuery(subQuery, null), alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.MAX, new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MAX(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
                     column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction("MAX", column, alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.MAX, column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MAX({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
@@ -1394,11 +1394,11 @@ class QueryParser {
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction("AVG", new SubQuery(subQuery, null), alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.AVG, new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: AVG(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
                     column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction("AVG", column, alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.AVG, column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: AVG({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
@@ -1408,11 +1408,11 @@ class QueryParser {
                 if (column.startsWith("(") && column.endsWith(")")) {
                     String subQueryStr = column.substring(1, column.length() - 1).trim();
                     Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction("SUM", new SubQuery(subQuery, null), alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.SUM, new SubQuery(subQuery, null), alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: SUM(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
                 } else {
                     column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction("SUM", column, alias));
+                    aggregates.add(new AggregateFunction(SqlKeywords.SUM, column, alias));
                     LOGGER.log(Level.FINE, "Разобранная агрегатная функция: SUM({0}){1}",
                             new Object[]{column, alias != null ? " AS " + alias : ""});
                 }
@@ -1482,7 +1482,7 @@ class QueryParser {
         String[] mainTableTokens = mainTablePart.split("\\s+");
         tableName = unquoteIdentifier(mainTableTokens[0].trim());
         if (mainTableTokens.length > 1) {
-            if (mainTableTokens.length == 3 && mainTableTokens[1].equalsIgnoreCase("AS")) {
+            if (mainTableTokens.length == 3 && mainTableTokens[1].equalsIgnoreCase(SqlKeywords.AS)) {
                 tableAlias = unquoteIdentifier(mainTableTokens[2].trim());
             } else if (mainTableTokens.length == 2) {
                 tableAlias = unquoteIdentifier(mainTableTokens[1].trim());
@@ -1544,7 +1544,7 @@ class QueryParser {
                     throw new IllegalArgumentException("Недопустимый формат " + joinTypeStr + ": отсутствует ON");
                 }
                 String joinTablePart = joinPart.substring(0, onIndex).trim();
-                String onClause = joinPart.substring(onIndex + 2).trim(); // Пропускаем "ON"
+                String onClause = joinPart.substring(onIndex + 2).trim(); // Пропускаем SqlKeywords.ON
                 joinTableTokens = new String[]{joinTablePart, onClause};
             }
 
@@ -1552,7 +1552,7 @@ class QueryParser {
             String[] joinTableParts = joinTablePart.split("\\s+");
             joinTableName = unquoteIdentifier(joinTableParts[0].trim());
             if (joinTableParts.length > 1) {
-                if (joinTableParts.length == 3 && joinTableParts[1].equalsIgnoreCase("AS")) {
+                if (joinTableParts.length == 3 && joinTableParts[1].equalsIgnoreCase(SqlKeywords.AS)) {
                     joinTableAlias = unquoteIdentifier(joinTableParts[2].trim());
                 } else if (joinTableParts.length == 2) {
                     joinTableAlias = unquoteIdentifier(joinTableParts[1].trim());
@@ -1609,9 +1609,9 @@ class QueryParser {
     // Парсит тип соединения
     private JoinType parseJoinType(String joinTypeStr) {
         return switch (joinTypeStr.toUpperCase()) {
-            case "JOIN", "INNER JOIN" -> JoinType.INNER;
-            case "LEFT JOIN", "LEFT OUTER JOIN" -> JoinType.LEFT_OUTER;
-            case "RIGHT JOIN", "RIGHT OUTER JOIN" -> JoinType.RIGHT_OUTER;
+            case SqlKeywords.JOIN, SqlKeywords.INNER_JOIN -> JoinType.INNER;
+            case SqlKeywords.LEFT_JOIN, "LEFT OUTER JOIN" -> JoinType.LEFT_OUTER;
+            case SqlKeywords.RIGHT_JOIN, "RIGHT OUTER JOIN" -> JoinType.RIGHT_OUTER;
             case "FULL JOIN", "FULL OUTER JOIN" -> JoinType.FULL_OUTER;
             case "LEFT INNER JOIN" -> JoinType.LEFT_INNER;
             case "RIGHT INNER JOIN" -> JoinType.RIGHT_INNER;
@@ -1636,10 +1636,10 @@ class QueryParser {
 
         // Проверяем наличие ключевых слов
         Map<String, String> groupBySubQueries = new HashMap<>();
-        int groupByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "GROUP BY");
+        int groupByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.GROUP_BY);
         if (groupByIndex != -1) {
-            int orderByIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, "ORDER BY");
-            int limitIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, "LIMIT");
+            int orderByIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.ORDER_BY);
+            int limitIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
             int groupByEndIndex = tableAndJoinsOriginal.length();
             for (int idx : new int[]{orderByIndexForEnd, limitIndexForEnd}) {
                 if (idx != -1 && idx > groupByIndex && idx < groupByEndIndex) {
@@ -1647,7 +1647,7 @@ class QueryParser {
                 }
             }
             String groupByClause = tableAndJoinsOriginal.substring(groupByIndex + 8, groupByEndIndex).trim();
-            int havingIndex = findClauseOutsideSubquery(groupByClause, "HAVING");
+            int havingIndex = findClauseOutsideSubquery(groupByClause, SqlKeywords.HAVING);
             String havingClause = null;
             if (havingIndex != -1) {
                 havingClause = groupByClause.substring(havingIndex + 6).trim();
@@ -1664,7 +1664,7 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Разобранная клауза GROUP BY: {0}, HAVING: {1}", new Object[]{groupBy, havingConditions});
         }
 
-        int orderByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "ORDER BY");
+        int orderByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.ORDER_BY);
         if (orderByIndex != -1) {
             String beforeOrderBy = tableAndJoinsOriginal.substring(0, orderByIndex).trim();
             String orderByClause = tableAndJoinsOriginal.substring(orderByIndex + 8).trim();
@@ -1688,7 +1688,7 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Разобранная клауза ORDER BY: {0}", orderBy);
         }
 
-        int limitIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "LIMIT");
+        int limitIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
         if (limitIndex != -1) {
             String beforeLimit = tableAndJoinsOriginal.substring(0, limitIndex).trim();
             String afterLimit = tableAndJoinsOriginal.substring(limitIndex + 5).trim();
@@ -1718,7 +1718,7 @@ class QueryParser {
         // When LIMIT is present its branch already consumed "LIMIT n" and any
         // trailing "OFFSET m", so this only applies to an OFFSET that appears
         // without a preceding LIMIT.
-        int offsetIndex = limitIndex == -1 ? findClauseOutsideSubquery(tableAndJoinsOriginal, "OFFSET") : -1;
+        int offsetIndex = limitIndex == -1 ? findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET) : -1;
         if (offsetIndex != -1) {
             String beforeOffset = tableAndJoinsOriginal.substring(0, offsetIndex).trim();
             String afterOffset = tableAndJoinsOriginal.substring(offsetIndex + 6).trim();
@@ -1734,7 +1734,7 @@ class QueryParser {
             tableAndJoinsOriginal = beforeOffset;
         }
 
-        int whereIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, "WHERE");
+        int whereIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.WHERE);
         if (whereIndex != -1) {
             conditionStr = tableAndJoinsOriginal.substring(whereIndex + 6).trim();
             conditions = parseConditions(conditionStr, tableName, database, original,
@@ -1888,8 +1888,8 @@ class QueryParser {
                 throw new IllegalArgumentException("Invalid ORDER BY item: " + trimmedItem);
             }
             String column = unquoteQualifiedIdentifier(orderMatcher.group(1).trim());
-            String direction = orderMatcher.group(2) != null ? orderMatcher.group(2).toUpperCase() : "ASC";
-            boolean ascending = direction.equals("ASC");
+            String direction = orderMatcher.group(2) != null ? orderMatcher.group(2).toUpperCase() : SqlKeywords.ASC;
+            boolean ascending = direction.equals(SqlKeywords.ASC);
 
             String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
             boolean found = false;
@@ -1960,7 +1960,7 @@ class QueryParser {
             Matcher columnMatcher = columnPattern.matcher(trimmedItem);
             if (columnMatcher.matches()) {
                 String columnOrSubQuery = columnMatcher.group(1);
-                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains("SELECT")) {
+                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains(SqlKeywords.SELECT)) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     parse(subQueryStr, database);
                     String marker = "SUBQUERY_" + System.currentTimeMillis();
@@ -1989,7 +1989,7 @@ class QueryParser {
     }
 
     private Integer parseOffsetClause(String offsetClause) {
-        String normalized = offsetClause.toUpperCase().replace("OFFSET", "").trim();
+        String normalized = offsetClause.toUpperCase().replace(SqlKeywords.OFFSET, "").trim();
         if (normalized.isEmpty()) {
             LOGGER.log(Level.WARNING, "Empty OFFSET clause detected");
             return null;
@@ -2038,12 +2038,12 @@ class QueryParser {
     }
 
     private Query<Void> parseInsertQuery(String normalized, String original, Database database) {
-        String[] parts = normalized.split("VALUES");
+        String[] parts = normalized.split(SqlKeywords.VALUES);
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid INSERT query format");
         }
 
-        String tableAndColumns = parts[0].replace("INSERT INTO", "").trim();
+        String tableAndColumns = parts[0].replace(SqlKeywords.INSERT_INTO, "").trim();
         String tableName = unquoteIdentifier(tableAndColumns.substring(0, tableAndColumns.indexOf("(")).trim());
         String columnsPart = original.substring(original.indexOf("(") + 1, original.indexOf(")")).trim();
         List<String> columns = Arrays.stream(columnsPart.split(","))
@@ -2063,7 +2063,7 @@ class QueryParser {
             throw new IllegalArgumentException("Cannot specify value for sequence-based primary key column: " + primaryKeyColumn);
         }
 
-        String valuesPart = original.substring(parts[0].length() + "VALUES".length()).trim();
+        String valuesPart = original.substring(parts[0].length() + SqlKeywords.VALUES.length()).trim();
         if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
             throw new IllegalArgumentException("Invalid VALUES syntax");
         }
@@ -2089,17 +2089,17 @@ class QueryParser {
     }
 
     private Query<Void> parseUpdateQuery(String normalized, String original, Database database) {
-        String[] parts = normalized.split("SET");
+        String[] parts = normalized.split(SqlKeywords.SET);
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid UPDATE query format");
         }
 
-        String tablePart = parts[0].replace("UPDATE", "").trim();
+        String tablePart = parts[0].replace(SqlKeywords.UPDATE, "").trim();
         String[] tableTokens = tablePart.split("\\s+");
         String tableName = unquoteIdentifier(tableTokens[0].trim());
         String tableAlias = null;
         if (tableTokens.length > 1) {
-            if (tableTokens.length == 3 && tableTokens[1].equalsIgnoreCase("AS")) {
+            if (tableTokens.length == 3 && tableTokens[1].equalsIgnoreCase(SqlKeywords.AS)) {
                 tableAlias = unquoteIdentifier(tableTokens[2].trim());
             } else if (tableTokens.length == 2) {
                 tableAlias = unquoteIdentifier(tableTokens[1].trim());
@@ -2118,11 +2118,11 @@ class QueryParser {
             LOGGER.log(Level.FINE, "Parsed UPDATE table alias: {0} -> {1}", new Object[]{tableAlias, tableName});
         }
 
-        String setAndWhere = original.substring(parts[0].length() + "SET".length()).trim();
+        String setAndWhere = original.substring(parts[0].length() + SqlKeywords.SET.length()).trim();
         String setPart;
         List<Condition> conditions = new ArrayList<>();
 
-        if (setAndWhere.toUpperCase().contains("WHERE")) {
+        if (setAndWhere.toUpperCase().contains(SqlKeywords.WHERE)) {
             String[] setWhereParts = setAndWhere.split("(?i)WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
@@ -2195,7 +2195,7 @@ class QueryParser {
 
     private Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {
         try {
-            if (valueStr.equalsIgnoreCase("NULL")) {
+            if (valueStr.equalsIgnoreCase(SqlKeywords.NULL)) {
                 return null;
             }
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
@@ -2215,7 +2215,7 @@ class QueryParser {
                 } else {
                     throw new IllegalArgumentException("Value '" + strippedValue + "' does not match column type: " + columnType.getSimpleName());
                 }
-            } else if (valueStr.equalsIgnoreCase("TRUE") || valueStr.equalsIgnoreCase("FALSE")) {
+            } else if (valueStr.equalsIgnoreCase(SqlKeywords.TRUE) || valueStr.equalsIgnoreCase(SqlKeywords.FALSE)) {
                 if (columnType == Boolean.class) {
                     return Boolean.parseBoolean(valueStr);
                 } else {
@@ -2495,7 +2495,7 @@ class QueryParser {
             }
             if (token.type == TokenType.CONDITION) {
                 String condStr = token.value;
-                if (condStr.equalsIgnoreCase("NOT")) {
+                if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
                     not = true;
                     LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
                     continue;
@@ -2549,11 +2549,11 @@ class QueryParser {
             throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subquery);
         }
         String upperSubquery = subquery.toUpperCase();
-        if (!upperSubquery.contains("SELECT ") || !upperSubquery.contains("FROM ")) {
+        if (!upperSubquery.contains(SqlKeywords.SELECT + " ") || !upperSubquery.contains("FROM ")) {
             LOGGER.log(Level.SEVERE, "Subquery missing SELECT or FROM clause: {0}", subquery);
             throw new IllegalArgumentException("Subquery must contain SELECT and FROM clauses: " + subquery);
         }
-        int selectIndex = upperSubquery.indexOf("SELECT ");
+        int selectIndex = upperSubquery.indexOf(SqlKeywords.SELECT + " ");
         int fromIndex = upperSubquery.indexOf("FROM ", selectIndex);
         if (fromIndex == -1 || fromIndex < selectIndex) {
             LOGGER.log(Level.SEVERE, "Invalid subquery structure: SELECT and FROM out of order in {0}", subquery);
@@ -2570,8 +2570,8 @@ class QueryParser {
             case ">" -> Operator.GREATER_THAN;
             case "<=" -> Operator.LESS_THAN_OR_EQUALS;
             case ">=" -> Operator.GREATER_THAN_OR_EQUALS;
-            case "LIKE" -> Operator.LIKE;
-            case "NOT LIKE" -> Operator.NOT_LIKE;
+            case SqlKeywords.LIKE -> Operator.LIKE;
+            case SqlKeywords.NOT_LIKE -> Operator.NOT_LIKE;
             default -> throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
         };
     }
@@ -2661,7 +2661,7 @@ class QueryParser {
             String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
             validateColumn(normalizedColumn, combinedColumnTypes);
 
-            Operator operator = operatorStr.equals("LIKE") ? Operator.LIKE : Operator.NOT_LIKE;
+            Operator operator = operatorStr.equals(SqlKeywords.LIKE) ? Operator.LIKE : Operator.NOT_LIKE;
             Object parsedValue = parseConditionValue(actualColumn, "'" + value + "'", getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
 
             return new Condition(actualColumn, parsedValue, operator, conjunction, not);
@@ -2713,7 +2713,7 @@ class QueryParser {
         String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
         Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
 
-        if (valuesStr.trim().toUpperCase().startsWith("SELECT ")) {
+        if (valuesStr.trim().toUpperCase().startsWith(SqlKeywords.SELECT + " ")) {
             String subQueryStr = valuesStr.trim();
             if (subQueryStr.startsWith("(") && subQueryStr.endsWith(")")) {
                 int subQueryEnd = findMatchingParenthesis(subQueryStr, 0);
@@ -2864,9 +2864,9 @@ class QueryParser {
         Object value = null;
 
         String upperRightPart = actualRightPart.toUpperCase();
-        if (upperRightPart.equals("TRUE") || upperRightPart.equals("FALSE") || upperRightPart.equals("NULL")) {
+        if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
             Class<?> literalColumnType = getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
-            if (upperRightPart.equals("NULL")) {
+            if (upperRightPart.equals(SqlKeywords.NULL)) {
                 value = null;
             } else if (literalColumnType == Boolean.class) {
                 value = Boolean.parseBoolean(actualRightPart);
@@ -3077,7 +3077,7 @@ class QueryParser {
                     continue;
                 } else if (parenDepth == 0 && c == ' ' && subQueryStart == -1) {
                     String nextToken = getNextToken(havingClause, i + 1);
-                    if (nextToken.equalsIgnoreCase("AND") || nextToken.equalsIgnoreCase("OR")) {
+                    if (nextToken.equalsIgnoreCase(SqlKeywords.AND) || nextToken.equalsIgnoreCase(SqlKeywords.OR)) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
                             HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
@@ -3095,14 +3095,14 @@ class QueryParser {
                             i += nextToken.length();
                         }
                         continue;
-                    } else if (nextToken.equalsIgnoreCase("NOT")) {
+                    } else if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
                         not = true;
                         currentCondition.append(c);
                         i += nextToken.length();
                         continue;
                     } else if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
-                            (nextToken.equalsIgnoreCase("LIMIT") && subQueryStart == -1) ||
-                            (nextToken.equalsIgnoreCase("OFFSET") && subQueryStart == -1)) {
+                            (nextToken.equalsIgnoreCase(SqlKeywords.LIMIT) && subQueryStart == -1) ||
+                            (nextToken.equalsIgnoreCase(SqlKeywords.OFFSET) && subQueryStart == -1)) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
                             HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
@@ -3204,7 +3204,7 @@ class QueryParser {
             }
         }
 
-        Class<?> valueType = aggregate.functionName.equals("COUNT") ? Long.class :
+        Class<?> valueType = aggregate.functionName.equals(SqlKeywords.COUNT) ? Long.class :
                 (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes, defaultTableName, tableAliases, columnAliases) : Double.class);
         Object value = parseConditionValue(aggregate.toString(), rightPart, valueType);
 
@@ -3323,8 +3323,8 @@ class QueryParser {
             normalized = normalized.replaceAll("(?i)\\bEQUALS\\b", "=")
                     .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
                     .replaceAll("(?i)\\bGREATER_THAN\\b", ">")
-                    .replaceAll("(?i)\\bLIKE\\b", "LIKE")
-                    .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE");
+                    .replaceAll("(?i)\\bLIKE\\b", SqlKeywords.LIKE)
+                    .replaceAll("(?i)\\bNOT_LIKE\\b", SqlKeywords.NOT_LIKE);
         }
 
         StringBuilder finalResult = new StringBuilder();
@@ -3368,8 +3368,8 @@ class QueryParser {
                 .replaceAll("(?i)\\bEQUALS\\b", "=")
                 .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
                 .replaceAll("(?i)\\bGREATER_THAN\\b", ">") // Add this line
-                .replaceAll("(?i)\\bLIKE\\b", "LIKE")
-                .replaceAll("(?i)\\bNOT_LIKE\\b", "NOT LIKE")
+                .replaceAll("(?i)\\bLIKE\\b", SqlKeywords.LIKE)
+                .replaceAll("(?i)\\bNOT_LIKE\\b", SqlKeywords.NOT_LIKE)
                 .replaceAll("\\s*;", "")
                 .replaceAll("(?i)\\bLIMIT\\s*(\\d+)\\b", " LIMIT $1 ")
                 .replaceAll("(?i)\\bWHERE\\b", " WHERE ")
