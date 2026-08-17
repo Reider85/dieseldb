@@ -1303,8 +1303,8 @@ class QueryParser {
         Map<String, Class<?>> combinedColumnTypes = tableJoins.combinedColumnTypes;
 
         // Парсим дополнительные условия и клаузы
-        AdditionalClauses clauses = parseAdditionalClauses(tableAndJoinsOriginal, tableName, database, original,
-                aggregates, combinedColumnTypes, tableAliases, columnAliases, subQueries);
+        ParseContext ctx = new ParseContext(tableName, database, original, false, combinedColumnTypes, tableAliases, columnAliases);
+        AdditionalClauses clauses = parseAdditionalClauses(tableAndJoinsOriginal, ctx, aggregates, subQueries);
         List<Condition> conditions = clauses.conditions;
         List<String> groupBy = clauses.groupBy;
         List<HavingCondition> havingConditions = clauses.havingConditions;
@@ -1315,8 +1315,22 @@ class QueryParser {
         LOGGER.log(Level.INFO, "Разобран SELECT-запрос: таблица={0}, столбцы={1}, агрегации={2}, соединения={3}, условия={4}",
                 new Object[]{tableName, columns, aggregates, joins, conditions});
 
-        return new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions,
-                groupBy, havingConditions, orderBy, limit, offset, columnAliases, tableAliases, tableJoins.combinedColumnTypes);
+        return SelectQuery.builder()
+                .tableName(tableName)
+                .tableAlias(tableAlias)
+                .columns(columns)
+                .aggregates(aggregates)
+                .joins(joins)
+                .conditions(conditions)
+                .groupBy(groupBy)
+                .havingConditions(havingConditions)
+                .orderBy(orderBy)
+                .limit(limit)
+                .offset(offset)
+                .tableAliases(columnAliases)
+                .extraTableAliases(tableAliases)
+                .columnTypes(tableJoins.combinedColumnTypes)
+                .build();
     }
 
 
@@ -1591,8 +1605,8 @@ class QueryParser {
                 combinedColumnTypes.putAll(joinTable.getColumnTypes());
                 tableAliases.put(joinTableName, joinTableName);
 
-                onConditions = parseConditions(onClause, tableName, database, tableAndJoinsOriginal, true,
-                        combinedColumnTypes, tableAliases, new HashMap<>());
+                onConditions = parseConditions(onClause, new ParseContext(tableName, database, tableAndJoinsOriginal, true,
+                        combinedColumnTypes, tableAliases, new HashMap<>()));
 
                 for (Condition cond : onConditions) {
                     validateJoinCondition(cond, tableName, joinTableName, tableAliases);
@@ -1621,11 +1635,8 @@ class QueryParser {
     }
 
     // Парсит дополнительные клаузы (WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET)
-    private AdditionalClauses parseAdditionalClauses(String tableAndJoinsOriginal, String tableName, Database database,
-                                                     String original, List<AggregateFunction> aggregates,
-                                                     Map<String, Class<?>> combinedColumnTypes,
-                                                     Map<String, String> tableAliases, Map<String, String> columnAliases,
-                                                     List<SubQuery> subQueries) {
+    private AdditionalClauses parseAdditionalClauses(String tableAndJoinsOriginal, ParseContext ctx,
+                                                     List<AggregateFunction> aggregates, List<SubQuery> subQueries) {
         String conditionStr = null;
         List<Condition> conditions = new ArrayList<>();
         List<String> groupBy = new ArrayList<>();
@@ -1653,10 +1664,10 @@ class QueryParser {
                 havingClause = groupByClause.substring(havingIndex + 6).trim();
                 groupByClause = groupByClause.substring(0, havingIndex).trim();
             }
-            groupBy = parseGroupByClause(groupByClause, tableName, database, combinedColumnTypes, tableAliases, columnAliases, groupBySubQueries);
+            groupBy = parseGroupByClause(groupByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
+                    ctx.tableAliases, ctx.columnAliases, groupBySubQueries);
             if (havingClause != null) {
-                havingConditions = parseHavingConditions(havingClause, tableName, database, original,
-                        aggregates, combinedColumnTypes, tableAliases, columnAliases);
+                havingConditions = parseHavingConditions(havingClause, ctx, aggregates);
             }
             String beforeGroupBy = tableAndJoinsOriginal.substring(0, groupByIndex).trim();
             String afterGroupBy = tableAndJoinsOriginal.substring(groupByEndIndex).trim();
@@ -1683,7 +1694,8 @@ class QueryParser {
                 orderByClause = orderByClause.substring(0, orderByLimitMatcher.start()).trim();
                 beforeOrderBy = (beforeOrderBy + " " + trailingLimit).trim();
             }
-            orderBy = parseOrderByClause(orderByClause, tableName, combinedColumnTypes, tableAliases, columnAliases, subQueries); // Updated call
+            orderBy = parseOrderByClause(orderByClause, ctx.defaultTableName, ctx.combinedColumnTypes,
+                    ctx.tableAliases, ctx.columnAliases, subQueries); // Updated call
             tableAndJoinsOriginal = beforeOrderBy;
             LOGGER.log(Level.FINE, "Разобранная клауза ORDER BY: {0}", orderBy);
         }
@@ -1737,8 +1749,7 @@ class QueryParser {
         int whereIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.WHERE);
         if (whereIndex != -1) {
             conditionStr = tableAndJoinsOriginal.substring(whereIndex + 6).trim();
-            conditions = parseConditions(conditionStr, tableName, database, original,
-                    false, combinedColumnTypes, tableAliases, columnAliases);
+            conditions = parseConditions(conditionStr, ctx);
         }
 
         return new AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset, groupBySubQueries);
@@ -2126,7 +2137,8 @@ class QueryParser {
             String[] setWhereParts = setAndWhere.split("(?i)WHERE");
             setPart = setWhereParts[0].trim();
             String conditionStr = setWhereParts[1].trim();
-            conditions = parseConditions(conditionStr, tableName, database, original, false, columnTypes, tableAliases, new HashMap<>());
+            conditions = parseConditions(conditionStr, new ParseContext(tableName, database, original, false,
+                    columnTypes, tableAliases, new HashMap<>()));
         } else {
             setPart = setAndWhere;
         }
@@ -2182,7 +2194,8 @@ class QueryParser {
             if (table == null) {
                 throw new IllegalArgumentException("Table not found: " + tableName);
             }
-            conditions = parseConditions(conditionStr, tableName, database, original, false, table.getColumnTypes(), new HashMap<>(), new HashMap<>());
+            conditions = parseConditions(conditionStr, new ParseContext(tableName, database, original, false,
+                    table.getColumnTypes(), new HashMap<>(), new HashMap<>()));
         } else {
             LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
         }
@@ -2271,12 +2284,9 @@ class QueryParser {
         }
     }
 
-    private List<Condition> parseConditions(String conditionStr, String defaultTableName, Database database,
-                                            String originalQuery, boolean isJoinCondition,
-                                            Map<String, Class<?>> combinedColumnTypes,
-                                            Map<String, String> tableAliases, Map<String, String> columnAliases) {
+    private List<Condition> parseConditions(String conditionStr, ParseContext ctx) {
         LOGGER.log(Level.FINE, "Начало парсинга условий: conditionStr={0}, defaultTableName={1}, isJoinCondition={2}",
-                new Object[]{conditionStr, defaultTableName, isJoinCondition});
+                new Object[]{conditionStr, ctx.defaultTableName, ctx.isJoinCondition});
 
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
             LOGGER.log(Level.FINE, "Пустая строка условий, возвращается пустой список условий");
@@ -2289,8 +2299,7 @@ class QueryParser {
 
         List<Condition> conditions = new ArrayList<>();
         List<Token> tokens = tokenizeConditions(trimmedConditionStr);
-        return parseTokenizedConditions(tokens, defaultTableName, database, originalQuery, isJoinCondition,
-                combinedColumnTypes, tableAliases, columnAliases, null, false);
+        return parseTokenizedConditions(tokens, ctx, null, false);
     }
 
     // Обрезает строку до ключевых слов
@@ -2477,11 +2486,7 @@ class QueryParser {
 
 
     // Парсит токенизированные условия
-    private List<Condition> parseTokenizedConditions(List<Token> tokens, String defaultTableName, Database database,
-                                                     String originalQuery, boolean isJoinCondition,
-                                                     Map<String, Class<?>> combinedColumnTypes,
-                                                     Map<String, String> tableAliases,
-                                                     Map<String, String> columnAliases,
+    private List<Condition> parseTokenizedConditions(List<Token> tokens, ParseContext ctx,
                                                      String conjunction, boolean not) {
         List<Condition> conditions = new ArrayList<>();
         for (int i = 0; i < tokens.size(); i++) {
@@ -2510,21 +2515,18 @@ class QueryParser {
                     if (endParen == condStr.length() - 1) {
                         String subCondStr = condStr.substring(1, endParen).trim();
                         List<Token> subTokens = tokenizeConditions(subCondStr);
-                        List<Condition> subConditions = parseTokenizedConditions(subTokens, defaultTableName, database,
-                                originalQuery, isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                        List<Condition> subConditions = parseTokenizedConditions(subTokens, ctx, conjunction, not);
                         conditions.add(new Condition(subConditions, conjunction, not));
                         LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
                     } else {
                         throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
                     }
                 } else if (condStr.toUpperCase().contains(" IN ")) {
-                    Condition condition = parseInCondition(condStr, defaultTableName, database, originalQuery,
-                            combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                    Condition condition = parseInCondition(condStr, ctx, conjunction, not);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
                 } else {
-                    Condition condition = parseSingleCondition(condStr, defaultTableName, database, originalQuery,
-                            isJoinCondition, combinedColumnTypes, tableAliases, columnAliases, conjunction, not, condStr);
+                    Condition condition = parseSingleCondition(condStr, ctx, conjunction, not, condStr);
                     conditions.add(condition);
                     LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
                 }
@@ -2623,31 +2625,26 @@ class QueryParser {
         return "";
     }
 
-    private Condition parseSingleCondition(String condStr, String defaultTableName, Database database, String originalQuery,
-                                           boolean isJoinCondition, Map<String, Class<?>> combinedColumnTypes,
-                                           Map<String, String> tableAliases, Map<String, String> columnAliases,
+    private Condition parseSingleCondition(String condStr, ParseContext ctx,
                                            String conjunction, boolean not, String conditionStr) {
         LOGGER.log(Level.FINEST, "Parsing single condition: {0}, full condition={1}", new Object[]{condStr, conditionStr});
 
         String normalizedCondStr = normalizeCondition(condStr);
         if (isGroupedCondition(normalizedCondStr)) {
-            return parseGroupedCondition(normalizedCondStr, defaultTableName, database, originalQuery, isJoinCondition,
-                    combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+            return parseGroupedCondition(normalizedCondStr, ctx, conjunction, not);
         }
 
         if (isInCondition(normalizedCondStr)) {
-            return parseInCondition(normalizedCondStr, defaultTableName, database, originalQuery, combinedColumnTypes,
-                    tableAliases, columnAliases, conjunction, not);
+            return parseInCondition(normalizedCondStr, ctx, conjunction, not);
         }
 
         if (isNullCondition(normalizedCondStr)) {
-            return parseNullCondition(normalizedCondStr, defaultTableName, combinedColumnTypes, tableAliases, columnAliases,
-                    conjunction, not);
+            return parseNullCondition(normalizedCondStr, ctx.defaultTableName, ctx.combinedColumnTypes,
+                    ctx.tableAliases, ctx.columnAliases, conjunction, not);
         }
 
         if (isSubQueryCondition(normalizedCondStr)) {
-            return parseSubQueryCondition(normalizedCondStr, defaultTableName, database, originalQuery, combinedColumnTypes,
-                    tableAliases, columnAliases, conjunction, not);
+            return parseSubQueryCondition(normalizedCondStr, ctx, conjunction, not);
         }
 
         // Проверка на корректность шаблона LIKE
@@ -2657,35 +2654,32 @@ class QueryParser {
             String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());
             String operatorStr = likeMatcher.group(2).toUpperCase();
             String value = likeMatcher.group(3).substring(1, likeMatcher.group(3).length() - 1); // Удаляем кавычки
-            String actualColumn = resolveColumnAlias(column, columnAliases);
-            String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
-            validateColumn(normalizedColumn, combinedColumnTypes);
+            String actualColumn = resolveColumnAlias(column, ctx.columnAliases);
+            String normalizedColumn = normalizeColumnName(actualColumn, ctx.defaultTableName, ctx.tableAliases);
+            validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
             Operator operator = operatorStr.equals(SqlKeywords.LIKE) ? Operator.LIKE : Operator.NOT_LIKE;
-            Object parsedValue = parseConditionValue(actualColumn, "'" + value + "'", getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
+            Object parsedValue = parseConditionValue(actualColumn, "'" + value + "'",
+                    getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName, ctx.tableAliases, ctx.columnAliases));
 
             return new Condition(actualColumn, parsedValue, operator, conjunction, not);
         }
 
         LOGGER.log(Level.FINEST, "Передача в parseComparisonCondition: condStr={0}", normalizedCondStr);
-        return parseComparisonCondition(normalizedCondStr, defaultTableName, combinedColumnTypes, tableAliases, columnAliases,
-                conjunction, not, isJoinCondition, conditionStr);
+        return parseComparisonCondition(normalizedCondStr, ctx, conjunction, not, conditionStr);
     }
 
     private boolean isGroupedCondition(String condStr) {
         return condStr.toUpperCase().startsWith("(") && condStr.toUpperCase().endsWith(")");
     }
 
-    private Condition parseGroupedCondition(String condStr, String defaultTableName, Database database, String originalQuery,
-                                            boolean isJoinCondition, Map<String, Class<?>> combinedColumnTypes,
-                                            Map<String, String> tableAliases, Map<String, String> columnAliases,
+    private Condition parseGroupedCondition(String condStr, ParseContext ctx,
                                             String conjunction, boolean not) {
         String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
         if (subCondStr.isEmpty()) {
             throw new IllegalArgumentException("Пустое группированное условие: " + condStr);
         }
-        List<Condition> subConditions = parseConditions(subCondStr, defaultTableName, database, originalQuery,
-                isJoinCondition, combinedColumnTypes, tableAliases, columnAliases);
+        List<Condition> subConditions = parseConditions(subCondStr, ctx);
         if (subConditions.isEmpty()) {
             throw new IllegalArgumentException("Не удалось разобрать подусловия в группированном условии: " + subCondStr);
         }
@@ -2697,9 +2691,7 @@ class QueryParser {
         return inPattern.matcher(condStr).matches();
     }
 
-    private Condition parseInCondition(String condStr, String defaultTableName, Database database, String originalQuery,
-                                       Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
-                                       Map<String, String> columnAliases, String conjunction, boolean not) {
+    private Condition parseInCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
@@ -2709,9 +2701,10 @@ class QueryParser {
         String column = unquoteQualifiedIdentifier(inMatcher.group(1).trim());
         boolean inNot = inMatcher.group(2) != null;
         String valuesStr = inMatcher.group(3).trim();
-        String actualColumn = resolveColumnAlias(column, columnAliases);
-        String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
-        Class<?> columnType = getColumnType(normalizedColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
+        String actualColumn = resolveColumnAlias(column, ctx.columnAliases);
+        String normalizedColumn = normalizeColumnName(actualColumn, ctx.defaultTableName, ctx.tableAliases);
+        Class<?> columnType = getColumnType(normalizedColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
+                ctx.tableAliases, ctx.columnAliases);
 
         if (valuesStr.trim().toUpperCase().startsWith(SqlKeywords.SELECT + " ")) {
             String subQueryStr = valuesStr.trim();
@@ -2723,7 +2716,7 @@ class QueryParser {
                 subQueryStr = subQueryStr.substring(1, subQueryStr.length() - 1).trim();
             }
             validateSubquery(subQueryStr);
-            Query<?> subQuery = parse(subQueryStr, database);
+            Query<?> subQuery = parse(subQueryStr, ctx.database);
             LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
             return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
         }
@@ -2804,9 +2797,7 @@ class QueryParser {
         return subQueryPattern.matcher(condStr).matches();
     }
 
-    private Condition parseSubQueryCondition(String condStr, String defaultTableName, Database database, String originalQuery,
-                                             Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
-                                             Map<String, String> columnAliases, String conjunction, boolean not) {
+    private Condition parseSubQueryCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern subQueryPattern = Pattern.compile(
                 "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
                 Pattern.DOTALL
@@ -2831,17 +2822,16 @@ class QueryParser {
         SubQuery newSubQuery = new SubQuery(subQuery, null);
 
         Operator operator = parseOperator(operatorStr);
-        String normalizedColumn = normalizeColumnName(column, defaultTableName, tableAliases);
-        validateColumn(normalizedColumn, combinedColumnTypes);
+        String normalizedColumn = normalizeColumnName(column, ctx.defaultTableName, ctx.tableAliases);
+        validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
         LOGGER.log(Level.FINE, "Parsed subquery condition: column={0}, operator={1}, subQuery={2}",
                 new Object[]{normalizedColumn, operator, subQueryStr});
         return new Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
     }
 
-    private Condition parseComparisonCondition(String condStr, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
-                                               Map<String, String> tableAliases, Map<String, String> columnAliases,
-                                               String conjunction, boolean not, boolean isJoinCondition, String conditionStr) {
+    private Condition parseComparisonCondition(String condStr, ParseContext ctx,
+                                               String conjunction, boolean not, String conditionStr) {
         LOGGER.log(Level.FINEST, "Parsing comparison condition: {0}", condStr);
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         OperatorInfo operatorInfo = findOperator(condStr, operators);
@@ -2855,9 +2845,9 @@ class QueryParser {
         String actualRightPart = trimRightPart(rightPart);
 
         String column = unquoteQualifiedIdentifier(leftPart);
-        String actualColumn = resolveColumnAlias(column, columnAliases);
-        String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
-        validateColumn(normalizedColumn, combinedColumnTypes);
+        String actualColumn = resolveColumnAlias(column, ctx.columnAliases);
+        String normalizedColumn = normalizeColumnName(actualColumn, ctx.defaultTableName, ctx.tableAliases);
+        validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
         Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
         String rightColumn = null;
@@ -2865,7 +2855,8 @@ class QueryParser {
 
         String upperRightPart = actualRightPart.toUpperCase();
         if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
-            Class<?> literalColumnType = getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases);
+            Class<?> literalColumnType = getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
+                    ctx.tableAliases, ctx.columnAliases);
             if (upperRightPart.equals(SqlKeywords.NULL)) {
                 value = null;
             } else if (literalColumnType == Boolean.class) {
@@ -2878,7 +2869,8 @@ class QueryParser {
         } else {
             try {
                 value = parseConditionValue(actualColumn, actualRightPart,
-                        getColumnType(actualColumn, combinedColumnTypes, defaultTableName, tableAliases, columnAliases));
+                        getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
+                                ctx.tableAliases, ctx.columnAliases));
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
                         new Object[]{actualRightPart, e.getMessage()});
@@ -2892,13 +2884,13 @@ class QueryParser {
 
         Operator operator = parseOperator(operatorInfo.operator);
 
-        if (isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn, tableAliases)) {
+        if (ctx.isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn, ctx.tableAliases)) {
             throw new IllegalArgumentException("Join condition must compare columns from different tables: " + condStr);
         }
 
         if (rightColumn != null) {
-            String normalizedRightColumn = normalizeColumnName(rightColumn, defaultTableName, tableAliases);
-            validateColumn(normalizedRightColumn, combinedColumnTypes);
+            String normalizedRightColumn = normalizeColumnName(rightColumn, ctx.defaultTableName, ctx.tableAliases);
+            validateColumn(normalizedRightColumn, ctx.combinedColumnTypes);
             return new Condition(actualColumn, rightColumn, operator, conjunction, not);
         } else {
             return new Condition(actualColumn, value, operator, conjunction, not);
@@ -3013,10 +3005,8 @@ class QueryParser {
         return defaultTableName + "." + unquoted.trim();
     }
 
-    private List<HavingCondition> parseHavingConditions(String havingClause, String defaultTableName, Database database,
-                                                        String originalQuery, List<AggregateFunction> aggregates,
-                                                        Map<String, Class<?>> combinedColumnTypes,
-                                                        Map<String, String> tableAliases, Map<String, String> columnAliases) {
+    private List<HavingCondition> parseHavingConditions(String havingClause, ParseContext ctx,
+                                                    List<AggregateFunction> aggregates) {
         List<HavingCondition> conditions = new ArrayList<>();
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
@@ -3063,8 +3053,7 @@ class QueryParser {
                         if (condStr.startsWith("(") && condStr.endsWith(")")) {
                             condStr = condStr.substring(1, condStr.length() - 1).trim();
                             if (!condStr.isEmpty()) {
-                                List<HavingCondition> subConditions = parseHavingConditions(condStr, defaultTableName,
-                                        database, originalQuery, aggregates, combinedColumnTypes, tableAliases, columnAliases);
+                                List<HavingCondition> subConditions = parseHavingConditions(condStr, ctx, aggregates);
                                 conditions.add(new HavingCondition(subConditions, conjunction, not));
                                 LOGGER.log(Level.FINE, "Parsed grouped HAVING condition: {0}, conjunction={1}, not={2}",
                                         new Object[]{subConditions, conjunction, not});
@@ -3080,8 +3069,7 @@ class QueryParser {
                     if (nextToken.equalsIgnoreCase(SqlKeywords.AND) || nextToken.equalsIgnoreCase(SqlKeywords.OR)) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
-                            HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
-                                    aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                            HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, conjunction, not);
                             conditions.add(condition);
                             LOGGER.log(Level.FINE, "Parsed HAVING condition: {0}", condition);
                             conjunction = nextToken.toUpperCase();
@@ -3105,8 +3093,7 @@ class QueryParser {
                             (nextToken.equalsIgnoreCase(SqlKeywords.OFFSET) && subQueryStart == -1)) {
                         String condStr = currentCondition.toString().trim();
                         if (!condStr.isEmpty()) {
-                            HavingCondition condition = parseSingleHavingCondition(condStr, defaultTableName, database, originalQuery,
-                                    aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+                            HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, conjunction, not);
                             conditions.add(condition);
                             LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
                         }
@@ -3119,8 +3106,7 @@ class QueryParser {
 
         String finalCondStr = currentCondition.toString().trim();
         if (!finalCondStr.isEmpty()) {
-            HavingCondition condition = parseSingleHavingCondition(finalCondStr, defaultTableName, database, originalQuery,
-                    aggregates, combinedColumnTypes, tableAliases, columnAliases, conjunction, not);
+            HavingCondition condition = parseSingleHavingCondition(finalCondStr, ctx, aggregates, conjunction, not);
             conditions.add(condition);
             LOGGER.log(Level.FINE, "Parsed final HAVING condition: {0}", condition);
         }
@@ -3128,15 +3114,12 @@ class QueryParser {
         return conditions;
     }
 
-    private HavingCondition parseSingleHavingCondition(String condStr, String defaultTableName, Database database,
-                                                       String originalQuery, List<AggregateFunction> aggregates,
-                                                       Map<String, Class<?>> combinedColumnTypes,
-                                                       Map<String, String> tableAliases, Map<String, String> columnAliases,
+    private HavingCondition parseSingleHavingCondition(String condStr, ParseContext ctx,
+                                                       List<AggregateFunction> aggregates,
                                                        String conjunction, boolean not) {
         if (condStr.toUpperCase().startsWith("(") && condStr.toUpperCase().endsWith(")")) {
             String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
-            List<HavingCondition> subConditions = parseHavingConditions(subCondStr, defaultTableName, database, originalQuery,
-                    aggregates, combinedColumnTypes, tableAliases, columnAliases);
+            List<HavingCondition> subConditions = parseHavingConditions(subCondStr, ctx, aggregates);
             return new HavingCondition(subConditions, conjunction, not);
         }
 
@@ -3180,14 +3163,14 @@ class QueryParser {
                     aggregate = new AggregateFunction(funcName, (String) null, alias);
                 } else if (columnOrSubQuery.startsWith("(") && columnOrSubQuery.endsWith(")")) {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
+                    Query<?> subQuery = parse(subQueryStr, ctx.database);
                     aggregate = new AggregateFunction(funcName, new SubQuery(subQuery, null), alias);
                 } else {
                     columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
-                    String normalizedColumn = normalizeColumnName(columnOrSubQuery, defaultTableName, tableAliases);
+                    String normalizedColumn = normalizeColumnName(columnOrSubQuery, ctx.defaultTableName, ctx.tableAliases);
                     String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
                     boolean found = false;
-                    for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+                    for (Map.Entry<String, Class<?>> entry : ctx.combinedColumnTypes.entrySet()) {
                         String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
                         if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
                             found = true;
@@ -3205,7 +3188,8 @@ class QueryParser {
         }
 
         Class<?> valueType = aggregate.functionName.equals(SqlKeywords.COUNT) ? Long.class :
-                (aggregate.column != null ? getColumnType(aggregate.column, combinedColumnTypes, defaultTableName, tableAliases, columnAliases) : Double.class);
+                (aggregate.column != null ? getColumnType(aggregate.column, ctx.combinedColumnTypes, ctx.defaultTableName,
+                        ctx.tableAliases, ctx.columnAliases) : Double.class);
         Object value = parseConditionValue(aggregate.toString(), rightPart, valueType);
 
         Operator operator;

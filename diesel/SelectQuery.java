@@ -369,44 +369,34 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param extraTableAliases extra aliases from joins
      * @param columnTypes       the combined column types
      */
-    public SelectQuery(String tableName, String tableAlias, List<String> columns,
-                       List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
-                       List<QueryParser.Condition> conditions, List<String> groupBy,
-                       List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
-                       Integer limit, Integer offset,
-                       Map<String, String> tableAliases, Map<String, String> extraTableAliases,
-                       Map<String, Class<?>> columnTypes) {
+    /**
+     * Creates a SELECT query over the given table. Use {@link #builder()} to
+     * construct an instance, since the fifteen-argument constructor is too
+     * unwieldy (java:S107, Prompt 32).
+     */
+    private SelectQuery(String tableName, String tableAlias, List<String> columns,
+                        List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
+                        List<QueryParser.Condition> conditions, List<String> groupBy,
+                        List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
+                        Integer limit, Integer offset,
+                        Map<String, String> tableAliases, Map<String, String> extraTableAliases,
+                        Map<String, Class<?>> columnTypes) {
         this(tableName, tableAlias, columns, aggregates, joins, conditions, groupBy, havingConditions, orderBy,
                 limit, offset, tableAliases, extraTableAliases, columnTypes, new HashMap<>());
     }
 
     /**
      * Creates a SELECT query over the given table, including any subqueries in
-     * the GROUP BY clause.
-     *
-     * @param tableName         the main table name
-     * @param tableAlias        the main table alias, or null
-     * @param columns           the selected columns (or aggregates/subqueries)
-     * @param aggregates        the parsed aggregate functions
-     * @param joins             the parsed join clauses
-     * @param conditions        the WHERE conditions
-     * @param groupBy           the GROUP BY columns
-     * @param havingConditions  the HAVING conditions
-     * @param orderBy           the ORDER BY list
-     * @param limit             the LIMIT, or null
-     * @param offset            the OFFSET, or null
-     * @param tableAliases      the alias to table name mapping
-     * @param extraTableAliases extra aliases from joins
-     * @param columnTypes       the combined column types
-     * @param groupBySubQueries the subqueries used in the GROUP BY clause
+     * the GROUP BY clause. Use {@link #builder()} to construct an instance
+     * (java:S107, Prompt 32).
      */
-    public SelectQuery(String tableName, String tableAlias, List<String> columns,
-                       List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
-                       List<QueryParser.Condition> conditions, List<String> groupBy,
-                       List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
-                       Integer limit, Integer offset,
-                       Map<String, String> tableAliases, Map<String, String> extraTableAliases,
-                       Map<String, Class<?>> columnTypes, Map<String, String> groupBySubQueries) {
+    private SelectQuery(String tableName, String tableAlias, List<String> columns,
+                        List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
+                        List<QueryParser.Condition> conditions, List<String> groupBy,
+                        List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
+                        Integer limit, Integer offset,
+                        Map<String, String> tableAliases, Map<String, String> extraTableAliases,
+                        Map<String, Class<?>> columnTypes, Map<String, String> groupBySubQueries) {
         this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
         this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
         this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
@@ -429,6 +419,162 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // Обрабатываем extraTableAliases
         if (extraTableAliases != null) {
             this.tableAliases.putAll(extraTableAliases);
+        }
+    }
+
+    /**
+     * Builder for {@link SelectQuery}, so callers never face the long
+     * constructor (java:S107, Prompt 32).
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static final class Builder {
+        private String tableName;
+        private String tableAlias;
+        private List<String> columns;
+        private List<QueryParser.AggregateFunction> aggregates;
+        private List<QueryParser.JoinInfo> joins;
+        private List<QueryParser.Condition> conditions;
+        private List<String> groupBy;
+        private List<QueryParser.HavingCondition> havingConditions;
+        private List<QueryParser.OrderByInfo> orderBy;
+        private Integer limit;
+        private Integer offset;
+        private Map<String, String> tableAliases;
+        private Map<String, String> extraTableAliases;
+        private Map<String, Class<?>> columnTypes;
+        private Map<String, String> groupBySubQueries;
+
+        public Builder tableName(String tableName) {
+            this.tableName = tableName;
+            return this;
+        }
+
+        public Builder tableAlias(String tableAlias) {
+            this.tableAlias = tableAlias;
+            return this;
+        }
+
+        public Builder columns(List<String> columns) {
+            this.columns = columns;
+            return this;
+        }
+
+        public Builder aggregates(List<QueryParser.AggregateFunction> aggregates) {
+            this.aggregates = aggregates;
+            return this;
+        }
+
+        public Builder joins(List<QueryParser.JoinInfo> joins) {
+            this.joins = joins;
+            return this;
+        }
+
+        public Builder conditions(List<QueryParser.Condition> conditions) {
+            this.conditions = conditions;
+            return this;
+        }
+
+        public Builder groupBy(List<String> groupBy) {
+            this.groupBy = groupBy;
+            return this;
+        }
+
+        public Builder havingConditions(List<QueryParser.HavingCondition> havingConditions) {
+            this.havingConditions = havingConditions;
+            return this;
+        }
+
+        public Builder orderBy(List<QueryParser.OrderByInfo> orderBy) {
+            this.orderBy = orderBy;
+            return this;
+        }
+
+        public Builder limit(Integer limit) {
+            this.limit = limit;
+            return this;
+        }
+
+        public Builder offset(Integer offset) {
+            this.offset = offset;
+            return this;
+        }
+
+        public Builder tableAliases(Map<String, String> tableAliases) {
+            this.tableAliases = tableAliases;
+            return this;
+        }
+
+        public Builder extraTableAliases(Map<String, String> extraTableAliases) {
+            this.extraTableAliases = extraTableAliases;
+            return this;
+        }
+
+        public Builder columnTypes(Map<String, Class<?>> columnTypes) {
+            this.columnTypes = columnTypes;
+            return this;
+        }
+
+        public Builder groupBySubQueries(Map<String, String> groupBySubQueries) {
+            this.groupBySubQueries = groupBySubQueries;
+            return this;
+        }
+
+        public SelectQuery build() {
+            return new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions, groupBy,
+                    havingConditions, orderBy, limit, offset, tableAliases, extraTableAliases, columnTypes,
+                    groupBySubQueries);
+        }
+    }
+
+    /**
+     * Parameter Object for the join execution pipeline (java:S107, Prompt 32).
+     * The join helpers shared up to seventeen arguments; this holder carries
+     * the execution-wide context (spill state, WHERE conditions, column types,
+     * table map and row locks) plus the per-join state (join, equality and
+     * streaming flags, table names). The per-join fields are set once per join
+     * iteration in {@link #applyJoins}, so {@link #emitHashJoinMatch} - which
+     * runs per (probe, build) pair millions of times - never allocates.
+     */
+    private static final class JoinContext {
+        final boolean[] spillActive;
+        final StreamingResultIterator spill;
+        final List<Map<String, Object>> spillFallback;
+        final List<QueryParser.Condition> whereConditions;
+        final Map<String, Class<?>> combinedColumnTypes;
+        final Map<String, Table> tables;
+        final List<ReentrantReadWriteLock> acquiredLocks;
+
+        QueryParser.JoinInfo join;
+        boolean onlyEquality;
+        boolean lastStream;
+        String buildTableName;
+        String probeTableName;
+
+        JoinContext(StreamingResultIterator spill, boolean[] spillActive,
+                    List<Map<String, Object>> spillFallback,
+                    List<QueryParser.Condition> whereConditions,
+                    Map<String, Class<?>> combinedColumnTypes,
+                    Map<String, Table> tables,
+                    List<ReentrantReadWriteLock> acquiredLocks) {
+            this.spill = spill;
+            this.spillActive = spillActive;
+            this.spillFallback = spillFallback;
+            this.whereConditions = whereConditions;
+            this.combinedColumnTypes = combinedColumnTypes;
+            this.tables = tables;
+            this.acquiredLocks = acquiredLocks;
+        }
+
+        void forJoin(QueryParser.JoinInfo join, boolean onlyEquality, boolean lastStream,
+                     String buildTableName, String probeTableName) {
+            this.join = join;
+            this.onlyEquality = onlyEquality;
+            this.lastStream = lastStream;
+            this.buildTableName = buildTableName;
+            this.probeTableName = probeTableName;
         }
     }
 
@@ -550,8 +696,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
 
-            joinedRows = applyJoins(mainRows, joinedRows, tables, combinedColumnTypes, useStreaming,
-                    spill, spillActive, spillFallback, acquiredLocks);
+            JoinContext joinCtx = new JoinContext(spill, spillActive, spillFallback, conditions,
+                combinedColumnTypes, tables, acquiredLocks);
+            joinedRows = applyJoins(mainRows, joinedRows, useStreaming, joinCtx);
 
             List<Map<String, Object>> filteredRows = applyWhereFilter(joinedRows, useStreaming,
                     spill, spillActive, spillFallback, combinedColumnTypes, tables);
@@ -584,18 +731,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private List<Map<String, Map<String, Object>>> applyJoins(
             List<Map<String, Object>> mainRows,
             List<Map<String, Map<String, Object>>> joinedRows,
-            Map<String, Table> tables,
-            Map<String, Class<?>> combinedColumnTypes,
             boolean useStreaming,
-            StreamingResultIterator spill,
-            boolean[] spillActive,
-            List<Map<String, Object>> spillFallback,
-            List<ReentrantReadWriteLock> acquiredLocks) {
+            JoinContext ctx) {
         for (QueryParser.JoinInfo join : joins) {
-            Table joinTable = tables.get(join.tableName);
+            Table joinTable = ctx.tables.get(join.tableName);
             List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+            boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
 
-            boolean useHashJoin = canUseHashJoin(join, combinedColumnTypes);
+            boolean useHashJoin = canUseHashJoin(join, ctx.combinedColumnTypes);
             if (hasOrInOnConditions(join)) {
                 LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
             }
@@ -606,11 +749,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             // that column can use it, with an advisory warning. Idempotent
             // (existing indexes and the clustered PK are skipped) and never
             // fatal: any failure only degrades to a log record.
-            ensureJoinColumnIndexes(tables, join);
+            ensureJoinColumnIndexes(ctx.tables, join);
 
             if (useHashJoin) {
-                Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : tables.get(mainTableName);
-                Table probeTable = buildTable == joinTable ? tables.get(mainTableName) : joinTable;
+                Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : ctx.tables.get(mainTableName);
+                Table probeTable = buildTable == joinTable ? ctx.tables.get(mainTableName) : joinTable;
                 String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
                 String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
 
@@ -627,7 +770,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
                 }
 
-                List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, combinedColumnTypes);
+                List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, ctx.combinedColumnTypes);
                 if (buildRows == null) {
                     buildRows = buildTable.getRows();
                 }
@@ -637,7 +780,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 // match already guarantees the condition, so we skip the
                 // flatten+evaluate round trip entirely.
                 boolean onlyEquality = join.onConditions.size() == 1 && equalityCondition != null && !equalityCondition.not;
-                boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
 
                 // Estimate the hash table size before building it, so a huge
                 // build side never materialises an in-memory hash table that
@@ -656,37 +798,33 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     // nested loop is cheaper (see Prompt 14).
                     LOGGER.log(Level.FINE, "Statistics prefer nested loop over hash join for join on {0} ({1} x {2} rows)",
                             new Object[]{join.tableName, buildTable.getStatistics().getRowCount(), probeTable.getStatistics().getRowCount()});
-                    newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
-                            spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
+                    ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
+                    newJoinedRows = runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
                 } else if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
                     // Build side estimated above the memory budget: use the
                     // partitioned hash join, which spills partition files to
                     // disk and keeps peak memory bounded by a single partition.
                     try {
+                        ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
                         newJoinedRows = runPartitionedHashJoin(buildRows, buildTable, probeTable,
-                                buildTableName, probeTableName, buildColumnKey,
-                                normalizeColumnKey(probeColumn, probeTableName),
-                                join, onlyEquality, lastStream, spill, spillActive, spillFallback,
-                                conditions, combinedColumnTypes, tables, acquiredLocks);
+                                buildColumnKey, normalizeColumnKey(probeColumn, probeTableName), ctx);
                         LOGGER.log(Level.INFO, "Partitioned hash join completed: {0} rows produced for join on {1}",
                                 new Object[]{newJoinedRows.size(), join.tableName});
                     } catch (IOException e) {
                         LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
-                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
-                                spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
+                        ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
+                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
                     }
                 } else {
+                    ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
                     newJoinedRows = runInMemoryHashJoin(buildRows, buildTable, probeTable,
-                            buildTableName, probeTableName, buildColumnKey,
-                            normalizeColumnKey(probeColumn, probeTableName),
-                            join, onlyEquality, lastStream, spill, spillActive, spillFallback,
-                            conditions, combinedColumnTypes, tables, acquiredLocks);
+                            buildColumnKey, normalizeColumnKey(probeColumn, probeTableName), ctx);
                     LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
                             new Object[]{newJoinedRows.size(), join.tableName});
                 }
             } else {
-                newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
-                        spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
+                ctx.forJoin(join, false, lastStream, null, null);
+                newJoinedRows = runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
             }
             joinedRows = newJoinedRows;
         }
@@ -916,12 +1054,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     private List<Map<String, Map<String, Object>>> runInMemoryHashJoin(
             List<Map<String, Object>> buildRows, Table buildTable, Table probeTable,
-            String buildTableName, String probeTableName,
-            String buildColumnKey, String probeColumnKey,
-            QueryParser.JoinInfo join, boolean onlyEquality, boolean lastStream,
-            StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
-            List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
-            Map<String, Table> tables, List<ReentrantReadWriteLock> acquiredLocks) {
+            String buildColumnKey, String probeColumnKey, JoinContext ctx) {
 
         long buildStart = System.nanoTime();
         Map<Object, List<Map<String, Object>>> hashTable = new HashMap<>();
@@ -932,14 +1065,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 hashTable.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
                 ReentrantReadWriteLock lock = buildTable.getRowLock(i);
                 lock.readLock().lock();
-                acquiredLocks.add(lock);
+                ctx.acquiredLocks.add(lock);
             }
         }
         long buildTimeMs = (System.nanoTime() - buildStart) / 1_000_000;
 
         long probeStart = System.nanoTime();
         List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
-        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, join.onConditions, probeTableName, combinedColumnTypes);
+        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
         if (probeRows == null) {
             probeRows = probeTable.getRows();
         }
@@ -949,9 +1082,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 List<Map<String, Object>> matches = hashTable.get(probeKey);
                 if (matches != null) {
                     for (Map<String, Object> buildRow : matches) {
-                        emitHashJoinMatch(probeRow, buildRow, onlyEquality, lastStream,
-                                probeTableName, buildTableName, join, spill, spillActive, spillFallback,
-                                whereConditions, combinedColumnTypes, tables, newJoinedRows);
+                        emitHashJoinMatch(probeRow, buildRow, newJoinedRows, ctx);
                     }
                 }
             }
@@ -978,12 +1109,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     private List<Map<String, Map<String, Object>>> runPartitionedHashJoin(
             List<Map<String, Object>> buildRows, Table buildTable, Table probeTable,
-            String buildTableName, String probeTableName,
-            String buildColumnKey, String probeColumnKey,
-            QueryParser.JoinInfo join, boolean onlyEquality, boolean lastStream,
-            StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
-            List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
-            Map<String, Table> tables, List<ReentrantReadWriteLock> acquiredLocks) throws IOException {
+            String buildColumnKey, String probeColumnKey, JoinContext ctx) throws IOException {
 
         int partitionCount = choosePartitionCount(buildRows.size());
         File tempDir = Files.createTempDirectory("diesel-hj-" + System.nanoTime() + "-").toFile();
@@ -1004,7 +1130,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             writeBinaryRow(buildWriters[p], row);
             ReentrantReadWriteLock lock = buildTable.getRowLock(i);
             lock.readLock().lock();
-            acquiredLocks.add(lock);
+            ctx.acquiredLocks.add(lock);
         }
         for (DataOutputStream writer : buildWriters) {
             if (writer != null) {
@@ -1013,7 +1139,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
 
-        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, join.onConditions, probeTableName, combinedColumnTypes);
+        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
         if (probeRows == null) {
             probeRows = probeTable.getRows();
         }
@@ -1068,9 +1194,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         List<Map<String, Object>> matches = partitionHash.get(probeKey);
                         if (matches != null) {
                             for (Map<String, Object> buildRow : matches) {
-                                emitHashJoinMatch(probeRow, buildRow, onlyEquality, lastStream,
-                                        probeTableName, buildTableName, join, spill, spillActive, spillFallback,
-                                        whereConditions, combinedColumnTypes, tables, newJoinedRows);
+                                emitHashJoinMatch(probeRow, buildRow, newJoinedRows, ctx);
                             }
                         }
                     }
@@ -1110,34 +1234,31 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * the streaming spill, or wrapped as a joined row.
      */
     private void emitHashJoinMatch(Map<String, Object> probeRow, Map<String, Object> buildRow,
-                                   boolean onlyEquality, boolean lastStream,
-                                   String probeTableName, String buildTableName,
-                                   QueryParser.JoinInfo join,
-                                   StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
-                                   List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
-                                   Map<String, Table> tables, List<Map<String, Map<String, Object>>> newJoinedRows) {
-        if (onlyEquality) {
-            if (lastStream) {
+                               List<Map<String, Map<String, Object>>> newJoinedRows, JoinContext ctx) {
+        if (ctx.onlyEquality) {
+            if (ctx.lastStream) {
                 Map<String, Object> flatRow = new HashMap<>((probeRow.size() + buildRow.size()) * 4 / 3 + 1);
-                flattenInto(flatRow, probeRow, probeTableName);
-                flattenInto(flatRow, buildRow, buildTableName);
-                spillFilteredRow(spill, spillActive, spillFallback, flatRow, whereConditions, combinedColumnTypes, tables);
+                flattenInto(flatRow, probeRow, ctx.probeTableName);
+                flattenInto(flatRow, buildRow, ctx.buildTableName);
+                spillFilteredRow(ctx.spill, ctx.spillActive, ctx.spillFallback, flatRow,
+                        ctx.whereConditions, ctx.combinedColumnTypes, ctx.tables);
             } else {
                 Map<String, Map<String, Object>> newRow = new HashMap<>(2);
-                newRow.put(probeTableName, probeRow);
-                newRow.put(buildTableName, buildRow);
+                newRow.put(ctx.probeTableName, probeRow);
+                newRow.put(ctx.buildTableName, buildRow);
                 checkResultRowLimit(newJoinedRows.size(), "join");
                 newJoinedRows.add(newRow);
             }
         } else {
-            Map<String, Object> flattenedRow = flattenJoinedPair(probeRow, probeTableName, buildRow, buildTableName);
-            if (evaluateConditions(flattenedRow, join.onConditions, combinedColumnTypes, tables)) {
-                if (lastStream) {
-                    spillFilteredRow(spill, spillActive, spillFallback, flattenedRow, whereConditions, combinedColumnTypes, tables);
+            Map<String, Object> flattenedRow = flattenJoinedPair(probeRow, ctx.probeTableName, buildRow, ctx.buildTableName);
+            if (evaluateConditions(flattenedRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
+                if (ctx.lastStream) {
+                    spillFilteredRow(ctx.spill, ctx.spillActive, ctx.spillFallback, flattenedRow,
+                            ctx.whereConditions, ctx.combinedColumnTypes, ctx.tables);
                 } else {
                     Map<String, Map<String, Object>> newRow = new HashMap<>(2);
-                    newRow.put(probeTableName, probeRow);
-                    newRow.put(buildTableName, buildRow);
+                    newRow.put(ctx.probeTableName, probeRow);
+                    newRow.put(ctx.buildTableName, buildRow);
                     checkResultRowLimit(newJoinedRows.size(), "join");
                     newJoinedRows.add(newRow);
                 }
@@ -1152,19 +1273,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * matching, streaming flattened results when the last join is streaming.
      */
     private List<Map<String, Map<String, Object>>> runBlockNestedLoopJoin(
-            List<Map<String, Map<String, Object>>> joinedRows, QueryParser.JoinInfo join, Table joinTable,
-            Map<String, Table> tables, boolean useStreaming,
-            StreamingResultIterator spill, boolean[] spillActive, List<Map<String, Object>> spillFallback,
-            List<QueryParser.Condition> whereConditions, Map<String, Class<?>> combinedColumnTypes,
-            List<ReentrantReadWriteLock> acquiredLocks) {
+            List<Map<String, Map<String, Object>>> joinedRows, Table joinTable, JoinContext ctx) {
 
         List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
-        List<Map<String, Object>> joinRows = getIndexedRows(joinTable, join.onConditions, join.tableName, combinedColumnTypes);
+        List<Map<String, Object>> joinRows = getIndexedRows(joinTable, ctx.join.onConditions, ctx.join.tableName, ctx.combinedColumnTypes);
         if (joinRows == null) {
             joinRows = joinTable.getRows();
         }
 
-        String rightPrefix = join.tableName + ".";
+        String rightPrefix = ctx.join.tableName + ".";
         List<String> rightSrcKeys;
         List<String> rightTargetKeys;
         if (!joinRows.isEmpty()) {
@@ -1178,10 +1295,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             rightTargetKeys = Collections.emptyList();
         }
 
-        boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
-        boolean equalsJoin = join.onConditions.isEmpty() && join.leftColumn != null && join.rightColumn != null;
-        String leftJoinKey = equalsJoin ? normalizeColumnKey(join.leftColumn, join.originalTable) : null;
-        String rightJoinKey = equalsJoin ? normalizeColumnKey(join.rightColumn, join.tableName) : null;
+        boolean equalsJoin = ctx.join.onConditions.isEmpty() && ctx.join.leftColumn != null && ctx.join.rightColumn != null;
+        String leftJoinKey = equalsJoin ? normalizeColumnKey(ctx.join.leftColumn, ctx.join.originalTable) : null;
+        String rightJoinKey = equalsJoin ? normalizeColumnKey(ctx.join.rightColumn, ctx.join.tableName) : null;
 
         // Row locks are keyed by row index, not by pair, so acquire
         // the whole join table's read locks once instead of once per
@@ -1189,13 +1305,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (int j = 0; j < joinRows.size(); j++) {
             ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
             joinLock.readLock().lock();
-            acquiredLocks.add(joinLock);
+            ctx.acquiredLocks.add(joinLock);
         }
 
         for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
             Map<String, Object> evalRow = flattenJoinedRow(currentJoin);
-            if (lastStream) {
-                Map<String, Object> leftRow = equalsJoin ? currentJoin.get(join.originalTable) : null;
+            if (ctx.lastStream) {
+                Map<String, Object> leftRow = equalsJoin ? currentJoin.get(ctx.join.originalTable) : null;
                 Object leftValue = equalsJoin ? leftRow.get(leftJoinKey) : null;
                 for (int j = 0; j < joinRows.size(); j++) {
                     Map<String, Object> rightRow = joinRows.get(j);
@@ -1205,46 +1321,47 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         flatRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
                     }
                     boolean matches;
-                    if (join.joinType == QueryParser.JoinType.CROSS) {
+                    if (ctx.join.joinType == QueryParser.JoinType.CROSS) {
                         matches = true;
                     } else if (equalsJoin) {
                         matches = valuesEqual(leftValue, rightRow.get(rightJoinKey));
-                    } else if (!join.onConditions.isEmpty()) {
-                        matches = evaluateConditions(flatRow, join.onConditions, combinedColumnTypes, tables);
+                    } else if (!ctx.join.onConditions.isEmpty()) {
+                        matches = evaluateConditions(flatRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables);
                     } else {
                         throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
                     }
                     if (matches) {
-                        spillFilteredRow(spill, spillActive, spillFallback, flatRow, whereConditions, combinedColumnTypes, tables);
+                        spillFilteredRow(ctx.spill, ctx.spillActive, ctx.spillFallback, flatRow,
+                                ctx.whereConditions, ctx.combinedColumnTypes, ctx.tables);
                     }
                 }
             } else {
                 for (int j = 0; j < joinRows.size(); j++) {
                     Map<String, Object> rightRow = joinRows.get(j);
                     Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
-                    newRow.put(join.tableName, rightRow);
+                    newRow.put(ctx.join.tableName, rightRow);
 
-                    if (join.joinType == QueryParser.JoinType.CROSS) {
+                    if (ctx.join.joinType == QueryParser.JoinType.CROSS) {
                         checkResultRowLimit(newJoinedRows.size(), "join");
                         newJoinedRows.add(newRow);
                     } else if (equalsJoin) {
-                        Map<String, Object> leftRow = currentJoin.get(join.originalTable);
+                        Map<String, Object> leftRow = currentJoin.get(ctx.join.originalTable);
                         if (!valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
                             continue;
                         }
                         checkResultRowLimit(newJoinedRows.size(), "join");
                         newJoinedRows.add(newRow);
-                    } else if (!join.onConditions.isEmpty()) {
+                    } else if (!ctx.join.onConditions.isEmpty()) {
                         for (int k = 0; k < rightSrcKeys.size(); k++) {
                             evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
                         }
-                        if (!evaluateConditions(evalRow, join.onConditions, combinedColumnTypes, tables)) {
+                        if (!evaluateConditions(evalRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
                             continue;
                         }
                         checkResultRowLimit(newJoinedRows.size(), "join");
                         newJoinedRows.add(newRow);
                         LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
-                                new Object[]{join.tableName, join.onConditions});
+                                new Object[]{ctx.join.tableName, ctx.join.onConditions});
                     } else {
                         throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
                     }
