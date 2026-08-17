@@ -1333,7 +1333,7 @@ public class SubqueryParser {
         condStr = condStr.replaceAll("([=><!])", " $1 ").replaceAll("\\s+", " ").trim();
         LOGGER.log(Level.FINEST, "Normalized condition: {0}", condStr);
 
-        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:[^']|)*+')");
+        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:''|[^'])*+')");
         Matcher likeMatcher = likePattern.matcher(condStr);
         if (likeMatcher.matches()) {
             String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());
