@@ -11,7 +11,7 @@
 | 22 | ❌ TODO | HIGH | Multiple (13 мест) | Null Pointer Dereference |
 | 17 | ❌ TODO | MEDIUM | pom.xml, tests | Разделить тесты на @LargeTest для CI скорости |
 | 29 | ❌ TODO | MEDIUM | SelectQuery.java | Refactor execute() complexity=59 |
-| 28 | ❌ TODO | MEDIUM | QueryParser.java | Cognitive Complexity оптимизация |
+| 28 | ✔ DONE (2026-08-17) | MEDIUM | QueryParser.java | Cognitive Complexity оптимизация |
 
 ## Full Status (Prompts 1-100)
 
@@ -51,7 +51,7 @@
 | 25 | ✔ DONE (2026-08-16) | Игнорирование возвращаемых значений (S899) | MEDIUM |
 | 26 | ✔ DONE (2026-08-17) | Regex grouping (S5850) | MEDIUM |
 | 27 | ✔ DONE (2026-08-17) | Regex repeated patterns (S5842) | MEDIUM |
-| 28 | ❌ TODO | Cognitive Complexity QueryParser (S3776) | MEDIUM |
+| 28 | ✔ DONE (2026-08-17) | Cognitive Complexity QueryParser (S3776) | MEDIUM |
 | 29 | ❌ TODO | Refactor SelectQuery.execute() (complexity=59) | HIGH |
 | 30 | ❌ TODO | Оптимизация regex (S5869, S6353) | LOW |
 | 31 | ❌ TODO | String literals в константы (S1192) | LOW |

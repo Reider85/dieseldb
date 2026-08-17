@@ -557,6 +557,199 @@ class QueryParser {
     }
 
     /**
+     * Strategy for recognizing and parsing one SQL statement type in the
+     * {@link #parse(String, Database)} dispatch. Replaces the long if/else chain
+     * (java:S3776 cognitive complexity) with one object per statement type,
+     * preserving the exact precedence the legacy chain used.
+     */
+    private interface QueryParseStrategy {
+        boolean matches(String normalized);
+        Query<?> parse(String normalized, String original, Database database);
+    }
+
+    private final List<QueryParseStrategy> parseStrategies = buildParseStrategies();
+
+    private List<QueryParseStrategy> buildParseStrategies() {
+        List<QueryParseStrategy> strategies = new ArrayList<>();
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("EXPLAIN");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseExplainQuery(n, o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("SELECT");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseSelectQuery(n, o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("INSERT INTO");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseInsertQuery(n, o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("UPDATE");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseUpdateQuery(n, o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("DELETE FROM");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseDeleteQuery(n, o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("CREATE TABLE");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateTableQuery(n, o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("CREATE UNIQUE CLUSTERED INDEX");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateUniqueDurableClusteredIndexQuery(n);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("CREATE UNIQUE INDEX");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateUniqueIndexQuery(n);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("CREATE HASH INDEX");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateHashIndexQuery(n);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("CREATE INDEX");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateIndexQuery(n);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.equals("BEGIN") || n.equals("BEGIN TRANSACTION")
+                        || n.equals("START TRANSACTION")
+                        || n.startsWith("BEGIN TRANSACTION ISOLATION LEVEL")
+                        || n.startsWith("START TRANSACTION ISOLATION LEVEL");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                IsolationLevel isolationLevel = null;
+                if (n.contains("ISOLATION LEVEL READ UNCOMMITTED")) {
+                    isolationLevel = IsolationLevel.READ_UNCOMMITTED;
+                } else if (n.contains("ISOLATION LEVEL READ COMMITTED")) {
+                    isolationLevel = IsolationLevel.READ_COMMITTED;
+                } else if (n.contains("ISOLATION LEVEL REPEATABLE READ")) {
+                    isolationLevel = IsolationLevel.REPEATABLE_READ;
+                } else if (n.contains("ISOLATION LEVEL SERIALIZABLE")) {
+                    isolationLevel = IsolationLevel.SERIALIZABLE;
+                }
+                return new BeginTransactionQuery(isolationLevel);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.equals("COMMIT TRANSACTION") || n.equals("COMMIT");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return new CommitTransactionQuery();
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.equals("ROLLBACK TRANSACTION") || n.equals("ROLLBACK");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return new RollbackTransactionQuery();
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("SET");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                Query<String> setAutoCommitQuery = parseSetAutoCommitQuery(n);
+                if (setAutoCommitQuery != null) {
+                    return setAutoCommitQuery;
+                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);
+                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.READ_COMMITTED);
+                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.REPEATABLE_READ);
+                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
+                    return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
+                }
+                throw new IllegalArgumentException("Unsupported query type");
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith("ANALYZE");
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseAnalyzeTableQuery(n);
+            }
+        });
+        return strategies;
+    }
+
+    /**
      * Parses a SQL query into an executable {@link Query} object bound to the
      * given database. The database is used to resolve table metadata while
      * parsing and when executing joins.
@@ -567,9 +760,6 @@ class QueryParser {
      * @throws IllegalArgumentException if the query is null, empty or unsupported
      */
     public Query<?> parse(String query, Database database) {
-        // Prompt 22 (java:S2259): the Javadoc contract below promises an
-        // IllegalArgumentException for a null query, but query.trim() would
-        // NPE first; guard the parameter explicitly.
         if (query == null) {
             throw new IllegalArgumentException("Query must not be null");
         }
@@ -584,62 +774,10 @@ class QueryParser {
             if (lexerResult != null) {
                 return lexerResult;
             }
-            if (normalized.startsWith("EXPLAIN")) {
-                return parseExplainQuery(normalized, query, database);
-            }
-            if (normalized.startsWith("SELECT")) {
-                return parseSelectQuery(normalized, query, database);
-            } else if (normalized.startsWith("INSERT INTO")) {
-                return parseInsertQuery(normalized, query, database);
-            } else if (normalized.startsWith("UPDATE")) {
-                return parseUpdateQuery(normalized, query, database);
-            } else if (normalized.startsWith("DELETE FROM")) {
-                return parseDeleteQuery(normalized, query, database);
-            } else if (normalized.startsWith("CREATE TABLE")) {
-                return parseCreateTableQuery(normalized, query);
-            } else if (normalized.startsWith("CREATE UNIQUE CLUSTERED INDEX")) {
-                return parseCreateUniqueDurableClusteredIndexQuery(normalized);
-            } else if (normalized.startsWith("CREATE UNIQUE INDEX")) {
-                return parseCreateUniqueIndexQuery(normalized);
-            } else if (normalized.startsWith("CREATE HASH INDEX")) {
-                return parseCreateHashIndexQuery(normalized);
-            } else if (normalized.startsWith("CREATE INDEX")) {
-                return parseCreateIndexQuery(normalized);
-            } else if (normalized.equals("BEGIN") ||
-                    normalized.equals("BEGIN TRANSACTION") ||
-                    normalized.equals("START TRANSACTION") ||
-                    normalized.startsWith("BEGIN TRANSACTION ISOLATION LEVEL") ||
-                    normalized.startsWith("START TRANSACTION ISOLATION LEVEL")) {
-                IsolationLevel isolationLevel = null;
-                if (normalized.contains("ISOLATION LEVEL READ UNCOMMITTED")) {
-                    isolationLevel = IsolationLevel.READ_UNCOMMITTED;
-                } else if (normalized.contains("ISOLATION LEVEL READ COMMITTED")) {
-                    isolationLevel = IsolationLevel.READ_COMMITTED;
-                } else if (normalized.contains("ISOLATION LEVEL REPEATABLE READ")) {
-                    isolationLevel = IsolationLevel.REPEATABLE_READ;
-                } else if (normalized.contains("ISOLATION LEVEL SERIALIZABLE")) {
-                    isolationLevel = IsolationLevel.SERIALIZABLE;
+            for (QueryParseStrategy strategy : parseStrategies) {
+                if (strategy.matches(normalized)) {
+                    return strategy.parse(normalized, query, database);
                 }
-                return new BeginTransactionQuery(isolationLevel);
-            } else if (normalized.equals("COMMIT TRANSACTION") || normalized.equals("COMMIT")) {
-                return new CommitTransactionQuery();
-            } else if (normalized.equals("ROLLBACK TRANSACTION") || normalized.equals("ROLLBACK")) {
-                return new RollbackTransactionQuery();
-            } else if (normalized.startsWith("SET")) {
-                Query<String> setAutoCommitQuery = parseSetAutoCommitQuery(normalized);
-                if (setAutoCommitQuery != null) {
-                    return setAutoCommitQuery;
-                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
-                    return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);
-                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")) {
-                    return new SetIsolationLevelQuery(IsolationLevel.READ_COMMITTED);
-                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
-                    return new SetIsolationLevelQuery(IsolationLevel.REPEATABLE_READ);
-                } else if (normalized.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
-                    return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
-                }
-            } else if (normalized.startsWith("ANALYZE")) {
-                return parseAnalyzeTableQuery(normalized);
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
@@ -1365,6 +1503,19 @@ class QueryParser {
         tableAliases.put(tableName, tableName);
 
         String mainTableName = tableName;
+        joins = parseJoins(joinParts, mainTableName, database, tableAndJoinsOriginal, tableAliases, combinedColumnTypes);
+
+        return new TableJoins(mainTableName, tableAlias, joins, tableAliases, combinedColumnTypes);
+    }
+
+    // Парсит JOIN-части (выделено из parseTableAndJoins для снижения
+    // когнитивной сложности — java:S3776). Мутирует tableAliases и
+    // combinedColumnTypes, возвращает список JoinInfo.
+    private List<JoinInfo> parseJoins(List<String> joinParts, String mainTableName, Database database,
+            String tableAndJoinsOriginal, Map<String, String> tableAliases,
+            Map<String, Class<?>> combinedColumnTypes) {
+        List<JoinInfo> joins = new ArrayList<>();
+        String tableName = mainTableName;
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
             String joinPart = joinParts.get(i + 1).trim();
@@ -1453,8 +1604,7 @@ class QueryParser {
             }
             tableName = joinTableName;
         }
-
-        return new TableJoins(mainTableName, tableAlias, joins, tableAliases, combinedColumnTypes);
+        return joins;
     }
 
     // Парсит тип соединения
