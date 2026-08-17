@@ -467,6 +467,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Objects.requireNonNull(table, "Main table must not be null");
         Database database = Objects.requireNonNull(table.getDatabase(),
                 "Table " + mainTableName + " is not attached to a database");
+        return executeSelect(table, database);
+    }
+
+    // Prompt 29 (execute() complexity 59): the main flow is split into
+    // focused phases, each under the complexity threshold - executeSelect
+    // (setup + orchestration), applyJoins, applyWhereFilter, applyGroupBy,
+    // applyOrderBy and applyLimitOffset. All phases are behavior-preserving.
+    private List<Map<String, Object>> executeSelect(Table table, Database database) {
         // Prompt 18: per-query phase timing. The plan phase covers the setup
         // below (join reordering, ORDER BY key resolution, projection plan);
         // the execute phase covers everything between the main scan and the
@@ -478,7 +486,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         lastPlanNanos = 0;
         lastExecuteNanos = 0;
         lastSortNanos = 0;
-        List<Map<String, Object>> result = new ArrayList<>();
         List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
         Map<String, Table> tables = new HashMap<>();
         tables.put(mainTableName, table);
@@ -543,255 +550,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
 
-            for (QueryParser.JoinInfo join : joins) {
-                Table joinTable = tables.get(join.tableName);
-                List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+            joinedRows = applyJoins(mainRows, joinedRows, tables, combinedColumnTypes, useStreaming,
+                    spill, spillActive, spillFallback, acquiredLocks);
 
-                boolean useHashJoin = canUseHashJoin(join, combinedColumnTypes);
-                if (hasOrInOnConditions(join)) {
-                    LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
-                }
-                LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
+            List<Map<String, Object>> filteredRows = applyWhereFilter(joinedRows, useStreaming,
+                    spill, spillActive, spillFallback, combinedColumnTypes, tables);
 
-                // Prompt 15: when a JOIN equality column has no index, one is
-                // auto-created (in-memory B-tree) so later joins and lookups on
-                // that column can use it, with an advisory warning. Idempotent
-                // (existing indexes and the clustered PK are skipped) and never
-                // fatal: any failure only degrades to a log record.
-                ensureJoinColumnIndexes(tables, join);
-
-                if (useHashJoin) {
-                    Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : tables.get(mainTableName);
-                    Table probeTable = buildTable == joinTable ? tables.get(mainTableName) : joinTable;
-                    String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
-                    String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
-
-                    QueryParser.Condition equalityCondition = join.onConditions.stream()
-                            .filter(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison())
-                            .findFirst()
-                            .orElse(null);
-                    if (equalityCondition == null) {
-                        throw new IllegalStateException("No equality condition for hash join");
-                    }
-                    String buildColumn = resolveJoinColumn(equalityCondition, buildTableName);
-                    String probeColumn = resolveJoinColumn(equalityCondition, probeTableName);
-                    if (buildColumn == null || probeColumn == null) {
-                        throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
-                    }
-
-                    List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, combinedColumnTypes);
-                    if (buildRows == null) {
-                        buildRows = buildTable.getRows();
-                    }
-                    String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
-
-                    // When the ON clause is exactly one plain equality, the hash
-                    // match already guarantees the condition, so we skip the
-                    // flatten+evaluate round trip entirely.
-                    boolean onlyEquality = join.onConditions.size() == 1 && equalityCondition != null && !equalityCondition.not;
-                    boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
-
-                    // Estimate the hash table size before building it, so a huge
-                    // build side never materialises an in-memory hash table that
-                    // could cause an OutOfMemoryError (see Prompt 10). When either
-                    // the estimated row count or the estimated byte size exceeds
-                    // its budget, the partitioned hash join is used: it spills
-                    // partition files to disk and keeps peak memory bounded by a
-                    // single partition, so it stays O(build + probe + result)
-                    // instead of falling back to the O(n x m) nested loop.
-                    long estimatedRows = buildRows.size();
-                    long estimatedBytes = estimateHashTableSizeBytes(buildRows, buildTable);
-
-                    if (preferNestedLoopByStatistics(buildTable, probeTable)) {
-                        // Statistics say the row-count product is too small for
-                        // the hash table build/probe overhead to pay off, so a
-                        // nested loop is cheaper (see Prompt 14).
-                        LOGGER.log(Level.FINE, "Statistics prefer nested loop over hash join for join on {0} ({1} x {2} rows)",
-                                new Object[]{join.tableName, buildTable.getStatistics().getRowCount(), probeTable.getStatistics().getRowCount()});
-                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
-                                spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
-                    } else if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
-                        // Build side estimated above the memory budget: use the
-                        // partitioned hash join, which spills partition files to
-                        // disk and keeps peak memory bounded by a single partition.
-                        try {
-                            newJoinedRows = runPartitionedHashJoin(buildRows, buildTable, probeTable,
-                                    buildTableName, probeTableName, buildColumnKey,
-                                    normalizeColumnKey(probeColumn, probeTableName),
-                                    join, onlyEquality, lastStream, spill, spillActive, spillFallback,
-                                    conditions, combinedColumnTypes, tables, acquiredLocks);
-                            LOGGER.log(Level.INFO, "Partitioned hash join completed: {0} rows produced for join on {1}",
-                                    new Object[]{newJoinedRows.size(), join.tableName});
-                        } catch (IOException e) {
-                            LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
-                            newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
-                                    spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
-                        }
-                    } else {
-                        newJoinedRows = runInMemoryHashJoin(buildRows, buildTable, probeTable,
-                                buildTableName, probeTableName, buildColumnKey,
-                                normalizeColumnKey(probeColumn, probeTableName),
-                                join, onlyEquality, lastStream, spill, spillActive, spillFallback,
-                                conditions, combinedColumnTypes, tables, acquiredLocks);
-                        LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
-                                new Object[]{newJoinedRows.size(), join.tableName});
-                    }
-                } else {
-                    newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
-                            spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
-                }
-                joinedRows = newJoinedRows;
-            }
-
-            List<Map<String, Object>> filteredRows;
-            if (useStreaming) {
-                filteredRows = new ArrayList<>();
-                if (spillActive[0] && spill != null) {
-                    try {
-                        spill.finishWriting();
-                        while (spill.hasNext()) {
-                            checkResultRowLimit(filteredRows.size(), "filter");
-                            filteredRows.add(spill.next());
-                        }
-                    } catch (IOException e) {
-                        spillActive[0] = false;
-                    } finally {
-                        spill.close();
-                    }
-                }
-                if (!spillActive[0] && spillFallback != null) {
-                    filteredRows = spillFallback;
-                }
-            } else {
-                filteredRows = new ArrayList<>();
-                for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
-                    Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
-                    if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes, tables)) {
-                        checkResultRowLimit(filteredRows.size(), "filter");
-                        filteredRows.add(flattenedRow);
-                    }
-                }
-            }
-
-            List<Map<String, Object>> finalRows;
-            if (!groupBy.isEmpty()) {
-                Map<List<Object>, List<Map<String, Object>>> groupedRows = filteredRows.stream()
-                        .collect(Collectors.groupingBy(row -> groupBy.stream()
-                                .map(col -> groupBySubQueries.containsKey(col)
-                                        ? evaluateGroupBySubQuery(groupBySubQueries.get(col), row, database)
-                                        : row.get(normalizeColumnName(col, mainTableName)))
-                                .collect(Collectors.toList())));
-
-                groupAggregateKeys.clear();
-                for (QueryParser.AggregateFunction agg : aggregates) {
-                    String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                    groupAggregateKeys.add(resultKey);
-                }
-
-                finalRows = new ArrayList<>();
-                for (List<Object> groupKey : groupedRows.keySet()) {
-                    List<Map<String, Object>> group = groupedRows.get(groupKey);
-                    Map<String, Object> resultRow = new HashMap<>();
-
-                    for (int i = 0; i < groupBy.size(); i++) {
-                        String column = groupBy.get(i);
-                        String normalizedColumn = normalizeColumnName(column, mainTableName);
-                        resultRow.put(normalizedColumn, groupKey.get(i));
-                    }
-
-                    for (QueryParser.AggregateFunction agg : aggregates) {
-                        String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                        resultRow.put(resultKey, computeAggregate(agg, group, combinedColumnTypes));
-                    }
-
-                    for (QueryParser.HavingCondition havingCondition : havingConditions) {
-                        addMissingHavingAggregates(havingCondition, resultRow, group, combinedColumnTypes);
-                    }
-
-                    for (String column : columns) {
-                        String normalizedColumn = normalizeColumnName(column, mainTableName);
-                        if (!resultRow.containsKey(normalizedColumn)) {
-                            Object value = group.get(0).get(normalizedColumn);
-                            resultRow.put(normalizedColumn, value);
-                        }
-                    }
-
-                    if (!havingConditions.isEmpty()) {
-                        if (!evaluateHavingConditions(resultRow, havingConditions)) {
-                            continue;
-                        }
-                    }
-
-                    checkResultRowLimit(finalRows.size(), "group by");
-                    finalRows.add(resultRow);
-                }
-                LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
-                        new Object[]{groupBy.size(), finalRows.size()});
-            } else {
-                finalRows = filteredRows;
-            }
+            List<Map<String, Object>> finalRows = applyGroupBy(filteredRows, database, combinedColumnTypes);
 
             beforeSort = System.nanoTime();
             lastExecuteNanos += beforeSort - execStart;
-            if (!orderBy.isEmpty()) {
-                finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
-                LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses (streaming={1})",
-                        new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
-            }
+            applyOrderBy(finalRows, useStreaming);
             sortStart = System.nanoTime();
             lastSortNanos = sortStart - beforeSort;
             execStart = sortStart;
 
-            if (offset != null && limit == null) {
-                LOGGER.warning("OFFSET without LIMIT may be inefficient");
-            }
-
-            if (!aggregates.isEmpty() && groupBy.isEmpty()) {
-                // Aggregates without GROUP BY produce a single row. The aggregate
-                // must be computed over ALL (filtered and sorted) rows; LIMIT/OFFSET
-                // then applies to that single result row, so
-                // SELECT COUNT(*) FROM t LIMIT 1 returns the full count and
-                // SELECT COUNT(*) FROM t LIMIT 0 returns an empty result.
-                Map<String, Object> resultRow = new HashMap<>();
-                for (QueryParser.AggregateFunction agg : aggregates) {
-                    String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                    resultRow.put(resultKey, computeAggregate(agg, finalRows, combinedColumnTypes));
-                }
-                int rowsSkipped = (offset != null) ? offset : 0;
-                int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
-                if (rowsSkipped == 0 && maxRows > 0) {
-                    checkResultRowLimit(result.size(), "result");
-                    result.add(resultRow);
-                }
-            } else {
-                int rowsSkipped = (offset != null) ? offset : 0;
-                int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
-                List<Map<String, Object>> selectedRows = new ArrayList<>();
-                for (int i = 0; i < finalRows.size() && selectedRows.size() < maxRows; i++) {
-                    if (rowsSkipped > 0) {
-                        rowsSkipped--;
-                        continue;
-                    }
-                    selectedRows.add(finalRows.get(i));
-                }
-                if (groupAggregateKeys.isEmpty()) {
-                    for (Map<String, Object> row : selectedRows) {
-                        checkResultRowLimit(result.size(), "result");
-                        result.add(filterColumns(row, columns));
-                    }
-                } else {
-                    for (Map<String, Object> row : selectedRows) {
-                        Map<String, Object> filteredRow = filterColumns(row, columns);
-                        for (String aggregateKey : groupAggregateKeys) {
-                            if (row.containsKey(aggregateKey)) {
-                                filteredRow.put(aggregateKey, row.get(aggregateKey));
-                            }
-                        }
-                        checkResultRowLimit(result.size(), "result");
-                        result.add(filteredRow);
-                    }
-                }
-            }
+            List<Map<String, Object>> result = applyLimitOffset(finalRows, combinedColumnTypes);
 
             LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, having={5}, limit={6}, offset={7}, orderBy={8}",
                     new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
@@ -803,6 +577,293 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 lock.readLock().unlock();
             }
         }
+    }
+
+    // Prompt 29: applies every JOIN (hash / partitioned hash / block nested
+    // loop / statistics-preferred nested loop) and returns the joined rows.
+    private List<Map<String, Map<String, Object>>> applyJoins(
+            List<Map<String, Object>> mainRows,
+            List<Map<String, Map<String, Object>>> joinedRows,
+            Map<String, Table> tables,
+            Map<String, Class<?>> combinedColumnTypes,
+            boolean useStreaming,
+            StreamingResultIterator spill,
+            boolean[] spillActive,
+            List<Map<String, Object>> spillFallback,
+            List<ReentrantReadWriteLock> acquiredLocks) {
+        for (QueryParser.JoinInfo join : joins) {
+            Table joinTable = tables.get(join.tableName);
+            List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+
+            boolean useHashJoin = canUseHashJoin(join, combinedColumnTypes);
+            if (hasOrInOnConditions(join)) {
+                LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
+            }
+            LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
+
+            // Prompt 15: when a JOIN equality column has no index, one is
+            // auto-created (in-memory B-tree) so later joins and lookups on
+            // that column can use it, with an advisory warning. Idempotent
+            // (existing indexes and the clustered PK are skipped) and never
+            // fatal: any failure only degrades to a log record.
+            ensureJoinColumnIndexes(tables, join);
+
+            if (useHashJoin) {
+                Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : tables.get(mainTableName);
+                Table probeTable = buildTable == joinTable ? tables.get(mainTableName) : joinTable;
+                String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
+                String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
+
+                QueryParser.Condition equalityCondition = join.onConditions.stream()
+                        .filter(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison())
+                        .findFirst()
+                        .orElse(null);
+                if (equalityCondition == null) {
+                    throw new IllegalStateException("No equality condition for hash join");
+                }
+                String buildColumn = resolveJoinColumn(equalityCondition, buildTableName);
+                String probeColumn = resolveJoinColumn(equalityCondition, probeTableName);
+                if (buildColumn == null || probeColumn == null) {
+                    throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
+                }
+
+                List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, combinedColumnTypes);
+                if (buildRows == null) {
+                    buildRows = buildTable.getRows();
+                }
+                String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
+
+                // When the ON clause is exactly one plain equality, the hash
+                // match already guarantees the condition, so we skip the
+                // flatten+evaluate round trip entirely.
+                boolean onlyEquality = join.onConditions.size() == 1 && equalityCondition != null && !equalityCondition.not;
+                boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
+
+                // Estimate the hash table size before building it, so a huge
+                // build side never materialises an in-memory hash table that
+                // could cause an OutOfMemoryError (see Prompt 10). When either
+                // the estimated row count or the estimated byte size exceeds
+                // its budget, the partitioned hash join is used: it spills
+                // partition files to disk and keeps peak memory bounded by a
+                // single partition, so it stays O(build + probe + result)
+                // instead of falling back to the O(n x m) nested loop.
+                long estimatedRows = buildRows.size();
+                long estimatedBytes = estimateHashTableSizeBytes(buildRows, buildTable);
+
+                if (preferNestedLoopByStatistics(buildTable, probeTable)) {
+                    // Statistics say the row-count product is too small for
+                    // the hash table build/probe overhead to pay off, so a
+                    // nested loop is cheaper (see Prompt 14).
+                    LOGGER.log(Level.FINE, "Statistics prefer nested loop over hash join for join on {0} ({1} x {2} rows)",
+                            new Object[]{join.tableName, buildTable.getStatistics().getRowCount(), probeTable.getStatistics().getRowCount()});
+                    newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
+                            spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
+                } else if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+                    // Build side estimated above the memory budget: use the
+                    // partitioned hash join, which spills partition files to
+                    // disk and keeps peak memory bounded by a single partition.
+                    try {
+                        newJoinedRows = runPartitionedHashJoin(buildRows, buildTable, probeTable,
+                                buildTableName, probeTableName, buildColumnKey,
+                                normalizeColumnKey(probeColumn, probeTableName),
+                                join, onlyEquality, lastStream, spill, spillActive, spillFallback,
+                                conditions, combinedColumnTypes, tables, acquiredLocks);
+                        LOGGER.log(Level.INFO, "Partitioned hash join completed: {0} rows produced for join on {1}",
+                                new Object[]{newJoinedRows.size(), join.tableName});
+                    } catch (IOException e) {
+                        LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
+                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
+                                spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
+                    }
+                } else {
+                    newJoinedRows = runInMemoryHashJoin(buildRows, buildTable, probeTable,
+                            buildTableName, probeTableName, buildColumnKey,
+                            normalizeColumnKey(probeColumn, probeTableName),
+                            join, onlyEquality, lastStream, spill, spillActive, spillFallback,
+                            conditions, combinedColumnTypes, tables, acquiredLocks);
+                    LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
+                            new Object[]{newJoinedRows.size(), join.tableName});
+                }
+            } else {
+                newJoinedRows = runBlockNestedLoopJoin(joinedRows, join, joinTable, tables, useStreaming,
+                        spill, spillActive, spillFallback, conditions, combinedColumnTypes, acquiredLocks);
+            }
+            joinedRows = newJoinedRows;
+        }
+        return joinedRows;
+    }
+
+    // Prompt 29: applies the WHERE filter (streaming drain or flatten +
+    // evaluate per joined row) and returns the filtered rows.
+    private List<Map<String, Object>> applyWhereFilter(
+            List<Map<String, Map<String, Object>>> joinedRows,
+            boolean useStreaming,
+            StreamingResultIterator spill,
+            boolean[] spillActive,
+            List<Map<String, Object>> spillFallback,
+            Map<String, Class<?>> combinedColumnTypes,
+            Map<String, Table> tables) {
+        List<Map<String, Object>> filteredRows;
+        if (useStreaming) {
+            filteredRows = new ArrayList<>();
+            if (spillActive[0] && spill != null) {
+                try {
+                    spill.finishWriting();
+                    while (spill.hasNext()) {
+                        checkResultRowLimit(filteredRows.size(), "filter");
+                        filteredRows.add(spill.next());
+                    }
+                } catch (IOException e) {
+                    spillActive[0] = false;
+                } finally {
+                    spill.close();
+                }
+            }
+            if (!spillActive[0] && spillFallback != null) {
+                filteredRows = spillFallback;
+            }
+        } else {
+            filteredRows = new ArrayList<>();
+            for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
+                Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
+                if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes, tables)) {
+                    checkResultRowLimit(filteredRows.size(), "filter");
+                    filteredRows.add(flattenedRow);
+                }
+            }
+        }
+        return filteredRows;
+    }
+
+    // Prompt 29: groups the filtered rows (with per-group aggregates and
+    // HAVING) and returns the final grouped rows.
+    private List<Map<String, Object>> applyGroupBy(List<Map<String, Object>> filteredRows,
+            Database database, Map<String, Class<?>> combinedColumnTypes) {
+        List<Map<String, Object>> finalRows;
+        if (!groupBy.isEmpty()) {
+            Map<List<Object>, List<Map<String, Object>>> groupedRows = filteredRows.stream()
+                    .collect(Collectors.groupingBy(row -> groupBy.stream()
+                            .map(col -> groupBySubQueries.containsKey(col)
+                                    ? evaluateGroupBySubQuery(groupBySubQueries.get(col), row, database)
+                                    : row.get(normalizeColumnName(col, mainTableName)))
+                            .collect(Collectors.toList())));
+
+            groupAggregateKeys.clear();
+            for (QueryParser.AggregateFunction agg : aggregates) {
+                String resultKey = agg.alias != null ? agg.alias : agg.toString();
+                groupAggregateKeys.add(resultKey);
+            }
+
+            finalRows = new ArrayList<>();
+            for (List<Object> groupKey : groupedRows.keySet()) {
+                List<Map<String, Object>> group = groupedRows.get(groupKey);
+                Map<String, Object> resultRow = new HashMap<>();
+
+                for (int i = 0; i < groupBy.size(); i++) {
+                    String column = groupBy.get(i);
+                    String normalizedColumn = normalizeColumnName(column, mainTableName);
+                    resultRow.put(normalizedColumn, groupKey.get(i));
+                }
+
+                for (QueryParser.AggregateFunction agg : aggregates) {
+                    String resultKey = agg.alias != null ? agg.alias : agg.toString();
+                    resultRow.put(resultKey, computeAggregate(agg, group, combinedColumnTypes));
+                }
+
+                for (QueryParser.HavingCondition havingCondition : havingConditions) {
+                    addMissingHavingAggregates(havingCondition, resultRow, group, combinedColumnTypes);
+                }
+
+                for (String column : columns) {
+                    String normalizedColumn = normalizeColumnName(column, mainTableName);
+                    if (!resultRow.containsKey(normalizedColumn)) {
+                        Object value = group.get(0).get(normalizedColumn);
+                        resultRow.put(normalizedColumn, value);
+                    }
+                }
+
+                if (!havingConditions.isEmpty()) {
+                    if (!evaluateHavingConditions(resultRow, havingConditions)) {
+                        continue;
+                    }
+                }
+
+                checkResultRowLimit(finalRows.size(), "group by");
+                finalRows.add(resultRow);
+            }
+            LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
+                    new Object[]{groupBy.size(), finalRows.size()});
+        } else {
+            finalRows = filteredRows;
+        }
+        return finalRows;
+    }
+
+    // Prompt 29: sorts the final rows by the ORDER BY clauses.
+    private void applyOrderBy(List<Map<String, Object>> finalRows, boolean useStreaming) {
+        if (!orderBy.isEmpty()) {
+            finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
+            LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses (streaming={1})",
+                    new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
+        }
+    }
+
+    // Prompt 29: applies LIMIT/OFFSET (and the single-row aggregates-without-
+    // GROUP BY case), projects the selected columns and returns the result.
+    private List<Map<String, Object>> applyLimitOffset(List<Map<String, Object>> finalRows,
+            Map<String, Class<?>> combinedColumnTypes) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (offset != null && limit == null) {
+            LOGGER.warning("OFFSET without LIMIT may be inefficient");
+        }
+
+        if (!aggregates.isEmpty() && groupBy.isEmpty()) {
+            // Aggregates without GROUP BY produce a single row. The aggregate
+            // must be computed over ALL (filtered and sorted) rows; LIMIT/OFFSET
+            // then applies to that single result row, so
+            // SELECT COUNT(*) FROM t LIMIT 1 returns the full count and
+            // SELECT COUNT(*) FROM t LIMIT 0 returns an empty result.
+            Map<String, Object> resultRow = new HashMap<>();
+            for (QueryParser.AggregateFunction agg : aggregates) {
+                String resultKey = agg.alias != null ? agg.alias : agg.toString();
+                resultRow.put(resultKey, computeAggregate(agg, finalRows, combinedColumnTypes));
+            }
+            int rowsSkipped = (offset != null) ? offset : 0;
+            int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
+            if (rowsSkipped == 0 && maxRows > 0) {
+                checkResultRowLimit(result.size(), "result");
+                result.add(resultRow);
+            }
+        } else {
+            int rowsSkipped = (offset != null) ? offset : 0;
+            int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
+            List<Map<String, Object>> selectedRows = new ArrayList<>();
+            for (int i = 0; i < finalRows.size() && selectedRows.size() < maxRows; i++) {
+                if (rowsSkipped > 0) {
+                    rowsSkipped--;
+                    continue;
+                }
+                selectedRows.add(finalRows.get(i));
+            }
+            if (groupAggregateKeys.isEmpty()) {
+                for (Map<String, Object> row : selectedRows) {
+                    checkResultRowLimit(result.size(), "result");
+                    result.add(filterColumns(row, columns));
+                }
+            } else {
+                for (Map<String, Object> row : selectedRows) {
+                    Map<String, Object> filteredRow = filterColumns(row, columns);
+                    for (String aggregateKey : groupAggregateKeys) {
+                        if (row.containsKey(aggregateKey)) {
+                            filteredRow.put(aggregateKey, row.get(aggregateKey));
+                        }
+                    }
+                    checkResultRowLimit(result.size(), "result");
+                    result.add(filteredRow);
+                }
+            }
+        }
+        return result;
     }
 
     private boolean shouldUseStreaming(List<Map<String, Object>> mainRows, Map<String, Table> tables) {
