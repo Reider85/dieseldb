@@ -916,7 +916,7 @@ class QueryParser {
         if (tableName.endsWith(";")) {
             tableName = tableName.substring(0, tableName.length() - 1).trim();
         }
-        if (tableName.isEmpty() || tableName.matches(".*\\s+.*") || tableName.contains("(")) {
+        if (tableName.isEmpty() || CharOps.containsWhitespace(tableName) || tableName.contains("(")) {
             throw new IllegalArgumentException("Invalid ANALYZE TABLE syntax: expected 'ANALYZE TABLE <table name>'");
         }
         return new AnalyzeTableQuery(tableName.toUpperCase());
@@ -1335,7 +1335,6 @@ class QueryParser {
         Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
-        Pattern starPattern = Pattern.compile("^\\*$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -1449,7 +1448,7 @@ class QueryParser {
                 } else {
                     LOGGER.log(Level.FINE, "Разобран столбец: {0}", new Object[]{column});
                 }
-            } else if (starPattern.matcher(trimmedItem).matches()) {
+            } else if (trimmedItem.equals("*")) {
                 columns.add("*");
                 LOGGER.log(Level.FINE, "Разобран столбец: *");
             } else {
@@ -2203,11 +2202,11 @@ class QueryParser {
                 String strippedValue = SqlLexer.extractStringLiteral(valueStr);
                 if (columnType == String.class) {
                     return strippedValue;
-                } else if (columnType == LocalDate.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                } else if (columnType == LocalDate.class && CharOps.isLocalDateLiteral(strippedValue)) {
                     return LocalDate.parse(strippedValue);
-                } else if (columnType == LocalDateTime.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}")) {
+                } else if (columnType == LocalDateTime.class && CharOps.isLocalDateTimeMillisLiteral(strippedValue)) {
                     return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
-                } else if (columnType == LocalDateTime.class && strippedValue.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                } else if (columnType == LocalDateTime.class && CharOps.isLocalDateTimeLiteral(strippedValue)) {
                     return LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
                 } else if (columnType == UUID.class && strippedValue.matches(UUID_PATTERN)) {
                     return UUID.fromString(strippedValue);

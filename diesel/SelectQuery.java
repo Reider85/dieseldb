@@ -2322,7 +2322,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             String[] parts = trimmed.split("\\s+AS\\s+|\\s+", 2);
             if (parts.length > 1) {
                 columnAlias = parts[1].trim();
-                if (!columnAlias.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+                if (!CharOps.isAsciiIdentifier(columnAlias)) {
                     columnAlias = normalizeColumnKey(column, mainTableName);
                 }
             }
