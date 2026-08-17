@@ -1543,7 +1543,7 @@ class QueryParser {
         if (limitIndex != -1) {
             String beforeLimit = tableAndJoinsOriginal.substring(0, limitIndex).trim();
             String afterLimit = tableAndJoinsOriginal.substring(limitIndex + 5).trim();
-            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
+            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+)|(?:\\s*;\\s*)?\\s*$)");
             Matcher limitMatcher = limitPattern.matcher(afterLimit);
             if (limitMatcher.find()) {
                 String limitValue = limitMatcher.group(1);
@@ -1573,7 +1573,7 @@ class QueryParser {
         if (offsetIndex != -1) {
             String beforeOffset = tableAndJoinsOriginal.substring(0, offsetIndex).trim();
             String afterOffset = tableAndJoinsOriginal.substring(offsetIndex + 6).trim();
-            Pattern offsetPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s*;\\s*$)");
+            Pattern offsetPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
             Matcher offsetMatcher = offsetPattern.matcher(afterOffset);
             if (offsetMatcher.find()) {
                 offset = Integer.parseInt(offsetMatcher.group(1));

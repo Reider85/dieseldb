@@ -49,7 +49,7 @@
 | 23 | ✔ DONE (2026-08-16) | Удаление мёртвого кода (S2583, S108, S1144, S1068) | LOW |
 | 24 | ✔ DONE (2026-08-16) | Double Brace Initialization (S3599) | LOW |
 | 25 | ✔ DONE (2026-08-16) | Игнорирование возвращаемых значений (S899) | MEDIUM |
-| 26 | ❌ TODO | Regex grouping (S5850) | MEDIUM |
+| 26 | ✔ DONE (2026-08-17) | Regex grouping (S5850) | MEDIUM |
 | 27 | ❌ TODO | Regex repeated patterns (S5842) | MEDIUM |
 | 28 | ❌ TODO | Cognitive Complexity QueryParser (S3776) | MEDIUM |
 | 29 | ❌ TODO | Refactor SelectQuery.execute() (complexity=59) | HIGH |

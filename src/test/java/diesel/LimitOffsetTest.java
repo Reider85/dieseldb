@@ -368,4 +368,43 @@ public class LimitOffsetTest {
                     "COUNT(*) must be computed over all rows, not limited rows");
         }, "aggregateWithoutGroupByLimitOffset");
     }
+
+    // --- Regression coverage for the S5850 regex regrouping (LIMIT/OFFSET tail branches) ---
+
+    @Test
+    void limitWithTrailingSemicolonStatementTerminator() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS LIMIT 5;");
+            assertEquals(5, rows.size(), "LIMIT 5; (terminated by semicolon) must return exactly five rows");
+        }, "limitWithTrailingSemicolonStatementTerminator");
+    }
+
+    @Test
+    void limitWithSpaceBeforeTrailingSemicolon() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS LIMIT 5 ;");
+            assertEquals(5, rows.size(), "LIMIT 5 ; (whitespace before terminator) must return exactly five rows");
+        }, "limitWithSpaceBeforeTrailingSemicolon");
+    }
+
+    @Test
+    void standaloneOffsetWithTrailingSemicolon() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect("SELECT ID, NAME FROM USERS OFFSET 5;");
+            assertEquals(RECORD_COUNT - 5, rows.size(), "OFFSET 5; must skip the first five rows");
+            assertEquals(6L, ((Number) rows.get(0).get("ID")).longValue(),
+                    "first row after OFFSET 5 must have ID 6");
+        }, "standaloneOffsetWithTrailingSemicolon");
+    }
+
+    @Test
+    void subqueryLimitWithStatementTerminatorEquivalent() {
+        assertDoesNotThrow(() -> {
+            List<Map<String, Object>> rows = runSelect(
+                    "SELECT * FROM (SELECT ID, NAME FROM USERS ORDER BY ID LIMIT 3) AS subq");
+            assertEquals(3, rows.size(), "LIMIT 3 inside a derived table must return three rows");
+            assertEquals(3L, ((Number) rows.get(2).get("ID")).longValue(),
+                    "third row of the derived table must have ID 3");
+        }, "subqueryLimitWithStatementTerminatorEquivalent");
+    }
 }

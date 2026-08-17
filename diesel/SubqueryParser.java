@@ -706,12 +706,12 @@ public class SubqueryParser {
         // Обработка LIMIT
         if (limitIndex != -1 && limitIndex > whereIndex && limitIndex > groupByIndex && limitIndex > orderByIndex) {
             String afterLimit = tableAndJoins.substring(limitIndex + 5).trim();
-            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:$|\\s+OFFSET\\s+|\\s*;\\s*$)");
+            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+)|(?:\\s*;\\s*)?\\s*$)");
             Matcher limitMatcher = limitPattern.matcher(afterLimit);
             if (limitMatcher.find()) {
                 limit = Integer.parseInt(limitMatcher.group(1));
                 String remaining = afterLimit.substring(limitMatcher.end()).trim();
-                Pattern offsetPattern = Pattern.compile("(?i)^OFFSET\\s+(\\d+)\\s*(?:$|\\s*;\\s*$)");
+                Pattern offsetPattern = Pattern.compile("(?i)^OFFSET\\s+(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
                 Matcher offsetMatcher = offsetPattern.matcher(remaining);
                 if (offsetMatcher.find()) {
                     offset = Integer.parseInt(offsetMatcher.group(1));
