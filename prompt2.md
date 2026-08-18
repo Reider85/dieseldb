@@ -661,9 +661,222 @@ boolean result = condition;
 Приоритет: MAINTAINABILITY
 ```
 
-## Раздел 2: Оптимизация производительности (20 промптов)
+## Раздел 2: Исправление топ-10 проблем SonarQube по принципу Парето (10 промптов)
+*На основе документа sonaranalytics2.md - эти 10 правил устранят 652 проблемы из 813 (80.2%)*
 
-### Промпт 41: Оптимизация updateIndicesAfterInsert (O(n × m × log n))
+### Промпт 41: Замена '[A-Za-z0-9_]' на '\w' в регулярных выражениях (java:S6353, 119 проблем)
+```
+Проблема: В коде используются избыточные character classes '[A-Za-z0-9_]' вместо краткой формы '\w'.
+
+Задача:
+1. Найди все regex паттерны с '[A-Za-z0-9_]' в QueryParser.java, SubqueryParser.java, SqlLexer.java
+2. Замени '[A-Za-z0-9_]' на '\w' во всех регулярных выражениях
+3. Проверь что замена не меняет семантику regex (класс \w включает [a-zA-Z0-9_])
+4. Добавь тесты на парсинг идентификаторов с цифрами и подчёркиваниями
+
+Пример замены:
+БЫЛО: Pattern.compile("[A-Za-z0-9_]+")
+СТАЛО: Pattern.compile("\\w+")
+
+Файлы: diesel/QueryParser.java, diesel/SubqueryParser.java, diesel/SqlLexer.java
+Приоритет: HIGH (119 проблем, самая частая проблема в проекте)
+```
+
+### Промпт 42: Рефакторинг методов с высокой Cognitive Complexity (java:S3776, 92 проблемы)
+```
+Проблема: Методы имеют Cognitive Complexity >15 (порог), некоторые >50.
+
+Задача:
+1. Найди методы с complexity >20 в QueryParser.java и SelectQuery.java
+2. Вынеси крупные блоки кода в отдельные методы:
+   - parseSelectStatement() - парсинг SELECT запросов
+   - parseJoinClause() - обработка JOIN условий
+   - parseWhereCondition() - парсинг WHERE условий
+   - parseGroupByClause() - обработка GROUP BY
+   - parseOrderByClause() - обработка ORDER BY
+3. Используй early return для уменьшения вложенности
+4. Примени Strategy pattern для разных типов запросов
+
+Цель: каждый метод должен иметь complexity <20.
+Файлы: diesel/QueryParser.java, diesel/SelectQuery.java, diesel/SubqueryParser.java
+Приоритет: CRITICAL (92 проблемы, влияет на поддерживаемость)
+```
+
+### Промпт 43: Использование pattern matching для instanceof (java:S6201, 84 проблемы)
+```
+Проблема: Устаревший паттерн instanceof + cast вместо pattern matching (Java 16+).
+
+Задача:
+1. Найди все конструкции вида:
+   if (obj instanceof Query) {
+       Query q = (Query) obj;
+       ...
+   }
+2. Замени на pattern matching syntax (Java 16+):
+   if (obj instanceof Query q) {
+       // q уже приведён к типу Query
+       ...
+   }
+3. Проверь что версия Java в pom.xml установлена на 16 или выше
+4. Добавь тесты что рефакторинг не изменил логику
+
+Файлы: diesel/QueryParser.java, diesel/SelectQuery.java, diesel/SubqueryParser.java
+Приоритет: MEDIUM (84 проблемы, улучшает читаемость кода)
+```
+
+### Промпт 44: Устранение рекурсивных паттернов в regex (java:S5998, 57 проблем)
+```
+Проблема: Регулярные выражения могут вызвать StackOverflowError при большой вложенности.
+
+Задача:
+1. Найди regex с вложенными квантификаторами: (.*?)+, ([a-z]+)+, (.*)* 
+2. Перепиши с possessive квантификаторами: (?>...), .*+, .++
+3. Разбей сложные regex на несколько простых паттернов
+4. Добавь тесты на SQL с глубиной вложенности 100+ уровней
+
+Пример:
+БЫЛО: Pattern.compile("((SELECT|INSERT).*?)+")
+СТАЛО: Pattern.compile("(?>SELECT|INSERT)(?:.*?(?>SELECT|INSERT))*")
+
+Файлы: diesel/QueryParser.java, diesel/SubqueryParser.java, diesel/SqlLexer.java
+Приоритет: CRITICAL (BUG - риск падения production при больших запросах)
+```
+
+### Промпт 45: Вынос строковых литералов в константы (java:S1192, 41 проблема)
+```
+Проблема: Строковые литералы дублируются в коде 3+ раз.
+
+Задача:
+1. Найди повторяющиеся литералы:
+   - " does not exist", "already exists"
+   - "SELECT", "INSERT", "UPDATE", "DELETE"
+   - "WHERE", "GROUP BY", "ORDER BY", "LIMIT", "OFFSET"
+   - "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "CROSS JOIN"
+   - "NULL", "TRUE", "FALSE", "AND", "OR", "NOT"
+2. Создай класс SqlConstants или используй существующий SqlKeywords
+3. Замени все литералы на константы
+
+Пример:
+БЫЛО: throw new Exception("Table " + name + " does not exist");
+СТАЛО: throw new Exception("Table " + name + TABLE_DOES_NOT_EXIST);
+
+Файлы: diesel/SqlKeywords.java (создать или обновить), diesel/*.java
+Приоритет: HIGH (41 проблема, улучшает maintainability)
+```
+
+### Промпт 46: Удаление неиспользуемых импортов (java:S1128, 36 проблем)
+```
+Проблема: В файлах присутствуют неиспользуемые import statements.
+
+Задача:
+1. Найди все unused imports (IntelliJ: Code → Optimize Imports)
+2. Особенно проверь импорты:
+   - diesel.ThreeValuedLogic.TRUE/FALSE/UNKNOWN
+   - java.util.* которые не используются
+   - duplicate импорты одного класса
+3. Удали неиспользуемые импорты
+4. Настрой pre-commit hook для авто-очистки импортов
+
+Файлы: Все .java файлы в diesel/
+Приоритет: LOW но БЫСТРО (36 проблем, чистится за 10 минут)
+```
+
+### Промпт 47: Ограничение break/continue в циклах (java:S135, 30 проблем)
+```
+Проблема: В циклах используется более одного break/continue statement.
+
+Задача:
+1. Найди циклы с множественными break/continue
+2. Рефакторинг варианты:
+   - Вынеси цикл в отдельный метод с early return
+   - Используй boolean flag вместо break
+   - Примени Guard Clauses pattern
+3. Цель: максимум один break/continue на цикл
+
+Пример рефакторинга:
+БЫЛО:
+for (Row row : rows) {
+    if (condition1) break;
+    if (condition2) continue;
+    if (condition3) break;
+}
+
+СТАЛО:
+for (Row row : rows) {
+    if (!condition1 && !condition3) {
+        if (!condition2) {
+            process(row);
+        }
+    } else {
+        break; // или return из вынесенного метода
+    }
+}
+
+Файлы: diesel/SelectQuery.java, diesel/QueryParser.java, diesel/Table.java
+Приоритет: MEDIUM (30 проблем, улучшает читаемость)
+```
+
+### Промпт 48: Удаление неиспользуемых параметров методов (java:S1172, 28 проблем)
+```
+Проблема: Методы имеют параметры которые не используются в теле метода.
+
+Задача:
+1. Найди методы с unused parameters (SonarQube покажет locations)
+2. Варианты решения:
+   - Удалить параметр если он действительно не нужен
+   - Использовать параметр если он должен использоваться (bug?)
+   - Закомментировать имя параметра: methodName(Type unusedParam)
+3. Проверь все вызовы метода перед удалением параметра
+4. Обнови документацию (JavaDoc) если параметр удалён
+
+Файлы: diesel/*.java (где SonarQube укажет проблемы)
+Приоритет: MEDIUM (28 проблем, улучшает API clarity)
+```
+
+### Промпт 49: Заполнение или удаление пустых блоков кода (java:S108, 28 проблем)
+```
+Проблема: В коде присутствуют пустые блоки else, catch, или просто {}.
+
+Задача:
+1. Найди все пустые блоки кода
+2. Для каждого случая:
+   - Если блок должен быть пустым → добавь комментарий "// intentionally empty"
+   - Если блок забыли заполнить → реализуй логику
+   - Если блок не нужен → удали пустой блок и упрости условие
+3. Особое внимание: пустые catch блоки (скрывают ошибки!)
+
+Пример:
+БЫЛО: } catch (Exception e) { }
+СТАЛО: } catch (Exception e) { log.warn("Ignored exception", e); }
+
+Файлы: diesel/*.java (где SonarQube укажет проблемы)
+Приоритет: HIGH (28 проблем, некоторые могут скрывать баги)
+```
+
+### Промпт 50: Удаление использования deprecated setScale() (java:S1874, 28 проблем)
+```
+Проблема: Используется deprecated метод BigDecimal.setScale() без rounding mode.
+
+Задача:
+1. Найди все вызовы setScale() без второго параметра
+2. Замени на setScale(scale, RoundingMode.HALF_UP) или другой подходящий режим
+3. Варианты RoundingMode:
+   - HALF_UP - округление до ближайшего (стандартное)
+   - HALF_EVEN - banker's rounding (для финансов)
+   - DOWN - усечение (отбрасывание дробной части)
+   - UP - округление вверх
+
+Пример:
+БЫЛО: bigDecimal.setScale(2)
+СТАЛО: bigDecimal.setScale(2, RoundingMode.HALF_UP)
+
+Файлы: diesel/*.java (где используются BigDecimal операции)
+Приоритет: MEDIUM (28 проблем, предотвращает UnexpectedResultException)
+```
+
+## Раздел 3: Оптимизация производительности (20 промптов)
+
+### Промпт 51: Оптимизация updateIndicesAfterInsert (O(n × m × log n))
 ```
 Проблема: После каждой вставки обновляются все индексы (O(m × log n)).
 
@@ -781,7 +994,7 @@ boolean result = condition;
 Приоритет: BUG
 ```
 
-### Промпт 50: Замена сериализации на Copy-on-Write для транзакций
+### Промпт 52: Замена сериализации на Copy-on-Write для транзакций
 ```
 Проблема: Сериализация всей таблицы для транзакций медленная.
 
@@ -794,7 +1007,7 @@ boolean result = condition;
 Приоритет: HIGH
 ```
 
-### Промпт 51: Параллельное выполнение независимых запросов
+### Промпт 53: Параллельное выполнение независимых запросов
 ```
 Проблема: Запросы выполняются последовательно даже если независимы.
 
@@ -807,7 +1020,7 @@ boolean result = condition;
 Приоритет: MEDIUM
 ```
 
-### Промпт 52: Асинхронный I/O для сетевых операций
+### Промпт 54: Асинхронный I/O для сетевых операций
 ```
 Проблема: Синхронный I/O блокирует потоки на чтение/запись в сокет.
 
@@ -820,7 +1033,7 @@ boolean result = condition;
 Приоритет: MEDIUM
 ```
 
-### Промпт 53: Compression для сетевых ответов
+### Промпт 55: Compression для сетевых ответов
 ```
 Проблема: Большие результаты передаются без сжатия.
 
@@ -833,7 +1046,7 @@ boolean result = condition;
 Приоритет: LOW
 ```
 
-### Промпт 54: Prepared Statements caching
+### Промпт 56: Prepared Statements caching
 ```
 Проблема: Каждый запрос парсится заново.
 
@@ -846,7 +1059,7 @@ boolean result = condition;
 Приоритет: HIGH
 ```
 
-### Промпт 55: Batch execution support
+### Промпт 57: Batch execution support
 ```
 Проблема: Нет пакетного выполнения запросов.
 
@@ -859,7 +1072,7 @@ boolean result = condition;
 Приоритет: MEDIUM
 ```
 
-### Промпт 56: Query result pagination
+### Промпт 58: Query result pagination
 ```
 Проблема: Клиент получает весь результат сразу (OOM risk).
 
@@ -872,7 +1085,7 @@ boolean result = condition;
 Приоритет: MEDIUM
 ```
 
-### Промпт 57: Adaptive query execution
+### Промпт 59: Adaptive query execution
 ```
 Проблема: План выполнения выбирается один раз и не меняется.
 
