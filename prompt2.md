@@ -889,7 +889,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 42: Замена Nested Loop Join на Hash Join
+### Промпт 52: Замена Nested Loop Join на Hash Join
 ```
 Проблема: Nested Loop Join имеет сложность O(n × m).
 
@@ -903,7 +903,7 @@ for (Row row : rows) {
 Приоритет: CRITICAL
 ```
 
-### Промпт 43: Оптимизация обновления индексов после DELETE
+### Промпт 53: Оптимизация обновления индексов после DELETE
 ```
 Проблема: Удаление строки требует обновления всех индексов.
 
@@ -916,7 +916,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 44: Оптимизация создания кластеризованного индекса
+### Промпт 54: Оптимизация создания кластеризованного индекса
 ```
 Проблема: Создание кластеризованного индекса требует полной пересортировки таблицы.
 
@@ -929,7 +929,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 45: Пакетная вставка индексов при загрузке (readObject)
+### Промпт 55: Пакетная вставка индексов при загрузке (readObject)
 ```
 Проблема: При десериализации таблицы индексы строятся по одной записи.
 
@@ -942,7 +942,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 46: Индексы для покрытия WHERE условий
+### Промпт 56: Индексы для покрытия WHERE условий
 ```
 Проблема: WHERE условия сканируют всю таблицу.
 
@@ -955,7 +955,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 47: Оптимизация массового UPDATE
+### Промпт 57: Оптимизация массового UPDATE
 ```
 Проблема: UPDATE каждой строки отдельно неэффективен.
 
@@ -968,7 +968,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 48: Исправление потери indexDefinitions при сериализации
+### Промпт 58: Исправление потери indexDefinitions при сериализации
 ```
 Проблема: После сериализации/десериализации пропадают определения индексов.
 
@@ -981,7 +981,7 @@ for (Row row : rows) {
 Приоритет: BUG
 ```
 
-### Промпт 49: Сохранение состояния индексов в сериализованном виде
+### Промпт 59: Сохранение состояния индексов в сериализованном виде
 ```
 Проблема: Индексы не сохраняются между перезапусками.
 
@@ -994,7 +994,7 @@ for (Row row : rows) {
 Приоритет: BUG
 ```
 
-### Промпт 52: Замена сериализации на Copy-on-Write для транзакций
+### Промпт 60: Замена сериализации на Copy-on-Write для транзакций
 ```
 Проблема: Сериализация всей таблицы для транзакций медленная.
 
@@ -1007,7 +1007,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 53: Параллельное выполнение независимых запросов
+### Промпт 61: Параллельное выполнение независимых запросов
 ```
 Проблема: Запросы выполняются последовательно даже если независимы.
 
@@ -1020,7 +1020,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 54: Асинхронный I/O для сетевых операций
+### Промпт 62: Асинхронный I/O для сетевых операций
 ```
 Проблема: Синхронный I/O блокирует потоки на чтение/запись в сокет.
 
@@ -1033,7 +1033,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 55: Compression для сетевых ответов
+### Промпт 63: Compression для сетевых ответов
 ```
 Проблема: Большие результаты передаются без сжатия.
 
@@ -1046,7 +1046,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 56: Prepared Statements caching
+### Промпт 64: Prepared Statements caching
 ```
 Проблема: Каждый запрос парсится заново.
 
@@ -1059,7 +1059,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 57: Batch execution support
+### Промпт 65: Batch execution support
 ```
 Проблема: Нет пакетного выполнения запросов.
 
@@ -1072,7 +1072,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 58: Query result pagination
+### Промпт 66: Query result pagination
 ```
 Проблема: Клиент получает весь результат сразу (OOM risk).
 
@@ -1085,7 +1085,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 59: Adaptive query execution
+### Промпт 67: Adaptive query execution
 ```
 Проблема: План выполнения выбирается один раз и не меняется.
 
@@ -1098,7 +1098,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 58: Index-only scans
+### Промпт 68: Index-only scans
 ```
 Проблема: Даже при наличии индекса читается вся таблица.
 
@@ -1111,7 +1111,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 59: Parallel index scan
+### Промпт 69: Parallel index scan
 ```
 Проблема: Сканирование индекса однопоточное.
 
@@ -1124,7 +1124,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 60: SIMD векторизация для агрегатов
+### Промпт 70: SIMD векторизация для агрегатов
 ```
 Проблема: Агрегатные функции (SUM, AVG) обрабатывают строки по одной.
 
@@ -1139,7 +1139,7 @@ for (Row row : rows) {
 
 ## Раздел 3: Parquet Storage и Query Cache (20 промптов)
 
-### Промпт 61: Интеграция Apache Parquet библиотеки
+### Промпт 71: Интеграция Apache Parquet библиотеки
 ```
 Добавь зависимость Apache Parquet в pom.xml:
 ```xml
@@ -1155,7 +1155,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 62: ParquetReader для чтения данных
+### Промпт 72: ParquetReader для чтения данных
 ```
 Реализуй ParquetReader который:
 1. Читает Parquet файлы в Row объекты
@@ -1166,7 +1166,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 63: Columnar storage для аналитических запросов
+### Промпт 73: Columnar storage для аналитических запросов
 ```
 Для таблиц >1M строк предлагай columnar storage (Parquet):
 1. Конвертация row-based → columnar (async background job)
@@ -1177,7 +1177,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 64: Schema evolution для Parquet
+### Промпт 74: Schema evolution для Parquet
 ```
 Поддержи эволюцию схемы Parquet файлов:
 1. Добавление новых колонок (nullable)
@@ -1188,7 +1188,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 65: Partitioning для Parquet таблиц
+### Промпт 75: Partitioning для Parquet таблиц
 ```
 Реализуй partitioning по дате/категории:
 1. Directory structure: /table/date=2024-01-01/data.parquet
@@ -1199,7 +1199,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 66: Compression codecs для Parquet
+### Промпт 76: Compression codecs для Parquet
 ```
 Поддержи разные codecs:
 1. UNCOMPRESSED - быстро, большой размер
@@ -1212,7 +1212,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 67: Statistics в Parquet metadata
+### Промпт 77: Statistics в Parquet metadata
 ```
 Используй встроенную статистику Parquet:
 1. Min/max значения для каждой колонки в row group
@@ -1223,7 +1223,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 68: Bloom filters для Parquet
+### Промпт 78: Bloom filters для Parquet
 ```
 Добавь bloom filters для fast lookup:
 1. Bloom filter на первичный ключ
@@ -1234,7 +1234,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 69: QueryCache архитектура
+### Промпт 79: QueryCache архитектура
 ```
 Создай QueryCache с:
 1. Ключ: normalized SQL + parameter types
@@ -1246,7 +1246,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 70: Cache invalidation策略
+### Промпт 80: Cache invalidation策略
 ```
 Реализуй инвалидацию кэша:
 1. INSERT/UPDATE/DELETE → invalidate cache для этой таблицы
@@ -1258,7 +1258,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 71: Интеграция QueryCache в SelectQuery.java
+### Промпт 81: Интеграция QueryCache в SelectQuery.java
 ```
 Модифицируй SelectQuery.execute():
 1. Перед выполнением: check cache
@@ -1270,7 +1270,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 72: Инвалидация кэша при INSERT
+### Промпт 82: Инвалидация кэша при INSERT
 ```
 При INSERT в таблицу:
 1. Найди все cached queries для этой таблицы
@@ -1281,7 +1281,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 73: Инвалидация кэша при UPDATE
+### Промпт 83: Инвалидация кэша при UPDATE
 ```
 При UPDATE таблицы:
 1. Invalidate все cached SELECT queries к этой таблице
@@ -1292,7 +1292,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 74: Инвалидация кэша при DELETE
+### Промпт 84: Инвалидация кэша при DELETE
 ```
 При DELETE из таблицы:
 1. Invalidate все cached queries к этой таблице
@@ -1302,7 +1302,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 75: Инвалидация кэша при DDL операциях
+### Промпт 85: Инвалидация кэша при DDL операциях
 ```
 При DDL (CREATE TABLE, ALTER TABLE, DROP TABLE):
 1. CREATE TABLE: no invalidation needed (новая таблица)
@@ -1313,7 +1313,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 76: Мониторинг QueryCache
+### Промпт 86: Мониторинг QueryCache
 ```
 Добавь JMX metrics для QueryCache:
 1. Cache size (entries count)
@@ -1326,7 +1326,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 77: Тестирование Parquet storage
+### Промпт 87: Тестирование Parquet storage
 ```
 Напиши тесты для Parquet integration:
 1. Write table to Parquet → read back → compare data
@@ -1338,7 +1338,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 78: Тестирование QueryCache
+### Промпт 88: Тестирование QueryCache
 ```
 Напиши тесты для QueryCache:
 1. Cache hit: одинаковый запрос → cache hit
@@ -1351,7 +1351,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 79: Integration test Parquet + Cache
+### Промпт 89: Integration test Parquet + Cache
 ```
 Комплексный тест:
 1. Создай таблицу с 1M строк
@@ -1365,7 +1365,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 80: Документация Parquet формата
+### Промпт 90: Документация Parquet формата
 ```
 Создай документацию:
 1. Как включить Parquet storage (config)
@@ -1379,7 +1379,7 @@ for (Row row : rows) {
 
 ## Раздел 4: Дополнительные улучшения (20 промптов)
 
-### Промпт 81: Конфигурация Parquet на уровне таблицы
+### Промпт 91: Конфигурация Parquet на уровне таблицы
 ```
 Добавь возможность настройки Parquet per table:
 ```sql
@@ -1398,7 +1398,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 82: Lazy загрузка Parquet файлов
+### Промпт 92: Lazy загрузка Parquet файлов
 ```
 Не загружай все Parquet файлы в память:
 1. Открывай файл только когда нужны данные из него
@@ -1409,7 +1409,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 83: Predicate pushdown для Parquet
+### Промпт 93: Predicate pushdown для Parquet
 ```
 Передавай WHERE условия в ParquetReader:
 1. Parquet filter row groups по statistics (min/max)
@@ -1420,7 +1420,7 @@ CREATE TABLE analytics (
 Приоритет: HIGH
 ```
 
-### Промпт 84: Параллельное чтение Parquet
+### Промпт 94: Параллельное чтение Parquet
 ```
 Читай多个 Parquet файлы параллельно:
 1. Один файл → один поток (или один row group → один поток)
@@ -1431,7 +1431,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 85: Статистика использования кэша
+### Промпт 95: Статистика использования кэша
 ```
 Собирай detailed статистику:
 1. Per-query cache performance (hit/miss/ttl)
@@ -1442,7 +1442,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 86: Настройка Database.java для Parquet by default
+### Промпт 96: Настройка Database.java для Parquet by default
 ```
 Для новых таблиц по умолчанию используй Parquet если:
 1. Таблица >100K строк (estimated)
@@ -1454,7 +1454,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 87: Обработка ошибок при миграции
+### Промпт 97: Обработка ошибок при миграции
 ```
 При конвертации table → Parquet:
 1. Валидируй данные перед записью (no nulls в NOT NULL columns)
@@ -1465,7 +1465,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 88: Поддержка partitioned tables в Parquet
+### Промпт 98: Поддержка partitioned tables в Parquet
 ```
 Расширь поддержку partitioning:
 1. Multi-level partitioning: date=.../category=.../data.parquet
@@ -1476,7 +1476,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 89: Оптимизация Dictionary encoding для строк
+### Промпт 99: Оптимизация Dictionary encoding для строк
 ```
 Для string колонок с low cardinality:
 1. Dictionary encoding: map strings → integers
@@ -1487,7 +1487,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 90: Compression tuning (ZSTD levels)
+### Промпт 100: Compression tuning (ZSTD levels)
 ```
 ZSTD поддерживает уровни сжатия 1-22:
 1. Level 1-3: fast compression, good ratio (default)
@@ -1499,7 +1499,7 @@ ZSTD поддерживает уровни сжатия 1-22:
 Приоритет: LOW
 ```
 
-### Промпт 91: Row group size tuning
+### Промпт 101: Row group size tuning
 ```
 Parquet row group size влияет на performance:
 1. Small groups (1MB): better pruning, more overhead
@@ -1510,7 +1510,7 @@ Parquet row group size влияет на performance:
 Приоритет: LOW
 ```
 
-### Промпт 92: Column statistics в Parquet metadata
+### Промпт 102: Column statistics в Parquet metadata
 ```
 Включи сбор статистики для всех колонок:
 1. Min, max, null count, distinct count (approximate)
@@ -1521,7 +1521,7 @@ Parquet row group size влияет на performance:
 Приоритет: MEDIUM
 ```
 
-### Промпт 93: Bloom filters для Parquet
+### Промпт 103: Bloom filters для Parquet
 ```
 Добавь bloom filters для быстрого lookup:
 1. Один bloom filter на колонку на row group
@@ -1532,7 +1532,7 @@ Parquet row group size влияет на performance:
 Приоритет: LOW
 ```
 
-### Промпт 94: Query Cache warm-up strategy
+### Промпт 104: Query Cache warm-up strategy
 ```
 При старте сервера:
 1. Load frequently used queries from persistent cache
@@ -1543,7 +1543,7 @@ Parquet row group size влияет на performance:
 Приоритет: LOW
 ```
 
-### Промпт 95: Adaptive TTL для кэша
+### Промпт 105: Adaptive TTL для кэша
 ```
 Dynamic TTL based on table activity:
 1. High write frequency → shorter TTL
@@ -1554,7 +1554,7 @@ Dynamic TTL based on table activity:
 Приоритет: LOW
 ```
 
-### Промпт 96: Query normalization improvements
+### Промпт 106: Query normalization improvements
 ```
 Улучши нормализацию SQL для cache key:
 1. Ignore whitespace differences
@@ -1566,7 +1566,7 @@ Dynamic TTL based on table activity:
 Приоритет: MEDIUM
 ```
 
-### Промпт 97: Parameterized query caching
+### Промпт 107: Parameterized query caching
 ```
 Кэшируй параметризованные запросы:
 1. Key: normalized SQL с placeholders
@@ -1577,7 +1577,7 @@ Dynamic TTL based on table activity:
 Приоритет: MEDIUM
 ```
 
-### Промпт 98: Multi-level cache (L1/L2)
+### Промпт 108: Multi-level cache (L1/L2)
 ```
 Двухуровневый кэш:
 1. L1: in-memory, fast, small (100 entries, TTL 1 min)
@@ -1588,7 +1588,7 @@ Dynamic TTL based on table activity:
 Приоритет: LOW
 ```
 
-### Промпт 99: Cache persistence across restarts
+### Промпт 109: Cache persistence across restarts
 ```
 Персистентный кэш:
 1. Save cache to disk on graceful shutdown
@@ -1599,7 +1599,7 @@ Dynamic TTL based on table activity:
 Приоритет: LOW
 ```
 
-### Промпт 100: Final integration testing and documentation
+### Промпт 110: Final integration testing and documentation
 ```
 Финальные задачи:
 1. Full regression test suite (все тесты проходят)
