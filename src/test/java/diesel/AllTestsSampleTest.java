@@ -361,7 +361,7 @@ public class AllTestsSampleTest {
     private void dropTable(String name) {
         try {
             database.dropTable(name);
-        } catch (IllegalArgumentException e) {
+        } catch (TableNotFoundException e) {
             LOGGER.log(Level.WARNING, "Table {0} not found for dropping", name);
         }
     }

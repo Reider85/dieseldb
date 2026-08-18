@@ -432,7 +432,7 @@ public class PerformanceTest {
     private void dropTable() {
         try {
             database.dropTable("USERS");
-        } catch (IllegalArgumentException e) {
+        } catch (TableNotFoundException e) {
             LOGGER.warn("Table USERS not found for dropping");
         }
     }

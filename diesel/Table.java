@@ -329,7 +329,7 @@ class Table implements Serializable {
      */
     private void createSecondaryIndex(String columnName, String definition, Function<Class<?>, Index> indexFactory, boolean unique) {
         if (!columnTypes.containsKey(columnName)) {
-            throw new IllegalArgumentException("Column " + columnName + " does not exist");
+            throw new ColumnNotFoundException("Column " + columnName + " does not exist");
         }
         Index index = indexFactory.apply(columnTypes.get(columnName));
         Set<Object> seenKeys = unique ? new HashSet<>() : null;
@@ -358,7 +358,7 @@ class Table implements Serializable {
      */
     public void createUniqueClusteredIndex(String columnName) {
         if (!columnTypes.containsKey(columnName)) {
-            throw new IllegalArgumentException("Column " + columnName + " does not exist");
+            throw new ColumnNotFoundException("Column " + columnName + " does not exist");
         }
         if (hasClusteredIndex) {
             throw new IllegalStateException("Table already has a clustered index on " + clusteredIndexColumn);

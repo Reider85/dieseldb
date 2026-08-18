@@ -30,7 +30,7 @@ public class QueryCacheTest {
     private void dropTable() {
         try {
             database.dropTable("CACHE_TEST");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
     }
 

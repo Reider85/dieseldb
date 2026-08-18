@@ -45,11 +45,11 @@ public class MaxResultRowsTest {
     private void dropTables() {
         try {
             database.dropTable("MRT_LEFT");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
         try {
             database.dropTable("MRT_RIGHT");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
     }
 

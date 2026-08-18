@@ -65,7 +65,7 @@ public class AutoJoinIndexTest {
         for (String name : new String[]{"A", "B", "C"}) {
             try {
                 database.dropTable(name);
-            } catch (IllegalArgumentException ignored) {
+            } catch (TableNotFoundException ignored) {
             }
         }
     }

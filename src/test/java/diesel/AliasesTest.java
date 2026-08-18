@@ -43,7 +43,7 @@ public class AliasesTest {
     private void dropTable(String tableName) {
         try {
             database.dropTable(tableName);
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
             // Table may not exist if a previous test failed before creating it
         }
     }

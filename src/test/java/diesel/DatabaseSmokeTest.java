@@ -20,7 +20,7 @@ class DatabaseSmokeTest {
         database = new Database();
         try {
             database.dropTable("SMOKE");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
             // table does not exist yet, nothing to drop
         }
         database.executeQuery("CREATE TABLE SMOKE (ID LONG PRIMARY KEY SEQUENCE(smoke_seq 1 1), NAME STRING, AGE INTEGER)", null);

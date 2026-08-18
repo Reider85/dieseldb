@@ -40,7 +40,7 @@ public class LimitOffsetTest {
     private void dropTable() {
         try {
             database.dropTable("USERS");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
     }
 

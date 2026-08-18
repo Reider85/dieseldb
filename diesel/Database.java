@@ -196,6 +196,9 @@ class Database {
             Object result = dispatch(parsedQuery, cleanQuery, currentTransaction, transactionId);
             recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
             return result;
+        } catch (DieselException e) {
+            recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
+            throw e;
         } catch (Exception e) {
             recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
@@ -337,7 +340,7 @@ class Database {
 
     private Object executeBeginTransaction(BeginTransactionQuery beginQuery, Transaction currentTransaction) {
         if (currentTransaction != null && currentTransaction.isActive()) {
-            throw new IllegalStateException("Another transaction is already active for this client");
+            throw new TransactionException("Another transaction is already active for this client");
         }
         IsolationLevel isolationLevel = beginQuery.getIsolationLevel() != null
                 ? beginQuery.getIsolationLevel()
@@ -354,7 +357,7 @@ class Database {
 
     private Object executeCommit(Transaction currentTransaction, UUID transactionId) {
         if (currentTransaction == null || !currentTransaction.isActive()) {
-            throw new IllegalStateException("No active transaction to commit");
+            throw new TransactionException("No active transaction to commit");
         }
         persistModifiedTables(currentTransaction.getModifiedTables(), true);
         currentTransaction.setInactive();
@@ -365,7 +368,7 @@ class Database {
 
     private Object executeRollback(Transaction currentTransaction, UUID transactionId) {
         if (currentTransaction == null || !currentTransaction.isActive()) {
-            throw new IllegalStateException("No active transaction to rollback");
+            throw new TransactionException("No active transaction to rollback");
         }
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
@@ -426,7 +429,7 @@ class Database {
             String tableName = extractTableName(explainQuery.getInnerSql());
             table = getTableForQuery(tableName, currentTransaction);
             if (table == null) {
-                throw new IllegalArgumentException("Table " + tableName + " does not exist");
+                throw new TableNotFoundException("Table " + tableName + " does not exist");
             }
         }
         return explainQuery.execute(table);
@@ -459,7 +462,7 @@ class Database {
             tableName = extractTableName(query);
             table = getTableForQuery(tableName, currentTransaction);
             if (table == null) {
-                throw new IllegalArgumentException("Table " + tableName + " does not exist");
+                throw new TableNotFoundException("Table " + tableName + " does not exist");
             }
         }
 
@@ -611,7 +614,7 @@ class Database {
     public Table getTable(String tableName) {
         Table table = tables.get(tableName);
         if (table == null) {
-            throw new IllegalArgumentException("Table " + tableName + " does not exist");
+            throw new TableNotFoundException("Table " + tableName + " does not exist");
         }
         return table;
     }
@@ -626,7 +629,7 @@ class Database {
      */
     public void dropTable(String tableName) {
         if (tables.remove(tableName) == null) {
-            throw new IllegalArgumentException("Table " + tableName + " does not exist");
+            throw new TableNotFoundException("Table " + tableName + " does not exist");
         }
         queryCache.invalidateAll();
         deleteTableFiles(tableName);

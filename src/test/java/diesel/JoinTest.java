@@ -38,7 +38,7 @@ public class JoinTest {
         try {
             database.dropTable("USERS");
             database.dropTable("USER_DETAILS");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
             // Tables may not exist if a previous test failed before creating them
         }
     }

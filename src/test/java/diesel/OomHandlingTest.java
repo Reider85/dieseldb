@@ -35,11 +35,11 @@ public class OomHandlingTest {
     void tearDown() {
         try {
             database.dropTable("OOMT_LEFT");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
         try {
             database.dropTable("OOMT_RIGHT");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
         SelectQuery.loadHashJoinConfig();
     }

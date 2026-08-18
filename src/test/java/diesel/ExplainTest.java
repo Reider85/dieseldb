@@ -41,11 +41,11 @@ public class ExplainTest {
     private void dropTables() {
         try {
             database.dropTable("USERS");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
         try {
             database.dropTable("USER_DETAILS");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
     }
 

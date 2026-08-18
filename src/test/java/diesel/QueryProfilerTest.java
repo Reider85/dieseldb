@@ -44,7 +44,7 @@ public class QueryProfilerTest {
     private void dropTable() {
         try {
             database.dropTable("PROFILER_TEST");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
         }
     }
 

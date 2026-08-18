@@ -48,7 +48,7 @@ public class OrderByTest {
     private void dropTable() {
         try {
             database.dropTable("USERS");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
             // Table may not exist if a previous test failed before creating it
         }
     }
@@ -56,7 +56,7 @@ public class OrderByTest {
     private void dropJoinTable() {
         try {
             database.dropTable("PROFILES");
-        } catch (IllegalArgumentException ignored) {
+        } catch (TableNotFoundException ignored) {
             // Table may not exist if a previous test failed before creating it
         }
     }

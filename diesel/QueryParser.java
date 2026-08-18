@@ -925,7 +925,7 @@ class QueryParser {
     private Query<Void> parseCreateIndexQuery(String normalized) {
         String[] parts = normalized.split(SqlKeywords.ON);
         if (parts.length != 2) {
-            throw new IllegalArgumentException("Invalid CREATE INDEX query format");
+            throw new SyntaxErrorException("Invalid CREATE INDEX query format");
         }
         String indexPart = parts[0].replace(SqlKeywords.CREATE_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
@@ -2051,7 +2051,7 @@ class QueryParser {
     private Query<Void> parseInsertQuery(String normalized, String original, Database database) {
         String[] parts = normalized.split(SqlKeywords.VALUES);
         if (parts.length != 2) {
-            throw new IllegalArgumentException("Invalid INSERT query format");
+            throw new SyntaxErrorException("Invalid INSERT query format");
         }
 
         String tableAndColumns = parts[0].replace(SqlKeywords.INSERT_INTO, "").trim();
@@ -2102,7 +2102,7 @@ class QueryParser {
     private Query<Void> parseUpdateQuery(String normalized, String original, Database database) {
         String[] parts = normalized.split(SqlKeywords.SET);
         if (parts.length != 2) {
-            throw new IllegalArgumentException("Invalid UPDATE query format");
+            throw new SyntaxErrorException("Invalid UPDATE query format");
         }
 
         String tablePart = parts[0].replace(SqlKeywords.UPDATE, "").trim();
@@ -2174,7 +2174,7 @@ class QueryParser {
         String[] fromParts = normalized.split("(?i)FROM\\s+", 2);
         if (fromParts.length != 2) {
             LOGGER.log(Level.SEVERE, "Invalid DELETE query format: missing FROM clause, normalized: {0}", normalized);
-            throw new IllegalArgumentException("Invalid DELETE query format: missing FROM clause");
+            throw new SyntaxErrorException("Invalid DELETE query format: missing FROM clause");
         }
 
         String tableAndCondition = fromParts[1].trim();
