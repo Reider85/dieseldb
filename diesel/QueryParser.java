@@ -2277,10 +2277,8 @@ class QueryParser {
                     throw new IllegalArgumentException("Invalid numeric value '" + valueStr + "' for column type: " + columnType.getSimpleName());
                 }
             }
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to parse condition value: column={0}, value={1}, type={2}, error={3}",
-                    new Object[]{conditionColumn, valueStr, columnType.getSimpleName(), e.getMessage()});
-            throw new IllegalArgumentException("Invalid value for column " + conditionColumn + ": " + valueStr, e);
+        } catch (IllegalArgumentException e) {
+            throw e;
         }
     }
 

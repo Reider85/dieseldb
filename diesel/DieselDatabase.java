@@ -107,7 +107,7 @@ public class DieselDatabase {
             } catch (Exception rollbackEx) {
                 LOGGER.error("Rollback failed: {}", rollbackEx.getMessage());
             }
-            e.printStackTrace();
+            LOGGER.error("Main execution failed: {}", e.getMessage(), e);
         }
     }
 }

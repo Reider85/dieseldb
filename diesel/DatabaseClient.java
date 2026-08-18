@@ -56,8 +56,10 @@ public class DatabaseClient {
             in = new ObjectInputStream(socket.getInputStream());
             LOGGER.info("Connected to server at " + host + ":" + port);
         } catch (IOException e) {
-            LOGGER.error("Failed to connect to server: {}", e.getMessage());
-            throw new RuntimeException("Connection failed: " + e.getMessage());
+            closeQuietly(in);
+            closeQuietly(out);
+            closeQuietly(socket);
+            throw new DieselIOException("Connection failed: " + e.getMessage(), e);
         }
     }
 
@@ -92,13 +94,13 @@ public class DatabaseClient {
             }
             if (result instanceof String && ((String) result).startsWith("Error: ")) {
                 LOGGER.error("Server error for query '{}': {}", normalizedQuery, result);
-                throw new RuntimeException((String) result);
+                throw new DieselException((String) result);
             }
             LOGGER.info("Query executed: {}, Result: {}", normalizedQuery, result);
             return result;
         } catch (IOException | ClassNotFoundException e) {
             LOGGER.error("Query execution failed: {}, Error: {}", query, e.getMessage());
-            throw new RuntimeException("Query failed: " + e.getMessage());
+            throw new DieselIOException("Query failed: " + e.getMessage(), e);
         }
     }
 
@@ -113,12 +115,22 @@ public class DatabaseClient {
                 out.writeObject("EXIT");
                 out.flush();
             }
-            if (in != null) in.close();
-            if (out != null) out.close();
-            if (socket != null) socket.close();
-            LOGGER.info("Disconnected from server");
         } catch (IOException e) {
-            LOGGER.error("Error disconnecting from server: {}", e.getMessage());
+            LOGGER.error("Error sending EXIT: {}", e.getMessage());
+        }
+        closeQuietly(in);
+        closeQuietly(out);
+        closeQuietly(socket);
+        LOGGER.info("Disconnected from server");
+    }
+
+    private static void closeQuietly(java.io.Closeable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (IOException e) {
+                LOGGER.error("Error closing resource: {}", e.getMessage());
+            }
         }
     }
 
@@ -188,8 +200,7 @@ public class DatabaseClient {
 
             client.executeQuery(SqlKeywords.COMMIT_TRANSACTION);
         } catch (Exception e) {
-            LOGGER.error("Client error: {}", e.getMessage());
-            e.printStackTrace();
+            LOGGER.error("Client error: {}", e.getMessage(), e);
             try {
                 if (client.transactionId != null) {
                     client.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION);

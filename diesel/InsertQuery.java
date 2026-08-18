@@ -134,9 +134,8 @@ class InsertQuery implements Query<Void> {
                     } else {
                         throw new IllegalArgumentException("Expected single character");
                     }
-                } catch (Exception e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected CHAR", value, column));
+                } catch (IllegalArgumentException e) {
+                    throw e;
                 }
             } else if (expectedType == UUID.class && !(value instanceof UUID)) {
                 try {

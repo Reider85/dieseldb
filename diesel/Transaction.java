@@ -146,8 +146,8 @@ class Transaction {
     private Table cloneForTransaction(Table table, String tableName) {
         try {
             return table != null ? cloneTable(table) : null;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to snapshot/update transaction table: " + tableName, e);
+        } catch (IOException | ClassNotFoundException e) {
+            throw new DieselException("Failed to snapshot/update transaction table: " + tableName, e);
         }
     }
 

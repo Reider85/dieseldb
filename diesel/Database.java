@@ -199,10 +199,9 @@ class Database {
         } catch (DieselException e) {
             recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
             throw e;
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
-            LOGGER.log(Level.SEVERE, "Query execution failed: {0}", e.getMessage());
-            throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
+            throw e;
         }
     }
 

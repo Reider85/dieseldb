@@ -1503,8 +1503,8 @@ public class SubqueryParser {
                 }
             }
             throw new IllegalArgumentException("Unsupported value type for column " + column + ": " + value);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to parse value '" + value + "' for column " + column + ": " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Failed to parse value '" + value + "' for column " + column + ": " + e.getMessage(), e);
         }
     }
 

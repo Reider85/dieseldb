@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(set *)",
+      "Bash(c:\\tools\\apache-maven-3.9.6\\bin\\mvn *)",
+      "Bash(findstr *)"
+    ]
+  },
+  "$version": 4
+}

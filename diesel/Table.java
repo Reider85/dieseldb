@@ -1057,7 +1057,7 @@ class Table implements Serializable {
                     new Object[]{tableName, fileName, rows.size()});
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
-            throw new RuntimeException("Failed to save table to file: " + fileName, e);
+            throw new DieselIOException("Failed to save table to file: " + fileName, e);
         }
     }
 
@@ -1094,7 +1094,7 @@ class Table implements Serializable {
                     new Object[]{tableName, fileName, rows.size()});
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
-            throw new RuntimeException("Failed to save table to file: " + fileName, e);
+            throw new DieselIOException("Failed to save table to file: " + fileName, e);
         }
     }
 
