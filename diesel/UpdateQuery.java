@@ -1,5 +1,9 @@
 package diesel;
 
+import static diesel.ThreeValuedLogic.TRUE;
+import static diesel.ThreeValuedLogic.FALSE;
+import static diesel.ThreeValuedLogic.UNKNOWN;
+
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -125,7 +129,7 @@ class UpdateQuery implements Query<Void> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        return ThreeValuedLogic.isTrue(evaluateConditions3vl(row, conditions, columnTypes));
+        return evaluateConditions3vl(row, conditions, columnTypes).isTrue();
     }
 
     /**
@@ -133,33 +137,33 @@ class UpdateQuery implements Query<Void> {
      * (см. {@link ThreeValuedLogic}). Правый операнд не вычисляется, если левый
      * уже определяет результат: {@code TRUE OR X = TRUE}, {@code FALSE AND X = FALSE}.
      */
-    private Boolean evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
+    private ThreeValuedLogic evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
         if (conditions.isEmpty()) {
-            return Boolean.TRUE;
+            return TRUE;
         }
-        Boolean result = evaluateCondition3vl(row, conditions.get(0), columnTypes);
+        ThreeValuedLogic result = evaluateCondition3vl(row, conditions.get(0), columnTypes);
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
             if (conjunction != null && conjunction.equalsIgnoreCase(SqlKeywords.OR)) {
-                if (ThreeValuedLogic.orIsDetermined(result)) {
+                if (result.orIsDetermined()) {
                     continue;
                 }
-                result = ThreeValuedLogic.or(result, evaluateCondition3vl(row, condition, columnTypes));
+                result = result.or(evaluateCondition3vl(row, condition, columnTypes));
             } else if (conjunction == null || conjunction.equalsIgnoreCase(SqlKeywords.AND)) {
-                if (ThreeValuedLogic.andIsDetermined(result)) {
+                if (result.andIsDetermined()) {
                     continue;
                 }
-                result = ThreeValuedLogic.and(result, evaluateCondition3vl(row, condition, columnTypes));
+                result = result.and(evaluateCondition3vl(row, condition, columnTypes));
             }
         }
         return result;
     }
 
-    private Boolean evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
+    private ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
         if (condition.isGrouped()) {
-            Boolean subResult = evaluateConditions3vl(row, condition.subConditions, columnTypes);
-            return condition.not ? ThreeValuedLogic.not(subResult) : subResult;
+            ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, columnTypes);
+            return condition.not ? subResult.not() : subResult;
         }
 
         if (condition.isNullOperator()) {
@@ -168,13 +172,13 @@ class UpdateQuery implements Query<Void> {
             boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
             LOGGER.log(Level.FINE, "Evaluated IS NULL condition: {0}, value: {1}, result: {2}",
                     new Object[]{condition, value, result});
-            return condition.not ? Boolean.valueOf(!result) : Boolean.valueOf(result);
+            return (condition.not ? !result : result) ? TRUE : FALSE;
         }
 
         Object rowValue = row.get(condition.column);
         if (rowValue == null) {
             LOGGER.log(Level.FINE, "Row value for column {0} is null, condition is UNKNOWN", condition.column);
-            return null;
+            return UNKNOWN;
         }
 
         if (condition.isInOperator()) {
@@ -199,13 +203,13 @@ class UpdateQuery implements Query<Void> {
             boolean result = condition.not ? !inResult : inResult;
             LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue: {1}, values: {2}, result: {3}",
                     new Object[]{condition, rowValue, condition.inValues, result});
-            return Boolean.valueOf(result);
+            return result ? TRUE : FALSE;
         }
 
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
         if (conditionValue == null) {
             LOGGER.log(Level.FINE, "Condition value for column {0} is null, condition is UNKNOWN", condition.column);
-            return null;
+            return UNKNOWN;
         }
         LOGGER.log(Level.FINE, "Condition values: rowValue={0}, conditionValue={1}, column={2}, operator={3}",
                 new Object[]{rowValue, conditionValue, condition.column, condition.operator});
@@ -252,7 +256,7 @@ class UpdateQuery implements Query<Void> {
         result = condition.not ? !result : result;
         LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue: {1}, conditionValue: {2}, result: {3}",
                 new Object[]{condition, rowValue, conditionValue, result});
-        return Boolean.valueOf(result);
+        return result ? TRUE : FALSE;
     }
 
     private Object convertConditionValue(Object value, String column, Class<?> targetType, Map<String, Class<?>> columnTypes) {

@@ -1,5 +1,9 @@
 package diesel;
 
+import static diesel.ThreeValuedLogic.TRUE;
+import static diesel.ThreeValuedLogic.FALSE;
+import static diesel.ThreeValuedLogic.UNKNOWN;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -2166,7 +2170,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
-        return ThreeValuedLogic.isTrue(evaluateConditions3vl(row, conditions, combinedColumnTypes, tables));
+        return evaluateConditions3vl(row, conditions, combinedColumnTypes, tables).isTrue();
     }
 
     /**
@@ -2174,22 +2178,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * (см. {@link ThreeValuedLogic}). Правый операнд не вычисляется, если левый
      * уже определяет результат: {@code TRUE OR X = TRUE}, {@code FALSE AND X = FALSE}.
      */
-    private Boolean evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions,
-                                          Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+    private ThreeValuedLogic evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions,
+                                           Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
         if (conditions.isEmpty()) {
-            return Boolean.TRUE;
+            return TRUE;
         }
         logConditionEvaluation(conditions);
 
         // SQL precedence: AND binds tighter than OR, so the flat condition list
         // is evaluated as a disjunction of AND-segments. Each segment short-
         // circuits: FALSE AND anything = FALSE (skip the rest of the segment)
-        // and TRUE OR anything = TRUE (skip the remaining segments). A null
-        // (UNKNOWN) result must not be conflated with an uninitialized
-        // accumulator, hence the explicit initialized flags.
-        Boolean orResult = null;
+        // and TRUE OR anything = TRUE (skip the remaining segments). UNKNOWN
+        // result must not be conflated with an uninitialized accumulator, hence
+        // the explicit initialized flags.
+        ThreeValuedLogic orResult = UNKNOWN;
         boolean orInitialized = false;
-        Boolean andResult = null;
+        ThreeValuedLogic andResult = UNKNOWN;
         boolean andInitialized = false;
 
         for (int i = 0; i < conditions.size(); i++) {
@@ -2198,12 +2202,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             boolean orBoundary = i > 0 && conjunction != null && conjunction.equalsIgnoreCase(SqlKeywords.OR);
 
             if (orBoundary) {
-                orResult = orInitialized ? ThreeValuedLogic.or(orResult, andResult) : andResult;
+                orResult = orInitialized ? orResult.or(andResult) : andResult;
                 orInitialized = true;
-                if (ThreeValuedLogic.orIsDetermined(orResult)) {
+                if (orResult.orIsDetermined()) {
                     return orResult;
                 }
-                andResult = null;
+                andResult = UNKNOWN;
                 andInitialized = false;
             }
 
@@ -2213,7 +2217,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 continue;
             }
 
-            if (ThreeValuedLogic.andIsDetermined(andResult)) {
+            if (andResult.andIsDetermined()) {
                 while (i + 1 < conditions.size()) {
                     String nextConj = conditions.get(i + 1).conjunction;
                     if (nextConj != null && nextConj.equalsIgnoreCase(SqlKeywords.OR)) {
@@ -2224,11 +2228,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 continue;
             }
 
-            Boolean value = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
-            andResult = ThreeValuedLogic.and(andResult, value);
+            ThreeValuedLogic value = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
+            andResult = andResult.and(value);
         }
 
-        return orInitialized ? ThreeValuedLogic.or(orResult, andResult) : andResult;
+        return orInitialized ? orResult.or(andResult) : andResult;
     }
 
     private void logConditionEvaluation(List<QueryParser.Condition> conditions) {
@@ -2246,11 +2250,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         LOGGER.fine(sb.toString());
     }
 
-    private Boolean evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
+    private ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
                                          Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
         if (condition.isGrouped()) {
-            Boolean subResult = evaluateConditions3vl(row, condition.subConditions, combinedColumnTypes, tables);
-            return condition.not ? ThreeValuedLogic.not(subResult) : subResult;
+            ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, combinedColumnTypes, tables);
+            return condition.not ? subResult.not() : subResult;
         }
 
         if (condition.isNullOperator()) {
@@ -2258,14 +2262,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             Object value = row.get(column);
             boolean isNull = value == null;
             boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
-            return condition.not ? Boolean.valueOf(!result) : Boolean.valueOf(result);
+            return (condition.not ? !result : result) ? TRUE : FALSE;
         }
 
         if (condition.isInOperator()) {
             String column = normalizeColumnName(condition.column, mainTableName);
             Object value = row.get(column);
             if (value == null) {
-                return null;
+                return UNKNOWN;
             }
 
             List<Object> inValues;
@@ -2311,7 +2315,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             boolean inResult = condition.inValueSet != null && condition.inValueSet.contains(value)
                     || inValues.stream().anyMatch(v -> valuesEqual(v, value));
             boolean result = condition.not ? !inResult : inResult;
-            return Boolean.valueOf(result);
+            return result ? TRUE : FALSE;
         }
 
         if (condition.isColumnComparison()) {
@@ -2337,9 +2341,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return compareConditionOperand(rowValue, conditionValue, condition);
     }
 
-    private Boolean compareConditionOperand(Object leftValue, Object rightValue, QueryParser.Condition condition) {
+    private ThreeValuedLogic compareConditionOperand(Object leftValue, Object rightValue, QueryParser.Condition condition) {
         if (leftValue == null || rightValue == null) {
-            return null;
+            return UNKNOWN;
         }
         boolean comparisonResult;
         switch (condition.operator) {
@@ -2370,7 +2374,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             default:
                 throw new IllegalStateException("Unsupported operator: " + condition.operator);
         }
-        return condition.not ? Boolean.valueOf(!comparisonResult) : Boolean.valueOf(comparisonResult);
+        return (condition.not ? !comparisonResult : comparisonResult) ? TRUE : FALSE;
     }
 
     private int compareValues(Object left, Object right) {

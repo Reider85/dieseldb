@@ -1,53 +1,57 @@
 package diesel;
 
 /**
- * Three-valued logic helpers for SQL NULL semantics.
- * TRUE / FALSE / UNKNOWN (represented as Boolean.TRUE / Boolean.FALSE / null).
+ * Three-valued logic for SQL NULL semantics.
+ * Each constant represents a truth value: TRUE, FALSE, or UNKNOWN.
  * A short-circuit is possible only when the accumulated result already
  * determines the whole expression: for OR that is TRUE (TRUE OR x = TRUE),
  * for AND that is FALSE (FALSE AND x = FALSE).
  */
-public final class ThreeValuedLogic {
+public enum ThreeValuedLogic {
 
-    private ThreeValuedLogic() {
-    }
+    TRUE,
+    FALSE,
+    UNKNOWN;
 
-    public static Boolean and(Boolean left, Boolean right) {
-        if (Boolean.FALSE.equals(left) || Boolean.FALSE.equals(right)) {
-            return Boolean.FALSE;
+    public ThreeValuedLogic and(ThreeValuedLogic right) {
+        if (this == FALSE || right == FALSE) {
+            return FALSE;
         }
-        if (Boolean.TRUE.equals(left) && Boolean.TRUE.equals(right)) {
-            return Boolean.TRUE;
+        if (this == TRUE && right == TRUE) {
+            return TRUE;
         }
-        return null;
+        return UNKNOWN;
     }
 
-    public static Boolean or(Boolean left, Boolean right) {
-        if (Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right)) {
-            return Boolean.TRUE;
+    public ThreeValuedLogic or(ThreeValuedLogic right) {
+        if (this == TRUE || right == TRUE) {
+            return TRUE;
         }
-        if (Boolean.FALSE.equals(left) && Boolean.FALSE.equals(right)) {
-            return Boolean.FALSE;
+        if (this == FALSE && right == FALSE) {
+            return FALSE;
         }
-        return null;
+        return UNKNOWN;
     }
 
-    public static Boolean not(Boolean value) {
-        if (value == null) {
-            return null;
+    public ThreeValuedLogic not() {
+        if (this == TRUE) {
+            return FALSE;
         }
-        return Boolean.valueOf(!value.booleanValue());
+        if (this == FALSE) {
+            return TRUE;
+        }
+        return UNKNOWN;
     }
 
-    public static boolean isTrue(Boolean value) {
-        return Boolean.TRUE.equals(value);
+    public boolean isTrue() {
+        return this == TRUE;
     }
 
-    public static boolean orIsDetermined(Boolean result) {
-        return Boolean.TRUE.equals(result);
+    public boolean orIsDetermined() {
+        return this == TRUE;
     }
 
-    public static boolean andIsDetermined(Boolean result) {
-        return Boolean.FALSE.equals(result);
+    public boolean andIsDetermined() {
+        return this == FALSE;
     }
 }

@@ -56,7 +56,7 @@
 | 30 | ✔ DONE (2026-08-17) | Оптимизация regex (S5869, S6353) | LOW |
 | 31 | ✔ DONE (2026-08-17) | String literals в константы (S1192) | LOW |
 | 32 | ✔ DONE (2026-08-18) | Параметры методов (S107) | LOW |
-| 33 | ❌ TODO | Boolean null (S2447) | MEDIUM |
+| 33 | ✔ DONE (2026-08-18) | Boolean null (S2447) | MEDIUM |
 | 34 | ❌ TODO | Serializable поля (S1948) | LOW |
 | 35 | ❌ TODO | Logger вместо System.out (S106) | LOW |
 | 36 | ❌ TODO | Специфичные исключения (S112) | LOW |
