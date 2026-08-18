@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.Objects;
 
 /**
  * Parser that turns a SQL string into a {@link Query} execution object.

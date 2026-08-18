@@ -26,6 +26,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Objects;
 
 /**
  * Executes a SELECT statement against a table: applies WHERE conditions
@@ -1960,7 +1961,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return false;
         }
         return join.onConditions.stream()
-                .anyMatch(c -> c.conjunction != null && SqlKeywords.OR.equalsIgnoreCase(c.conjunction));
+                .anyMatch(c -> Objects.equals(c.conjunction, SqlKeywords.OR));
     }
 
     /**
@@ -2058,7 +2059,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // the pre-filter uses the first indexed condition only, so rows that match
         // a later OR branch would be dropped before the WHERE evaluation runs.
         for (QueryParser.Condition condition : conditions) {
-            if (condition.conjunction != null && SqlKeywords.OR.equalsIgnoreCase(condition.conjunction)) {
+            if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
                 return null;
             }
         }
@@ -2196,7 +2197,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (int i = 0; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
-            boolean orBoundary = i > 0 && conjunction != null && conjunction.equalsIgnoreCase(SqlKeywords.OR);
+            boolean orBoundary = i > 0 && Objects.equals(conjunction, SqlKeywords.OR);
 
             if (orBoundary) {
                 orResult = orInitialized ? orResult.or(andResult) : andResult;
@@ -2217,7 +2218,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (andResult.andIsDetermined()) {
                 while (i + 1 < conditions.size()) {
                     String nextConj = conditions.get(i + 1).conjunction;
-                    if (nextConj != null && nextConj.equalsIgnoreCase(SqlKeywords.OR)) {
+                    if (Objects.equals(nextConj, SqlKeywords.OR)) {
                         break;
                     }
                     i++;
@@ -2823,7 +2824,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return "none (full scan)";
         }
         for (QueryParser.Condition condition : conditions) {
-            if (condition.conjunction != null && SqlKeywords.OR.equalsIgnoreCase(condition.conjunction)) {
+            if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
                 return "none (OR conditions disable the index pre-filter)";
             }
         }

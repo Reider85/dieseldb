@@ -10,6 +10,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.util.Objects;
 
 /**
  * Executes a DELETE statement: removes every row matching the WHERE
@@ -180,7 +181,7 @@ class DeleteQuery implements Query<Void> {
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
-            if (conjunction != null && conjunction.equalsIgnoreCase(SqlKeywords.OR)) {
+            if (Objects.equals(conjunction, SqlKeywords.OR)) {
                 if (result.orIsDetermined()) {
                     continue;
                 }

@@ -18,6 +18,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
+import java.util.Objects;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -906,7 +907,7 @@ class Table implements Serializable {
     private void checkUniqueConstraint(String column, Object value) {
         Index index = indexes.get(column);
         if (index instanceof UniqueIndex || index instanceof BTreeClusteredIndex) {
-            if (value != null && index.search(value).size() > 0) {
+            if (value != null && !index.search(value).isEmpty()) {
                 LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
                 throw new IllegalStateException("Duplicate key violation: key '" + value + "' already exists in column " + column);
             }

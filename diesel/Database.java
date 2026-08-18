@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -58,7 +59,7 @@ class Database {
      *                null/empty to keep the current working directory
      */
     public Database(String dataDir) {
-        if (dataDir != null && !dataDir.isEmpty()) {
+        if (dataDir != null && !dataDir.isBlank()) {
             this.dataDir = dataDir;
         }
         File dir = new File(this.dataDir);
@@ -93,7 +94,7 @@ class Database {
      * @param dataDir new data directory, or null/empty to keep the current one
      */
     public void setDataDir(String dataDir) {
-        if (dataDir != null && !dataDir.isEmpty()) {
+        if (dataDir != null && !dataDir.isBlank()) {
             this.dataDir = dataDir;
         }
         File dir = new File(this.dataDir);
@@ -333,17 +334,16 @@ class Database {
     }
 
     private Object executeSetAutoCommit(SetAutoCommitQuery autoCommitQuery) {
-        setAutoCommit(autoCommitQuery.isAutoCommit());
-        return "AUTOCOMMIT set to " + (autoCommitQuery.isAutoCommit() ? SqlKeywords.ON : "OFF");
+        boolean autoCommit = autoCommitQuery.isAutoCommit();
+        setAutoCommit(autoCommit);
+        return "AUTOCOMMIT set to " + (autoCommit ? SqlKeywords.ON : "OFF");
     }
 
     private Object executeBeginTransaction(BeginTransactionQuery beginQuery, Transaction currentTransaction) {
         if (currentTransaction != null && currentTransaction.isActive()) {
             throw new TransactionException("Another transaction is already active for this client");
         }
-        IsolationLevel isolationLevel = beginQuery.getIsolationLevel() != null
-                ? beginQuery.getIsolationLevel()
-                : defaultIsolationLevel;
+        IsolationLevel isolationLevel = Objects.requireNonNullElse(beginQuery.getIsolationLevel(), defaultIsolationLevel);
         Transaction transaction = new Transaction(isolationLevel);
         UUID newTransactionId = transaction.getTransactionId();
         activeTransactions.put(newTransactionId, transaction);
