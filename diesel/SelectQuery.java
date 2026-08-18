@@ -1940,9 +1940,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         boolean hasEquality = false;
         for (QueryParser.Condition condition : join.onConditions) {
-            if (SqlKeywords.OR.equalsIgnoreCase(condition.conjunction)) {
-                return false;
-            }
             if (condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison()) {
                 hasEquality = true;
             }

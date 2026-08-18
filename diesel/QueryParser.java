@@ -927,7 +927,6 @@ class QueryParser {
         if (parts.length != 2) {
             throw new SyntaxErrorException("Invalid CREATE INDEX query format");
         }
-        String indexPart = parts[0].replace(SqlKeywords.CREATE_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -939,7 +938,6 @@ class QueryParser {
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE HASH INDEX query format");
         }
-        String indexPart = parts[0].replace(SqlKeywords.CREATE_HASH_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -951,7 +949,6 @@ class QueryParser {
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE UNIQUE INDEX query format");
         }
-        String indexPart = parts[0].replace(SqlKeywords.CREATE_UNIQUE_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -963,7 +960,6 @@ class QueryParser {
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid CREATE UNIQUE CLUSTERED INDEX query format");
         }
-        String indexPart = parts[0].replace(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX, "").trim();
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
         String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
@@ -1177,7 +1173,6 @@ class QueryParser {
         int bracketDepth = 0;
         int fromIndex = -1;
         int currentPos = 0;
-        StringBuilder currentToken = new StringBuilder();
 
         while (currentPos < query.length()) {
             // Проверяем строки в кавычках
@@ -1237,12 +1232,11 @@ class QueryParser {
 
             // Обрабатываем токен
             if (tokenType.equals("quotedString")) {
-                currentToken.append(token);
+                // skip
             } else if (tokenType.equals("quotedIdentifier")) {
-                currentToken.append(token);
+                // skip
             } else if (tokenType.equals("openParen")) {
                 bracketDepth++;
-                currentToken.append(token);
             } else if (tokenType.equals("closeParen")) {
                 bracketDepth--;
                 if (bracketDepth < 0) {
@@ -1250,14 +1244,13 @@ class QueryParser {
                             new Object[]{start, query});
                     return -1;
                 }
-                currentToken.append(token);
             } else if (tokenType.equals("from") && bracketDepth == 0) {
                 fromIndex = start;
                 LOGGER.log(Level.FINEST, "Найден основной FROM на позиции {0} в запросе: {1}",
                         new Object[]{fromIndex, query});
                 return fromIndex;
             } else if (tokenType.equals("word")) {
-                currentToken.append(token);
+                // skip
             }
 
             currentPos = nextPos;
@@ -2354,8 +2347,6 @@ class QueryParser {
         List<Token> tokens = new ArrayList<>();
         int currentPos = 0;
         int stringLength = conditionStr.length();
-        boolean inQuotes = false;
-        StringBuilder currentToken = new StringBuilder();
 
         while (currentPos < stringLength) {
             // Пропускаем пробелы
@@ -2430,7 +2421,6 @@ class QueryParser {
                                     "(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:''|\\\\.|[^'\\\\])*+')")
                             .matcher(matchedToken);
                     if (likeMatcher.matches()) {
-                        String column = likeMatcher.group(1);
                         String pattern = likeMatcher.group(3);
                         if (!pattern.endsWith("'")) {
                             LOGGER.log(Level.WARNING, "Незакрытая кавычка в LIKE шаблоне на позиции {0}: {1}",

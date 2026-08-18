@@ -88,10 +88,10 @@ public class ExplainTest {
     }
 
     @Test
-    void explainSelectWithOrOnConditionShowsNestedLoop() {
+    void explainSelectWithOrOnConditionShowsHashJoin() {
         String plan = explain("EXPLAIN SELECT USERS.ID, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID OR USERS.AGE = 25");
-        assertTrue(plan.contains("Nested Loop (OR condition may produce a large result set)"),
-                "an OR in the ON clause must be planned as a nested loop");
+        assertTrue(plan.contains("In-Memory Hash Join"),
+                "an OR with an equality in the ON clause must use hash join");
     }
 
     @Test

@@ -658,7 +658,6 @@ public class SubqueryParser {
                 }
             }
             // Находим позицию после WHERE и пробелов
-            int startPos = whereIndex;
             String whereClause = tableAndJoins.substring(whereIndex, whereEndIndex).trim();
             Pattern wherePattern = Pattern.compile("(?i)^WHERE\\s+");
             Matcher whereMatcher = wherePattern.matcher(whereClause);
