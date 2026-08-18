@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,7 @@ import java.util.Map;
  * @see DatabaseClient
  * @see Database
  */
+@SuppressWarnings("java:S106")
 public class CliRepl {
     private static final Logger LOGGER = LoggerFactory.getLogger(CliRepl.class);
     private static final String PROMPT = "diesel> ";
@@ -34,6 +36,7 @@ public class CliRepl {
 
     private final DatabaseClient client;
     private final Database database;
+    private final PrintWriter out;
 
     /**
      * Creates a REPL in remote mode backed by the given client.
@@ -43,6 +46,7 @@ public class CliRepl {
     public CliRepl(DatabaseClient client) {
         this.client = client;
         this.database = null;
+        this.out = new PrintWriter(System.out, true);
     }
 
     /**
@@ -53,6 +57,7 @@ public class CliRepl {
     public CliRepl(Database database) {
         this.client = null;
         this.database = database;
+        this.out = new PrintWriter(System.out, true);
     }
 
     /**
@@ -85,7 +90,7 @@ public class CliRepl {
         try {
             client.connect();
         } catch (RuntimeException e) {
-            System.out.println(ERROR_PREFIX + e.getMessage());
+            LOGGER.error("Connection failed: {}", e.getMessage());
             return;
         }
         new CliRepl(client).run();
@@ -99,8 +104,8 @@ public class CliRepl {
         printHelp();
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         while (true) {
-            System.out.print(PROMPT);
-            System.out.flush();
+            out.print(PROMPT);
+            out.flush();
             String line;
             try {
                 line = reader.readLine();
@@ -142,7 +147,7 @@ public class CliRepl {
             } else if (message.startsWith(ERROR_PREFIX)) {
                 message = message.substring(ERROR_PREFIX.length());
             }
-            System.out.println(ERROR_PREFIX + message);
+            LOGGER.error("{}", message);
             return;
         }
         printResult(result);
@@ -150,17 +155,17 @@ public class CliRepl {
 
     private void printResult(Object result) {
         if (result == null) {
-            System.out.println("OK");
+            out.println("OK");
         } else if (result instanceof List) {
             printTable((List<?>) result);
         } else {
-            System.out.println(result);
+            out.println(result);
         }
     }
 
     private void printTable(List<?> rows) {
         if (rows.isEmpty()) {
-            System.out.println("(0 rows)");
+            out.println("(0 rows)");
             return;
         }
         List<Map<String, Object>> maps = new ArrayList<>();
@@ -178,7 +183,7 @@ public class CliRepl {
             }
         }
         if (maps.isEmpty()) {
-            System.out.println(rows);
+            out.println(rows);
             return;
         }
         int[] widths = new int[columns.size()];
@@ -205,7 +210,7 @@ public class CliRepl {
             printRow(formattedRow, widths);
         }
         printBorder(columns.size(), widths);
-        System.out.println("(" + rows.size() + " rows)");
+        out.println("(" + rows.size() + " rows)");
     }
 
     private void printRow(List<String> cells, int[] widths) {
@@ -217,7 +222,7 @@ public class CliRepl {
             }
             sb.append(" |");
         }
-        System.out.println(sb);
+        out.println(sb);
     }
 
     private void printBorder(int columnCount, int[] widths) {
@@ -228,18 +233,18 @@ public class CliRepl {
             }
             sb.append('+');
         }
-        System.out.println(sb);
+        out.println(sb);
     }
 
     private void printHelp() {
-        System.out.println("DieselDB CLI REPL");
-        System.out.println("Type SQL queries and press Enter to execute them.");
-        System.out.println("Commands:");
-        System.out.println("  HELP                    show this help");
-        System.out.println("  EXIT or QUIT            exit the REPL");
-        System.out.println("Usage:");
-        System.out.println("  CliRepl [host] [port]   connect to a running server (default localhost:3306)");
-        System.out.println("  CliRepl --local [dir]   use a local database directly (default dir .)");
+        out.println("DieselDB CLI REPL");
+        out.println("Type SQL queries and press Enter to execute them.");
+        out.println("Commands:");
+        out.println("  HELP                    show this help");
+        out.println("  EXIT or QUIT            exit the REPL");
+        out.println("Usage:");
+        out.println("  CliRepl [host] [port]   connect to a running server (default localhost:3306)");
+        out.println("  CliRepl --local [dir]   use a local database directly (default dir .)");
     }
 
     private void disconnect() {
