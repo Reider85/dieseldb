@@ -2554,34 +2554,11 @@ class QueryParser {
     }
 
     private Operator parseOperator(String operatorStr) {
-        return switch (operatorStr.toUpperCase().trim()) {
-            case "=" -> Operator.EQUALS;
-            case "!=", "<>" -> Operator.NOT_EQUALS;
-            case "<" -> Operator.LESS_THAN;
-            case ">" -> Operator.GREATER_THAN;
-            case "<=" -> Operator.LESS_THAN_OR_EQUALS;
-            case ">=" -> Operator.GREATER_THAN_OR_EQUALS;
-            case SqlKeywords.LIKE -> Operator.LIKE;
-            case SqlKeywords.NOT_LIKE -> Operator.NOT_LIKE;
-            default -> throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
-        };
+        return SqlParsingUtils.parseOperator(operatorStr);
     }
 
     private void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
-        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-        boolean found = false;
-        for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-            String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-            if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
-                    new Object[]{column, combinedColumnTypes.keySet()});
-            throw new IllegalArgumentException("Unknown column: " + column);
-        }
+        SqlParsingUtils.validateColumn(column, combinedColumnTypes);
     }
 
     private String getNextToken(String conditionStr, int startIndex) {
@@ -2983,15 +2960,7 @@ class QueryParser {
     }
 
     private String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {
-        String unquoted = unquoteQualifiedIdentifier(column);
-        if (unquoted.contains(".")) {
-            String[] parts = unquoted.split("\\.");
-            String tableOrAlias = parts[0].trim();
-            String colName = parts[1].trim();
-            String tableName = tableAliases.getOrDefault(tableOrAlias, tableOrAlias);
-            return tableName + "." + colName;
-        }
-        return defaultTableName + "." + unquoted.trim();
+        return SqlParsingUtils.normalizeColumnName(column, defaultTableName, tableAliases);
     }
 
     private List<HavingCondition> parseHavingConditions(String havingClause, ParseContext ctx,
@@ -3386,14 +3355,7 @@ class QueryParser {
      * Identifiers that are not quoted are returned unchanged.
      */
     static String unquoteIdentifier(String identifier) {
-        if (identifier == null) {
-            return null;
-        }
-        String trimmed = identifier.trim();
-        if (trimmed.length() >= 2 && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"') {
-            return trimmed.substring(1, trimmed.length() - 1);
-        }
-        return trimmed;
+        return SqlParsingUtils.unquoteIdentifier(identifier);
     }
 
     /**
@@ -3401,17 +3363,6 @@ class QueryParser {
      * qualified (table.column) identifier.
      */
     private static String unquoteQualifiedIdentifier(String identifier) {
-        if (identifier == null) {
-            return null;
-        }
-        String[] parts = identifier.split("\\.", -1);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < parts.length; i++) {
-            if (i > 0) {
-                sb.append('.');
-            }
-            sb.append(unquoteIdentifier(parts[i]));
-        }
-        return sb.toString();
+        return SqlParsingUtils.unquoteQualifiedIdentifier(identifier);
     }
 }

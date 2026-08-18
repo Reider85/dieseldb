@@ -38,29 +38,11 @@ public class SubqueryParser {
     }
 
     private static String unquoteIdentifier(String identifier) {
-        if (identifier == null) {
-            return null;
-        }
-        String trimmed = identifier.trim();
-        if (trimmed.length() >= 2 && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"') {
-            return trimmed.substring(1, trimmed.length() - 1);
-        }
-        return trimmed;
+        return SqlParsingUtils.unquoteIdentifier(identifier);
     }
 
     private static String unquoteQualifiedIdentifier(String identifier) {
-        if (identifier == null) {
-            return null;
-        }
-        String[] parts = identifier.split("\\.", -1);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < parts.length; i++) {
-            if (i > 0) {
-                sb.append('.');
-            }
-            sb.append(unquoteIdentifier(parts[i]));
-        }
-        return sb.toString();
+        return SqlParsingUtils.unquoteQualifiedIdentifier(identifier);
     }
 
     /**
@@ -1410,17 +1392,7 @@ public class SubqueryParser {
     }
 
     private QueryParser.Operator parseOperator(String operatorStr) {
-        return switch (operatorStr.toUpperCase().trim()) {
-            case "=" -> QueryParser.Operator.EQUALS;
-            case "!=", "<>" -> QueryParser.Operator.NOT_EQUALS;
-            case "<" -> QueryParser.Operator.LESS_THAN;
-            case ">" -> QueryParser.Operator.GREATER_THAN;
-            case "<=" -> QueryParser.Operator.LESS_THAN_OR_EQUALS;
-            case ">=" -> QueryParser.Operator.GREATER_THAN_OR_EQUALS;
-            case SqlKeywords.LIKE -> QueryParser.Operator.LIKE;
-            case SqlKeywords.NOT_LIKE -> QueryParser.Operator.NOT_LIKE;
-            default -> throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
-        };
+        return SqlParsingUtils.parseOperator(operatorStr);
     }
 
     private QueryParser.OperatorInfo findOperator(String condStr, String[] operators) {
@@ -1535,15 +1507,7 @@ public class SubqueryParser {
     }
 
     private String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {
-        String unquoted = unquoteQualifiedIdentifier(column);
-        if (unquoted.contains(".")) {
-            String[] parts = unquoted.split("\\.");
-            String tableOrAlias = parts[0].trim();
-            String colName = parts[1].trim();
-            String tableName = tableAliases.getOrDefault(tableOrAlias, tableOrAlias);
-            return tableName + "." + colName;
-        }
-        return defaultTableName + "." + unquoted.trim();
+        return SqlParsingUtils.normalizeColumnName(column, defaultTableName, tableAliases);
     }
 
     private List<QueryParser.HavingCondition> parseHavingConditions(String havingClause, ParseContext ctx,

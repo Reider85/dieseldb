@@ -216,6 +216,7 @@ class QueryCache {
                 }
                 case LITERAL -> key.append(token.value);
                 case COMPARISON_OPERATOR, PUNCTUATION -> key.append(token.value);
+                default -> { /* exhaustive enum switch - all TokenType values covered */ }
             }
             key.append(' ');
         }
