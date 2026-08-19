@@ -69,7 +69,7 @@ class BTreeClusteredIndex implements Index, Serializable {
         // Проверяем уникальность ключа
         List<Integer> existing = search(key);
         if (!existing.isEmpty()) {
-            throw new IllegalStateException("Duplicate key violation: key '" + key + "' already exists");
+            throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + ErrorMessages.ALREADY_EXISTS_SUFFIX);
         }
 
         Node r = root;

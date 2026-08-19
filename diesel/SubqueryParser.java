@@ -57,7 +57,7 @@ public class SubqueryParser {
         // Prompt 22 (java:S2259): a null query would NPE inside the delegated
         // QueryParser.parse call; reject it here with the same contract.
         if (query == null) {
-            throw new IllegalArgumentException("Query must not be null");
+            throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
         LOGGER.log(Level.INFO, "Parsing query: {0}", query);
         String normalizedQuery = normalizeQueryString(query).trim();
@@ -365,7 +365,7 @@ public class SubqueryParser {
 
             Table mainTable = database.getTable(tableName);
             if (mainTable == null) {
-                throw new IllegalArgumentException("Table not found: " + tableName);
+                throw new IllegalArgumentException(ErrorMessages.TABLE_NOT_FOUND_PREFIX + tableName);
             }
 
             combinedColumnTypes = new HashMap<>(mainTable.getColumnTypes());

@@ -126,7 +126,7 @@ class ConditionEvaluator {
                 case LESS_THAN_OR_EQUALS -> comparison <= 0;
                 case GREATER_THAN -> comparison > 0;
                 case GREATER_THAN_OR_EQUALS -> comparison >= 0;
-                default -> throw new IllegalStateException("Unsupported operator: " + condition.operator);
+                default -> throw new IllegalStateException(ErrorMessages.UNSUPPORTED_OPERATOR_PREFIX + condition.operator);
             };
         }
 

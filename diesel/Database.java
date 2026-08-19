@@ -117,7 +117,7 @@ class Database {
      */
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         if (tables.containsKey(tableName)) {
-            throw new IllegalArgumentException("Table " + tableName + " already exists");
+            throw new IllegalArgumentException(ErrorMessages.TABLE_PREFIX + tableName + " already exists");
         }
         Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
         tables.put(tableName, newTable);
@@ -151,7 +151,7 @@ class Database {
         // cleanQuery.trim() before the try-block that formats execution
         // errors; reject it up front with a clear IllegalArgumentException.
         if (query == null) {
-            throw new IllegalArgumentException("Query must not be null");
+            throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
         Long maxRowsHint = parseMaxRowsHint(query);
@@ -427,7 +427,7 @@ class Database {
             String tableName = extractTableName(explainQuery.getInnerSql());
             table = getTableForQuery(tableName, currentTransaction);
             if (table == null) {
-                throw new TableNotFoundException("Table " + tableName + " does not exist");
+                throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
             }
         }
         return explainQuery.execute(table);
@@ -460,7 +460,7 @@ class Database {
             tableName = extractTableName(query);
             table = getTableForQuery(tableName, currentTransaction);
             if (table == null) {
-                throw new TableNotFoundException("Table " + tableName + " does not exist");
+                throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
             }
         }
 
@@ -612,7 +612,7 @@ class Database {
     public Table getTable(String tableName) {
         Table table = tables.get(tableName);
         if (table == null) {
-            throw new TableNotFoundException("Table " + tableName + " does not exist");
+            throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
         }
         return table;
     }
@@ -627,7 +627,7 @@ class Database {
      */
     public void dropTable(String tableName) {
         if (tables.remove(tableName) == null) {
-            throw new TableNotFoundException("Table " + tableName + " does not exist");
+            throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
         }
         queryCache.invalidateAll();
         deleteTableFiles(tableName);
@@ -663,12 +663,12 @@ class Database {
      */
     public void loadTablesFromDisk() {
         File dir = new File(dataDir);
-        File[] files = dir.listFiles((d, name) -> name.endsWith(".table"));
+        File[] files = dir.listFiles((d, name) -> name.endsWith(ErrorMessages.TABLE_EXTENSION));
         if (files == null) {
             return;
         }
         for (File file : files) {
-            String tableName = file.getName().substring(0, file.getName().length() - ".table".length());
+            String tableName = file.getName().substring(0, file.getName().length() - ErrorMessages.TABLE_EXTENSION.length());
             Table table = Table.loadFromFile(this, tableName);
             if (table != null) {
                 tables.put(tableName, table);
@@ -687,7 +687,7 @@ class Database {
                     new Object[]{tableName, e.getMessage()});
         }
         try {
-            Files.deleteIfExists(Path.of(dataDir, tableName + ".table"));
+            Files.deleteIfExists(Path.of(dataDir, tableName + ErrorMessages.TABLE_EXTENSION));
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to delete serialized file for table {0}: {1}",
                     new Object[]{tableName, e.getMessage()});

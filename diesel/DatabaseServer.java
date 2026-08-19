@@ -23,7 +23,7 @@ import java.util.logging.Level;
  */
 public class DatabaseServer {
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
-    private static final String CONFIG_FILE = "config.properties";
+    private static final String CONFIG_FILE = ErrorMessages.CONFIG_FILE;
     private static final int POOL_SIZE = 100;
     private static final int QUEUE_CAPACITY = 100;
     private final int port;
@@ -258,7 +258,7 @@ public class DatabaseServer {
                                 new Object[]{clientSocket.getInetAddress(), e.getMessage()});
                         break;
                     }
-                    if (input == null || input.equals("EXIT")) {
+                    if (input == null || input.equals(ErrorMessages.EXIT_COMMAND)) {
                         break;
                     }
 

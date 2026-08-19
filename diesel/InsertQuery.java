@@ -72,7 +72,7 @@ class InsertQuery implements Query<Void> {
             Object value = values.get(i);
             Class<?> expectedType = columnTypes.get(column);
             if (expectedType == null) {
-                throw new IllegalArgumentException("Unknown column: " + column);
+                throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
             }
             if (value == null) {
                 row.put(column, null);

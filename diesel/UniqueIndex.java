@@ -39,7 +39,7 @@ class UniqueIndex implements Index, Serializable {
             throw new IllegalArgumentException("Null keys are not allowed in unique index");
         }
         if (indexMap.containsKey(key)) {
-            throw new IllegalStateException("Duplicate key violation: key '" + key + "' already exists in unique index");
+            throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + ErrorMessages.ALREADY_EXISTS_SUFFIX + " in unique index");
         }
         indexMap.put(key, rowIndex);
     }

@@ -75,7 +75,7 @@ class SqlParsingUtils {
             case ">=" -> QueryParser.Operator.GREATER_THAN_OR_EQUALS;
             case SqlKeywords.LIKE -> QueryParser.Operator.LIKE;
             case SqlKeywords.NOT_LIKE -> QueryParser.Operator.NOT_LIKE;
-            default -> throw new IllegalArgumentException("Unsupported operator: " + operatorStr);
+            default -> throw new IllegalArgumentException(ErrorMessages.UNSUPPORTED_OPERATOR_PREFIX + operatorStr);
         };
     }
 
@@ -96,7 +96,7 @@ class SqlParsingUtils {
         if (!found) {
             LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
                     new Object[]{column, combinedColumnTypes.keySet()});
-            throw new IllegalArgumentException("Unknown column: " + column);
+            throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
         }
     }
 }

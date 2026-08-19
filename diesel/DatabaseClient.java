@@ -112,7 +112,7 @@ public class DatabaseClient {
     public void disconnect() {
         try {
             if (out != null) {
-                out.writeObject("EXIT");
+                out.writeObject(ErrorMessages.EXIT_COMMAND);
                 out.flush();
             }
         } catch (IOException e) {

@@ -205,7 +205,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         long hashMb = 512;
         long maxResultRows = 1_000_000;
         try {
-            File configFile = new File("config.properties");
+            File configFile = new File(ErrorMessages.CONFIG_FILE);
             if (configFile.exists()) {
                 java.util.Properties props = new java.util.Properties();
                 try (FileInputStream fis = new FileInputStream(configFile)) {
@@ -617,7 +617,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // (a JOIN would NPE on database.getTable below).
         Objects.requireNonNull(table, "Main table must not be null");
         Database database = Objects.requireNonNull(table.getDatabase(),
-                "Table " + mainTableName + " is not attached to a database");
+                ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
         return executeSelect(table, database);
     }
 
@@ -974,7 +974,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             int rowsSkipped = (offset != null) ? offset : 0;
             int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
             if (rowsSkipped == 0 && maxRows > 0) {
-                checkResultRowLimit(result.size(), "result");
+                checkResultRowLimit(result.size(), ErrorMessages.STAGE_RESULT);
                 result.add(resultRow);
             }
         } else {
@@ -990,7 +990,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
             if (groupAggregateKeys.isEmpty()) {
                 for (Map<String, Object> row : selectedRows) {
-                    checkResultRowLimit(result.size(), "result");
+                    checkResultRowLimit(result.size(), ErrorMessages.STAGE_RESULT);
                     result.add(filterColumns(row, columns));
                 }
             } else {
@@ -1001,7 +1001,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             filteredRow.put(aggregateKey, row.get(aggregateKey));
                         }
                     }
-                    checkResultRowLimit(result.size(), "result");
+                    checkResultRowLimit(result.size(), ErrorMessages.STAGE_RESULT);
                     result.add(filteredRow);
                 }
             }
@@ -1130,7 +1130,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             int p = (key.hashCode() & 0x7fffffff) % partitionCount;
             if (buildWriters[p] == null) {
                 buildWriters[p] = new DataOutputStream(new BufferedOutputStream(
-                        new FileOutputStream(new File(tempDir, "build-" + p + ".bin")), 1 << 20));
+                        new FileOutputStream(new File(tempDir, "build-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
             }
             writeBinaryRow(buildWriters[p], row);
             ReentrantReadWriteLock lock = buildTable.getRowLock(i);
@@ -1157,7 +1157,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             int p = (key.hashCode() & 0x7fffffff) % partitionCount;
             if (probeWriters[p] == null) {
                 probeWriters[p] = new DataOutputStream(new BufferedOutputStream(
-                        new FileOutputStream(new File(tempDir, "probe-" + p + ".bin")), 1 << 20));
+                        new FileOutputStream(new File(tempDir, "probe-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
             }
             writeBinaryRow(probeWriters[p], row);
         }
@@ -1173,8 +1173,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
         long totalHashEntries = 0;
         for (int p = 0; p < partitionCount; p++) {
-            File buildFile = new File(tempDir, "build-" + p + ".bin");
-            File probeFile = new File(tempDir, "probe-" + p + ".bin");
+            File buildFile = new File(tempDir, "build-" + p + ErrorMessages.BIN_EXTENSION);
+            File probeFile = new File(tempDir, "probe-" + p + ErrorMessages.BIN_EXTENSION);
             if (!buildFile.exists() || !probeFile.exists()) {
                 continue;
             }
@@ -1251,7 +1251,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 Map<String, Map<String, Object>> newRow = new HashMap<>(2);
                 newRow.put(ctx.probeTableName, probeRow);
                 newRow.put(ctx.buildTableName, buildRow);
-                checkResultRowLimit(newJoinedRows.size(), "join");
+                checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
                 newJoinedRows.add(newRow);
             }
         } else {
@@ -1264,7 +1264,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     Map<String, Map<String, Object>> newRow = new HashMap<>(2);
                     newRow.put(ctx.probeTableName, probeRow);
                     newRow.put(ctx.buildTableName, buildRow);
-                    checkResultRowLimit(newJoinedRows.size(), "join");
+                    checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
                     newJoinedRows.add(newRow);
                 }
             }
@@ -1347,14 +1347,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     newRow.put(ctx.join.tableName, rightRow);
 
                     if (ctx.join.joinType == QueryParser.JoinType.CROSS) {
-                        checkResultRowLimit(newJoinedRows.size(), "join");
+                        checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
                         newJoinedRows.add(newRow);
                     } else if (equalsJoin) {
                         Map<String, Object> leftRow = currentJoin.get(ctx.join.originalTable);
                         if (!valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
                             continue;
                         }
-                        checkResultRowLimit(newJoinedRows.size(), "join");
+                        checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
                         newJoinedRows.add(newRow);
                     } else if (!ctx.join.onConditions.isEmpty()) {
                         for (int k = 0; k < rightSrcKeys.size(); k++) {
@@ -1363,7 +1363,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         if (!evaluateConditions(evalRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
                             continue;
                         }
-                        checkResultRowLimit(newJoinedRows.size(), "join");
+                        checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
                         newJoinedRows.add(newRow);
                         LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
                                 new Object[]{ctx.join.tableName, ctx.join.onConditions});
@@ -2272,7 +2272,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             List<Object> inValues;
             if (condition.subQuery != null) {
                 Database database = Objects.requireNonNull(tables.get(mainTableName).getDatabase(),
-                        "Table " + mainTableName + " is not attached to a database");
+                        ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
                 String subQueryString = condition.subQuery.toString().trim();
                 if (subQueryString.startsWith("(") && subQueryString.endsWith(")")) {
                     subQueryString = subQueryString.substring(1, subQueryString.length() - 1).trim();
@@ -2327,7 +2327,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Object rowValue = row.get(column);
         if (condition.subQuery != null) {
             Database database = Objects.requireNonNull(tables.get(mainTableName).getDatabase(),
-                    "Table " + mainTableName + " is not attached to a database");
+                    ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
             String subQueryString = condition.subQuery.toString();
             String resolvedKey = substituteOuterReferences(subQueryString, row);
             Object subQueryValue = scalarSubQueryCache.computeIfAbsent(resolvedKey,
@@ -2369,7 +2369,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 comparisonResult = !likeComparison(leftValue, rightValue);
                 break;
             default:
-                throw new IllegalStateException("Unsupported operator: " + condition.operator);
+                throw new IllegalStateException(ErrorMessages.UNSUPPORTED_OPERATOR_PREFIX + condition.operator);
         }
         return (condition.not ? !comparisonResult : comparisonResult) ? TRUE : FALSE;
     }
@@ -2697,7 +2697,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // and is dereferenced for every join table below.
         Objects.requireNonNull(mainTable, "Main table must not be null");
         Database database = Objects.requireNonNull(mainTable.getDatabase(),
-                "Table " + mainTableName + " is not attached to a database");
+                ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
         for (QueryParser.JoinInfo join : joins) {
             tableAliases.putIfAbsent(join.tableName, join.tableName);
             if (join.alias != null) {
@@ -2819,7 +2819,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     private String describeScanIndex(Table table, String tableName, List<QueryParser.Condition> conditions) {
         if (conditions == null || conditions.isEmpty()) {
-            return "none (full scan)";
+            return ErrorMessages.NONE_FULL_SCAN;
         }
         for (QueryParser.Condition condition : conditions) {
             if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
@@ -2846,7 +2846,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
             }
         }
-        return "none (full scan)";
+        return ErrorMessages.NONE_FULL_SCAN;
     }
 
     /**

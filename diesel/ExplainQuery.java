@@ -88,7 +88,7 @@ class ExplainQuery implements Query<String> {
         } else if (innerQuery instanceof UpdateQuery uq) {
             sb.append("  Columns: ").append(uq.getUpdates().keySet()).append('\n');
             sb.append("  Conditions: ").append(formatConditions(uq.getConditions())).append('\n');
-            sb.append("  Index: none (full scan)\n");
+            sb.append("  Index: ").append(ErrorMessages.NONE_FULL_SCAN).append('\n');
         } else {
             DeleteQuery delete = (DeleteQuery) innerQuery;
             sb.append("  Conditions: ").append(formatConditions(delete.getConditions())).append('\n');
@@ -122,16 +122,16 @@ class ExplainQuery implements Query<String> {
      */
     private String describeDeleteIndex(Table table, List<QueryParser.Condition> conditions) {
         if (conditions == null || conditions.size() != 1) {
-            return "none (full scan)";
+            return ErrorMessages.NONE_FULL_SCAN;
         }
         QueryParser.Condition condition = conditions.get(0);
         if (condition.isGrouped() || condition.not
                 || !(condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator())) {
-            return "none (full scan)";
+            return ErrorMessages.NONE_FULL_SCAN;
         }
         Index index = table.getIndex(condition.column);
         if (index == null) {
-            return "none (full scan)";
+            return ErrorMessages.NONE_FULL_SCAN;
         }
         return SelectQuery.indexTypeName(index) + " index on " + table.getName() + "." + condition.column;
     }

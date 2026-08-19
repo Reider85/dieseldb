@@ -185,7 +185,7 @@ class Table implements Serializable {
 
         if (primaryKeyColumn != null) {
             if (!this.columnTypes.containsKey(primaryKeyColumn)) {
-                throw new IllegalArgumentException("Primary key column " + primaryKeyColumn + " does not exist");
+                throw new IllegalArgumentException("Primary key column " + primaryKeyColumn + ErrorMessages.DOES_NOT_EXIST);
             }
             createUniqueClusteredIndex(primaryKeyColumn);
         }
@@ -294,7 +294,7 @@ class Table implements Serializable {
      * @throws IllegalArgumentException if the column does not exist
      */
     public void createBTreeIndex(String columnName) {
-        createSecondaryIndex(columnName, "BTREE", BTreeIndex::new, false);
+        createSecondaryIndex(columnName, ErrorMessages.INDEX_BTREE, BTreeIndex::new, false);
         LOGGER.log(Level.INFO, "Created B-tree index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
@@ -306,7 +306,7 @@ class Table implements Serializable {
      * @throws IllegalArgumentException if the column does not exist
      */
     public void createHashIndex(String columnName) {
-        createSecondaryIndex(columnName, "HASH", HashIndex::new, false);
+        createSecondaryIndex(columnName, ErrorMessages.INDEX_HASH, HashIndex::new, false);
         LOGGER.log(Level.INFO, "Created hash index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
@@ -319,7 +319,7 @@ class Table implements Serializable {
      * @throws IllegalStateException    if the column already holds duplicate keys
      */
     public void createUniqueIndex(String columnName) {
-        createSecondaryIndex(columnName, "UNIQUE", UniqueIndex::new, true);
+        createSecondaryIndex(columnName, ErrorMessages.INDEX_UNIQUE, UniqueIndex::new, true);
         LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
     }
 
@@ -330,7 +330,7 @@ class Table implements Serializable {
      */
     private void createSecondaryIndex(String columnName, String definition, Function<Class<?>, Index> indexFactory, boolean unique) {
         if (!columnTypes.containsKey(columnName)) {
-            throw new ColumnNotFoundException("Column " + columnName + " does not exist");
+            throw new ColumnNotFoundException("Column " + columnName + ErrorMessages.DOES_NOT_EXIST);
         }
         Index index = indexFactory.apply(columnTypes.get(columnName));
         Set<Object> seenKeys = unique ? new HashSet<>() : null;
@@ -359,7 +359,7 @@ class Table implements Serializable {
      */
     public void createUniqueClusteredIndex(String columnName) {
         if (!columnTypes.containsKey(columnName)) {
-            throw new ColumnNotFoundException("Column " + columnName + " does not exist");
+            throw new ColumnNotFoundException("Column " + columnName + ErrorMessages.DOES_NOT_EXIST);
         }
         if (hasClusteredIndex) {
             throw new IllegalStateException("Table already has a clustered index on " + clusteredIndexColumn);
@@ -815,13 +815,13 @@ class Table implements Serializable {
                 Class<?> keyType = columnTypes.get(column);
                 Index index;
                 switch (entry.getValue()) {
-                    case "BTREE":
+                    case ErrorMessages.INDEX_BTREE:
                         index = new BTreeIndex(keyType);
                         break;
-                    case "HASH":
+                    case ErrorMessages.INDEX_HASH:
                         index = new HashIndex(keyType);
                         break;
-                    case "UNIQUE":
+                    case ErrorMessages.INDEX_UNIQUE:
                         index = new UniqueIndex(keyType);
                         break;
                     default:
@@ -895,7 +895,7 @@ class Table implements Serializable {
             List<Integer> existing = clusteredIndex.search(key);
             if (!existing.isEmpty()) {
                 LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
-                throw new IllegalStateException("Duplicate key violation: key '" + key + "' in column " + clusteredIndexColumn);
+                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
             }
             insertIntoClusteredPosition(validatedRow, key);
         } else {
@@ -911,7 +911,7 @@ class Table implements Serializable {
         if (index instanceof UniqueIndex || index instanceof BTreeClusteredIndex) {
             if (value != null && !index.search(value).isEmpty()) {
                 LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
-                throw new IllegalStateException("Duplicate key violation: key '" + value + "' already exists in column " + column);
+                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + " in column " + column);
             }
         }
     }
@@ -1088,7 +1088,7 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToSerializedFile(String tableName) {
-        String fileName = resolveFilePath(tableName, ".table");
+        String fileName = resolveFilePath(tableName, ErrorMessages.TABLE_EXTENSION);
         try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
             oos.writeObject(this);
             oos.flush();
@@ -1113,7 +1113,7 @@ class Table implements Serializable {
      */
     public static Table loadFromFile(Database database, String tableName) {
         String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
-        String fileName = dir + File.separator + tableName + ".table";
+        String fileName = dir + File.separator + tableName + ErrorMessages.TABLE_EXTENSION;
         File file = new File(fileName);
         if (!file.exists()) {
             LOGGER.log(Level.INFO, "Serialized file {0} not found, creating new table {1} with base structure",

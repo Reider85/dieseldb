@@ -762,7 +762,7 @@ class QueryParser {
      */
     public Query<?> parse(String query, Database database) {
         if (query == null) {
-            throw new IllegalArgumentException("Query must not be null");
+            throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
         try {
             // Normalize and remove surrounding parentheses
@@ -2058,7 +2058,7 @@ class QueryParser {
 
         Table table = database.getTable(tableName);
         if (table == null) {
-            throw new IllegalArgumentException("Table not found: " + tableName);
+            throw new IllegalArgumentException(ErrorMessages.TABLE_NOT_FOUND_PREFIX + tableName);
         }
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         Map<String, Sequence> sequences = table.getSequences();
@@ -2082,7 +2082,7 @@ class QueryParser {
             if (columnType == null) {
                 LOGGER.log(Level.SEVERE, "Unknown column in INSERT: {0}, available columns: {1}",
                         new Object[]{column, columnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column: " + column);
+                throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
             }
             values.add(parseConditionValue(column, val, columnType));
         }
@@ -2113,7 +2113,7 @@ class QueryParser {
 
         Table table = database.getTable(tableName);
         if (table == null) {
-            throw new IllegalArgumentException("Table not found: " + tableName);
+            throw new IllegalArgumentException(ErrorMessages.TABLE_NOT_FOUND_PREFIX + tableName);
         }
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         Map<String, String> tableAliases = new HashMap<>();
@@ -2150,7 +2150,7 @@ class QueryParser {
             if (columnType == null) {
                 LOGGER.log(Level.SEVERE, "Unknown column in UPDATE: {0}, available columns: {1}",
                         new Object[]{column, columnTypes.keySet()});
-                throw new IllegalArgumentException("Unknown column: " + column);
+                throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
             }
             Object value = parseConditionValue(column, valueStr, columnType);
             updates.put(column, value);
@@ -2186,7 +2186,7 @@ class QueryParser {
             }
             Table table = database.getTable(tableName);
             if (table == null) {
-                throw new IllegalArgumentException("Table not found: " + tableName);
+                throw new IllegalArgumentException(ErrorMessages.TABLE_NOT_FOUND_PREFIX + tableName);
             }
             conditions = parseConditions(conditionStr, new ParseContext(tableName, database, original, false,
                     table.getColumnTypes(), new HashMap<>(), new HashMap<>()));
@@ -2220,13 +2220,13 @@ class QueryParser {
                 } else if (columnType == Character.class && strippedValue.length() == 1) {
                     return strippedValue.charAt(0);
                 } else {
-                    throw new IllegalArgumentException("Value '" + strippedValue + "' does not match column type: " + columnType.getSimpleName());
+                    throw new IllegalArgumentException("Value '" + strippedValue + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
                 }
             } else if (valueStr.equalsIgnoreCase(SqlKeywords.TRUE) || valueStr.equalsIgnoreCase(SqlKeywords.FALSE)) {
                 if (columnType == Boolean.class) {
                     return Boolean.parseBoolean(valueStr);
                 } else {
-                    throw new IllegalArgumentException("Boolean value '" + valueStr + "' does not match column type: " + columnType.getSimpleName());
+                    throw new IllegalArgumentException("Boolean value '" + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
                 }
             } else {
                 try {
@@ -2236,14 +2236,14 @@ class QueryParser {
                         BigDecimal bd = new BigDecimal(valueStr);
                         float floatValue = bd.floatValue();
                         if (Float.isInfinite(floatValue) || Float.isNaN(floatValue)) {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Float");
+                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Float");
                         }
                         return floatValue;
                     } else if (columnType == Double.class) {
                         BigDecimal bd = new BigDecimal(valueStr);
                         double doubleValue = bd.doubleValue();
                         if (Double.isInfinite(doubleValue) || Double.isNaN(doubleValue)) {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Double");
+                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Double");
                         }
                         return doubleValue;
                     } else if (columnType == Byte.class) {
@@ -2251,21 +2251,21 @@ class QueryParser {
                         if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
                             return (byte) parsedLong;
                         } else {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Byte");
+                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Byte");
                         }
                     } else if (columnType == Short.class) {
                         long parsedLong = Long.parseLong(valueStr);
                         if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
                             return (short) parsedLong;
                         } else {
-                            throw new IllegalArgumentException("Numeric value '" + valueStr + "' out of range for Short");
+                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Short");
                         }
                     } else if (columnType == Integer.class) {
                         return Integer.parseInt(valueStr);
                     } else if (columnType == Long.class) {
                         return Long.parseLong(valueStr);
                     } else {
-                        throw new IllegalArgumentException("Numeric value '" + valueStr + "' does not match column type: " + columnType.getSimpleName());
+                        throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
                     }
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException("Invalid numeric value '" + valueStr + "' for column type: " + columnType.getSimpleName());
@@ -2849,7 +2849,7 @@ class QueryParser {
             } else if (literalColumnType == Boolean.class) {
                 return new RightPart(null, Boolean.parseBoolean(rightPart));
             } else {
-                throw new IllegalArgumentException("Boolean value '" + rightPart + "' does not match column type: " + literalColumnType.getSimpleName());
+                throw new IllegalArgumentException("Boolean value '" + rightPart + ErrorMessages.TYPE_MISMATCH_SUFFIX + literalColumnType.getSimpleName());
             }
         } else if (columnPattern.matcher(rightPart).matches()) {
             return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
@@ -2975,7 +2975,7 @@ class QueryParser {
                 return entry.getValue();
             }
         }
-        throw new IllegalArgumentException("Unknown column: " + column);
+        throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
     }
 
     private String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {

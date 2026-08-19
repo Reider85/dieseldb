@@ -124,7 +124,7 @@ public class CliRepl {
                 break;
             }
             String command = query.toUpperCase();
-            if (command.equals("EXIT") || command.equals("QUIT")) {
+            if (command.equals(ErrorMessages.EXIT_COMMAND) || command.equals("QUIT")) {
                 break;
             }
             if (command.equals("HELP")) {
