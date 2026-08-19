@@ -39,6 +39,7 @@ public class LimitOffsetTest {
         try {
             database.dropTable("USERS");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
     }
 

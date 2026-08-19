@@ -1042,6 +1042,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         fallback.add(spill.next());
                     }
                 } catch (IOException ignored) {
+                    // Best-effort drain; row is added directly below on failure
                 } finally {
                     spill.close();
                 }
@@ -1666,17 +1667,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     writer.close();
                 }
             } catch (IOException ignored) {
+                // Best-effort close; failure is non-critical
             }
             try {
                 if (reader != null) {
                     reader.close();
                 }
             } catch (IOException ignored) {
+                // Best-effort close; failure is non-critical
             }
             if (spillFile != null) {
                 try {
                     Files.deleteIfExists(spillFile.toPath());
                 } catch (IOException ignored) {
+                    // Best-effort temp file cleanup
                 }
             }
         }

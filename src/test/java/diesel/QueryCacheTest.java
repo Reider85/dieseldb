@@ -31,6 +31,7 @@ public class QueryCacheTest {
         try {
             database.dropTable("CACHE_TEST");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
     }
 

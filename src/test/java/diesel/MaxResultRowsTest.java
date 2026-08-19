@@ -46,10 +46,12 @@ public class MaxResultRowsTest {
         try {
             database.dropTable("MRT_LEFT");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
         try {
             database.dropTable("MRT_RIGHT");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
     }
 
@@ -171,10 +173,12 @@ public class MaxResultRowsTest {
 
             @Override
             public void flush() {
+                // no-op
             }
 
             @Override
             public void close() {
+                // no-op
             }
         };
         logger.addHandler(handler);

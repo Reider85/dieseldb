@@ -45,6 +45,7 @@ public class QueryProfilerTest {
         try {
             database.dropTable("PROFILER_TEST");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
     }
 

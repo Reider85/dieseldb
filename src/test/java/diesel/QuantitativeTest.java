@@ -1032,6 +1032,7 @@ public class QuantitativeTest {
                     }
                 }
             } catch (IOException ignored) {
+                // Ignore: stream ends when subprocess terminates
             }
         }, "prompt70-output-pump");
         outputPump.setDaemon(true);

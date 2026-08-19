@@ -38,10 +38,12 @@ public class AutoJoinIndexTest {
 
             @Override
             public void flush() {
+                // no-op
             }
 
             @Override
             public void close() {
+                // no-op
             }
         };
         logger.addHandler(handler);
@@ -66,6 +68,7 @@ public class AutoJoinIndexTest {
             try {
                 database.dropTable(name);
             } catch (TableNotFoundException ignored) {
+                // Ignore: table may not have been created
             }
         }
     }

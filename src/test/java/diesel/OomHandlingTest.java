@@ -36,10 +36,12 @@ public class OomHandlingTest {
         try {
             database.dropTable("OOMT_LEFT");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
         try {
             database.dropTable("OOMT_RIGHT");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
         SelectQuery.loadHashJoinConfig();
     }
@@ -101,10 +103,12 @@ public class OomHandlingTest {
 
             @Override
             public void flush() {
+                // no-op
             }
 
             @Override
             public void close() {
+                // no-op
             }
         };
         logger.addHandler(handler);

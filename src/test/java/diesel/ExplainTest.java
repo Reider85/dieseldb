@@ -42,10 +42,12 @@ public class ExplainTest {
         try {
             database.dropTable("USERS");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
         try {
             database.dropTable("USER_DETAILS");
         } catch (TableNotFoundException ignored) {
+            // Ignore: table may not have been created
         }
     }
 
