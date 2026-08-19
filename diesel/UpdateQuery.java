@@ -1,15 +1,9 @@
 package diesel;
 
-import static diesel.ThreeValuedLogic.TRUE;
-import static diesel.ThreeValuedLogic.FALSE;
-import static diesel.ThreeValuedLogic.UNKNOWN;
-
-import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.Objects;
 
 /**
  * Executes an UPDATE statement: for every row matching the WHERE conditions,

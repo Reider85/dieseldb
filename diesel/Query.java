@@ -1,5 +1,4 @@
 package diesel;
-import java.util.*;
 
 /**
  * Common contract of every parsed SQL statement: an executable object that

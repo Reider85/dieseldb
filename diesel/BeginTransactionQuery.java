@@ -1,7 +1,4 @@
 package diesel;
-import diesel.IsolationLevel;
-import diesel.Table;
-import diesel.TransactionQuery;
 
 /**
  * Parsed representation of a BEGIN TRANSACTION statement. The actual
