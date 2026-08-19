@@ -157,18 +157,18 @@ public class AnalyzeTableTest {
     }
 
     @Test
-    void smallTablesUseNestedLoopByStatistics() {
+    void smallTablesUseHashJoinByHeuristic() {
         createUsersTable();
         createDetailsTable();
         insertUsers(10);
         insertDetails(10);
         SelectQuery selectQuery = runJoin();
         assertFalse(selectQuery.isLastJoinUsedPartitioning());
-        assertEquals(0, selectQuery.getLastHashJoinTableSize(),
-                "10-row tables must be joined with a nested loop, not a hash join");
+        assertEquals(10, selectQuery.getLastHashJoinTableSize(),
+                "10-row tables must be joined with a hash join (smaller side < 1000 heuristic)");
         String plan = (String) database.executeQuery(
                 "EXPLAIN SELECT USERS.ID, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID", null);
-        assertTrue(plan.contains("Nested Loop (chosen by statistics)"), plan);
+        assertTrue(plan.contains("In-Memory Hash Join"), plan);
     }
 
     @Test

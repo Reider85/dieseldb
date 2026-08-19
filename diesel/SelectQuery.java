@@ -1930,6 +1930,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Table.TableStatistics probeStats = probeTable.getStatistics();
         long buildRows = Math.max(1, buildStats.getRowCount());
         long probeRows = Math.max(1, probeStats.getRowCount());
+
+        // Prompt 52: when the smaller side is below 1 000 rows the hash-table
+        // build is cheap and O(n + m) always beats O(n × m), so we force
+        // the hash-join path regardless of the full cost model.
+        long smallerRows = Math.min(buildRows, probeRows);
+        if (smallerRows < HASH_JOIN_OVERHEAD_ROWS) {
+            return false;
+        }
+
         long avgSize = Math.max(1, (buildStats.getAvgRowSizeBytes() + probeStats.getAvgRowSizeBytes()) / 2);
         double sizeWeight = 1.0 + avgSize / 10000.0;
         double nestedLoopCost = buildRows * (double) probeRows * sizeWeight;
