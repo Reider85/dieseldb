@@ -79,7 +79,7 @@ class QueryParser {
     static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
     private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
-    private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_][a-zA-Z0-9_]*";
+    private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_]\\w*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
     private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
 

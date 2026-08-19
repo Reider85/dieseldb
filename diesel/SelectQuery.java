@@ -2541,7 +2541,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private String substituteOuterReferences(String query, Map<String, Object> outerRow) {
-        Matcher matcher = Pattern.compile("(?i)\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\b").matcher(query);
+        Matcher matcher = Pattern.compile("(?i)\\b([A-Za-z_]\\w*)\\.([A-Za-z_]\\w*)\\b").matcher(query);
         StringBuilder result = new StringBuilder();
         while (matcher.find()) {
             String prefix = matcher.group(1);
