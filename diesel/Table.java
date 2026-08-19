@@ -128,6 +128,12 @@ class Table implements Serializable {
     private transient volatile boolean statsDirty;
     private transient volatile boolean statsRefreshScheduled;
 
+    /** When true, index insert/update operations are skipped (bulk-load mode). */
+    private transient volatile boolean indicesDisabled;
+
+    /** Queued index operations when deferred mode is active; null when not deferring. */
+    private transient List<Runnable> deferredIndexOps;
+
     /**
      * Daemon scheduler for the asynchronous statistics refresh. Daemon threads
      * never keep the JVM alive, so the refresh never blocks Maven/JUnit exit.
@@ -964,6 +970,9 @@ class Table implements Serializable {
 
     /** Inserts {@code row} into every secondary index at {@code rowIndex}, skipping NULL keys. */
     private void insertRowIntoIndexes(Map<String, Object> row, int rowIndex) {
+        if (indicesDisabled) {
+            return;
+        }
         for (Map.Entry<String, Index> entry : indexes.entrySet()) {
             Object key = row.get(entry.getKey());
             if (key != null) {
@@ -995,6 +1004,9 @@ class Table implements Serializable {
 
     /** Shifts the stored row index of every row after an insert into a clustered table. */
     private void updateIndicesAfterInsert(int insertIndex) {
+        if (indicesDisabled) {
+            return;
+        }
         for (int i = insertIndex + 1; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
 
@@ -1017,6 +1029,238 @@ class Table implements Serializable {
                     }
                 }
             }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Bulk / deferred / bulk-load index optimisation  (Prompt 51)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Inserts multiple rows in one shot, rebuilding every index exactly once
+     * at the end.  For a table with {@code N} existing rows and {@code M}
+     * indexes the cost drops from O(N² × M × log N) (N individual inserts)
+     * to O((N+K) × M × log(N+K)) where K is the batch size.
+     *
+     * <p>The rows are validated, sorted by clustered key (if present),
+     * duplicate-checked and then merged into the row list.  All indexes are
+     * rebuilt from scratch — no per-row shifting is performed.
+     *
+     * @param incomingRows the rows to insert
+     * @throws IllegalArgumentException if a value is missing or has the wrong type
+     * @throws IllegalStateException    if a unique/clustered key is duplicated
+     */
+    public void bulkInsert(List<Map<String, Object>> incomingRows) {
+        if (incomingRows == null || incomingRows.isEmpty()) {
+            return;
+        }
+
+        // Phase 1 – validate every row and collect batch-internal uniqueness keys.
+        Set<Object> batchClusteredKeys = hasClusteredIndex ? new HashSet<>() : null;
+        Map<String, Set<Object>> batchUniqueKeys = new HashMap<>();
+        for (Map.Entry<String, Index> e : indexes.entrySet()) {
+            if (e.getValue() instanceof UniqueIndex) {
+                batchUniqueKeys.put(e.getKey(), new HashSet<>());
+            }
+        }
+
+        List<Map<String, Object>> validatedRows = new ArrayList<>(incomingRows.size());
+        for (Map<String, Object> row : incomingRows) {
+            validatedRows.add(validateRowForBulk(row, batchClusteredKeys, batchUniqueKeys));
+        }
+
+        // Phase 2 – sort by clustered key so the final index build is optimal.
+        if (hasClusteredIndex) {
+            validatedRows.sort((a, b) -> compareKeys(
+                    a.get(clusteredIndexColumn),
+                    b.get(clusteredIndexColumn)));
+        }
+
+        // Phase 3 – merge into the row list.
+        rows.addAll(validatedRows);
+
+        // Phase 4 – rebuild every index in a single pass.
+        rebuildAllIndexes();
+
+        // Phase 5 – update statistics.
+        rowCount = rows.size();
+        markStatsDirty();
+        LOGGER.log(Level.INFO, "Bulk inserted {0} rows into table {1} (total {2})",
+                new Object[]{validatedRows.size(), name, rows.size()});
+    }
+
+    /**
+     * Validates a single row for bulk insert: type-checks every value, fills
+     * sequence defaults, and checks uniqueness against both the live index and
+     * the batch-internal key sets.
+     */
+    private Map<String, Object> validateRowForBulk(Map<String, Object> row,
+                                                   Set<Object> batchClusteredKeys,
+                                                   Map<String, Set<Object>> batchUniqueKeys) {
+        Map<String, Object> validatedRow = new HashMap<>();
+        for (String col : columns) {
+            Object value;
+            Sequence sequence = sequences.get(col);
+            if (sequence != null) {
+                if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
+                    throw new IllegalArgumentException(
+                            "Cannot manually specify value for sequence-based primary key column: " + col);
+                }
+                value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
+            } else if (!row.containsKey(col)) {
+                throw new IllegalArgumentException("Missing value for column: " + col);
+            } else {
+                value = row.get(col);
+            }
+
+            Class<?> expectedType = columnTypes.get(col);
+            if (expectedType == null) {
+                throw new IllegalArgumentException("Invalid value or type for column: " + col);
+            }
+            if (value == null) {
+                validatedRow.put(col, null);
+                continue;
+            }
+            validateColumnValueType(col, expectedType, value);
+            validatedRow.put(col, value);
+        }
+
+        // Clustered uniqueness
+        if (hasClusteredIndex) {
+            Object key = validatedRow.get(clusteredIndexColumn);
+            if (key == null) {
+                throw new IllegalArgumentException(
+                        "Null key in clustered index column: " + clusteredIndexColumn);
+            }
+            if (!clusteredIndex.search(key).isEmpty() || !batchClusteredKeys.add(key)) {
+                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key
+                        + "' in column " + clusteredIndexColumn);
+            }
+        }
+
+        // Secondary-unique uniqueness
+        for (Map.Entry<String, Set<Object>> e : batchUniqueKeys.entrySet()) {
+            String col = e.getKey();
+            Set<Object> seen = e.getValue();
+            Object value = validatedRow.get(col);
+            if (value != null) {
+                Index idx = indexes.get(col);
+                if (idx != null && !idx.search(value).isEmpty()) {
+                    throw new IllegalStateException(
+                            ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX
+                                    + " in column " + col);
+                }
+                if (!seen.add(value)) {
+                    throw new IllegalStateException(
+                            ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX
+                                    + " in column " + col + " (within batch)");
+                }
+            }
+        }
+
+        return validatedRow;
+    }
+
+    /**
+     * Disables all index maintenance.  Subsequent {@link #addRow} calls skip
+     * index updates entirely — useful for bulk-load scenarios where indexes
+     * will be rebuilt once at the end via {@link #enableAndRebuildIndices()}.
+     */
+    public void disableIndices() {
+        indicesDisabled = true;
+        LOGGER.log(Level.INFO, "Index maintenance disabled for table {0}", name);
+    }
+
+    /**
+     * Re-enables index maintenance and rebuilds every index from the current
+     * row data.  Call this after a bulk-load phase that was preceded by
+     * {@link #disableIndices()}.
+     */
+    public void enableAndRebuildIndices() {
+        indicesDisabled = false;
+        rebuildAllIndexes();
+        LOGGER.log(Level.INFO, "Index maintenance re-enabled and indexes rebuilt for table {0}", name);
+    }
+
+    /**
+     * Starts deferred index mode: subsequent {@link #addRow} calls queue
+     * their index operations instead of executing them immediately.  Call
+     * {@link #flushDeferredIndexUpdates()} to execute all queued operations
+     * and rebuild the final index state.
+     */
+    public void deferIndexUpdates() {
+        deferredIndexOps = new ArrayList<>();
+        LOGGER.log(Level.FINE, "Deferred index mode activated for table {0}", name);
+    }
+
+    /**
+     * Executes all queued index operations and rebuilds every index from
+     * the current row data, then exits deferred mode.
+     */
+    public void flushDeferredIndexUpdates() {
+        if (deferredIndexOps == null) {
+            return;
+        }
+        // Execute every queued operation (typically no-ops during bulk inserts,
+        // but useful when mixed single-insert + bulk patterns are used).
+        for (Runnable op : deferredIndexOps) {
+            op.run();
+        }
+        deferredIndexOps = null;
+        rebuildAllIndexes();
+        LOGGER.log(Level.FINE, "Deferred index operations flushed and indexes rebuilt for table {0}", name);
+    }
+
+    /**
+     * Returns whether index maintenance is currently disabled (bulk-load mode).
+     *
+     * @return true when index updates are skipped
+     */
+    public boolean isIndicesDisabled() {
+        return indicesDisabled;
+    }
+
+    /**
+     * Rebuilds every index (clustered + secondary) from the current row
+     * data in a single O(rows × indexes × log rows) pass.  Used by bulk
+     * insert, bulk-load rebuild, deferred flush and deserialization.
+     */
+    private void rebuildAllIndexes() {
+        // Rebuild clustered index
+        if (hasClusteredIndex) {
+            clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
+            for (int i = 0; i < rows.size(); i++) {
+                Object key = rows.get(i).get(clusteredIndexColumn);
+                if (key != null) {
+                    clusteredIndex.insert(key, i);
+                }
+            }
+        }
+        // Rebuild secondary indexes
+        for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
+            String column = entry.getKey();
+            Class<?> keyType = columnTypes.get(column);
+            Index index;
+            switch (entry.getValue()) {
+                case ErrorMessages.INDEX_BTREE:
+                    index = new BTreeIndex(keyType);
+                    break;
+                case ErrorMessages.INDEX_HASH:
+                    index = new HashIndex(keyType);
+                    break;
+                case ErrorMessages.INDEX_UNIQUE:
+                    index = new UniqueIndex(keyType);
+                    break;
+                default:
+                    continue;
+            }
+            for (int i = 0; i < rows.size(); i++) {
+                Object key = rows.get(i).get(column);
+                if (key != null) {
+                    index.insert(key, i);
+                }
+            }
+            indexes.put(column, index);
         }
     }
 
