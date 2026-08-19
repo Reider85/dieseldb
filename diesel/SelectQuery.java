@@ -1452,33 +1452,33 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             } else if (v instanceof Character c) {
                 out.writeByte(BIN_CHAR);
                 out.writeChar(c);
-            } else if (v instanceof Integer) {
+            } else if (v instanceof Integer i) {
                 out.writeByte(BIN_INT);
-                out.writeInt((Integer) v);
-            } else if (v instanceof Long) {
+                out.writeInt(i);
+            } else if (v instanceof Long l) {
                 out.writeByte(BIN_LONG);
-                out.writeLong((Long) v);
-            } else if (v instanceof Boolean) {
+                out.writeLong(l);
+            } else if (v instanceof Boolean b) {
                 out.writeByte(BIN_BOOL);
-                out.writeBoolean((Boolean) v);
-            } else if (v instanceof BigDecimal) {
+                out.writeBoolean(b);
+            } else if (v instanceof BigDecimal bd) {
                 out.writeByte(BIN_BIGDEC);
-                writeBinaryUtf(out, v.toString());
-            } else if (v instanceof Float) {
+                writeBinaryUtf(out, bd.toString());
+            } else if (v instanceof Float f) {
                 out.writeByte(BIN_FLOAT);
-                out.writeFloat((Float) v);
-            } else if (v instanceof Double) {
+                out.writeFloat(f);
+            } else if (v instanceof Double d) {
                 out.writeByte(BIN_DOUBLE);
-                out.writeDouble((Double) v);
-            } else if (v instanceof LocalDate) {
+                out.writeDouble(d);
+            } else if (v instanceof LocalDate ld) {
                 out.writeByte(BIN_DATE);
-                writeBinaryUtf(out, v.toString());
-            } else if (v instanceof LocalDateTime) {
+                writeBinaryUtf(out, ld.toString());
+            } else if (v instanceof LocalDateTime ldt) {
                 out.writeByte(BIN_DATETIME);
-                writeBinaryUtf(out, v.toString());
-            } else if (v instanceof UUID) {
+                writeBinaryUtf(out, ldt.toString());
+            } else if (v instanceof UUID uuid) {
                 out.writeByte(BIN_UUID);
-                writeBinaryUtf(out, v.toString());
+                writeBinaryUtf(out, uuid.toString());
             } else {
                 out.writeByte(BIN_STRING);
                 writeBinaryUtf(out, String.valueOf(v));
@@ -2094,8 +2094,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
                     LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
                             new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
-                } else if (index instanceof BTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN || condition.operator == QueryParser.Operator.GREATER_THAN)) {
-                    BTreeIndex bTreeIndex = (BTreeIndex) index;
+                } else if (index instanceof BTreeIndex bTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN || condition.operator == QueryParser.Operator.GREATER_THAN)) {
                     Object low = condition.operator == QueryParser.Operator.GREATER_THAN ? condition.value : null;
                     Object high = condition.operator == QueryParser.Operator.LESS_THAN ? condition.value : null;
                     rowIndices.addAll(bTreeIndex.rangeSearch(low, high));
@@ -2123,12 +2122,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (left == null || right == null) {
             return false;
         }
-        if (left instanceof Float && right instanceof Float) {
-            return Math.abs(((Float) left) - ((Float) right)) < 1e-7;
-        } else if (left instanceof Double && right instanceof Double) {
-            return Math.abs(((Double) left) - ((Double) right)) < 1e-7;
-        } else if (left instanceof BigDecimal && right instanceof BigDecimal) {
-            return ((BigDecimal) left).compareTo((BigDecimal) right) == 0;
+        if (left instanceof Float lf && right instanceof Float rf) {
+            return Math.abs(lf - rf) < 1e-7;
+        } else if (left instanceof Double ld && right instanceof Double rd) {
+            return Math.abs(ld - rd) < 1e-7;
+        } else if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
+            return lbd.compareTo(rbd) == 0;
         } else if (left.getClass() == right.getClass()) {
             return left.equals(right);
         }
@@ -2381,9 +2380,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         if (left instanceof Number && right instanceof Number) {
-            if (left instanceof BigDecimal && right instanceof BigDecimal) {
-                return ((BigDecimal) left).compareTo((BigDecimal) right);
-            }
+        if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
+            return lbd.compareTo(rbd);
+        }
             // Fast paths for the common integral types: exact and allocation-free.
             // Mixed integral types compare as long, matching decimal ordering.
             if (isIntegral(left) && isIntegral(right)) {
@@ -2392,18 +2391,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             BigDecimal leftBD = new BigDecimal(left.toString());
             BigDecimal rightBD = new BigDecimal(right.toString());
             return leftBD.compareTo(rightBD);
-        } else if (left instanceof LocalDate && right instanceof LocalDate) {
-            return ((LocalDate) left).compareTo((LocalDate) right);
-        } else if (left instanceof LocalDateTime && right instanceof LocalDateTime) {
-            return ((LocalDateTime) left).compareTo((LocalDateTime) right);
-        } else if (left instanceof Boolean && right instanceof Boolean) {
-            return ((Boolean) left).compareTo((Boolean) right);
-        } else if (left instanceof UUID && right instanceof UUID) {
-            return ((UUID) left).compareTo((UUID) right);
-        } else if (left instanceof String && right instanceof String) {
-            return ((String) left).compareTo((String) right);
-        } else if (left instanceof Character && right instanceof Character) {
-            return ((Character) left).compareTo((Character) right);
+        } else if (left instanceof LocalDate ll && right instanceof LocalDate rl) {
+            return ll.compareTo(rl);
+        } else if (left instanceof LocalDateTime lldt && right instanceof LocalDateTime rldt) {
+            return lldt.compareTo(rldt);
+        } else if (left instanceof Boolean lb && right instanceof Boolean rb) {
+            return lb.compareTo(rb);
+        } else if (left instanceof UUID lu && right instanceof UUID ru) {
+            return lu.compareTo(ru);
+        } else if (left instanceof String ls && right instanceof String rs) {
+            return ls.compareTo(rs);
+        } else if (left instanceof Character lc && right instanceof Character rc) {
+            return lc.compareTo(rc);
         } else {
             throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
         }
@@ -2526,18 +2525,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         s = substituteOuterReferences(s, outerRow);
         Object result = database.executeQuery(s, transactionId);
-        if (!(result instanceof List)) {
-            throw new IllegalStateException("GROUP BY subquery must return a list of rows");
+        if (result instanceof List<?> rows) {
+            if (rows.isEmpty()) {
+                return null;
+            }
+            Object firstRow = rows.get(0);
+            if (!(firstRow instanceof Map<?, ?> map) || map.isEmpty()) {
+                return null;
+            }
+            return map.values().iterator().next();
         }
-        List<?> rows = (List<?>) result;
-        if (rows.isEmpty()) {
-            return null;
-        }
-        Object firstRow = rows.get(0);
-        if (!(firstRow instanceof Map) || ((Map<?, ?>) firstRow).isEmpty()) {
-            return null;
-        }
-        return ((Map<?, ?>) firstRow).values().iterator().next();
+        throw new IllegalStateException("GROUP BY subquery must return a list of rows");
     }
 
     private String substituteOuterReferences(String query, Map<String, Object> outerRow) {
@@ -2572,8 +2570,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (value == null) {
             return SqlKeywords.NULL;
         }
-        if (value instanceof String) {
-            return "'" + ((String) value).replace("'", "''") + "'";
+        if (value instanceof String s) {
+            return "'" + s.replace("'", "''") + "'";
         }
         if (value instanceof LocalDate || value instanceof LocalDateTime) {
             return "'" + value + "'";

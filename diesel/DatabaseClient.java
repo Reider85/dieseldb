@@ -86,15 +86,15 @@ public class DatabaseClient {
             out.writeObject(new QueryMessage(normalizedQuery, transactionId));
             out.flush();
             Object result = in.readObject();
-            if (result instanceof String && ((String) result).startsWith("Transaction started: ")) {
-                transactionId = UUID.fromString(((String) result).split(": ")[1]);
-            } else if (result instanceof String &&
-                    (((String) result).equals("Transaction committed") || ((String) result).equals("Transaction rolled back"))) {
+            if (result instanceof String s && s.startsWith("Transaction started: ")) {
+                transactionId = UUID.fromString(s.split(": ")[1]);
+            } else if (result instanceof String s &&
+                    (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
                 transactionId = null;
             }
-            if (result instanceof String && ((String) result).startsWith("Error: ")) {
+            if (result instanceof String s && s.startsWith("Error: ")) {
                 LOGGER.error("Server error for query '{}': {}", normalizedQuery, result);
-                throw new DieselException((String) result);
+                throw new DieselException(s);
             }
             LOGGER.info("Query executed: {}, Result: {}", normalizedQuery, result);
             return result;
@@ -189,9 +189,9 @@ public class DatabaseClient {
             String selectQuery = "SELECT ID, NAME, AGE FROM USERS WHERE NAME = 'Alice'";
             Object result = client.executeQuery(selectQuery);
 
-            if (result instanceof List) {
+            if (result instanceof List<?> list) {
                 @SuppressWarnings("unchecked")
-                List<Map<String, Object>> rows = (List<Map<String, Object>>) result;
+                List<Map<String, Object>> rows = (List<Map<String, Object>>) list;
                 LOGGER.info("Query Results:");
                 for (Map<String, Object> row : rows) {
                     LOGGER.info(row.toString());

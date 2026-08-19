@@ -46,8 +46,8 @@ class ExplainQuery implements Query<String> {
 
     @Override
     public String execute(Table table) {
-        if (innerQuery instanceof SelectQuery) {
-            return executeSelect((SelectQuery) innerQuery, table);
+        if (innerQuery instanceof SelectQuery sq) {
+            return executeSelect(sq, table);
         }
         return executeDml(table);
     }
@@ -73,9 +73,9 @@ class ExplainQuery implements Query<String> {
 
     private String executeDml(Table table) {
         String operation;
-        if (innerQuery instanceof InsertQuery) {
+        if (innerQuery instanceof InsertQuery iq) {
             operation = SqlKeywords.INSERT;
-        } else if (innerQuery instanceof UpdateQuery) {
+        } else if (innerQuery instanceof UpdateQuery uq) {
             operation = SqlKeywords.UPDATE;
         } else {
             operation = SqlKeywords.DELETE;
@@ -83,12 +83,11 @@ class ExplainQuery implements Query<String> {
         StringBuilder sb = new StringBuilder("Execution Plan\n");
         sb.append("  Operation: ").append(operation).append('\n');
         sb.append("  Table: ").append(table.getName()).append(" (estimated rows: ").append(table.rowCount()).append(")\n");
-        if (innerQuery instanceof InsertQuery) {
-            sb.append("  Columns: ").append(((InsertQuery) innerQuery).getColumns()).append('\n');
-        } else if (innerQuery instanceof UpdateQuery) {
-            UpdateQuery update = (UpdateQuery) innerQuery;
-            sb.append("  Columns: ").append(update.getUpdates().keySet()).append('\n');
-            sb.append("  Conditions: ").append(formatConditions(update.getConditions())).append('\n');
+        if (innerQuery instanceof InsertQuery iq) {
+            sb.append("  Columns: ").append(iq.getColumns()).append('\n');
+        } else if (innerQuery instanceof UpdateQuery uq) {
+            sb.append("  Columns: ").append(uq.getUpdates().keySet()).append('\n');
+            sb.append("  Conditions: ").append(formatConditions(uq.getConditions())).append('\n');
             sb.append("  Index: none (full scan)\n");
         } else {
             DeleteQuery delete = (DeleteQuery) innerQuery;
@@ -138,14 +137,14 @@ class ExplainQuery implements Query<String> {
     }
 
     private long affectedRows() {
-        if (innerQuery instanceof InsertQuery) {
-            return ((InsertQuery) innerQuery).getLastAffectedRows();
+        if (innerQuery instanceof InsertQuery iq) {
+            return iq.getLastAffectedRows();
         }
-        if (innerQuery instanceof UpdateQuery) {
-            return ((UpdateQuery) innerQuery).getLastAffectedRows();
+        if (innerQuery instanceof UpdateQuery uq) {
+            return uq.getLastAffectedRows();
         }
-        if (innerQuery instanceof DeleteQuery) {
-            return ((DeleteQuery) innerQuery).getLastAffectedRows();
+        if (innerQuery instanceof DeleteQuery dq) {
+            return dq.getLastAffectedRows();
         }
         return 0;
     }

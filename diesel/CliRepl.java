@@ -156,8 +156,8 @@ public class CliRepl {
     private void printResult(Object result) {
         if (result == null) {
             out.println("OK");
-        } else if (result instanceof List) {
-            printTable((List<?>) result);
+        } else if (result instanceof List<?> list) {
+            printTable(list);
         } else {
             out.println(result);
         }
@@ -171,11 +171,11 @@ public class CliRepl {
         List<Map<String, Object>> maps = new ArrayList<>();
         List<String> columns = new ArrayList<>();
         for (Object row : rows) {
-            if (row instanceof Map) {
+            if (row instanceof Map<?, ?> map) {
                 @SuppressWarnings("unchecked")
-                Map<String, Object> map = (Map<String, Object>) row;
-                maps.add(map);
-                for (String key : map.keySet()) {
+                Map<String, Object> stringMap = (Map<String, Object>) map;
+                maps.add(stringMap);
+                for (String key : stringMap.keySet()) {
                     if (!columns.contains(key)) {
                         columns.add(key);
                     }

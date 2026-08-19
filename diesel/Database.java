@@ -181,8 +181,8 @@ class Database {
             parseNanos = System.nanoTime() - parseStart;
             // Derived tables materialize their inner SELECT at parse time, so
             // their plans are never reused (a later hit would scan stale rows).
-            if (normalizedSelect != null && parsedQuery instanceof SelectQuery
-                    && ((SelectQuery) parsedQuery).getDerivedMainTable() == null) {
+            if (normalizedSelect != null && parsedQuery instanceof SelectQuery sq
+                    && sq.getDerivedMainTable() == null) {
                 queryCache.put(normalizedSelect, parsedQuery, parseNanos, queryCache.currentEpoch());
             }
         }
@@ -212,32 +212,32 @@ class Database {
      * the query profiler.
      */
     private Object dispatch(Query<?> parsedQuery, String cleanQuery, Transaction currentTransaction, UUID transactionId) {
-        if (parsedQuery instanceof SetIsolationLevelQuery) {
-            return executeSetIsolationLevel((SetIsolationLevelQuery) parsedQuery);
+        if (parsedQuery instanceof SetIsolationLevelQuery q) {
+            return executeSetIsolationLevel(q);
         }
-        if (parsedQuery instanceof SetAutoCommitQuery) {
-            return executeSetAutoCommit((SetAutoCommitQuery) parsedQuery);
+        if (parsedQuery instanceof SetAutoCommitQuery q) {
+            return executeSetAutoCommit(q);
         }
-        if (parsedQuery instanceof BeginTransactionQuery) {
-            return executeBeginTransaction((BeginTransactionQuery) parsedQuery, currentTransaction);
+        if (parsedQuery instanceof BeginTransactionQuery q) {
+            return executeBeginTransaction(q, currentTransaction);
         }
-        if (parsedQuery instanceof CommitTransactionQuery) {
+        if (parsedQuery instanceof CommitTransactionQuery q) {
             return executeCommit(currentTransaction, transactionId);
         }
-        if (parsedQuery instanceof RollbackTransactionQuery) {
+        if (parsedQuery instanceof RollbackTransactionQuery q) {
             return executeRollback(currentTransaction, transactionId);
         }
-        if (parsedQuery instanceof CreateTableQuery) {
-            return executeCreateTable((CreateTableQuery) parsedQuery);
+        if (parsedQuery instanceof CreateTableQuery q) {
+            return executeCreateTable(q);
         }
-        if (parsedQuery instanceof CreateIndexQueryBase) {
-            return executeCreateIndex((CreateIndexQueryBase) parsedQuery, currentTransaction);
+        if (parsedQuery instanceof CreateIndexQueryBase q) {
+            return executeCreateIndex(q, currentTransaction);
         }
-        if (parsedQuery instanceof ExplainQuery) {
-            return executeExplain((ExplainQuery) parsedQuery, currentTransaction);
+        if (parsedQuery instanceof ExplainQuery q) {
+            return executeExplain(q, currentTransaction);
         }
-        if (parsedQuery instanceof AnalyzeTableQuery) {
-            return executeAnalyzeTable((AnalyzeTableQuery) parsedQuery);
+        if (parsedQuery instanceof AnalyzeTableQuery q) {
+            return executeAnalyzeTable(q);
         }
         return executeDataQuery(parsedQuery, cleanQuery, currentTransaction);
     }
@@ -252,15 +252,14 @@ class Database {
      */
     private void recordQueryProfiling(Query<?> parsedQuery, String sql, long parseNanos, long execTotalNanos) {
         Query<?> profiled = parsedQuery;
-        if (profiled instanceof ExplainQuery) {
-            profiled = ((ExplainQuery) profiled).getInnerQuery();
+        if (profiled instanceof ExplainQuery eq) {
+            profiled = eq.getInnerQuery();
         }
         long planNanos = 0;
         long sortNanos = 0;
-        if (profiled instanceof SelectQuery) {
-            SelectQuery select = (SelectQuery) profiled;
-            planNanos = select.getLastPlanNanos();
-            sortNanos = select.getLastSortNanos();
+        if (profiled instanceof SelectQuery sq) {
+            planNanos = sq.getLastPlanNanos();
+            sortNanos = sq.getLastSortNanos();
         }
         long executeNanos = Math.max(0, execTotalNanos - planNanos - sortNanos);
         QueryProfiler.getInstance().record(sql, parseNanos, planNanos, executeNanos, sortNanos);
@@ -318,12 +317,12 @@ class Database {
         if (maxRowsHint == null) {
             return;
         }
-        if (parsedQuery instanceof SelectQuery) {
-            ((SelectQuery) parsedQuery).setMaxResultRows(maxRowsHint);
-        } else if (parsedQuery instanceof ExplainQuery) {
-            Query<?> inner = ((ExplainQuery) parsedQuery).getInnerQuery();
-            if (inner instanceof SelectQuery) {
-                ((SelectQuery) inner).setMaxResultRows(maxRowsHint);
+        if (parsedQuery instanceof SelectQuery sq) {
+            sq.setMaxResultRows(maxRowsHint);
+        } else if (parsedQuery instanceof ExplainQuery eq) {
+            Query<?> inner = eq.getInnerQuery();
+            if (inner instanceof SelectQuery isq) {
+                isq.setMaxResultRows(maxRowsHint);
             }
         }
     }
@@ -422,8 +421,8 @@ class Database {
     private Object executeExplain(ExplainQuery explainQuery, Transaction currentTransaction) {
         Query<?> inner = explainQuery.getInnerQuery();
         Table table;
-        if (inner instanceof SelectQuery && ((SelectQuery) inner).getDerivedMainTable() != null) {
-            table = ((SelectQuery) inner).getDerivedMainTable();
+        if (inner instanceof SelectQuery sq && sq.getDerivedMainTable() != null) {
+            table = sq.getDerivedMainTable();
         } else {
             String tableName = extractTableName(explainQuery.getInnerSql());
             table = getTableForQuery(tableName, currentTransaction);
@@ -455,8 +454,8 @@ class Database {
     private Object executeDataQuery(Query<?> parsedQuery, String query, Transaction currentTransaction) {
         String tableName = null;
         Table table;
-        if (parsedQuery instanceof SelectQuery && ((SelectQuery) parsedQuery).getDerivedMainTable() != null) {
-            table = ((SelectQuery) parsedQuery).getDerivedMainTable();
+        if (parsedQuery instanceof SelectQuery sq && sq.getDerivedMainTable() != null) {
+            table = sq.getDerivedMainTable();
         } else {
             tableName = extractTableName(query);
             table = getTableForQuery(tableName, currentTransaction);

@@ -140,12 +140,12 @@ class ConditionEvaluator {
      * Checks equality with epsilon comparison for floating-point types.
      */
     boolean valuesEqual(Object rowValue, Object conditionValue) {
-        if (rowValue instanceof Float && conditionValue instanceof Float) {
-            return Math.abs(((Float) rowValue) - ((Float) conditionValue)) < 1e-7;
-        } else if (rowValue instanceof Double && conditionValue instanceof Double) {
-            return Math.abs(((Double) rowValue) - ((Double) conditionValue)) < 1e-7;
-        } else if (rowValue instanceof BigDecimal && conditionValue instanceof BigDecimal) {
-            return ((BigDecimal) rowValue).compareTo((BigDecimal) conditionValue) == 0;
+            if (rowValue instanceof Float rf && conditionValue instanceof Float cf) {
+                return Math.abs(rf - cf) < 1e-7;
+            } else if (rowValue instanceof Double rd && conditionValue instanceof Double cd) {
+                return Math.abs(rd - cd) < 1e-7;
+            } else if (rowValue instanceof BigDecimal rbd && conditionValue instanceof BigDecimal cbd) {
+                return rbd.compareTo(cbd) == 0;
         } else {
             return String.valueOf(rowValue).equals(String.valueOf(conditionValue));
         }
@@ -214,16 +214,16 @@ class ConditionEvaluator {
             return left == right ? 0 : (left == null ? -1 : 1);
         }
         if (left instanceof Number && right instanceof Number) {
-            if (left instanceof BigDecimal || right instanceof BigDecimal) {
-                BigDecimal leftBD = left instanceof BigDecimal ? (BigDecimal) left : new BigDecimal(left.toString());
-                BigDecimal rightBD = right instanceof BigDecimal ? (BigDecimal) right : new BigDecimal(right.toString());
+            if (left instanceof BigDecimal lb && right instanceof BigDecimal rb) {
+                BigDecimal leftBD = lb;
+                BigDecimal rightBD = rb;
                 return leftBD.compareTo(rightBD);
             }
-            if (left instanceof Float && right instanceof Float) {
-                return Float.compare((Float) left, (Float) right);
+            if (left instanceof Float lf && right instanceof Float rf) {
+                return Float.compare(lf, rf);
             }
-            if (left instanceof Double && right instanceof Double) {
-                return Double.compare((Double) left, (Double) right);
+            if (left instanceof Double ld && right instanceof Double rd) {
+                return Double.compare(ld, rd);
             }
             return new BigDecimal(left.toString()).compareTo(new BigDecimal(right.toString()));
         }

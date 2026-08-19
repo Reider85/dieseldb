@@ -469,18 +469,17 @@ public class SubqueryParser {
      */
     private Table materializeDerivedTable(String subQuery, String alias, Database database) {
         Object result = database.executeQuery(subQuery, null);
-        if (!(result instanceof List<?>)) {
+        if (!(result instanceof List<?> rawRows)) {
             throw new IllegalArgumentException("Derived table subquery must return a row set: " + subQuery);
         }
-        List<?> rawRows = (List<?>) result;
         List<Map<String, Object>> rows = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (Object raw : rawRows) {
-            if (!(raw instanceof Map<?, ?>)) {
+            if (!(raw instanceof Map<?, ?> rawMap)) {
                 throw new IllegalArgumentException("Derived table subquery returned a non-row result: " + subQuery);
             }
             @SuppressWarnings("unchecked")
-            Map<String, Object> row = (Map<String, Object>) raw;
+            Map<String, Object> row = (Map<String, Object>) rawMap;
             rows.add(row);
             for (Map.Entry<String, Object> entry : row.entrySet()) {
                 Class<?> type = columnTypes.get(entry.getKey());

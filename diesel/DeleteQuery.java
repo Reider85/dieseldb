@@ -75,9 +75,9 @@ class DeleteQuery implements Query<Void> {
                     rowsToDelete = index.search(conditionValue);
                     LOGGER.log(Level.INFO, "Using {0} index for column {1} with value {2}",
                             new Object[]{index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue});
-                } else if (index instanceof BTreeIndex) {
+                } else if (index instanceof BTreeIndex btree) {
                     Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                    rowsToDelete = ((BTreeIndex) index).search(conditionValue);
+                    rowsToDelete = btree.search(conditionValue);
                     LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
                 }
             } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {

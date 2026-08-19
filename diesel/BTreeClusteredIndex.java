@@ -340,8 +340,10 @@ class BTreeClusteredIndex implements Index, Serializable {
     }
 
     private int compareKeys(Object k1, Object k2) {
-        if (k1 instanceof Comparable && k2 instanceof Comparable) {
-            return ((Comparable<Object>) k1).compareTo(k2);
+        if (k1 instanceof Comparable ck1 && k2 instanceof Comparable ck2) {
+            @SuppressWarnings("unchecked")
+            Comparable<Object> c1 = (Comparable<Object>) ck1;
+            return c1.compareTo(k2);
         }
         return String.valueOf(k1).compareTo(String.valueOf(k2));
     }

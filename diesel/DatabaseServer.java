@@ -262,15 +262,14 @@ public class DatabaseServer {
                         break;
                     }
 
-                    if (!(input instanceof QueryMessage)) {
+                    if (!(input instanceof QueryMessage qm)) {
                         out.writeObject("Error: Invalid query message");
                         out.flush();
                         continue;
                     }
 
-                    QueryMessage queryMessage = (QueryMessage) input;
-                    String query = queryMessage.getQuery();
-                    transactionId = queryMessage.getTransactionId();
+                    String query = qm.getQuery();
+                    transactionId = qm.getTransactionId();
 
                     try {
                         Object result = database.executeQuery(query, transactionId);
