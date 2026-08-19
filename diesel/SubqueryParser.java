@@ -475,11 +475,11 @@ public class SubqueryParser {
         List<Map<String, Object>> rows = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (Object raw : rawRows) {
-            if (!(raw instanceof Map<?, ?> rawMap)) {
+            if (!(raw instanceof Map<?, ?> m)) {
                 throw new IllegalArgumentException("Derived table subquery returned a non-row result: " + subQuery);
             }
             @SuppressWarnings("unchecked")
-            Map<String, Object> row = (Map<String, Object>) rawMap;
+            Map<String, Object> row = (Map<String, Object>) m;
             rows.add(row);
             for (Map.Entry<String, Object> entry : row.entrySet()) {
                 Class<?> type = columnTypes.get(entry.getKey());
@@ -1115,6 +1115,10 @@ public class SubqueryParser {
                 ctx.combinedColumnTypes, ctx.tableAliases, ctx.columnAliases);
     }
 
+    // Модифицируем метод parseInCondition
+// Удаляем createCustomSubQuery, так как он несовместим с Query<T>
+// Вместо этого модифицируем parseInCondition для хранения подзапроса как строки
+
     private QueryParser.Condition parseInCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile(
                 "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
@@ -1128,7 +1132,7 @@ public class SubqueryParser {
 
     private QueryParser.Condition parseInValuesCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern valuesInPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$",
                 Pattern.DOTALL);
         Matcher valuesMatcher = valuesInPattern.matcher(condStr);
         if (!valuesMatcher.matches()) {
@@ -1680,14 +1684,13 @@ public class SubqueryParser {
             String subQueryStr = cleanRightPart.substring(1, cleanRightPart.length() - 1).trim();
             validateSubQuery(subQueryStr);
             Object subQueryResult = ctx.database.executeQuery(subQueryStr, null);
-            if (!(subQueryResult instanceof List)) {
+            if (!(subQueryResult instanceof List<?> subRows)) {
                 throw new IllegalArgumentException("HAVING subquery must return a list of rows: " + rightPart);
             }
-            List<?> subRows = (List<?>) subQueryResult;
-            if (subRows.isEmpty() || !(subRows.get(0) instanceof Map) || ((Map<?, ?>) subRows.get(0)).isEmpty()) {
+            if (subRows.isEmpty() || !(subRows.get(0) instanceof Map<?, ?> firstMap) || firstMap.isEmpty()) {
                 value = null;
             } else {
-                value = ((Map<?, ?>) subRows.get(0)).values().iterator().next();
+                value = firstMap.values().iterator().next();
             }
         } else {
             value = parseConditionValue(aggregate.toString(), rightPart, valueType);

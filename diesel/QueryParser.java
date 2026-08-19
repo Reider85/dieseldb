@@ -1336,11 +1336,11 @@ class QueryParser {
         List<SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
 
@@ -2653,12 +2653,12 @@ class QueryParser {
     }
 
     private boolean isInCondition(String condStr) {
-        Pattern inPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
+        Pattern inPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$");
         return inPattern.matcher(condStr).matches();
     }
 
     private Condition parseInCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
-        Pattern inPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((.*?)\\)$");
+        Pattern inPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$");
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
             throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
@@ -2815,13 +2815,10 @@ class QueryParser {
         String normalizedColumn = normalizeColumnName(actualColumn, ctx.defaultTableName, ctx.tableAliases);
         validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
-        Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
         String rightColumn = null;
-        Object value = parseRightPart(actualRightPart, actualColumn, ctx, normalizedColumn);
-        if (value instanceof String s && columnPattern.matcher(s).matches()) {
-            rightColumn = unquoteQualifiedIdentifier(s);
-            value = null;
-        }
+        RightPart rightPartResult = parseRightPart(actualRightPart, actualColumn, ctx, normalizedColumn);
+        rightColumn = rightPartResult.column();
+        Object value = rightPartResult.value();
 
         Operator operator = parseOperator(operatorInfo.operator);
 
@@ -2838,36 +2835,43 @@ class QueryParser {
         }
     }
 
-    private Object parseRightPart(String rightPart, String actualColumn, ParseContext ctx, String normalizedColumn) {
+    private record RightPart(String column, Object value) {}
+
+    private RightPart parseRightPart(String rightPart, String actualColumn, ParseContext ctx, String normalizedColumn) {
         Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
         String upperRightPart = rightPart.toUpperCase();
+
         if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
             Class<?> literalColumnType = getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
                     ctx.tableAliases, ctx.columnAliases);
             if (upperRightPart.equals(SqlKeywords.NULL)) {
-                return null;
+                return new RightPart(null, null);
             } else if (literalColumnType == Boolean.class) {
-                return Boolean.parseBoolean(rightPart);
+                return new RightPart(null, Boolean.parseBoolean(rightPart));
             } else {
                 throw new IllegalArgumentException("Boolean value '" + rightPart + "' does not match column type: " + literalColumnType.getSimpleName());
             }
         } else if (columnPattern.matcher(rightPart).matches()) {
-            return unquoteQualifiedIdentifier(rightPart);
+            return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
         } else {
             try {
-                return parseConditionValue(actualColumn, rightPart,
+                return new RightPart(null, parseConditionValue(actualColumn, rightPart,
                         getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
-                                ctx.tableAliases, ctx.columnAliases));
+                                ctx.tableAliases, ctx.columnAliases)));
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
                         new Object[]{rightPart, e.getMessage()});
                 if (columnPattern.matcher(rightPart).matches()) {
-                    return unquoteQualifiedIdentifier(rightPart);
+                    return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
                 } else {
                     throw e;
                 }
             }
         }
+    }
+
+    private String resolveRightColumn(String rightPart) {
+        return unquoteQualifiedIdentifier(rightPart);
     }
 
     private String resolveColumnAlias(String column, Map<String, String> columnAliases) {
@@ -2892,11 +2896,11 @@ class QueryParser {
             }
             if (!inQuotes) {
                 if (c == '(') {
-                    parenDepth++;
                     if (parenDepth == 1 && i + 7 < condStr.length() &&
                             condStr.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
                         subQueryStart = i;
                     }
+                    parenDepth++;
                     continue;
                 } else if (c == ')') {
                     parenDepth--;
@@ -3126,7 +3130,7 @@ class QueryParser {
         }
 
         if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(.*\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
+            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(.*?\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
             Matcher aggMatcher = aggPattern.matcher(leftPart);
             if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);

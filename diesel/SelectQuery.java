@@ -1476,9 +1476,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             } else if (v instanceof LocalDateTime ldt) {
                 out.writeByte(BIN_DATETIME);
                 writeBinaryUtf(out, ldt.toString());
-            } else if (v instanceof UUID uuid) {
+            } else if (v instanceof UUID u) {
                 out.writeByte(BIN_UUID);
-                writeBinaryUtf(out, uuid.toString());
+                writeBinaryUtf(out, u.toString());
             } else {
                 out.writeByte(BIN_STRING);
                 writeBinaryUtf(out, String.valueOf(v));
@@ -2284,11 +2284,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 inValues = inSubQueryCache.computeIfAbsent(resolvedSubQuery, key -> {
                     LOGGER.log(Level.FINE, "Executing subquery: {0}", key);
                     Object subQueryResult = database.executeQuery(key, transactionId);
-                    if (!(subQueryResult instanceof List)) {
+                    if (!(subQueryResult instanceof List<?> subList)) {
                         throw new IllegalStateException("Subquery must return a list of rows");
                     }
                     List<Object> values = new ArrayList<>();
-                    for (Map<String, Object> subRow : (List<Map<String, Object>>) subQueryResult) {
+                    for (Map<String, Object> subRow : (List<Map<String, Object>>) subList) {
                         if (!subRow.isEmpty()) {
                             values.add(subRow.values().iterator().next());
                         }
@@ -2380,9 +2380,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         if (left instanceof Number && right instanceof Number) {
-        if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
-            return lbd.compareTo(rbd);
-        }
+            if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
+                return lbd.compareTo(rbd);
+            }
             // Fast paths for the common integral types: exact and allocation-free.
             // Mixed integral types compare as long, matching decimal ordering.
             if (isIntegral(left) && isIntegral(right)) {
@@ -2391,18 +2391,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             BigDecimal leftBD = new BigDecimal(left.toString());
             BigDecimal rightBD = new BigDecimal(right.toString());
             return leftBD.compareTo(rightBD);
-        } else if (left instanceof LocalDate ll && right instanceof LocalDate rl) {
-            return ll.compareTo(rl);
-        } else if (left instanceof LocalDateTime lldt && right instanceof LocalDateTime rldt) {
-            return lldt.compareTo(rldt);
-        } else if (left instanceof Boolean lb && right instanceof Boolean rb) {
-            return lb.compareTo(rb);
-        } else if (left instanceof UUID lu && right instanceof UUID ru) {
-            return lu.compareTo(ru);
-        } else if (left instanceof String ls && right instanceof String rs) {
-            return ls.compareTo(rs);
-        } else if (left instanceof Character lc && right instanceof Character rc) {
-            return lc.compareTo(rc);
+        } else if (left instanceof LocalDate ld1 && right instanceof LocalDate ld2) {
+            return ld1.compareTo(ld2);
+        } else if (left instanceof LocalDateTime ldt1 && right instanceof LocalDateTime ldt2) {
+            return ldt1.compareTo(ldt2);
+        } else if (left instanceof Boolean b1 && right instanceof Boolean b2) {
+            return b1.compareTo(b2);
+        } else if (left instanceof UUID u1 && right instanceof UUID u2) {
+            return u1.compareTo(u2);
+        } else if (left instanceof String s1 && right instanceof String s2) {
+            return s1.compareTo(s2);
+        } else if (left instanceof Character c1 && right instanceof Character rc) {
+            return c1.compareTo(rc);
         } else {
             throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
         }
@@ -2525,17 +2525,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         s = substituteOuterReferences(s, outerRow);
         Object result = database.executeQuery(s, transactionId);
-        if (result instanceof List<?> rows) {
-            if (rows.isEmpty()) {
-                return null;
-            }
-            Object firstRow = rows.get(0);
-            if (!(firstRow instanceof Map<?, ?> map) || map.isEmpty()) {
-                return null;
-            }
-            return map.values().iterator().next();
+        if (!(result instanceof List<?> rows)) {
+            throw new IllegalStateException("GROUP BY subquery must return a list of rows");
         }
-        throw new IllegalStateException("GROUP BY subquery must return a list of rows");
+        if (rows.isEmpty()) {
+            return null;
+        }
+        Object firstRow = rows.get(0);
+        if (!(firstRow instanceof Map<?, ?> map) || map.isEmpty()) {
+            return null;
+        }
+        return map.values().iterator().next();
     }
 
     private String substituteOuterReferences(String query, Map<String, Object> outerRow) {
