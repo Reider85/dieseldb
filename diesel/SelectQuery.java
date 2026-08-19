@@ -2065,13 +2065,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         for (QueryParser.Condition condition : conditions) {
-            if (condition.isGrouped() || condition.isColumnComparison()) {
-                continue;
-            }
-
             // Negated conditions (NOT IN / NOT EQUALS / ...) must not use the index
             // pre-filter: the index lookup returns the rows the condition rejects.
-            if (condition.not) {
+            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) {
                 continue;
             }
 
@@ -2211,10 +2207,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (!andInitialized) {
                 andResult = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
                 andInitialized = true;
-                continue;
-            }
-
-            if (andResult.andIsDetermined()) {
+            } else if (andResult.andIsDetermined()) {
                 while (i + 1 < conditions.size()) {
                     String nextConj = conditions.get(i + 1).conjunction;
                     if (Objects.equals(nextConj, SqlKeywords.OR)) {
@@ -2222,11 +2215,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
                     i++;
                 }
-                continue;
+            } else {
+                ThreeValuedLogic value = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
+                andResult = andResult.and(value);
             }
-
-            ThreeValuedLogic value = evaluateCondition3vl(row, condition, combinedColumnTypes, tables);
-            andResult = andResult.and(value);
         }
 
         return orInitialized ? orResult.or(andResult) : andResult;
@@ -2827,26 +2819,39 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         for (QueryParser.Condition condition : conditions) {
-            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) {
-                continue;
-            }
-            String unqualifiedColumn = normalizeColumnKey(normalizeColumnName(condition.column, tableName), tableName);
-            Index index = table.getIndex(unqualifiedColumn);
-            if (index == null && table.hasClusteredIndex() && unqualifiedColumn.equals(table.getClusteredIndexColumn())) {
-                index = table.getClusteredIndex();
-            }
-            if (index == null) {
-                continue;
-            }
-            if (condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator()) {
-                return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn;
-            }
-            if (index instanceof BTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN
-                    || condition.operator == QueryParser.Operator.GREATER_THAN)) {
-                return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
+            String hint = tryResolveIndexHint(condition, tableName, table);
+            if (hint != null) {
+                return hint;
             }
         }
         return ErrorMessages.NONE_FULL_SCAN;
+    }
+
+    /**
+     * Returns an EXPLAIN-friendly index hint string for the given condition,
+     * or {@code null} when the condition should be skipped (grouped, column
+     * comparison, negated, or no matching index).
+     */
+    private String tryResolveIndexHint(QueryParser.Condition condition, String tableName, Table table) {
+        if (condition.isGrouped() || condition.isColumnComparison() || condition.not) {
+            return null;
+        }
+        String unqualifiedColumn = normalizeColumnKey(normalizeColumnName(condition.column, tableName), tableName);
+        Index index = table.getIndex(unqualifiedColumn);
+        if (index == null && table.hasClusteredIndex() && unqualifiedColumn.equals(table.getClusteredIndexColumn())) {
+            index = table.getClusteredIndex();
+        }
+        if (index == null) {
+            return null;
+        }
+        if (condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator()) {
+            return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn;
+        }
+        if (index instanceof BTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN
+                || condition.operator == QueryParser.Operator.GREATER_THAN)) {
+            return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
+        }
+        return null;
     }
 
     /**

@@ -799,13 +799,10 @@ class QueryParser {
             List<SqlLexer.Token> tokens = lexer.tokenize(originalQuery);
             String statementType = null;
             for (SqlLexer.Token token : tokens) {
-                if (token.type == SqlLexer.TokenType.PUNCTUATION && token.value.equals("(")) {
-                    continue;
+                if (token.type != SqlLexer.TokenType.PUNCTUATION || !token.value.equals("(")) {
+                    statementType = token.type == SqlLexer.TokenType.KEYWORD ? token.value.toUpperCase() : null;
+                    break;
                 }
-                if (token.type == SqlLexer.TokenType.KEYWORD) {
-                    statementType = token.value.toUpperCase();
-                }
-                break;
             }
             if (statementType == null) {
                 return null;
@@ -2480,47 +2477,40 @@ class QueryParser {
         for (int i = 0; i < tokens.size(); i++) {
             Token token = tokens.get(i);
             if (token.type == TokenType.LOGICAL_OPERATOR) {
-                // Logical operators set the conjunction for the next condition
                 conjunction = token.value.toUpperCase();
                 LOGGER.log(Level.FINEST, "Processing logical operator: {0}, setting conjunction to {1}",
                         new Object[]{token.value, conjunction});
-                continue;
-            }
-            if (token.type == TokenType.CONDITION) {
+            } else if (token.type == TokenType.CONDITION) {
                 String condStr = token.value;
                 if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
                     not = true;
                     LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
-                    continue;
-                }
-                if (condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'")) {
-                    // Skip quoted strings, as they are handled within LIKE or comparison conditions
+                } else if (condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'")) {
                     LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
-                    continue;
-                }
-                if (condStr.startsWith("(") && condStr.endsWith(")")) {
-                    int endParen = findMatchingParenthesis(condStr, 0);
-                    if (endParen == condStr.length() - 1) {
-                        String subCondStr = condStr.substring(1, endParen).trim();
-                        List<Token> subTokens = tokenizeConditions(subCondStr);
-                        List<Condition> subConditions = parseTokenizedConditions(subTokens, ctx, conjunction, not);
-                        conditions.add(new Condition(subConditions, conjunction, not));
-                        LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
-                    } else {
-                        throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
-                    }
-                } else if (condStr.toUpperCase().contains(" IN ")) {
-                    Condition condition = parseInCondition(condStr, ctx, conjunction, not);
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
                 } else {
-                    Condition condition = parseSingleCondition(condStr, ctx, conjunction, not, condStr);
-                    conditions.add(condition);
-                    LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
+                    if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                        int endParen = findMatchingParenthesis(condStr, 0);
+                        if (endParen == condStr.length() - 1) {
+                            String subCondStr = condStr.substring(1, endParen).trim();
+                            List<Token> subTokens = tokenizeConditions(subCondStr);
+                            List<Condition> subConditions = parseTokenizedConditions(subTokens, ctx, conjunction, not);
+                            conditions.add(new Condition(subConditions, conjunction, not));
+                            LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
+                        } else {
+                            throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
+                        }
+                    } else if (condStr.toUpperCase().contains(" IN ")) {
+                        Condition condition = parseInCondition(condStr, ctx, conjunction, not);
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
+                    } else {
+                        Condition condition = parseSingleCondition(condStr, ctx, conjunction, not, condStr);
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
+                    }
+                    conjunction = null;
+                    not = false;
                 }
-                // Reset conjunction and negation after adding a condition
-                conjunction = null;
-                not = false;
             }
         }
         return conditions;

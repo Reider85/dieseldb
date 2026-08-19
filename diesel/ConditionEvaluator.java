@@ -32,15 +32,13 @@ class ConditionEvaluator {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
             if (Objects.equals(conjunction, SqlKeywords.OR)) {
-                if (result.orIsDetermined()) {
-                    continue;
+                if (!result.orIsDetermined()) {
+                    result = result.or(evaluateCondition3vl(row, condition, columnTypes));
                 }
-                result = result.or(evaluateCondition3vl(row, condition, columnTypes));
             } else if (conjunction == null || conjunction.equalsIgnoreCase(SqlKeywords.AND)) {
-                if (result.andIsDetermined()) {
-                    continue;
+                if (!result.andIsDetermined()) {
+                    result = result.and(evaluateCondition3vl(row, condition, columnTypes));
                 }
-                result = result.and(evaluateCondition3vl(row, condition, columnTypes));
             }
         }
         return result;

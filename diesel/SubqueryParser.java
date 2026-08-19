@@ -564,9 +564,7 @@ public class SubqueryParser {
             char c = joinPart.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
+            } else if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
                 } else if (c == ')') {
@@ -1058,48 +1056,45 @@ public class SubqueryParser {
             if (token.type == Token.TokenType.LOGICAL_OPERATOR) {
                 currentConjunction = token.value.toUpperCase();
                 LOGGER.log(Level.FINEST, "Set conjunction: {0}", currentConjunction);
-                continue;
             } else if (token.type == Token.TokenType.TABLE_ALIAS) {
                 lastAlias = token.value;
                 LOGGER.log(Level.FINEST, "Captured table alias: {0}", lastAlias);
-                continue;
-            }
-
-            String condStr = token.value;
-            String effectiveTableName = lastAlias != null ? ctx.tableAliases.getOrDefault(lastAlias, lastAlias) : ctx.defaultTableName;
-
-            if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
-                not = true;
-                LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
-                continue;
-            }
-
-            if (condStr.startsWith("(") && condStr.endsWith(")")) {
-                String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
-                if (subCondStr.toUpperCase().startsWith(SqlKeywords.SELECT)) {
-                    validateSubQuery(subCondStr);
-                    Query<?> subQuery = queryParser.parse(subCondStr, ctx.database);
-                    String columnName = effectiveTableName + ".unknown";
-                    conditions.add(new QueryParser.Condition(columnName, new QueryParser.SubQuery(subQuery, null), currentConjunction, not));
-                } else {
-                    List<Token> subTokens = tokenizeConditions(subCondStr);
-                    List<QueryParser.Condition> subConditions = parseTokenizedConditions(subTokens,
-                            withDefaultTableName(ctx, effectiveTableName), currentConjunction, not);
-                    conditions.add(new QueryParser.Condition(subConditions, currentConjunction, not));
-                }
-            } else if (condStr.toUpperCase().contains(" IN ")) {
-                conditions.add(parseInCondition(condStr, withDefaultTableName(ctx, effectiveTableName), currentConjunction, not));
-            } else if (condStr.toUpperCase().contains(SqlKeywords.SELECT)) {
-                LOGGER.log(Level.FINEST, "Attempting to parse subquery condition: {0}", condStr);
-                conditions.add(parseSubQueryCondition(condStr, withDefaultTableName(ctx, effectiveTableName), currentConjunction, not));
             } else {
-                LOGGER.log(Level.FINEST, "Parsing single condition: {0}", condStr);
-                conditions.add(parseSingleCondition(condStr, withDefaultTableName(ctx, effectiveTableName), currentConjunction, not));
-            }
+                String condStr = token.value;
+                String effectiveTableName = lastAlias != null ? ctx.tableAliases.getOrDefault(lastAlias, lastAlias) : ctx.defaultTableName;
 
-            lastAlias = null;
-            currentConjunction = null;
-            not = false;
+                if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
+                    not = true;
+                    LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
+                } else {
+                    if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                        String subCondStr = condStr.substring(1, condStr.length() - 1).trim();
+                        if (subCondStr.toUpperCase().startsWith(SqlKeywords.SELECT)) {
+                            validateSubQuery(subCondStr);
+                            Query<?> subQuery = queryParser.parse(subCondStr, ctx.database);
+                            String columnName = effectiveTableName + ".unknown";
+                            conditions.add(new QueryParser.Condition(columnName, new QueryParser.SubQuery(subQuery, null), currentConjunction, not));
+                        } else {
+                            List<Token> subTokens = tokenizeConditions(subCondStr);
+                            List<QueryParser.Condition> subConditions = parseTokenizedConditions(subTokens,
+                                    withDefaultTableName(ctx, effectiveTableName), currentConjunction, not);
+                            conditions.add(new QueryParser.Condition(subConditions, currentConjunction, not));
+                        }
+                    } else if (condStr.toUpperCase().contains(" IN ")) {
+                        conditions.add(parseInCondition(condStr, withDefaultTableName(ctx, effectiveTableName), currentConjunction, not));
+                    } else if (condStr.toUpperCase().contains(SqlKeywords.SELECT)) {
+                        LOGGER.log(Level.FINEST, "Attempting to parse subquery condition: {0}", condStr);
+                        conditions.add(parseSubQueryCondition(condStr, withDefaultTableName(ctx, effectiveTableName), currentConjunction, not));
+                    } else {
+                        LOGGER.log(Level.FINEST, "Parsing single condition: {0}", condStr);
+                        conditions.add(parseSingleCondition(condStr, withDefaultTableName(ctx, effectiveTableName), currentConjunction, not));
+                    }
+
+                    lastAlias = null;
+                    currentConjunction = null;
+                    not = false;
+                }
+            }
         }
 
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
@@ -1267,9 +1262,7 @@ public class SubqueryParser {
             char c = subQueryContent.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
+            } else if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
                 } else if (c == ')') {
