@@ -628,7 +628,7 @@ class QueryParser {
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
-                return parseCreateTableQuery(n, o);
+                return parseCreateTableQuery(o);
             }
         });
         strategies.add(new QueryParseStrategy() {
@@ -963,7 +963,7 @@ class QueryParser {
         return new CreateUniqueClusteredIndexQuery(tableName, columnName);
     }
 
-    private Query<Void> parseCreateTableQuery(String normalized, String original) {
+    private Query<Void> parseCreateTableQuery(String original) {
         int firstParen = original.indexOf('(');
         int lastParen = original.lastIndexOf(')');
         if (firstParen == -1 || lastParen == -1 || lastParen < firstParen) {
@@ -2080,7 +2080,7 @@ class QueryParser {
                         new Object[]{column, columnTypes.keySet()});
                 throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
             }
-            values.add(parseConditionValue(column, val, columnType));
+            values.add(parseConditionValue(val, columnType));
         }
 
         LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, values={2}",
@@ -2148,7 +2148,7 @@ class QueryParser {
                         new Object[]{column, columnTypes.keySet()});
                 throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
             }
-            Object value = parseConditionValue(column, valueStr, columnType);
+            Object value = parseConditionValue(valueStr, columnType);
             updates.put(column, value);
         }
 
@@ -2196,7 +2196,7 @@ class QueryParser {
         return new DeleteQuery(conditions);
     }
 
-    private Object parseConditionValue(String conditionColumn, String valueStr, Class<?> columnType) {
+    private Object parseConditionValue(String valueStr, Class<?> columnType) {
         try {
             if (valueStr.equalsIgnoreCase(SqlKeywords.NULL)) {
                 return null;
@@ -2614,14 +2614,14 @@ class QueryParser {
             validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
             Operator operator = operatorStr.equals(SqlKeywords.LIKE) ? Operator.LIKE : Operator.NOT_LIKE;
-            Object parsedValue = parseConditionValue(actualColumn, "'" + value + "'",
+            Object parsedValue = parseConditionValue("'" + value + "'",
                     getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName, ctx.tableAliases, ctx.columnAliases));
 
             return new Condition(actualColumn, parsedValue, operator, conjunction, not);
         }
 
         LOGGER.log(Level.FINEST, "Передача в parseComparisonCondition: condStr={0}", normalizedCondStr);
-        return parseComparisonCondition(normalizedCondStr, ctx, conjunction, not, conditionStr);
+        return parseComparisonCondition(normalizedCondStr, ctx, conjunction, not);
     }
 
     private boolean isGroupedCondition(String condStr) {
@@ -2682,7 +2682,7 @@ class QueryParser {
         for (String val : valueParts) {
             String trimmedVal = val.trim();
             if (trimmedVal.isEmpty()) continue;
-            Object value = parseConditionValue(actualColumn, trimmedVal, columnType);
+            Object value = parseConditionValue(trimmedVal, columnType);
             inValues.add(value);
         }
         if (inValues.isEmpty()) {
@@ -2786,7 +2786,7 @@ class QueryParser {
     }
 
     private Condition parseComparisonCondition(String condStr, ParseContext ctx,
-                                               String conjunction, boolean not, String conditionStr) {
+                                               String conjunction, boolean not) {
         LOGGER.log(Level.FINEST, "Parsing comparison condition: {0}", condStr);
         String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
         OperatorInfo operatorInfo = findOperator(condStr, operators);
@@ -2805,7 +2805,7 @@ class QueryParser {
         validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
         String rightColumn = null;
-        RightPart rightPartResult = parseRightPart(actualRightPart, actualColumn, ctx, normalizedColumn);
+        RightPart rightPartResult = parseRightPart(actualRightPart, actualColumn, ctx);
         rightColumn = rightPartResult.column();
         Object value = rightPartResult.value();
 
@@ -2826,7 +2826,7 @@ class QueryParser {
 
     private record RightPart(String column, Object value) {}
 
-    private RightPart parseRightPart(String rightPart, String actualColumn, ParseContext ctx, String normalizedColumn) {
+    private RightPart parseRightPart(String rightPart, String actualColumn, ParseContext ctx) {
         Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
         String upperRightPart = rightPart.toUpperCase();
 
@@ -2844,7 +2844,7 @@ class QueryParser {
             return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
         } else {
             try {
-                return new RightPart(null, parseConditionValue(actualColumn, rightPart,
+                return new RightPart(null, parseConditionValue(rightPart,
                         getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
                                 ctx.tableAliases, ctx.columnAliases)));
             } catch (IllegalArgumentException e) {
@@ -3156,7 +3156,7 @@ class QueryParser {
         Class<?> valueType = aggregate.functionName.equals(SqlKeywords.COUNT) ? Long.class :
                 (aggregate.column != null ? getColumnType(aggregate.column, ctx.combinedColumnTypes, ctx.defaultTableName,
                         ctx.tableAliases, ctx.columnAliases) : Double.class);
-        Object value = parseConditionValue(aggregate.toString(), rightPart, valueType);
+        Object value = parseConditionValue(rightPart, valueType);
 
         Operator operator;
         switch (selectedOperator) {

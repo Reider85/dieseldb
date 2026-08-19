@@ -687,7 +687,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 joinedRows.add(wrapped);
             }
 
-            boolean useStreaming = shouldUseStreaming(mainRows, tables);
+            boolean useStreaming = shouldUseStreaming();
             StreamingResultIterator spill = null;
             List<Map<String, Object>> spillFallback = null;
             boolean[] spillActive = { false };
@@ -743,7 +743,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
             boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
 
-            boolean useHashJoin = canUseHashJoin(join, ctx.combinedColumnTypes);
+            boolean useHashJoin = canUseHashJoin(join);
             if (hasOrInOnConditions(join)) {
                 LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
             }
@@ -1009,7 +1009,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return result;
     }
 
-    private boolean shouldUseStreaming(List<Map<String, Object>> mainRows, Map<String, Table> tables) {
+    private boolean shouldUseStreaming() {
         // Prompt 17: streaming is disabled. The streaming result iterator wrote
         // every flat row to a temp file once the estimate exceeded
         // max.inmemory.rows and then read it all back, but the pipeline
@@ -1933,7 +1933,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return nestedLoopCost < hashJoinCost;
     }
 
-    private boolean canUseHashJoin(QueryParser.JoinInfo join, Map<String, Class<?>> combinedColumnTypes) {
+    private boolean canUseHashJoin(QueryParser.JoinInfo join) {
         if (join.joinType != QueryParser.JoinType.INNER &&
                 join.joinType != QueryParser.JoinType.LEFT_INNER &&
                 join.joinType != QueryParser.JoinType.RIGHT_INNER) {
@@ -2766,7 +2766,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * when the join cannot use a hash join.
      */
     private QueryParser.Condition findHashEquality(QueryParser.JoinInfo join) {
-        if (!canUseHashJoin(join, null)) {
+        if (!canUseHashJoin(join)) {
             return null;
         }
         return join.onConditions.stream()
@@ -2786,7 +2786,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (join.joinType == QueryParser.JoinType.CROSS) {
             return "Nested Loop (cross join)";
         }
-        if (!canUseHashJoin(join, null)) {
+        if (!canUseHashJoin(join)) {
             if (hasOrInOnConditions(join)) {
                 return "Nested Loop (OR condition may produce a large result set)";
             }

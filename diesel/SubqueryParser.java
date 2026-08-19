@@ -676,7 +676,7 @@ public class SubqueryParser {
                 groupByClause = groupByClause.substring(0, havingIndex).trim();
             }
             groupBy = parseGroupByClause(groupByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
-                    ctx.tableAliases, ctx.columnAliases, groupBySubQueries);
+                    ctx.tableAliases, groupBySubQueries);
             if (havingClause != null) {
                 havingConditions = parseHavingConditions(havingClause, ctx, aggregates);
             }
@@ -691,7 +691,7 @@ public class SubqueryParser {
             Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
             orderByClause = limitPattern.matcher(orderByClause).replaceAll("");
             orderBy = parseOrderByClause(orderByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
-                    ctx.tableAliases, ctx.columnAliases, subQueries);
+                    ctx.tableAliases, subQueries);
         }
 
         // Обработка LIMIT
@@ -803,7 +803,7 @@ public class SubqueryParser {
 
     private List<QueryParser.OrderByInfo> parseOrderByClause(String orderByClause, String tableName, Database database,
                                                              Map<String, Class<?>> combinedColumnTypes,
-                                                             Map<String, String> tableAliases, Map<String, String> columnAliases,
+                                                             Map<String, String> tableAliases,
                                                              List<QueryParser.SubQuery> subQueries) {
         List<QueryParser.OrderByInfo> orderBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(orderByClause);
@@ -840,7 +840,7 @@ public class SubqueryParser {
 
     private List<String> parseGroupByClause(String groupByClause, String tableName, Database database,
                                             Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
-                                            Map<String, String> columnAliases, Map<String, String> groupBySubQueries) {
+                                            Map<String, String> groupBySubQueries) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(groupByClause);
         Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))$", Pattern.DOTALL);
