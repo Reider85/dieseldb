@@ -2817,35 +2817,10 @@ class QueryParser {
 
         Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
         String rightColumn = null;
-        Object value = null;
-
-        String upperRightPart = actualRightPart.toUpperCase();
-        if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
-            Class<?> literalColumnType = getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
-                    ctx.tableAliases, ctx.columnAliases);
-            if (upperRightPart.equals(SqlKeywords.NULL)) {
-                value = null;
-            } else if (literalColumnType == Boolean.class) {
-                value = Boolean.parseBoolean(actualRightPart);
-            } else {
-                throw new IllegalArgumentException("Boolean value '" + actualRightPart + "' does not match column type: " + literalColumnType.getSimpleName());
-            }
-        } else if (columnPattern.matcher(actualRightPart).matches()) {
-            rightColumn = unquoteQualifiedIdentifier(actualRightPart);
-        } else {
-            try {
-                value = parseConditionValue(actualColumn, actualRightPart,
-                        getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
-                                ctx.tableAliases, ctx.columnAliases));
-            } catch (IllegalArgumentException e) {
-                LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
-                        new Object[]{actualRightPart, e.getMessage()});
-                if (columnPattern.matcher(actualRightPart).matches()) {
-                    rightColumn = unquoteQualifiedIdentifier(actualRightPart);
-                } else {
-                    throw e;
-                }
-            }
+        Object value = parseRightPart(actualRightPart, actualColumn, ctx, normalizedColumn);
+        if (value instanceof String s && columnPattern.matcher(s).matches()) {
+            rightColumn = unquoteQualifiedIdentifier(s);
+            value = null;
         }
 
         Operator operator = parseOperator(operatorInfo.operator);
@@ -2860,6 +2835,38 @@ class QueryParser {
             return new Condition(actualColumn, rightColumn, operator, conjunction, not);
         } else {
             return new Condition(actualColumn, value, operator, conjunction, not);
+        }
+    }
+
+    private Object parseRightPart(String rightPart, String actualColumn, ParseContext ctx, String normalizedColumn) {
+        Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
+        String upperRightPart = rightPart.toUpperCase();
+        if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
+            Class<?> literalColumnType = getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
+                    ctx.tableAliases, ctx.columnAliases);
+            if (upperRightPart.equals(SqlKeywords.NULL)) {
+                return null;
+            } else if (literalColumnType == Boolean.class) {
+                return Boolean.parseBoolean(rightPart);
+            } else {
+                throw new IllegalArgumentException("Boolean value '" + rightPart + "' does not match column type: " + literalColumnType.getSimpleName());
+            }
+        } else if (columnPattern.matcher(rightPart).matches()) {
+            return unquoteQualifiedIdentifier(rightPart);
+        } else {
+            try {
+                return parseConditionValue(actualColumn, rightPart,
+                        getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
+                                ctx.tableAliases, ctx.columnAliases));
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
+                        new Object[]{rightPart, e.getMessage()});
+                if (columnPattern.matcher(rightPart).matches()) {
+                    return unquoteQualifiedIdentifier(rightPart);
+                } else {
+                    throw e;
+                }
+            }
         }
     }
 
@@ -2898,17 +2905,25 @@ class QueryParser {
                     }
                     continue;
                 } else if (parenDepth == 0 && subQueryStart == -1 && i < condStr.length() - 1) {
-                    for (String op : operators) {
-                        String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
-                        Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
-                        Matcher opMatcher = opPattern.matcher(condStr.substring(i));
-                        if (opMatcher.lookingAt()) {
-                            String remaining = condStr.substring(i + opMatcher.group().length()).trim();
-                            if (!remaining.isEmpty() && !remaining.toUpperCase().startsWith("(SELECT")) {
-                                return new OperatorInfo(opMatcher.group().trim(), i, i + opMatcher.group().length());
-                            }
-                        }
+                    OperatorInfo opInfo = tryMatchOperatorAt(condStr, i, operators);
+                    if (opInfo != null) {
+                        return opInfo;
                     }
+                }
+            }
+        }
+        return null;
+    }
+
+    private OperatorInfo tryMatchOperatorAt(String condStr, int i, String[] operators) {
+        for (String op : operators) {
+            String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
+            Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
+            Matcher opMatcher = opPattern.matcher(condStr.substring(i));
+            if (opMatcher.lookingAt()) {
+                String remaining = condStr.substring(i + opMatcher.group().length()).trim();
+                if (!remaining.isEmpty() && !remaining.toUpperCase().startsWith("(SELECT")) {
+                    return new OperatorInfo(opMatcher.group().trim(), i, i + opMatcher.group().length());
                 }
             }
         }
