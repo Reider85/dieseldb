@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
@@ -25,8 +26,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinWorkerThread;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -132,6 +138,15 @@ class Table implements Serializable {
     /** When true, index insert/update operations are skipped (bulk-load mode). */
     private transient volatile boolean indicesDisabled;
 
+    /**
+     * Table-level read/write lock. Writers (INSERT, DELETE, CREATE INDEX swap
+     * phase) hold the write lock; readers (SELECT) hold the read lock. During
+     * clustered index creation, the expensive sort + bulk-load phases run
+     * without holding any lock; only the final atomic swap acquires the write
+     * lock, minimising read disruption.
+     */
+    private transient ReentrantReadWriteLock tableLock = new ReentrantReadWriteLock();
+
     /** Queued index operations when deferred mode is active; null when not deferring. */
     private transient List<Runnable> deferredIndexOps;
 
@@ -156,6 +171,24 @@ class Table implements Serializable {
 
     /** Delay before a dirty statistics refresh runs, coalescing insert bursts. */
     private static final long STATS_REFRESH_DELAY_MILLIS = 150;
+
+    /**
+     * Shared ForkJoinPool for parallel index-build phases (sorting, bulk-load).
+     * Uses {@link Runtime#availableProcessors()} parallelism. Daemon threads
+     * so it does not block JVM exit.
+     */
+    private static final ForkJoinPool INDEX_BUILD_POOL = new ForkJoinPool(
+            Runtime.getRuntime().availableProcessors(),
+            pool -> {
+                ForkJoinWorkerThread t = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
+                t.setDaemon(true);
+                t.setName("diesel-index-build-" + t.getPoolIndex());
+                return t;
+            },
+            null, true);
+
+    /** Row count threshold above which parallel sort is used during index creation. */
+    private static final int PARALLEL_SORT_THRESHOLD = 10_000;
 
     private static final DateTimeFormatter STATS_TIMESTAMP_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -190,6 +223,7 @@ class Table implements Serializable {
         this.clusteredIndexColumn = null;
         this.clusteredIndex = null;
         this.deletedRows = new BitSet();
+        this.tableLock = new ReentrantReadWriteLock();
         this.rowCount = 0;
         this.avgRowSizeBytes = estimateAverageRowSizeBytes();
         this.lastAnalyzedMillis = 0;
@@ -378,35 +412,67 @@ class Table implements Serializable {
             throw new IllegalStateException("Table already has a clustered index on " + clusteredIndexColumn);
         }
 
-        clusteredIndex = new BTreeClusteredIndex(columnTypes.get(columnName));
-        hasClusteredIndex = true;
-        clusteredIndexColumn = columnName;
+        // Phase 1: Snapshot rows under read lock (readers still see old data).
+        List<Map<String, Object>> snapshot;
+        tableLock.readLock().lock();
+        try {
+            snapshot = new ArrayList<>(rows);
+        } finally {
+            tableLock.readLock().unlock();
+        }
 
-        // Sort the rows by the clustered key and verify uniqueness before reindexing.
-        List<Map<String, Object>> sortedRows = new ArrayList<>(rows);
-        sortedRows.sort((row1, row2) -> {
-            Object key1 = row1.get(columnName);
-            Object key2 = row2.get(columnName);
-            if (key1 == null || key2 == null) {
+        int n = snapshot.size();
+
+        // Phase 2: Extract keys + indices, sort (parallel for large tables).
+        Object[] keys = new Object[n];
+        Integer[] sortedOrder = new Integer[n];
+        for (int i = 0; i < n; i++) {
+            Object key = snapshot.get(i).get(columnName);
+            if (key == null) {
                 throw new IllegalStateException("Null key in column " + columnName + " not allowed for unique clustered index");
             }
-            return compareKeys(key1, key2);
-        });
+            keys[i] = key;
+            sortedOrder[i] = i;
+        }
 
-        Set<Object> seenKeys = new HashSet<>();
-        for (Map<String, Object> row : sortedRows) {
-            Object key = row.get(columnName);
-            if (!seenKeys.add(key)) {
-                throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique clustered index");
+        if (n >= PARALLEL_SORT_THRESHOLD) {
+            INDEX_BUILD_POOL.submit(() -> Arrays.parallelSort(sortedOrder, (a, b) -> compareKeys(keys[a], keys[b]))).join();
+        } else {
+            Arrays.sort(sortedOrder, (a, b) -> compareKeys(keys[a], keys[b]));
+        }
+
+        // Phase 3: Uniqueness check — O(N) linear scan of sorted data.
+        for (int i = 1; i < n; i++) {
+            if (compareKeys(keys[sortedOrder[i - 1]], keys[sortedOrder[i]]) == 0) {
+                throw new IllegalStateException("Duplicate key '" + keys[sortedOrder[i]] + "' found in column " + columnName + " while creating unique clustered index");
             }
         }
 
-        rows.clear();
-        rows.addAll(sortedRows);
-        for (int i = 0; i < rows.size(); i++) {
-            Object key = rows.get(i).get(columnName);
-            clusteredIndex.insert(key, i);
-            insertRowIntoIndexes(rows.get(i), i);
+        // Phase 4: Build sorted row list and key/index lists for bulk-load (no lock held).
+        List<Map<String, Object>> sortedRows = new ArrayList<>(n);
+        List<Object> sortedKeys = new ArrayList<>(n);
+        List<Integer> sortedIndices = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            sortedRows.add(snapshot.get(sortedOrder[i]));
+            sortedKeys.add(keys[sortedOrder[i]]);
+            sortedIndices.add(i);
+        }
+
+        BTreeClusteredIndex newIndex = new BTreeClusteredIndex(columnTypes.get(columnName));
+        newIndex.bulkLoad(sortedKeys, sortedIndices);
+
+        // Phase 5: Atomic swap under write lock (brief window).
+        tableLock.writeLock().lock();
+        try {
+            rows.clear();
+            rows.addAll(sortedRows);
+            clusteredIndex = newIndex;
+            hasClusteredIndex = true;
+            clusteredIndexColumn = columnName;
+            // Rebuild secondary indexes on the new row order.
+            rebuildSecondaryIndexes();
+        } finally {
+            tableLock.writeLock().unlock();
         }
 
         LOGGER.log(Level.INFO, "Created unique clustered B-tree index on column {0} for table {1}", new Object[]{columnName, name});
@@ -770,20 +836,55 @@ class Table implements Serializable {
      * @return the row list
      */
     public List<Map<String, Object>> getRows() {
-        return new ArrayList<>(rows);
+        tableLock.readLock().lock();
+        try {
+            return new ArrayList<>(rows);
+        } finally {
+            tableLock.readLock().unlock();
+        }
     }
 
     /**
      * Returns a copy of the table rows with tombstoned (deleted) rows filtered out.
      */
     public List<Map<String, Object>> getLiveRows() {
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (int i = 0; i < rows.size(); i++) {
-            if (!isDeleted(i)) {
-                result.add(rows.get(i));
+        tableLock.readLock().lock();
+        try {
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (int i = 0; i < rows.size(); i++) {
+                if (!isDeleted(i)) {
+                    result.add(rows.get(i));
+                }
             }
+            return result;
+        } finally {
+            tableLock.readLock().unlock();
         }
-        return result;
+    }
+
+    /**
+     * Executes the given action while holding the table read lock.
+     * Use this in query execution paths that access rows or indexes.
+     */
+    public void withReadLock(Runnable action) {
+        tableLock.readLock().lock();
+        try {
+            action.run();
+        } finally {
+            tableLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Executes the given callable while holding the table read lock.
+     */
+    public <T> T withReadLock(Callable<T> action) throws Exception {
+        tableLock.readLock().lock();
+        try {
+            return action.call();
+        } finally {
+            tableLock.readLock().unlock();
+        }
     }
 
     /**
@@ -846,33 +947,38 @@ class Table implements Serializable {
      * This is the only point where the ArrayList actually shrinks.
      */
     public void compact() {
-        int oldSize = rows.size();
-        int deleted = getDeletedCount();
-        if (deleted == 0) {
-            return;
-        }
-
-        List<Map<String, Object>> newRows = new ArrayList<>(oldSize - deleted);
-        for (int i = 0; i < oldSize; i++) {
-            if (!isDeleted(i)) {
-                newRows.add(rows.get(i));
+        tableLock.writeLock().lock();
+        try {
+            int oldSize = rows.size();
+            int deleted = getDeletedCount();
+            if (deleted == 0) {
+                return;
             }
+
+            List<Map<String, Object>> newRows = new ArrayList<>(oldSize - deleted);
+            for (int i = 0; i < oldSize; i++) {
+                if (!isDeleted(i)) {
+                    newRows.add(rows.get(i));
+                }
+            }
+
+            rows.clear();
+            rows.addAll(newRows);
+
+            deletedRows = new BitSet();
+
+            rebuildAllIndexes();
+
+            rowLocks = new ConcurrentHashMap<>();
+
+            rowCount = rows.size();
+            markStatsDirty();
+
+            LOGGER.log(Level.INFO, "Compacted table {0}: removed {1} tombstones, {2} live rows remain",
+                    new Object[]{name, deleted, rows.size()});
+        } finally {
+            tableLock.writeLock().unlock();
         }
-
-        rows.clear();
-        rows.addAll(newRows);
-
-        deletedRows = new BitSet();
-
-        rebuildAllIndexes();
-
-        rowLocks = new ConcurrentHashMap<>();
-
-        rowCount = rows.size();
-        markStatsDirty();
-
-        LOGGER.log(Level.INFO, "Compacted table {0}: removed {1} tombstones, {2} live rows remain",
-                new Object[]{name, deleted, rows.size()});
     }
 
     private void writeObject(ObjectOutputStream oos) throws IOException {
@@ -892,6 +998,7 @@ class Table implements Serializable {
         this.columnTypes.putAll(tempColumnTypes);
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
+        this.tableLock = new ReentrantReadWriteLock();
         this.hasClusteredIndex = (boolean) ois.readObject();
         this.clusteredIndexColumn = (String) ois.readObject();
         this.sequences = (Map<String, Sequence>) ois.readObject();
@@ -902,40 +1009,21 @@ class Table implements Serializable {
         }
         if (hasClusteredIndex) {
             this.clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
+            // Rows are already sorted by key (clustered table); bulk-load in O(N).
+            List<Object> keys = new ArrayList<>(rows.size());
+            List<Integer> indices = new ArrayList<>(rows.size());
             for (int i = 0; i < rows.size(); i++) {
                 Object key = rows.get(i).get(clusteredIndexColumn);
                 if (key != null) {
-                    clusteredIndex.insert(key, i);
+                    keys.add(key);
+                    indices.add(i);
                 }
             }
+            clusteredIndex.bulkLoad(keys, indices);
         }
         // Rebuild all secondary indexes from their persisted definitions.
         if (indexDefinitions != null) {
-            for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
-                String column = entry.getKey();
-                Class<?> keyType = columnTypes.get(column);
-                Index index;
-                switch (entry.getValue()) {
-                    case ErrorMessages.INDEX_BTREE:
-                        index = new BTreeIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_HASH:
-                        index = new HashIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_UNIQUE:
-                        index = new UniqueIndex(keyType);
-                        break;
-                    default:
-                        continue;
-                }
-                for (int i = 0; i < rows.size(); i++) {
-                    Object key = rows.get(i).get(column);
-                    if (key != null) {
-                        index.insert(key, i);
-                    }
-                }
-                indexes.put(column, index);
-            }
+            rebuildSecondaryIndexes();
         }
         this.database = null;
         this.statsLock = new Object();
@@ -1175,15 +1263,21 @@ class Table implements Serializable {
                     b.get(clusteredIndexColumn)));
         }
 
-        // Phase 3 – merge into the row list.
-        rows.addAll(validatedRows);
+        // Phase 3-5 – merge, rebuild indexes, update stats (under write lock).
+        tableLock.writeLock().lock();
+        try {
+            // Phase 3 – merge into the row list.
+            rows.addAll(validatedRows);
 
-        // Phase 4 – rebuild every index in a single pass.
-        rebuildAllIndexes();
+            // Phase 4 – rebuild every index in a single pass.
+            rebuildAllIndexes();
 
-        // Phase 5 – update statistics.
-        rowCount = getLiveRowCount();
-        markStatsDirty();
+            // Phase 5 – update statistics.
+            rowCount = getLiveRowCount();
+            markStatsDirty();
+        } finally {
+            tableLock.writeLock().unlock();
+        }
         LOGGER.log(Level.INFO, "Bulk inserted {0} rows into table {1} (total {2})",
                 new Object[]{validatedRows.size(), name, rows.size()});
     }
@@ -1321,45 +1415,84 @@ class Table implements Serializable {
 
     /**
      * Rebuilds every index (clustered + secondary) from the current row
-     * data in a single O(rows × indexes × log rows) pass.  Used by bulk
-     * insert, bulk-load rebuild, deferred flush and deserialization.
+     * data. Used by bulk insert, bulk-load rebuild, deferred flush and
+     * deserialization.
      */
     private void rebuildAllIndexes() {
-        // Rebuild clustered index
-        if (hasClusteredIndex) {
-            clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
-            for (int i = 0; i < rows.size(); i++) {
-                Object key = rows.get(i).get(clusteredIndexColumn);
-                if (key != null) {
-                    clusteredIndex.insert(key, i);
-                }
+        rebuildClusteredIndexFromRows();
+        rebuildSecondaryIndexes();
+    }
+
+    /**
+     * Rebuilds the clustered index from current row data using bulk-load
+     * O(N) construction. Rows are expected to already be in sorted order.
+     */
+    private void rebuildClusteredIndexFromRows() {
+        if (!hasClusteredIndex) return;
+        int n = rows.size();
+        List<Object> keys = new ArrayList<>(n);
+        List<Integer> indices = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            Object key = rows.get(i).get(clusteredIndexColumn);
+            if (key != null) {
+                keys.add(key);
+                indices.add(i);
             }
         }
-        // Rebuild secondary indexes
+        clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
+        clusteredIndex.bulkLoad(keys, indices);
+    }
+
+    /**
+     * Rebuilds all secondary indexes from the current row data.
+     * When multiple secondary indexes exist, each is built in parallel
+     * via the shared {@link #INDEX_BUILD_POOL}.
+     */
+    private void rebuildSecondaryIndexes() {
+        if (indexDefinitions.isEmpty()) return;
+        int n = rows.size();
+
+        List<Future<Map.Entry<String, Index>>> futures = new ArrayList<>();
         for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
-            String column = entry.getKey();
-            Class<?> keyType = columnTypes.get(column);
-            Index index;
-            switch (entry.getValue()) {
-                case ErrorMessages.INDEX_BTREE:
-                    index = new BTreeIndex(keyType);
-                    break;
-                case ErrorMessages.INDEX_HASH:
-                    index = new HashIndex(keyType);
-                    break;
-                case ErrorMessages.INDEX_UNIQUE:
-                    index = new UniqueIndex(keyType);
-                    break;
-                default:
-                    continue;
-            }
-            for (int i = 0; i < rows.size(); i++) {
-                Object key = rows.get(i).get(column);
-                if (key != null) {
-                    index.insert(key, i);
+            futures.add(INDEX_BUILD_POOL.submit(() -> {
+                String column = entry.getKey();
+                Class<?> keyType = columnTypes.get(column);
+                Index index;
+                switch (entry.getValue()) {
+                    case ErrorMessages.INDEX_BTREE:
+                        index = new BTreeIndex(keyType);
+                        break;
+                    case ErrorMessages.INDEX_HASH:
+                        index = new HashIndex(keyType);
+                        break;
+                    case ErrorMessages.INDEX_UNIQUE:
+                        index = new UniqueIndex(keyType);
+                        break;
+                    default:
+                        return null;
                 }
+                for (int i = 0; i < n; i++) {
+                    Object key = rows.get(i).get(column);
+                    if (key != null) {
+                        index.insert(key, i);
+                    }
+                }
+                return Map.entry(column, index);
+            }));
+        }
+
+        for (Future<Map.Entry<String, Index>> future : futures) {
+            try {
+                Map.Entry<String, Index> result = future.get();
+                if (result != null) {
+                    indexes.put(result.getKey(), result.getValue());
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Secondary index build interrupted", e);
+            } catch (ExecutionException e) {
+                throw new RuntimeException("Secondary index build failed", e.getCause());
             }
-            indexes.put(column, index);
         }
     }
 
@@ -1376,36 +1509,41 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
-        String fileName = resolveFilePath(tableName, ".csv");
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
-            writer.write(String.join(",", columns));
-            writer.newLine();
+        tableLock.readLock().lock();
+        try {
+            String fileName = resolveFilePath(tableName, ".csv");
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
+                writer.write(String.join(",", columns));
+                writer.newLine();
 
-            for (int i = 0; i < rows.size(); i++) {
-                if (isDeleted(i)) {
-                    continue;
-                }
-                ReentrantReadWriteLock lock = getRowLock(i);
-                lock.readLock().lock();
-                try {
-                    Map<String, Object> row = rows.get(i);
-                    List<String> values = new ArrayList<>();
-                    for (String column : columns) {
-                        values.add(formatValue(row.get(column)));
+                for (int i = 0; i < rows.size(); i++) {
+                    if (isDeleted(i)) {
+                        continue;
                     }
-                    writer.write(String.join(",", values));
-                    writer.newLine();
-                } finally {
-                    lock.readLock().unlock();
+                    ReentrantReadWriteLock lock = getRowLock(i);
+                    lock.readLock().lock();
+                    try {
+                        Map<String, Object> row = rows.get(i);
+                        List<String> values = new ArrayList<>();
+                        for (String column : columns) {
+                            values.add(formatValue(row.get(column)));
+                        }
+                        writer.write(String.join(",", values));
+                        writer.newLine();
+                    } finally {
+                        lock.readLock().unlock();
+                    }
                 }
-            }
 
-            isFileInitialized = true;
-            LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
-                    new Object[]{tableName, fileName, rows.size()});
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
-            throw new DieselIOException("Failed to save table to file: " + fileName, e);
+                isFileInitialized = true;
+                LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
+                        new Object[]{tableName, fileName, rows.size()});
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
+                throw new DieselIOException("Failed to save table to file: " + fileName, e);
+            }
+        } finally {
+            tableLock.readLock().unlock();
         }
     }
 

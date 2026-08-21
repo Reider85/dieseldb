@@ -311,6 +311,109 @@ class BTreeClusteredIndex implements Index, Serializable {
     }
 
     /**
+     * Builds the B-tree from pre-sorted, pre-validated data in O(N) time.
+     * The caller MUST guarantee:
+     * <ol>
+     *   <li>{@code sortedKeys} and {@code rowIndices} are the same length</li>
+     *   <li>{@code sortedKeys} are in ascending order per {@link #compareKeys}</li>
+     *   <li>No duplicate keys exist</li>
+     *   <li>No null keys exist</li>
+     * </ol>
+     * After this call, the previous tree is discarded and replaced.
+     *
+     * @param sortedKeys sorted unique keys (ascending)
+     * @param rowIndices corresponding row indices
+     * @throws IllegalArgumentException if lists are empty or have mismatched sizes
+     */
+    void bulkLoad(List<Object> sortedKeys, List<Integer> rowIndices) {
+        if (sortedKeys.size() != rowIndices.size()) {
+            throw new IllegalArgumentException("sortedKeys and rowIndices must have the same size");
+        }
+        int n = sortedKeys.size();
+        if (n == 0) {
+            this.root = new Node(true);
+            return;
+        }
+
+        int leafCapacity = 2 * t - 1;
+
+        // Phase 1: Build all leaf nodes from sorted data (left to right)
+        List<Node> leaves = new ArrayList<>();
+        Node currentLeaf = new Node(true);
+        for (int i = 0; i < n; i++) {
+            currentLeaf.keys.add(sortedKeys.get(i));
+            currentLeaf.rowIndices.add(rowIndices.get(i));
+            if (currentLeaf.keys.size() == leafCapacity || i == n - 1) {
+                leaves.add(currentLeaf);
+                if (i < n - 1) {
+                    currentLeaf = new Node(true);
+                }
+            }
+        }
+
+        // Phase 2: Build internal levels bottom-up
+        List<Node> currentLevel = leaves;
+        while (currentLevel.size() > 1) {
+            List<Node> nextLevel = new ArrayList<>();
+            int i = 0;
+            while (i < currentLevel.size()) {
+                Node parent = new Node(false);
+                parent.children.add(currentLevel.get(i));
+                i++;
+                while (parent.keys.size() < leafCapacity && i < currentLevel.size()) {
+                    parent.keys.add(extractFirstKey(currentLevel.get(i)));
+                    parent.children.add(currentLevel.get(i));
+                    i++;
+                }
+                nextLevel.add(parent);
+            }
+            currentLevel = nextLevel;
+        }
+
+        this.root = currentLevel.get(0);
+    }
+
+    /**
+     * Extracts the leftmost (smallest) key from a subtree.
+     */
+    private Object extractFirstKey(Node node) {
+        if (node.isLeaf) {
+            return node.keys.get(0);
+        }
+        return extractFirstKey(node.children.get(0));
+    }
+
+    /**
+     * Validates the entire B-tree satisfies all structural invariants:
+     * key ordering, node sizes, leaf depth, and children/rowIndices consistency.
+     *
+     * @return {@code true} if the tree is valid
+     */
+    public boolean validate() {
+        if (root.keys.isEmpty() && root.isLeaf) return true;
+        return validateRecursive(root, null, null);
+    }
+
+    private boolean validateRecursive(Node node, Object minKey, Object maxKey) {
+        for (int i = 1; i < node.keys.size(); i++) {
+            if (compareKeys(node.keys.get(i - 1), node.keys.get(i)) >= 0) return false;
+        }
+        if (minKey != null && !node.keys.isEmpty() && compareKeys(node.keys.get(0), minKey) < 0) return false;
+        if (maxKey != null && !node.keys.isEmpty() && compareKeys(node.keys.get(node.keys.size() - 1), maxKey) > 0) return false;
+        if (node.keys.size() > 2 * t - 1) return false;
+        if (node.isLeaf && node.rowIndices.size() != node.keys.size()) return false;
+        if (!node.isLeaf) {
+            if (node.children.size() != node.keys.size() + 1) return false;
+            for (int i = 0; i < node.children.size(); i++) {
+                Object childMin = (i == 0) ? minKey : node.keys.get(i - 1);
+                Object childMax = (i == node.keys.size()) ? maxKey : node.keys.get(i);
+                if (!validateRecursive(node.children.get(i), childMin, childMax)) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Returns the row index that holds the given key, or an empty list when
      * the key is absent.
      *
@@ -328,13 +431,15 @@ class BTreeClusteredIndex implements Index, Serializable {
         while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
             i++;
         }
-        if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
-            if (x.isLeaf) {
+        if (x.isLeaf) {
+            if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
                 result.add(x.rowIndices.get(i));
             }
-        }
-        if (!x.isLeaf) {
-            result.addAll(search(x.children.get(i), key));
+        } else {
+            // Separator keys in internal nodes are the minimum of the right
+            // subtree, so when the key matches a separator, search child[i+1].
+            int childIdx = (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) ? i + 1 : i;
+            result.addAll(search(x.children.get(childIdx), key));
         }
         return result;
     }
