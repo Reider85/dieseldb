@@ -676,7 +676,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         try {
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
             if (mainRows == null) {
-                mainRows = table.getRows();
+                List<Map<String, Object>> rawRows = table.getRows();
+                mainRows = new ArrayList<>(rawRows.size());
+                for (int i = 0; i < rawRows.size(); i++) {
+                    if (!table.isDeleted(i)) {
+                        mainRows.add(rawRows.get(i));
+                    }
+                }
             }
 
             List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
@@ -777,7 +783,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                 List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, ctx.combinedColumnTypes);
                 if (buildRows == null) {
-                    buildRows = buildTable.getRows();
+                    buildRows = buildTable.getLiveRows();
                 }
                 String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
 
@@ -1080,7 +1086,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
         List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
         if (probeRows == null) {
-            probeRows = probeTable.getRows();
+            probeRows = probeTable.getLiveRows();
         }
         for (Map<String, Object> probeRow : probeRows) {
             Object probeKey = probeRow.get(probeColumnKey);
@@ -1147,7 +1153,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
         if (probeRows == null) {
-            probeRows = probeTable.getRows();
+            probeRows = probeTable.getLiveRows();
         }
         DataOutputStream[] probeWriters = new DataOutputStream[partitionCount];
         for (Map<String, Object> row : probeRows) {
@@ -1284,7 +1290,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
         List<Map<String, Object>> joinRows = getIndexedRows(joinTable, ctx.join.onConditions, ctx.join.tableName, ctx.combinedColumnTypes);
         if (joinRows == null) {
-            joinRows = joinTable.getRows();
+            joinRows = joinTable.getLiveRows();
         }
 
         String rightPrefix = ctx.join.tableName + ".";
@@ -2113,10 +2119,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
                 if (!rowIndices.isEmpty()) {
                     List<Map<String, Object>> indexedRows = new ArrayList<>();
-                    int tableSize = table.rowCount();
+                    int tableSize = table.getRawRowCount();
+                    List<Map<String, Object>> rawRows = table.getRows();
                     for (int idx : rowIndices) {
-                        if (idx >= 0 && idx < tableSize) {
-                            indexedRows.add(table.getRows().get(idx));
+                        if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
+                            indexedRows.add(rawRows.get(idx));
                         }
                     }
                     return indexedRows;
@@ -2811,7 +2818,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return "Nested Loop (chosen by statistics)";
         }
         long estimatedRows = buildTable.rowCount();
-        long estimatedBytes = estimateHashTableSizeBytes(buildTable.getRows(), buildTable);
+        long estimatedBytes = estimateHashTableSizeBytes(buildTable.getLiveRows(), buildTable);
         if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
             return "Partitioned Hash Join (spill to disk)";
         }

@@ -2161,31 +2161,41 @@ class QueryParser {
     private Query<Void> parseDeleteQuery(String normalized, String original, Database database) {
         LOGGER.log(Level.FINE, "Raw DELETE query: {0}", original);
         LOGGER.log(Level.FINE, "Normalized DELETE query: {0}", normalized);
+
+        // Use normalized query for table name extraction (identifiers are uppercased)
         String[] fromParts = normalized.split("(?i)FROM\\s+", 2);
         if (fromParts.length != 2) {
             LOGGER.log(Level.SEVERE, "Invalid DELETE query format: missing FROM clause, normalized: {0}", normalized);
             throw new SyntaxErrorException("Invalid DELETE query format: missing FROM clause");
         }
+        String tableAndConditionNorm = fromParts[1].trim();
+        String[] wherePartsNorm = tableAndConditionNorm.split("(?i)WHERE\\s+", 2);
+        String tableName = unquoteIdentifier(wherePartsNorm[0].trim());
 
-        String tableAndCondition = fromParts[1].trim();
-        LOGGER.log(Level.FINE, "Table and condition: {0}", tableAndCondition);
-        String[] whereParts = tableAndCondition.split("(?i)WHERE\\s+", 2);
-        String tableName = unquoteIdentifier(whereParts[0].trim());
+        // Use original query for WHERE condition extraction (preserves string literal case)
+        String[] fromPartsOrig = original.split("(?i)FROM\\s+", 2);
         List<Condition> conditions = new ArrayList<>();
 
-        if (whereParts.length == 2) {
-            String conditionStr = whereParts[1].trim();
-            LOGGER.log(Level.FINE, "Parsing WHERE clause for DELETE: {0}", conditionStr);
-            if (conditionStr.isEmpty()) {
-                LOGGER.log(Level.SEVERE, "Empty WHERE clause in DELETE query: {0}", normalized);
-                throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
+        if (fromPartsOrig.length == 2) {
+            String tableAndConditionOrig = fromPartsOrig[1].trim();
+            String[] wherePartsOrig = tableAndConditionOrig.split("(?i)WHERE\\s+", 2);
+
+            if (wherePartsOrig.length == 2) {
+                String conditionStr = wherePartsOrig[1].trim();
+                LOGGER.log(Level.FINE, "Parsing WHERE clause for DELETE: {0}", conditionStr);
+                if (conditionStr.isEmpty()) {
+                    LOGGER.log(Level.SEVERE, "Empty WHERE clause in DELETE query: {0}", original);
+                    throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
+                }
+                Table table = database.getTable(tableName);
+                if (table == null) {
+                    throw new IllegalArgumentException(ErrorMessages.TABLE_NOT_FOUND_PREFIX + tableName);
+                }
+                conditions = parseConditions(conditionStr, new ParseContext(tableName, database, original, false,
+                        table.getColumnTypes(), new HashMap<>(), new HashMap<>()));
+            } else {
+                LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
             }
-            Table table = database.getTable(tableName);
-            if (table == null) {
-                throw new IllegalArgumentException(ErrorMessages.TABLE_NOT_FOUND_PREFIX + tableName);
-            }
-            conditions = parseConditions(conditionStr, new ParseContext(tableName, database, original, false,
-                    table.getColumnTypes(), new HashMap<>(), new HashMap<>()));
         } else {
             LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
         }

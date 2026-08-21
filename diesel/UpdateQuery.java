@@ -77,6 +77,7 @@ class UpdateQuery implements Query<Void> {
 
         try {
             for (int i = 0; i < rows.size(); i++) {
+                if (table.isDeleted(i)) continue;
                 Map<String, Object> row = rows.get(i);
                 if (conditions.isEmpty() || evaluateConditions(row, conditions, columnTypes)) {
                     rowsToUpdate.add(i);

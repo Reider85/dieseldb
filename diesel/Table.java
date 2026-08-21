@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -134,6 +135,12 @@ class Table implements Serializable {
     /** Queued index operations when deferred mode is active; null when not deferring. */
     private transient List<Runnable> deferredIndexOps;
 
+    /** Tracks positions of tombstoned (logically deleted) rows. Physical removal happens only during {@link #compact()}. */
+    private transient BitSet deletedRows;
+
+    /** Fraction of rows that must be tombstoned before automatic compaction triggers. */
+    private static final double COMPACT_THRESHOLD = 0.3;
+
     /**
      * Daemon scheduler for the asynchronous statistics refresh. Daemon threads
      * never keep the JVM alive, so the refresh never blocks Maven/JUnit exit.
@@ -182,6 +189,7 @@ class Table implements Serializable {
         this.hasClusteredIndex = false;
         this.clusteredIndexColumn = null;
         this.clusteredIndex = null;
+        this.deletedRows = new BitSet();
         this.rowCount = 0;
         this.avgRowSizeBytes = estimateAverageRowSizeBytes();
         this.lastAnalyzedMillis = 0;
@@ -486,7 +494,7 @@ class Table implements Serializable {
      * @return the row count
      */
     public int rowCount() {
-        return rows.size();
+        return getLiveRowCount();
     }
 
     /**
@@ -550,7 +558,7 @@ class Table implements Serializable {
             if (avg <= 0) {
                 avg = estimateAverageRowSizeBytes();
             }
-            return new TableStatistics(Math.max(0, rowCount), avg, lastAnalyzedMillis);
+            return new TableStatistics(Math.max(0, getLiveRowCount()), avg, lastAnalyzedMillis);
         }
     }
 
@@ -564,7 +572,7 @@ class Table implements Serializable {
      */
     public TableStatistics analyze() {
         synchronized (statsLock) {
-            rowCount = rows.size();
+            rowCount = getLiveRowCount();
             avgRowSizeBytes = measureAverageRowSizeBytes();
             lastAnalyzedMillis = System.currentTimeMillis();
             statsDirty = false;
@@ -605,7 +613,7 @@ class Table implements Serializable {
             long measured = measureAverageRowSizeBytes();
             reschedule = rowsAtStart != rows.size();
             if (!reschedule) {
-                rowCount = rowsAtStart;
+                rowCount = getLiveRowCount();
                 avgRowSizeBytes = measured;
                 lastAnalyzedMillis = System.currentTimeMillis();
                 statsDirty = false;
@@ -766,6 +774,19 @@ class Table implements Serializable {
     }
 
     /**
+     * Returns a copy of the table rows with tombstoned (deleted) rows filtered out.
+     */
+    public List<Map<String, Object>> getLiveRows() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            if (!isDeleted(i)) {
+                result.add(rows.get(i));
+            }
+        }
+        return result;
+    }
+
+    /**
      * Removes the row at the given index and invalidates the locks of this
      * and all following rows, whose indexes shift down by one.
      *
@@ -785,11 +806,81 @@ class Table implements Serializable {
         markStatsDirty();
     }
 
+    // ─── Tombstone / lazy-deletion support ────────────────────────────
+
+    /**
+     * Logically marks the row at {@code rowIndex} as deleted (tombstone).
+     * The row stays in the ArrayList but is invisible to all query paths.
+     * Does NOT remove index entries — the caller must do that separately.
+     */
+    public void markDeleted(int rowIndex) {
+        if (rowIndex < 0 || rowIndex >= rows.size()) {
+            throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
+        }
+        deletedRows.set(rowIndex);
+        markStatsDirty();
+    }
+
+    /** Returns whether the row at the given raw position is tombstoned. */
+    public boolean isDeleted(int rowIndex) {
+        return deletedRows != null && deletedRows.get(rowIndex);
+    }
+
+    /** Returns the number of tombstoned rows. */
+    public int getDeletedCount() {
+        return deletedRows == null ? 0 : deletedRows.cardinality();
+    }
+
+    /** Returns the number of live (non-tombstoned) rows. */
+    public int getLiveRowCount() {
+        return rows.size() - getDeletedCount();
+    }
+
+    /** Returns the raw size of the internal row list, including tombstones. */
+    public int getRawRowCount() {
+        return rows.size();
+    }
+
+    /**
+     * Physically removes all tombstoned rows and rebuilds every index.
+     * This is the only point where the ArrayList actually shrinks.
+     */
+    public void compact() {
+        int oldSize = rows.size();
+        int deleted = getDeletedCount();
+        if (deleted == 0) {
+            return;
+        }
+
+        List<Map<String, Object>> newRows = new ArrayList<>(oldSize - deleted);
+        for (int i = 0; i < oldSize; i++) {
+            if (!isDeleted(i)) {
+                newRows.add(rows.get(i));
+            }
+        }
+
+        rows.clear();
+        rows.addAll(newRows);
+
+        deletedRows = new BitSet();
+
+        rebuildAllIndexes();
+
+        rowLocks = new ConcurrentHashMap<>();
+
+        rowCount = rows.size();
+        markStatsDirty();
+
+        LOGGER.log(Level.INFO, "Compacted table {0}: removed {1} tombstones, {2} live rows remain",
+                new Object[]{name, deleted, rows.size()});
+    }
+
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
         oos.writeObject(hasClusteredIndex);
         oos.writeObject(clusteredIndexColumn);
         oos.writeObject(sequences);
+        oos.writeObject(deletedRows != null ? deletedRows : new BitSet());
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
@@ -804,6 +895,11 @@ class Table implements Serializable {
         this.hasClusteredIndex = (boolean) ois.readObject();
         this.clusteredIndexColumn = (String) ois.readObject();
         this.sequences = (Map<String, Sequence>) ois.readObject();
+        try {
+            this.deletedRows = (BitSet) ois.readObject();
+        } catch (Exception e) {
+            this.deletedRows = new BitSet();
+        }
         if (hasClusteredIndex) {
             this.clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
             for (int i = 0; i < rows.size(); i++) {
@@ -901,6 +997,9 @@ class Table implements Serializable {
             if (!existing.isEmpty()) {
                 LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
                 throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
+            }
+            if (getDeletedCount() > 0) {
+                compact();
             }
             insertIntoClusteredPosition(validatedRow, key);
         } else {
@@ -1083,7 +1182,7 @@ class Table implements Serializable {
         rebuildAllIndexes();
 
         // Phase 5 – update statistics.
-        rowCount = rows.size();
+        rowCount = getLiveRowCount();
         markStatsDirty();
         LOGGER.log(Level.INFO, "Bulk inserted {0} rows into table {1} (total {2})",
                 new Object[]{validatedRows.size(), name, rows.size()});
@@ -1283,6 +1382,9 @@ class Table implements Serializable {
             writer.newLine();
 
             for (int i = 0; i < rows.size(); i++) {
+                if (isDeleted(i)) {
+                    continue;
+                }
                 ReentrantReadWriteLock lock = getRowLock(i);
                 lock.readLock().lock();
                 try {
@@ -1331,6 +1433,9 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToSerializedFile(String tableName) {
+        if (getDeletedCount() > 0) {
+            compact();
+        }
         String fileName = resolveFilePath(tableName, ErrorMessages.TABLE_EXTENSION);
         try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
             oos.writeObject(this);

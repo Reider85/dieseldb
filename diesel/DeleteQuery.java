@@ -61,6 +61,7 @@ class DeleteQuery implements Query<Void> {
         List<Integer> rowsToDelete = new ArrayList<>();
 
         try {
+            // Phase 1: Identify rows to delete (index-accelerated or full scan)
             if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
                 QueryParser.Condition condition = conditions.get(0);
                 Index index = table.getIndex(condition.column);
@@ -92,6 +93,7 @@ class DeleteQuery implements Query<Void> {
 
             if (rowsToDelete.isEmpty() && !conditions.isEmpty()) {
                 for (int i = 0; i < rows.size(); i++) {
+                    if (table.isDeleted(i)) continue;
                     Map<String, Object> row = rows.get(i);
                     if (evaluateConditions(row, conditions, columnTypes)) {
                         rowsToDelete.add(i);
@@ -99,10 +101,12 @@ class DeleteQuery implements Query<Void> {
                 }
             } else if (conditions.isEmpty()) {
                 for (int i = 0; i < rows.size(); i++) {
+                    if (table.isDeleted(i)) continue;
                     rowsToDelete.add(i);
                 }
             }
 
+            // Phase 2: Acquire write locks
             for (int rowIndex : rowsToDelete) {
                 if (rowIndex >= 0 && rowIndex < rows.size()) {
                     ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
@@ -111,9 +115,9 @@ class DeleteQuery implements Query<Void> {
                 }
             }
 
-            Collections.sort(rowsToDelete, Collections.reverseOrder());
+            // Phase 3: Tombstone + remove index entries (no physical removal, no re-index)
             for (int rowIndex : rowsToDelete) {
-                if (rowIndex >= 0 && rowIndex < rows.size()) {
+                if (rowIndex >= 0 && rowIndex < rows.size() && !table.isDeleted(rowIndex)) {
                     Map<String, Object> row = rows.get(rowIndex);
                     for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
                         String column = entry.getKey();
@@ -123,29 +127,22 @@ class DeleteQuery implements Query<Void> {
                             index.remove(key, rowIndex);
                         }
                     }
-                    rows.remove(rowIndex);
-                    table.removeRow(rowIndex);
-                    LOGGER.log(Level.INFO, "Deleted row at index {0} from table {1}", new Object[]{rowIndex, table.getName()});
+                    if (table.hasClusteredIndex()) {
+                        Object clusteredKey = row.get(table.getClusteredIndexColumn());
+                        if (clusteredKey != null) {
+                            table.getClusteredIndex().remove(clusteredKey, rowIndex);
+                        }
+                    }
+                    table.markDeleted(rowIndex);
+                    LOGGER.log(Level.INFO, "Tombstoned row at index {0} from table {1}", new Object[]{rowIndex, table.getName()});
                 }
             }
 
-            for (int i = 0; i < rows.size(); i++) {
-                Map<String, Object> row = rows.get(i);
-                for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
-                    String column = entry.getKey();
-                    Index index = entry.getValue();
-                    Object key = row.get(column);
-                    if (key != null) {
-                        List<Integer> currentIndices = index.search(key);
-                        if (currentIndices.contains(i)) {
-                            continue;
-                        }
-                        for (Integer oldIndex : currentIndices) {
-                            index.remove(key, oldIndex);
-                        }
-                        index.insert(key, i);
-                    }
-                }
+            // Phase 4: Auto-compact if tombstone threshold reached
+            int rawCount = table.getRawRowCount();
+            if (rawCount > 0 && (double) table.getDeletedCount() / rawCount >= 0.3) {
+                LOGGER.log(Level.INFO, "Tombstone ratio >= 0.3, compacting table {0}", table.getName());
+                table.compact();
             }
 
             LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});

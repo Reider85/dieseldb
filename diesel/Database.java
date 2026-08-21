@@ -673,7 +673,7 @@ class Database {
             if (table != null) {
                 tables.put(tableName, table);
                 LOGGER.log(Level.INFO, "Loaded table {0} from disk with {1} rows",
-                        new Object[]{tableName, table.getRows().size()});
+                        new Object[]{tableName, table.getLiveRowCount()});
             }
         }
         queryCache.invalidateAll();
