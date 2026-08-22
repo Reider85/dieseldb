@@ -674,6 +674,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         execStart = System.nanoTime();
 
         try {
+            ensureWhereIndexes(table, conditions, mainTableName);
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
             if (mainRows == null) {
                 List<Map<String, Object>> rawRows = table.getRows();
@@ -2069,20 +2070,61 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
+    /**
+     * Logs advisory warnings for WHERE-condition columns that lack an index.
+     * Unlike {@link #ensureJoinColumnIndex}, this method never auto-creates an
+     * index — WHERE patterns are more varied and auto-indexing could pollute
+     * the index space.  It only emits an INFO-level warning.
+     */
+    private void ensureWhereIndexes(Table table, List<QueryParser.Condition> conditions, String tableName) {
+        if (conditions == null || conditions.isEmpty()) {
+            return;
+        }
+        for (QueryParser.Condition condition : conditions) {
+            if (Objects.equals(condition.conjunction, SqlKeywords.OR) || condition.not) {
+                continue;
+            }
+            if (condition.isGrouped() || condition.isColumnComparison()) {
+                continue;
+            }
+            if (condition.operator == QueryParser.Operator.LIKE
+                    || condition.operator == QueryParser.Operator.NOT_LIKE
+                    || condition.operator == QueryParser.Operator.IS_NULL
+                    || condition.operator == QueryParser.Operator.IS_NOT_NULL) {
+                continue;
+            }
+            String columnName = normalizeColumnName(condition.column, tableName);
+            if (columnName == null) {
+                continue;
+            }
+            String unqualified = normalizeColumnKey(columnName, tableName);
+            if (table.getIndex(unqualified) != null) {
+                continue;
+            }
+            if (table.hasClusteredIndex() && unqualified.equals(table.getClusteredIndexColumn())) {
+                continue;
+            }
+            LOGGER.info("Consider creating index on " + tableName + "." + unqualified + " for faster WHERE filtering");
+        }
+    }
+
     private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
         if (conditions == null || conditions.isEmpty()) {
             return null;
         }
 
         // An index pre-filter must never be applied when conditions are OR-combined:
-        // the pre-filter uses the first indexed condition only, so rows that match
-        // a later OR branch would be dropped before the WHERE evaluation runs.
+        // the pre-filter uses index lookups that would drop rows matching a later
+        // OR branch before the WHERE evaluation runs.
         for (QueryParser.Condition condition : conditions) {
             if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
                 return null;
             }
         }
 
+        // Collect index row-sets for all AND-connected conditions that have an
+        // applicable index.  We intersect all of them to narrow the result.
+        List<Set<Integer>> indexedSets = new ArrayList<>();
         for (QueryParser.Condition condition : conditions) {
             // Negated conditions (NOT IN / NOT EQUALS / ...) must not use the index
             // pre-filter: the index lookup returns the rows the condition rejects.
@@ -2097,41 +2139,101 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 index = table.getClusteredIndex();
             }
 
-            if (index != null) {
-                List<Integer> rowIndices = new ArrayList<>();
-                if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
-                    rowIndices.addAll(index.search(condition.value));
-                    LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
-                            new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
-                } else if (condition.isInOperator() && condition.inValues != null) {
-                    for (Object inValue : condition.inValues) {
-                        rowIndices.addAll(index.search(inValue));
-                    }
-                    LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
-                            new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
-                } else if (index instanceof BTreeIndex bTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN || condition.operator == QueryParser.Operator.GREATER_THAN)) {
-                    Object low = condition.operator == QueryParser.Operator.GREATER_THAN ? condition.value : null;
-                    Object high = condition.operator == QueryParser.Operator.LESS_THAN ? condition.value : null;
-                    rowIndices.addAll(bTreeIndex.rangeSearch(low, high));
-                    LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for range condition {2}, found {3} rows",
-                            new Object[]{tableName, unqualifiedColumn, condition.operator, rowIndices.size()});
-                }
+            if (index == null) {
+                continue;
+            }
 
-                if (!rowIndices.isEmpty()) {
-                    List<Map<String, Object>> indexedRows = new ArrayList<>();
-                    int tableSize = table.getRawRowCount();
-                    List<Map<String, Object>> rawRows = table.getRows();
-                    for (int idx : rowIndices) {
-                        if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
-                            indexedRows.add(rawRows.get(idx));
-                        }
-                    }
-                    return indexedRows;
-                }
+            List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn);
+            if (rowIndices != null && !rowIndices.isEmpty()) {
+                indexedSets.add(new LinkedHashSet<>(rowIndices));
             }
         }
 
+        if (indexedSets.isEmpty()) {
+            return null;
+        }
+
+        // Intersect all collected sets — smallest first for efficiency.
+        indexedSets.sort(Comparator.comparingInt(Set::size));
+        Set<Integer> result = new LinkedHashSet<>(indexedSets.get(0));
+        for (int i = 1; i < indexedSets.size(); i++) {
+            result.retainAll(indexedSets.get(i));
+        }
+
+        if (result.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Map<String, Object>> indexedRows = new ArrayList<>(result.size());
+        int tableSize = table.getRawRowCount();
+        List<Map<String, Object>> rawRows = table.getRows();
+        for (int idx : result) {
+            if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
+                indexedRows.add(rawRows.get(idx));
+            }
+        }
+        return indexedRows;
+    }
+
+    /**
+     * Performs an index lookup for a single WHERE condition.  Returns the
+     * matching row indices, or {@code null} if the condition cannot use an
+     * index.
+     */
+    private List<Integer> lookupIndex(Index index, QueryParser.Condition condition, String tableName, String unqualifiedColumn) {
+        if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
+            List<Integer> rowIndices = index.search(condition.value);
+            LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
+                    new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
+            return rowIndices;
+        }
+        if (condition.isInOperator() && condition.inValues != null) {
+            List<Integer> rowIndices = new ArrayList<>();
+            for (Object inValue : condition.inValues) {
+                rowIndices.addAll(index.search(inValue));
+            }
+            LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
+                    new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
+            return rowIndices;
+        }
+        if (index instanceof BTreeIndex bTreeIndex) {
+            return lookupBTreeRange(bTreeIndex, condition, tableName, unqualifiedColumn);
+        }
         return null;
+    }
+
+    /**
+     * Handles range lookups ({@code <}, {@code >}, {@code <=}, {@code >=})
+     * on a BTree index.
+     */
+    private List<Integer> lookupBTreeRange(BTreeIndex bTreeIndex, QueryParser.Condition condition, String tableName, String unqualifiedColumn) {
+        return switch (condition.operator) {
+            case LESS_THAN -> {
+                List<Integer> r = bTreeIndex.rangeSearchHigh(condition.value);
+                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for < {2}, found {3} rows",
+                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                yield r;
+            }
+            case LESS_THAN_OR_EQUALS -> {
+                List<Integer> r = bTreeIndex.rangeSearchHigh(condition.value);
+                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for <= {2}, found {3} rows",
+                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                yield r;
+            }
+            case GREATER_THAN -> {
+                List<Integer> r = bTreeIndex.rangeSearchLow(condition.value);
+                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for > {2}, found {3} rows",
+                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                yield r;
+            }
+            case GREATER_THAN_OR_EQUALS -> {
+                List<Integer> r = bTreeIndex.rangeSearchLow(condition.value);
+                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for >= {2}, found {3} rows",
+                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                yield r;
+            }
+            default -> null;
+        };
     }
 
     private boolean valuesEqual(Object left, Object right) {
@@ -2828,6 +2930,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     /**
      * Reports which index (if any) the engine would use to pre-filter the main
      * table scan for the given WHERE conditions, mirroring {@link #getIndexedRows}.
+     * When multiple AND-conditions have applicable indexes, all of them are
+     * reported as intersected.
      */
     private String describeScanIndex(Table table, String tableName, List<QueryParser.Condition> conditions) {
         if (conditions == null || conditions.isEmpty()) {
@@ -2838,13 +2942,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 return "none (OR conditions disable the index pre-filter)";
             }
         }
+        List<String> hints = new ArrayList<>();
         for (QueryParser.Condition condition : conditions) {
             String hint = tryResolveIndexHint(condition, tableName, table);
             if (hint != null) {
-                return hint;
+                hints.add(hint);
             }
         }
-        return ErrorMessages.NONE_FULL_SCAN;
+        if (hints.isEmpty()) {
+            return ErrorMessages.NONE_FULL_SCAN;
+        }
+        if (hints.size() == 1) {
+            return hints.get(0);
+        }
+        return hints.get(0) + " (intersected with " + String.join(", ", hints.subList(1, hints.size())) + ")";
     }
 
     /**
@@ -2867,9 +2978,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator()) {
             return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn;
         }
-        if (index instanceof BTreeIndex && (condition.operator == QueryParser.Operator.LESS_THAN
-                || condition.operator == QueryParser.Operator.GREATER_THAN)) {
-            return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
+        if (index instanceof BTreeIndex bTreeIndex) {
+            return switch (condition.operator) {
+                case LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS ->
+                    indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
+                default -> null;
+            };
         }
         return null;
     }

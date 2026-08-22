@@ -187,7 +187,10 @@ class BTreeIndex implements Index, Serializable {
             return;
         }
 
-        if (i < x.children.size()) {
+        if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
+            // Key matches separator at position i — data lives in right child.
+            remove(x.children.get(i + 1), key, rowIndex);
+        } else if (i < x.children.size()) {
             remove(x.children.get(i), key, rowIndex);
         } else {
             LOGGER.log(Level.FINE, "No valid child for key={0}, i={1}, children size={2}",
@@ -243,27 +246,37 @@ class BTreeIndex implements Index, Serializable {
             }
             return result;
         }
+        // Bulk-loaded trees may have the same key as both a separator in this
+        // internal node and as data in a child.  When the key matches a
+        // separator at position i, the standard B-tree convention is to go
+        // right (children[i+1]) because left children hold keys < separator.
+        // We therefore search the right child on an exact match.
         int i = 0;
         while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
             i++;
         }
-        result.addAll(search(x.children.get(i), key));
+        if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
+            // Key matches separator at position i — data lives in right child.
+            result.addAll(search(x.children.get(i + 1), key));
+        } else {
+            // Key is strictly less than separator at i (or past all separators).
+            result.addAll(search(x.children.get(i), key));
+        }
         return result;
     }
 
     /**
      * Returns every row index whose key lies within the inclusive
-     * {@code [low, high]} range.
+     * {@code [low, high]} range. Either bound may be {@code null} to indicate
+     * an open-ended range ({@code null low} means no lower bound;
+     * {@code null high} means no upper bound).
      *
-     * @param low  the inclusive lower bound
-     * @param high the inclusive upper bound
+     * @param low  the inclusive lower bound, or {@code null}
+     * @param high the inclusive upper bound, or {@code null}
      * @return the list of matching row indexes, possibly empty
      */
     public List<Integer> rangeSearch(Object low, Object high) {
         List<Integer> result = new ArrayList<>();
-        if (low == null || high == null) {
-            return result;
-        }
         rangeSearch(root, low, high, result);
         return result;
     }
@@ -271,7 +284,10 @@ class BTreeIndex implements Index, Serializable {
     private void rangeSearch(Node x, Object low, Object high, List<Integer> result) {
         if (x.isLeaf) {
             for (int i = 0; i < x.keys.size(); i++) {
-                if (compareKeys(x.keys.get(i), low) >= 0 && compareKeys(x.keys.get(i), high) <= 0) {
+                Object key = x.keys.get(i);
+                boolean aboveLow = low == null || compareKeys(key, low) >= 0;
+                boolean belowHigh = high == null || compareKeys(key, high) <= 0;
+                if (aboveLow && belowHigh) {
                     result.addAll(x.rowIndices.get(i));
                 }
             }
@@ -280,6 +296,110 @@ class BTreeIndex implements Index, Serializable {
                 rangeSearch(child, low, high, result);
             }
         }
+    }
+
+    /**
+     * Returns every row index whose key is greater than or equal to
+     * {@code low}. Equivalent to {@code rangeSearch(low, null)}.
+     */
+    public List<Integer> rangeSearchLow(Object low) {
+        return rangeSearch(low, null);
+    }
+
+    /**
+     * Returns every row index whose key is less than or equal to
+     * {@code high}. Equivalent to {@code rangeSearch(null, high)}.
+     */
+    public List<Integer> rangeSearchHigh(Object high) {
+        return rangeSearch(null, high);
+    }
+
+    /**
+     * Bulk-loads the index from pre-sorted data. All key–rowIndex pairs are
+     * supplied in ascending key order. Duplicate keys are merged into a single
+     * entry with a combined list of row indices. After this call the previous
+     * tree is discarded and replaced.
+     *
+     * @param sortedKeys   sorted keys (ascending)
+     * @param sortedRowIdx corresponding row indices (same order as sortedKeys)
+     * @throws IllegalArgumentException if lists are empty or have mismatched sizes
+     */
+    void bulkLoad(List<Object> sortedKeys, List<Integer> sortedRowIdx) {
+        if (sortedKeys.size() != sortedRowIdx.size()) {
+            throw new IllegalArgumentException("sortedKeys and sortedRowIdx must have the same size");
+        }
+        int n = sortedKeys.size();
+        if (n == 0) {
+            this.root = new Node(true);
+            return;
+        }
+
+        // Merge duplicate keys into single entries with combined row index lists.
+        List<Object> mergedKeys = new ArrayList<>();
+        List<List<Integer>> mergedIndices = new ArrayList<>();
+        Object prevKey = sortedKeys.get(0);
+        List<Integer> currentIndices = new ArrayList<>();
+        currentIndices.add(sortedRowIdx.get(0));
+        for (int i = 1; i < n; i++) {
+            Object key = sortedKeys.get(i);
+            if (compareKeys(key, prevKey) == 0) {
+                currentIndices.add(sortedRowIdx.get(i));
+            } else {
+                mergedKeys.add(prevKey);
+                mergedIndices.add(currentIndices);
+                prevKey = key;
+                currentIndices = new ArrayList<>();
+                currentIndices.add(sortedRowIdx.get(i));
+            }
+        }
+        mergedKeys.add(prevKey);
+        mergedIndices.add(currentIndices);
+
+        // Build all leaf nodes from merged data (left to right).
+        int leafCapacity = 2 * t - 1;
+        List<Node> leaves = new ArrayList<>();
+        Node currentLeaf = new Node(true);
+        for (int i = 0; i < mergedKeys.size(); i++) {
+            currentLeaf.keys.add(mergedKeys.get(i));
+            currentLeaf.rowIndices.add(mergedIndices.get(i));
+            if (currentLeaf.keys.size() == leafCapacity || i == mergedKeys.size() - 1) {
+                leaves.add(currentLeaf);
+                if (i < mergedKeys.size() - 1) {
+                    currentLeaf = new Node(true);
+                }
+            }
+        }
+
+        // Build internal levels bottom-up.
+        List<Node> currentLevel = leaves;
+        while (currentLevel.size() > 1) {
+            List<Node> nextLevel = new ArrayList<>();
+            int i = 0;
+            while (i < currentLevel.size()) {
+                Node parent = new Node(false);
+                parent.children.add(currentLevel.get(i));
+                i++;
+                while (parent.keys.size() < leafCapacity && i < currentLevel.size()) {
+                    parent.keys.add(extractFirstKey(currentLevel.get(i)));
+                    parent.children.add(currentLevel.get(i));
+                    i++;
+                }
+                nextLevel.add(parent);
+            }
+            currentLevel = nextLevel;
+        }
+
+        this.root = currentLevel.get(0);
+    }
+
+    /**
+     * Extracts the leftmost (smallest) key from a subtree.
+     */
+    private Object extractFirstKey(Node node) {
+        if (node.isLeaf) {
+            return node.keys.get(0);
+        }
+        return extractFirstKey(node.children.get(0));
     }
 
     private int compareKeys(Object k1, Object k2) {

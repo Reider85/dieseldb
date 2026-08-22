@@ -380,14 +380,50 @@ class Table implements Serializable {
             throw new ColumnNotFoundException("Column " + columnName + ErrorMessages.DOES_NOT_EXIST);
         }
         Index index = indexFactory.apply(columnTypes.get(columnName));
-        Set<Object> seenKeys = unique ? new HashSet<>() : null;
-        for (int i = 0; i < rows.size(); i++) {
-            Object key = rows.get(i).get(columnName);
-            if (key != null) {
-                if (unique && !seenKeys.add(key)) {
-                    throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique index");
+        if (index instanceof BTreeIndex btree) {
+            // Bulk-load: collect all key/rowIndex pairs, sort, then build in O(N).
+            int n = rows.size();
+            List<Object> keys = new ArrayList<>(n);
+            List<Integer> indices = new ArrayList<>(n);
+            Set<Object> seenKeys = unique ? new HashSet<>() : null;
+            for (int i = 0; i < n; i++) {
+                Object key = rows.get(i).get(columnName);
+                if (key != null) {
+                    if (unique && !seenKeys.add(key)) {
+                        throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique index");
+                    }
+                    keys.add(key);
+                    indices.add(i);
                 }
-                index.insert(key, i);
+            }
+            // Sort by key using the same comparator BTreeIndex uses.
+            List<int[]> pairs = new ArrayList<>(keys.size());
+            for (int i = 0; i < keys.size(); i++) {
+                pairs.add(new int[]{i});
+            }
+            pairs.sort((a, b) -> {
+                @SuppressWarnings("unchecked")
+                Comparable<Object> c1 = (Comparable<Object>) keys.get(a[0]);
+                return c1.compareTo(keys.get(b[0]));
+            });
+            List<Object> sortedKeys = new ArrayList<>(keys.size());
+            List<Integer> sortedIdx = new ArrayList<>(keys.size());
+            for (int[] pair : pairs) {
+                sortedKeys.add(keys.get(pair[0]));
+                sortedIdx.add(indices.get(pair[0]));
+            }
+            btree.bulkLoad(sortedKeys, sortedIdx);
+        } else {
+            // One-by-one insert for Hash/Unique indexes.
+            Set<Object> seenKeys = unique ? new HashSet<>() : null;
+            for (int i = 0; i < rows.size(); i++) {
+                Object key = rows.get(i).get(columnName);
+                if (key != null) {
+                    if (unique && !seenKeys.add(key)) {
+                        throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique index");
+                    }
+                    index.insert(key, i);
+                }
             }
         }
         indexes.put(columnName, index);
@@ -1471,10 +1507,41 @@ class Table implements Serializable {
                     default:
                         return null;
                 }
-                for (int i = 0; i < n; i++) {
-                    Object key = rows.get(i).get(column);
-                    if (key != null) {
-                        index.insert(key, i);
+                if (index instanceof BTreeIndex btree) {
+                    // Bulk-load: collect all key/rowIndex pairs, sort, then build.
+                    List<Object> keys = new ArrayList<>(n);
+                    List<Integer> indices = new ArrayList<>(n);
+                    for (int i = 0; i < n; i++) {
+                        Object key = rows.get(i).get(column);
+                        if (key != null) {
+                            keys.add(key);
+                            indices.add(i);
+                        }
+                    }
+                    // Sort by key using the same comparator BTreeIndex uses.
+                    List<int[]> pairs = new ArrayList<>(keys.size());
+                    for (int i = 0; i < keys.size(); i++) {
+                        pairs.add(new int[]{i});
+                    }
+                    pairs.sort((a, b) -> {
+                        @SuppressWarnings("unchecked")
+                        Comparable<Object> c1 = (Comparable<Object>) keys.get(a[0]);
+                        return c1.compareTo(keys.get(b[0]));
+                    });
+                    List<Object> sortedKeys = new ArrayList<>(keys.size());
+                    List<Integer> sortedIdx = new ArrayList<>(keys.size());
+                    for (int[] pair : pairs) {
+                        sortedKeys.add(keys.get(pair[0]));
+                        sortedIdx.add(indices.get(pair[0]));
+                    }
+                    btree.bulkLoad(sortedKeys, sortedIdx);
+                } else {
+                    // Fallback: one-by-one insert for Hash/Unique indexes.
+                    for (int i = 0; i < n; i++) {
+                        Object key = rows.get(i).get(column);
+                        if (key != null) {
+                            index.insert(key, i);
+                        }
                     }
                 }
                 return Map.entry(column, index);
