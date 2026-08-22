@@ -18,6 +18,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Collections;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -76,6 +77,30 @@ interface Index {
      * @return the key type of the indexed column
      */
     Class<?> getKeyType();
+
+    /**
+     * Returns the columns this index covers beyond the indexed column,
+     * or an empty list when no extra columns are stored.
+     */
+    default List<String> getCoversColumns() {
+        return Collections.emptyList();
+    }
+
+    /**
+     * Returns {@code true} when this index stores all of the given columns
+     * and can serve as a covering index for them.
+     */
+    default boolean coversColumns(Set<String> columns) {
+        return false;
+    }
+
+    /**
+     * Returns the covered column values for the given row index, or
+     * {@code null} when the index does not store row data.
+     */
+    default Map<String, Object> getCoveredValues(int rowIndex) {
+        return null;
+    }
 }
 
 /**
@@ -113,6 +138,7 @@ class Table implements Serializable {
     private transient Map<String, Index> indexes;
     private transient Map<String, Sequence> sequences;
     private final Map<String, String> indexDefinitions = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> coverColumnDefinitions = new ConcurrentHashMap<>();
     private boolean isFileInitialized;
     private boolean hasClusteredIndex;
     private String clusteredIndexColumn;
@@ -368,6 +394,142 @@ class Table implements Serializable {
     public void createUniqueIndex(String columnName) {
         createSecondaryIndex(columnName, ErrorMessages.INDEX_UNIQUE, UniqueIndex::new, true);
         LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
+    }
+
+    /**
+     * Builds a composite B-tree index over multiple columns. The composite
+     * key is the ordered list of column values.
+     *
+     * @param columnNames the columns to index (order matters)
+     * @throws IllegalArgumentException if any column does not exist
+     */
+    public void createCompositeBTreeIndex(List<String> columnNames) {
+        if (columnNames == null || columnNames.isEmpty()) {
+            throw new IllegalArgumentException("Composite index requires at least one column");
+        }
+        for (String col : columnNames) {
+            if (!columnTypes.containsKey(col)) {
+                throw new ColumnNotFoundException("Column " + col + ErrorMessages.DOES_NOT_EXIST);
+            }
+        }
+        CompositeBTreeIndex index = new CompositeBTreeIndex(columnNames);
+        int n = rows.size();
+        List<List<Object>> keys = new ArrayList<>(n);
+        List<Integer> indices = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            List<Object> compositeKey = new ArrayList<>(columnNames.size());
+            boolean skip = false;
+            for (String col : columnNames) {
+                Object val = rows.get(i).get(col);
+                if (val == null) {
+                    skip = true;
+                    break;
+                }
+                compositeKey.add(val);
+            }
+            if (!skip) {
+                keys.add(compositeKey);
+                indices.add(i);
+            }
+        }
+        // Sort by composite key
+        List<int[]> pairs = new ArrayList<>(keys.size());
+        for (int i = 0; i < keys.size(); i++) {
+            pairs.add(new int[]{i});
+        }
+        pairs.sort((a, b) -> {
+            CompositeBTreeIndex.CompositeKey k1 = new CompositeBTreeIndex.CompositeKey(keys.get(a[0]));
+            CompositeBTreeIndex.CompositeKey k2 = new CompositeBTreeIndex.CompositeKey(keys.get(b[0]));
+            return k1.compareTo(k2);
+        });
+        List<List<Object>> sortedKeys = new ArrayList<>(keys.size());
+        List<Integer> sortedIdx = new ArrayList<>(keys.size());
+        for (int[] pair : pairs) {
+            sortedKeys.add(keys.get(pair[0]));
+            sortedIdx.add(indices.get(pair[0]));
+        }
+        index.bulkLoad(sortedKeys, sortedIdx);
+        String compositeKey = String.join("+", columnNames);
+        indexes.put(compositeKey, index);
+        indexDefinitions.put(compositeKey, ErrorMessages.INDEX_COMPOSITE_BTREE);
+        LOGGER.log(Level.INFO, "Created composite B-tree index on {0} for table {1}",
+                new Object[]{compositeKey, name});
+    }
+
+    /**
+     * Returns the composite index for the given column list, or null.
+     *
+     * @param columnNames the column names in order
+     * @return the index, or null
+     */
+    public Index getCompositeIndex(List<String> columnNames) {
+        return indexes.get(String.join("+", columnNames));
+    }
+
+    /**
+     * Returns the cover column names for a covering index, or an empty list.
+     */
+    List<String> getCoverColumnNames(String indexColumn) {
+        return coverColumnDefinitions.getOrDefault(indexColumn, Collections.emptyList());
+    }
+
+    /**
+     * Stores the cover column names for a covering index.
+     */
+    void setCoverColumnNames(String indexColumn, List<String> coverColumns) {
+        coverColumnDefinitions.put(indexColumn, coverColumns);
+    }
+
+    /**
+     * Builds a covering B-tree index that stores extra column values for
+     * each row, enabling index-only scans when all SELECT columns are covered.
+     *
+     * @param indexColumn  the column to index
+     * @param coverColumns additional columns to store in the index
+     * @throws IllegalArgumentException if any column does not exist
+     */
+    public void createCoveringBTreeIndex(String indexColumn, List<String> coverColumns) {
+        if (!columnTypes.containsKey(indexColumn)) {
+            throw new ColumnNotFoundException("Column " + indexColumn + ErrorMessages.DOES_NOT_EXIST);
+        }
+        for (String col : coverColumns) {
+            if (!columnTypes.containsKey(col)) {
+                throw new ColumnNotFoundException("Column " + col + ErrorMessages.DOES_NOT_EXIST);
+            }
+        }
+        CoveringBTreeIndex index = new CoveringBTreeIndex(
+                columnTypes.get(indexColumn), indexColumn, coverColumns);
+        int n = rows.size();
+        List<Object> keys = new ArrayList<>(n);
+        List<Integer> indices = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            Object key = rows.get(i).get(indexColumn);
+            if (key != null) {
+                keys.add(key);
+                indices.add(i);
+            }
+        }
+        List<int[]> pairs = new ArrayList<>(keys.size());
+        for (int i = 0; i < keys.size(); i++) {
+            pairs.add(new int[]{i});
+        }
+        pairs.sort((a, b) -> {
+            @SuppressWarnings("unchecked")
+            Comparable<Object> c1 = (Comparable<Object>) keys.get(a[0]);
+            return c1.compareTo(keys.get(b[0]));
+        });
+        List<Object> sortedKeys = new ArrayList<>(keys.size());
+        List<Integer> sortedIdx = new ArrayList<>(keys.size());
+        for (int[] pair : pairs) {
+            sortedKeys.add(keys.get(pair[0]));
+            sortedIdx.add(indices.get(pair[0]));
+        }
+        index.bulkLoadWithCover(sortedKeys, sortedIdx, rows);
+        indexes.put(indexColumn, index);
+        indexDefinitions.put(indexColumn, ErrorMessages.INDEX_COVERING_BTREE);
+        setCoverColumnNames(indexColumn, coverColumns);
+        LOGGER.log(Level.INFO, "Created covering B-tree index on {0} (covers {1}) for table {2}",
+                new Object[]{indexColumn, coverColumns, name});
     }
 
     /**
@@ -1197,9 +1359,29 @@ class Table implements Serializable {
             return;
         }
         for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-            Object key = row.get(entry.getKey());
-            if (key != null) {
-                entry.getValue().insert(key, rowIndex);
+            if (entry.getKey().contains("+")) {
+                // Composite index: extract multi-column key
+                String[] cols = entry.getKey().split("\\+");
+                List<Object> compositeKey = new ArrayList<>(cols.length);
+                boolean skip = false;
+                for (String col : cols) {
+                    Object val = row.get(col);
+                    if (val == null) { skip = true; break; }
+                    compositeKey.add(val);
+                }
+                if (!skip) {
+                    entry.getValue().insert(compositeKey, rowIndex);
+                }
+            } else if (entry.getValue() instanceof CoveringBTreeIndex coverIndex) {
+                Object key = row.get(entry.getKey());
+                if (key != null) {
+                    coverIndex.insertWithRow(key, rowIndex, row);
+                }
+            } else {
+                Object key = row.get(entry.getKey());
+                if (key != null) {
+                    entry.getValue().insert(key, rowIndex);
+                }
             }
         }
     }
@@ -1243,12 +1425,31 @@ class Table implements Serializable {
             }
 
             for (Map.Entry<String, Index> entry : indexes.entrySet()) {
-                Object key = row.get(entry.getKey());
-                if (key != null) {
-                    List<Integer> currentIndices = entry.getValue().search(key);
-                    if (currentIndices.contains(i - 1)) {
-                        entry.getValue().remove(key, i - 1);
-                        entry.getValue().insert(key, i);
+                if (entry.getKey().contains("+")) {
+                    // Composite index: extract multi-column key
+                    String[] cols = entry.getKey().split("\\+");
+                    List<Object> compositeKey = new ArrayList<>(cols.length);
+                    boolean skip = false;
+                    for (String col : cols) {
+                        Object val = row.get(col);
+                        if (val == null) { skip = true; break; }
+                        compositeKey.add(val);
+                    }
+                    if (!skip) {
+                        List<Integer> currentIndices = entry.getValue().search(compositeKey);
+                        if (currentIndices.contains(i - 1)) {
+                            entry.getValue().remove(compositeKey, i - 1);
+                            entry.getValue().insert(compositeKey, i);
+                        }
+                    }
+                } else {
+                    Object key = row.get(entry.getKey());
+                    if (key != null) {
+                        List<Integer> currentIndices = entry.getValue().search(key);
+                        if (currentIndices.contains(i - 1)) {
+                            entry.getValue().remove(key, i - 1);
+                            entry.getValue().insert(key, i);
+                        }
                     }
                 }
             }
@@ -1504,6 +1705,75 @@ class Table implements Serializable {
                     case ErrorMessages.INDEX_UNIQUE:
                         index = new UniqueIndex(keyType);
                         break;
+                    case ErrorMessages.INDEX_COMPOSITE_BTREE: {
+                        String[] colNames = column.split("\\+");
+                        List<String> cols = List.of(colNames);
+                        CompositeBTreeIndex compIndex = new CompositeBTreeIndex(cols);
+                        // Bulk-load composite keys
+                        List<List<Object>> compositeKeys = new ArrayList<>(n);
+                        List<Integer> compositeIndices = new ArrayList<>(n);
+                        for (int i = 0; i < n; i++) {
+                            List<Object> ck = new ArrayList<>(cols.size());
+                            boolean skip = false;
+                            for (String c : cols) {
+                                Object val = rows.get(i).get(c);
+                                if (val == null) { skip = true; break; }
+                                ck.add(val);
+                            }
+                            if (!skip) {
+                                compositeKeys.add(ck);
+                                compositeIndices.add(i);
+                            }
+                        }
+                        List<int[]> cpairs = new ArrayList<>(compositeKeys.size());
+                        for (int i = 0; i < compositeKeys.size(); i++) cpairs.add(new int[]{i});
+                        cpairs.sort((a, b) -> {
+                            CompositeBTreeIndex.CompositeKey k1 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(a[0]));
+                            CompositeBTreeIndex.CompositeKey k2 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(b[0]));
+                            return k1.compareTo(k2);
+                        });
+                        List<List<Object>> sortedCK = new ArrayList<>(compositeKeys.size());
+                        List<Integer> sortedCI = new ArrayList<>(compositeKeys.size());
+                        for (int[] p : cpairs) {
+                            sortedCK.add(compositeKeys.get(p[0]));
+                            sortedCI.add(compositeIndices.get(p[0]));
+                        }
+                        compIndex.bulkLoad(sortedCK, sortedCI);
+                        return Map.entry(column, compIndex);
+                    }
+                    case ErrorMessages.INDEX_COVERING_BTREE: {
+                        // Extract cover columns from indexDefinitions metadata
+                        // For now, we store them as a comma-separated list in a separate map
+                        // For rebuild, we parse the column list from the index definition
+                        // Actually, we need to persist cover column names somewhere.
+                        // Simplified: parse from a convention or store in indexDefinitions
+                        // We'll use a parallel map for cover column lists (see below)
+                        CoveringBTreeIndex coverIndex = new CoveringBTreeIndex(keyType, column, getCoverColumnNames(column));
+                        List<Object> cKeys = new ArrayList<>(n);
+                        List<Integer> cIndices = new ArrayList<>(n);
+                        for (int i = 0; i < n; i++) {
+                            Object key = rows.get(i).get(column);
+                            if (key != null) {
+                                cKeys.add(key);
+                                cIndices.add(i);
+                            }
+                        }
+                        List<int[]> cPairs = new ArrayList<>(cKeys.size());
+                        for (int i = 0; i < cKeys.size(); i++) cPairs.add(new int[]{i});
+                        cPairs.sort((a, b) -> {
+                            @SuppressWarnings("unchecked")
+                            Comparable<Object> c1 = (Comparable<Object>) cKeys.get(a[0]);
+                            return c1.compareTo(cKeys.get(b[0]));
+                        });
+                        List<Object> sortedCK2 = new ArrayList<>(cKeys.size());
+                        List<Integer> sortedCI2 = new ArrayList<>(cKeys.size());
+                        for (int[] p : cPairs) {
+                            sortedCK2.add(cKeys.get(p[0]));
+                            sortedCI2.add(cIndices.get(p[0]));
+                        }
+                        coverIndex.bulkLoadWithCover(sortedCK2, sortedCI2, rows);
+                        return Map.entry(column, coverIndex);
+                    }
                     default:
                         return null;
                 }

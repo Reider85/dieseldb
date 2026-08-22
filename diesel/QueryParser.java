@@ -926,8 +926,39 @@ class QueryParser {
         }
         String tableAndColumn = parts[1].trim();
         String tableName = tableAndColumn.substring(0, tableAndColumn.indexOf("(")).trim();
-        String columnName = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
-        return new CreateIndexQuery(tableName, columnName);
+
+        // Check for COVERING clause: CREATE INDEX ON T(A) COVERING (B, C)
+        if (tableAndColumn.toUpperCase().contains(SqlKeywords.COVERING)) {
+            int coveringIdx = tableAndColumn.toUpperCase().indexOf(SqlKeywords.COVERING);
+            String beforeCovering = tableAndColumn.substring(0, coveringIdx).trim();
+            String afterCovering = tableAndColumn.substring(coveringIdx + SqlKeywords.COVERING.length()).trim();
+
+            // Extract index column from before COVERING
+            String indexColumn = beforeCovering.substring(
+                    beforeCovering.indexOf("(") + 1, beforeCovering.indexOf(")")).trim();
+
+            // Extract cover columns from after COVERING(...)
+            String coverPart = afterCovering.substring(
+                    afterCovering.indexOf("(") + 1, afterCovering.indexOf(")")).trim();
+            String[] coverColNames = coverPart.split(",");
+            List<String> coverColumns = new ArrayList<>();
+            for (String c : coverColNames) {
+                coverColumns.add(c.trim());
+            }
+            return new CreateCoveringIndexQuery(tableName, indexColumn, coverColumns);
+        }
+
+        String columnsPart = tableAndColumn.substring(tableAndColumn.indexOf("(") + 1, tableAndColumn.indexOf(")")).trim();
+        String[] columnNames = columnsPart.split(",");
+        if (columnNames.length == 1) {
+            return new CreateIndexQuery(tableName, columnNames[0].trim());
+        } else {
+            List<String> columns = new ArrayList<>();
+            for (String c : columnNames) {
+                columns.add(c.trim());
+            }
+            return new CreateCompositeIndexQuery(tableName, columns);
+        }
     }
 
     private Query<Void> parseCreateHashIndexQuery(String normalized) {

@@ -34,6 +34,8 @@ public final class ErrorMessages {
     public static final String INDEX_BTREE = "BTREE";
     public static final String INDEX_HASH = "HASH";
     public static final String INDEX_UNIQUE = "UNIQUE";
+    public static final String INDEX_COMPOSITE_BTREE = "COMPOSITE_BTREE";
+    public static final String INDEX_COVERING_BTREE = "COVERING_BTREE";
 
     public static final String EXIT_COMMAND = "EXIT";
 }

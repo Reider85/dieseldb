@@ -2104,7 +2104,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (table.hasClusteredIndex() && unqualified.equals(table.getClusteredIndexColumn())) {
                 continue;
             }
-            LOGGER.info("Consider creating index on " + tableName + "." + unqualified + " for faster WHERE filtering");
+            try {
+                table.createBTreeIndex(unqualified);
+                LOGGER.warning("Auto-created index on " + tableName + "." + unqualified + " for WHERE filtering");
+            } catch (RuntimeException e) {
+                LOGGER.log(Level.FINE, "Skipped auto-creating index on {0}.{1}: {2}",
+                        new Object[]{tableName, unqualified, e.getMessage()});
+            }
         }
     }
 
@@ -2164,6 +2170,23 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return Collections.emptyList();
         }
 
+        // Try composite index for potentially better results
+        List<Integer> compositeRows = lookupCompositeIndex(table, conditions, tableName);
+        if (compositeRows != null && !compositeRows.isEmpty()) {
+            // Intersect composite result with existing single-column results
+            Set<Integer> compositeSet = new LinkedHashSet<>(compositeRows);
+            result.retainAll(compositeSet);
+            if (result.isEmpty()) {
+                return Collections.emptyList();
+            }
+        }
+
+        // Check for covering index optimization
+        List<Map<String, Object>> coveredRows = tryCoveringIndex(table, result, conditions, tableName);
+        if (coveredRows != null) {
+            return coveredRows;
+        }
+
         List<Map<String, Object>> indexedRows = new ArrayList<>(result.size());
         int tableSize = table.getRawRowCount();
         List<Map<String, Object>> rawRows = table.getRows();
@@ -2173,6 +2196,83 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         }
         return indexedRows;
+    }
+
+    /**
+     * Attempts to use a composite index for multi-column WHERE conditions.
+     * Returns the matching row indices, or null if no composite index applies.
+     */
+    private List<Integer> lookupCompositeIndex(Table table, List<QueryParser.Condition> conditions, String tableName) {
+        // Collect AND-connected equality conditions
+        Map<String, Object> equalityColumns = new LinkedHashMap<>();
+        for (QueryParser.Condition condition : conditions) {
+            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) continue;
+            if (condition.operator != QueryParser.Operator.EQUALS || condition.value == null) continue;
+            String columnName = normalizeColumnName(condition.column, tableName);
+            if (columnName == null) continue;
+            String unqualified = normalizeColumnKey(columnName, tableName);
+            equalityColumns.put(unqualified, condition.value);
+        }
+        if (equalityColumns.size() < 2) return null;
+
+        // Find best matching composite index
+        for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
+            if (!(entry.getValue() instanceof CompositeBTreeIndex compIndex)) continue;
+            List<String> compCols = compIndex.getColumns();
+            // Check if all composite columns are in the equality conditions
+            if (compCols.size() > equalityColumns.size()) continue;
+            List<Object> compositeKey = new ArrayList<>(compCols.size());
+            boolean allMatch = true;
+            for (String col : compCols) {
+                if (!equalityColumns.containsKey(col)) { allMatch = false; break; }
+                compositeKey.add(equalityColumns.get(col));
+            }
+            if (!allMatch) continue;
+            return compIndex.search(compositeKey);
+        }
+        return null;
+    }
+
+    /**
+     * Attempts to use a covering index to avoid table row lookups.
+     * Returns covered rows, or null if covering index cannot be used.
+     */
+    private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> rowIndices,
+                                                        List<QueryParser.Condition> conditions, String tableName) {
+        // Find which index was used for the lookup
+        for (QueryParser.Condition condition : conditions) {
+            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) continue;
+            String columnName = normalizeColumnName(condition.column, tableName);
+            if (columnName == null) continue;
+            String unqualified = normalizeColumnKey(columnName, tableName);
+            Index index = table.getIndex(unqualified);
+            if (index instanceof CoveringBTreeIndex coverIndex) {
+                // Check if the index covers all SELECT columns
+                Set<String> requiredColumns = new HashSet<>();
+                if (columns != null) {
+                    for (String col : columns) {
+                        if (!col.contains("(") && !col.equals("*")) {
+                            requiredColumns.add(col);
+                        }
+                    }
+                }
+                if (!requiredColumns.isEmpty() && coverIndex.coversColumns(requiredColumns)) {
+                    // Build rows from cover data
+                    List<Map<String, Object>> coveredRows = new ArrayList<>(rowIndices.size());
+                    int tableSize = table.getRawRowCount();
+                    for (int idx : rowIndices) {
+                        if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
+                            Map<String, Object> covered = coverIndex.getCoveredValues(idx);
+                            if (covered != null) {
+                                coveredRows.add(covered);
+                            }
+                        }
+                    }
+                    return coveredRows;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -2975,23 +3075,35 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (index == null) {
             return null;
         }
+        String hint;
         if (condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator()) {
-            return indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn;
-        }
-        if (index instanceof BTreeIndex bTreeIndex) {
-            return switch (condition.operator) {
+            hint = indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn;
+        } else if (index instanceof BTreeIndex) {
+            hint = switch (condition.operator) {
                 case LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS ->
                     indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
                 default -> null;
             };
+        } else {
+            return null;
         }
-        return null;
+        // Add covering info if applicable
+        if (hint != null && index instanceof CoveringBTreeIndex coverIndex) {
+            hint += " (covers " + String.join(", ", coverIndex.getCoverColumns()) + ")";
+        }
+        return hint;
     }
 
     /**
      * Human-readable name of an index implementation for EXPLAIN output.
      */
     static String indexTypeName(Index index) {
+        if (index instanceof CompositeBTreeIndex) {
+            return "Composite B-tree";
+        }
+        if (index instanceof CoveringBTreeIndex) {
+            return "Covering B-tree";
+        }
         if (index instanceof HashIndex) {
             return "Hash";
         }
