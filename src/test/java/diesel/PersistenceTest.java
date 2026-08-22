@@ -188,6 +188,75 @@ public class PersistenceTest {
     }
 
     @Test
+    void testCompositeIndexFunctionalAfterLoad() {
+        LOGGER.log(Level.INFO, "Starting test: testCompositeIndexFunctionalAfterLoad");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, CITY STRING)", null);
+        db.executeQuery("CREATE INDEX ON " + TABLE + " (NAME, AGE)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID1', 'Alice', 25, 'NYC')", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID2', 'Bob', 30, 'LA')", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID3', 'Alice', 30, 'NYC')", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID4', 'Carol', 25, 'SF')", null);
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        reloaded.loadTablesFromDisk();
+        Table table = reloaded.getTable(TABLE);
+
+        assertTrue(table.getIndexes().containsKey("NAME+AGE"),
+                "Composite B-tree index rebuilt after load");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) reloaded.executeQuery(
+                "SELECT ID FROM " + TABLE + " WHERE NAME = 'Alice' AND AGE = 25", null);
+        assertTrue(result.size() == 1 && "ID1".equals(result.get(0).get("ID")),
+                "Composite index lookup returns correct result after load");
+
+        Index compositeIdx = table.getIndex("NAME+AGE");
+        assertNotNull(compositeIdx, "Composite index accessible via getIndex after load");
+        List<Integer> hits = compositeIdx.search(List.of("Alice", 30));
+        assertEquals(1, hits.size(), "Composite index search returns one hit for (Alice, 30)");
+        assertEquals("ID3", table.getRows().get(hits.get(0)).get("ID"),
+                "Composite index hit points to correct row");
+        LOGGER.log(Level.INFO, "Test testCompositeIndexFunctionalAfterLoad: DONE");
+    }
+
+    @Test
+    void testCoveringIndexFunctionalAfterLoad() {
+        LOGGER.log(Level.INFO, "Starting test: testCoveringIndexFunctionalAfterLoad");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, SALARY DOUBLE)", null);
+        db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE) COVERING (NAME, SALARY)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID1', 'Alice', 25, 50000.0)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID2', 'Bob', 30, 60000.0)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID3', 'Carol', 25, 55000.0)", null);
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        reloaded.loadTablesFromDisk();
+        Table table = reloaded.getTable(TABLE);
+
+        assertTrue(table.getIndexes().containsKey("AGE"),
+                "Covering B-tree index rebuilt after load");
+
+        Index coverIdx = table.getIndex("AGE");
+        assertNotNull(coverIdx, "Covering index accessible via getIndex after load");
+        assertTrue(coverIdx instanceof CoveringBTreeIndex,
+                "Rebuilt index is a CoveringBTreeIndex instance");
+
+        List<String> coverCols = table.getCoverColumnNames("AGE");
+        assertEquals(List.of("NAME", "SALARY"), coverCols,
+                "Cover column definitions preserved after serialization round-trip");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) reloaded.executeQuery(
+                "SELECT NAME, SALARY FROM " + TABLE + " WHERE AGE = 25", null);
+        assertEquals(2, result.size(),
+                "Covering index returns correct number of rows after load");
+        LOGGER.log(Level.INFO, "Test testCoveringIndexFunctionalAfterLoad: DONE");
+    }
+
+    @Test
     void testLoadTablesFromDisk() {
         LOGGER.log(Level.INFO, "Starting test: testLoadTablesFromDisk");
         Database db = new Database();

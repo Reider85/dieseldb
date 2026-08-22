@@ -127,7 +127,7 @@ interface Index {
  */
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
-    private static final int CURRENT_FORMAT_VERSION = 1;
+    private static final int CURRENT_FORMAT_VERSION = 2;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final String name;
     private final List<String> columns;
@@ -1181,8 +1181,9 @@ class Table implements Serializable {
 
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
-        oos.writeObject(hasClusteredIndex);
-        oos.writeObject(clusteredIndexColumn);
+        // Only transient fields need explicit serialization.
+        // Non-transient fields (hasClusteredIndex, clusteredIndexColumn,
+        // indexDefinitions, coverColumnDefinitions) are handled by defaultWriteObject().
         oos.writeObject(sequences);
         oos.writeObject(deletedRows != null ? deletedRows : new BitSet());
     }
@@ -1197,8 +1198,12 @@ class Table implements Serializable {
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.tableLock = new ReentrantReadWriteLock();
-        this.hasClusteredIndex = (boolean) ois.readObject();
-        this.clusteredIndexColumn = (String) ois.readObject();
+        // Backward compat: format v1 wrote hasClusteredIndex/clusteredIndexColumn twice
+        // (once by defaultWriteObject, once explicitly). v2 removed the redundant write.
+        if (formatVersion < 2) {
+            this.hasClusteredIndex = (boolean) ois.readObject();
+            this.clusteredIndexColumn = (String) ois.readObject();
+        }
         this.sequences = (Map<String, Sequence>) ois.readObject();
         try {
             this.deletedRows = (BitSet) ois.readObject();
@@ -1220,8 +1225,12 @@ class Table implements Serializable {
             clusteredIndex.bulkLoad(keys, indices);
         }
         // Rebuild all secondary indexes from their persisted definitions.
-        if (indexDefinitions != null) {
+        if (indexDefinitions != null && !indexDefinitions.isEmpty()) {
             rebuildSecondaryIndexes();
+        } else {
+            LOGGER.log(Level.FINE,
+                    "No secondary index definitions found for table {0} during deserialization",
+                    name);
         }
         this.database = null;
         this.statsLock = new Object();
@@ -1775,6 +1784,9 @@ class Table implements Serializable {
                         return Map.entry(column, coverIndex);
                     }
                     default:
+                        LOGGER.log(Level.WARNING,
+                                "Unknown index type ''{0}'' for column ''{1}'' in table {2}, skipping rebuild",
+                                new Object[]{entry.getValue(), column, name});
                         return null;
                 }
                 if (index instanceof BTreeIndex btree) {
@@ -1948,9 +1960,9 @@ class Table implements Serializable {
         }
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
             Table table = (Table) ois.readObject();
-            if (table.formatVersion != CURRENT_FORMAT_VERSION) {
+            if (table.formatVersion > CURRENT_FORMAT_VERSION) {
                 throw new IllegalArgumentException("Unsupported table format version: " + table.formatVersion
-                        + ", expected: " + CURRENT_FORMAT_VERSION);
+                        + ", max supported: " + CURRENT_FORMAT_VERSION);
             }
             table.database = database;
             table.setFileInitialized(true);
