@@ -847,7 +847,7 @@ class Table implements Serializable {
     }
 
     /** Marks the statistics dirty and schedules the asynchronous refresh. */
-    private void markStatsDirty() {
+    void markStatsDirty() {
         statsDirty = true;
         if (!statsRefreshScheduled) {
             statsRefreshScheduled = true;

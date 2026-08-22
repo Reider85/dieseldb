@@ -88,11 +88,11 @@ class ExplainQuery implements Query<String> {
         } else if (innerQuery instanceof UpdateQuery uq) {
             sb.append("  Columns: ").append(uq.getUpdates().keySet()).append('\n');
             sb.append("  Conditions: ").append(formatConditions(uq.getConditions())).append('\n');
-            sb.append("  Index: ").append(ErrorMessages.NONE_FULL_SCAN).append('\n');
+            sb.append("  Index: ").append(describeIndex(table, uq.getConditions())).append('\n');
         } else {
             DeleteQuery delete = (DeleteQuery) innerQuery;
             sb.append("  Conditions: ").append(formatConditions(delete.getConditions())).append('\n');
-            sb.append("  Index: ").append(describeDeleteIndex(table, delete.getConditions())).append('\n');
+            sb.append("  Index: ").append(describeIndex(table, delete.getConditions())).append('\n');
         }
 
         if (analyze) {
@@ -116,17 +116,22 @@ class ExplainQuery implements Query<String> {
     }
 
     /**
-     * Reports which secondary index DELETE would use for its single equality
-     * or IN condition, mirroring {@link DeleteQuery#execute} (the clustered
-     * index is not consulted by DELETE).
+     * Reports which secondary index a DML statement would use for its single
+     * equality, IN, or range condition, mirroring {@link DeleteQuery#execute}
+     * and {@link UpdateQuery#identifyRows}.
      */
-    private String describeDeleteIndex(Table table, List<QueryParser.Condition> conditions) {
+    private String describeIndex(Table table, List<QueryParser.Condition> conditions) {
         if (conditions == null || conditions.size() != 1) {
             return ErrorMessages.NONE_FULL_SCAN;
         }
         QueryParser.Condition condition = conditions.get(0);
-        if (condition.isGrouped() || condition.not
-                || !(condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator())) {
+        if (condition.isGrouped() || condition.not || condition.rightColumn != null
+                || condition.subQuery != null) {
+            return ErrorMessages.NONE_FULL_SCAN;
+        }
+        if (!(condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator()
+                || condition.operator == QueryParser.Operator.GREATER_THAN_OR_EQUALS
+                || condition.operator == QueryParser.Operator.LESS_THAN_OR_EQUALS)) {
             return ErrorMessages.NONE_FULL_SCAN;
         }
         Index index = table.getIndex(condition.column);
