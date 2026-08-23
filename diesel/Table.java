@@ -918,6 +918,11 @@ class Table implements Serializable {
         return version.get();
     }
 
+    /** Increments the version counter. Called after in-place DML (e.g. UPDATE) that bypasses addRow/removeRow. */
+    public void bumpVersion() {
+        version.incrementAndGet();
+    }
+
     /**
      * Synchronously recomputes the statistics (exact row count, measured
      * average row size and the last-analyzed timestamp) and returns them. This

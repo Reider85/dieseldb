@@ -150,7 +150,10 @@ class UpdateQuery implements Query<Void> {
                 }
             }
 
-            // Phase 4: Statistics + logging
+            // Phase 4: Statistics + version bump + logging
+            if (affectedCount > 0) {
+                table.bumpVersion();
+            }
             table.markStatsDirty();
             LOGGER.log(Level.INFO, "Updated {0} rows in table {1}",
                     new Object[]{affectedCount, table.getName()});
