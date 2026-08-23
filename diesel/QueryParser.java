@@ -1164,37 +1164,32 @@ class QueryParser {
                 if (c == '\\' && i + 1 < input.length()) {
                     current.append(c);
                     current.append(input.charAt(++i));
-                    continue;
-                }
-                if (c == '\'') {
+                } else if (c == '\'') {
                     if (i + 1 < input.length() && input.charAt(i + 1) == '\'') {
                         current.append('\'');
                         current.append('\'');
                         i++;
-                        continue;
+                    } else {
+                        inQuotes = false;
+                        current.append(c);
                     }
-                    inQuotes = false;
+                } else {
+                    current.append(c);
                 }
-                current.append(c);
-                continue;
-            }
-            if (c == '\'') {
+            } else if (c == '\'') {
                 inQuotes = true;
                 current.append(c);
-                continue;
-            }
-            if (c == '(') {
-                parenDepth++;
-            } else if (c == ')') {
-                if (parenDepth > 0) {
-                    parenDepth--;
-                }
             } else if (c == ',' && parenDepth == 0) {
                 parts.add(current.toString());
                 current = new StringBuilder();
-                continue;
+            } else {
+                if (c == '(') {
+                    parenDepth++;
+                } else if (c == ')' && parenDepth > 0) {
+                    parenDepth--;
+                }
+                current.append(c);
             }
-            current.append(c);
         }
 
         parts.add(current.toString());
@@ -1400,28 +1395,22 @@ class QueryParser {
             if (aggMatcher.matches()) {
                 aggregates.add(parseAggregateArg(aggMatcher.group(1), aggMatcher.group(2),
                         unquoteIdentifier(aggMatcher.group(3)), database));
-                continue;
+            } else {
+                Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
+                if (subQueryMatcher.matches()) {
+                    parseSelectSubQuery(trimmedItem, subQueryMatcher, subQueries, columnAliases, database);
+                } else {
+                    Matcher columnMatcher = columnPattern.matcher(trimmedItem);
+                    if (columnMatcher.matches()) {
+                        parseSelectColumn(columnMatcher, columns, columnAliases);
+                    } else if (trimmedItem.equals("*")) {
+                        columns.add("*");
+                        LOGGER.log(Level.FINE, "Разобран столбец: *");
+                    } else {
+                        throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
+                    }
+                }
             }
-
-            Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
-            if (subQueryMatcher.matches()) {
-                parseSelectSubQuery(trimmedItem, subQueryMatcher, subQueries, columnAliases, database);
-                continue;
-            }
-
-            Matcher columnMatcher = columnPattern.matcher(trimmedItem);
-            if (columnMatcher.matches()) {
-                parseSelectColumn(columnMatcher, columns, columnAliases);
-                continue;
-            }
-
-            if (trimmedItem.equals("*")) {
-                columns.add("*");
-                LOGGER.log(Level.FINE, "Разобран столбец: *");
-                continue;
-            }
-
-            throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
         }
 
         return new SelectItems(columns, aggregates, subQueries, columnAliases);
@@ -2423,6 +2412,7 @@ class QueryParser {
                     new Object[]{currentPos, conditionStr.substring(currentPos)});
 
             boolean matched = false;
+            boolean handled = false;
             int nextPos = stringLength;
             String matchedToken = null;
             String matchedPatternName = null;
@@ -2430,55 +2420,65 @@ class QueryParser {
             // Проверяем строковые литералы первыми
             if (conditionStr.charAt(currentPos) == '\'') {
                 Pattern quotedStringPattern = patterns.get(0).getValue(); // Quoted String
-                Matcher matcher = quotedStringPattern.matcher(conditionStr).region(currentPos, stringLength);
-                if (matcher.lookingAt()) {
-                    matchedToken = matcher.group();
-                    matchedPatternName = "Quoted String";
-                    nextPos = matcher.end();
-                    matched = true;
-                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                    LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
-                    currentPos = nextPos;
-                    continue;
+                Matcher qsMatcher = quotedStringPattern.matcher(conditionStr).region(currentPos, stringLength);
+                if (qsMatcher.lookingAt()) {
+                    String qsToken = qsMatcher.group();
+                    tokens.add(new Token(TokenType.CONDITION, qsToken));
+                    LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", qsToken);
+                    currentPos = qsMatcher.end();
+                    handled = true;
+                } else {
+                    // Quoted string pattern didn't match — try other patterns below
+                    for (Map.Entry<String, Pattern> entry : patterns.subList(1, patterns.size())) {
+                        String patternName = entry.getKey();
+                        Pattern pattern = entry.getValue();
+                        Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
+                        if (matcher.lookingAt()) {
+                            String tokenValue = matcher.group().trim();
+                            if (!tokenValue.isEmpty()) {
+                                nextPos = matcher.end();
+                                matchedToken = tokenValue;
+                                matchedPatternName = patternName;
+                                matched = true;
+                                break;
+                            }
+                        }
+                    }
                 }
-            }
-
-            // Группированные условия в скобках выделяются как единый токен (с учётом вложенности)
-            if (conditionStr.charAt(currentPos) == '(') {
+            } else if (conditionStr.charAt(currentPos) == '(') {
+                // Группированные условия в скобках выделяются как единый токен (с учётом вложенности)
                 int endParen = findMatchingParenthesis(conditionStr, currentPos);
                 String groupedToken = conditionStr.substring(currentPos, endParen + 1);
                 tokens.add(new Token(TokenType.CONDITION, groupedToken));
                 LOGGER.log(Level.FINEST, "Добавлен токен группированного условия: {0}", groupedToken);
                 currentPos = endParen + 1;
-                continue;
-            }
+                handled = true;
+            } else {
+                // Проверяем остальные паттерны, исключая содержимое строк
+                for (Map.Entry<String, Pattern> entry : patterns.subList(1, patterns.size())) {
+                    String patternName = entry.getKey();
+                    Pattern pattern = entry.getValue();
+                    Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
 
-            // Проверяем остальные паттерны, исключая содержимое строк
-            for (Map.Entry<String, Pattern> entry : patterns.subList(1, patterns.size())) {
-                String patternName = entry.getKey();
-                Pattern pattern = entry.getValue();
-                Matcher matcher = pattern.matcher(conditionStr).region(currentPos, stringLength);
-
-                if (matcher.lookingAt()) {
-                    String tokenValue = matcher.group().trim();
-                    LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}",
-                            new Object[]{patternName, tokenValue, matcher.end()});
-                    if (!tokenValue.isEmpty()) {
-                        nextPos = matcher.end();
-                        matchedToken = tokenValue;
-                        matchedPatternName = patternName;
-                        matched = true;
-                        break;
+                    if (matcher.lookingAt()) {
+                        String tokenValue = matcher.group().trim();
+                        LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}",
+                                new Object[]{patternName, tokenValue, matcher.end()});
+                        if (!tokenValue.isEmpty()) {
+                            nextPos = matcher.end();
+                            matchedToken = tokenValue;
+                            matchedPatternName = patternName;
+                            matched = true;
+                            break;
+                        }
                     }
                 }
             }
 
-            if (matched) {
-                if (matchedPatternName.equals("Quoted String")) {
-                    // Строковые литералы обрабатываются как неделимые токены
-                    tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                    LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", matchedToken);
-                } else if (matchedPatternName.equals("Like Condition")) {
+            if (handled) {
+                // Token already added (quoted string or parenthesized group)
+            } else if (matched) {
+                if (matchedPatternName.equals("Like Condition")) {
                     Matcher likeMatcher = Pattern.compile(
                                     "(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:''|\\\\.|[^'\\\\])*+')")
                             .matcher(matchedToken);
@@ -2768,17 +2768,15 @@ class QueryParser {
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 current.append(c);
-                continue;
-            }
-            if (c == ',' && !inQuotes) {
+            } else if (c == ',' && !inQuotes) {
                 String value = current.toString().trim();
                 if (!value.isEmpty()) {
                     values.add(value);
                 }
                 current = new StringBuilder();
-                continue;
+            } else {
+                current.append(c);
             }
-            current.append(c);
         }
 
         // Добавляем последнее значение
@@ -2946,22 +2944,18 @@ class QueryParser {
             char c = condStr.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
+            } else if (!inQuotes) {
                 if (c == '(') {
                     if (parenDepth == 1 && i + 7 < condStr.length() &&
                             condStr.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
                         subQueryStart = i;
                     }
                     parenDepth++;
-                    continue;
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth == 0 && subQueryStart != -1) {
                         subQueryStart = -1;
                     }
-                    continue;
                 } else if (parenDepth == 0 && subQueryStart == -1 && i < condStr.length() - 1) {
                     OperatorInfo opInfo = tryMatchOperatorAt(condStr, i, operators);
                     if (opInfo != null) {
@@ -3052,34 +3046,28 @@ class QueryParser {
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 currentCondition.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    if (parenDepth == 0 && !inAggregateCall && i > 0
-                            && (Character.isLetterOrDigit(havingClause.charAt(i - 1)) || havingClause.charAt(i - 1) == '_')) {
-                        inAggregateCall = true;
-                        currentCondition.append(c);
-                        continue;
-                    }
+            } else if (!inQuotes && c == '(') {
+                if (parenDepth == 0 && !inAggregateCall && i > 0
+                        && (Character.isLetterOrDigit(havingClause.charAt(i - 1)) || havingClause.charAt(i - 1) == '_')) {
+                    inAggregateCall = true;
+                } else {
                     parenDepth++;
                     if (parenDepth == 1 && i + 7 < havingClause.length() && havingClause.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
                         subQueryStart = i;
                     }
+                }
+                currentCondition.append(c);
+            } else if (!inQuotes && c == ')') {
+                if (parenDepth == 0 && inAggregateCall) {
+                    inAggregateCall = false;
                     currentCondition.append(c);
-                    continue;
-                } else if (c == ')') {
-                    if (parenDepth == 0 && inAggregateCall) {
-                        inAggregateCall = false;
-                        currentCondition.append(c);
-                        continue;
-                    }
+                } else {
                     parenDepth--;
-                    currentCondition.append(c);
                     if (parenDepth == 0 && subQueryStart != -1) {
-                        subQueryStart = -1; // End of subquery
+                        subQueryStart = -1;
                     }
                     if (parenDepth == 0 && currentCondition.length() > 0) {
+                        currentCondition.append(c);
                         String condStr = currentCondition.toString().trim();
                         if (condStr.startsWith("(") && condStr.endsWith(")")) {
                             condStr = condStr.substring(1, condStr.length() - 1).trim();
@@ -3093,46 +3081,43 @@ class QueryParser {
                         currentCondition = new StringBuilder();
                         conjunction = null;
                         not = false;
-                    }
-                    continue;
-                } else if (parenDepth == 0 && c == ' ' && subQueryStart == -1) {
-                    String nextToken = getNextToken(havingClause, i + 1);
-                    if (nextToken.equalsIgnoreCase(SqlKeywords.AND) || nextToken.equalsIgnoreCase(SqlKeywords.OR)) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty()) {
-                            HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, conjunction, not);
-                            conditions.add(condition);
-                            LOGGER.log(Level.FINE, "Parsed HAVING condition: {0}", condition);
-                            conjunction = nextToken.toUpperCase();
-                            not = false;
-                            currentCondition = new StringBuilder();
-                            i += nextToken.length();
-                        } else {
-                            conjunction = nextToken.toUpperCase();
-                            not = false;
-                            currentCondition = new StringBuilder();
-                            i += nextToken.length();
-                        }
-                        continue;
-                    } else if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
-                        not = true;
+                    } else {
                         currentCondition.append(c);
-                        i += nextToken.length();
-                        continue;
-                    } else if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
-                            (nextToken.equalsIgnoreCase(SqlKeywords.LIMIT) && subQueryStart == -1) ||
-                            (nextToken.equalsIgnoreCase(SqlKeywords.OFFSET) && subQueryStart == -1)) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty()) {
-                            HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, conjunction, not);
-                            conditions.add(condition);
-                            LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
-                        }
-                        break;
                     }
                 }
+            } else if (!inQuotes && parenDepth == 0 && c == ' ' && subQueryStart == -1) {
+                String nextToken = getNextToken(havingClause, i + 1);
+                if (nextToken.equalsIgnoreCase(SqlKeywords.AND) || nextToken.equalsIgnoreCase(SqlKeywords.OR)) {
+                    String condStr = currentCondition.toString().trim();
+                    if (!condStr.isEmpty()) {
+                        HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, conjunction, not);
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Parsed HAVING condition: {0}", condition);
+                    }
+                    conjunction = nextToken.toUpperCase();
+                    not = false;
+                    currentCondition = new StringBuilder();
+                    i += nextToken.length();
+                } else if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
+                    not = true;
+                    currentCondition.append(c);
+                    i += nextToken.length();
+                } else if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
+                        (nextToken.equalsIgnoreCase(SqlKeywords.LIMIT) && subQueryStart == -1) ||
+                        (nextToken.equalsIgnoreCase(SqlKeywords.OFFSET) && subQueryStart == -1)) {
+                    String condStr = currentCondition.toString().trim();
+                    if (!condStr.isEmpty()) {
+                        HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, conjunction, not);
+                        conditions.add(condition);
+                        LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
+                    }
+                    break;
+                } else {
+                    currentCondition.append(c);
+                }
+            } else {
+                currentCondition.append(c);
             }
-            currentCondition.append(c);
         }
 
         String finalCondStr = currentCondition.toString().trim();
@@ -3351,26 +3336,26 @@ class QueryParser {
             if (c == '\'') {
                 inQuotes = !inQuotes;
                 finalResult.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    if (parenDepth == 1 && i + 7 < normalized.length() && normalized.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
-                        inSubQuery = true;
-                    }
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth == 0 && inSubQuery) {
-                        inSubQuery = false;
+            } else {
+                if (!inQuotes) {
+                    if (c == '(') {
+                        parenDepth++;
+                        if (parenDepth == 1 && i + 7 < normalized.length() && normalized.substring(i, i + 7).toUpperCase().startsWith("(SELECT")) {
+                            inSubQuery = true;
+                        }
+                    } else if (c == ')') {
+                        parenDepth--;
+                        if (parenDepth == 0 && inSubQuery) {
+                            inSubQuery = false;
+                        }
                     }
                 }
+                if (!inSubQuery && Character.isWhitespace(c) && finalResult.length() > 0 && Character.isWhitespace(finalResult.charAt(finalResult.length() - 1))) {
+                    // collapse consecutive whitespace outside subqueries
+                } else {
+                    finalResult.append(c);
+                }
             }
-            // Only collapse spaces outside subqueries
-            if (!inSubQuery && Character.isWhitespace(c) && finalResult.length() > 0 && Character.isWhitespace(finalResult.charAt(finalResult.length() - 1))) {
-                continue;
-            }
-            finalResult.append(c);
         }
 
         return finalResult.toString().trim();

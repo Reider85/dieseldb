@@ -1,4 +1,4 @@
-﻿# Prompt Status Tracker
+# Prompt Status Tracker
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -126,7 +126,7 @@
 | 65 | DONE (2026-08-23) | CRITICAL | SqlKeywords.java, QueryParser.java, SqlLexer.java, SubqueryParser.java, Database.java | Extract repeated string literals S1192 | CRITICAL |
 | 66 | ��� TODO | Compression codecs | MEDIUM |
 | 67 | DONE (2026-08-23) | Remove unused method parameters S1172 | MEDIUM |
-| 68 | ��� TODO | Bloom filters | MEDIUM |
+| 68 | DONE (2026-08-24) | Reduce break/continue in loops S135 | MINOR |
 | 69 | DONE (2026-08-24) | Fill/remove empty code blocks S108 | MEDIUM |
 | 70 | DONE (2026-08-24) | Remove deprecated setScale() S1874 | MEDIUM |
 | 71 | ��� TODO | QueryCache �- SelectQuery | MEDIUM |

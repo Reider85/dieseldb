@@ -1363,22 +1363,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         newJoinedRows.add(newRow);
                     } else if (equalsJoin) {
                         Map<String, Object> leftRow = currentJoin.get(ctx.join.originalTable);
-                        if (!valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
-                            continue;
+                        if (valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
+                            checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
+                            newJoinedRows.add(newRow);
                         }
-                        checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
-                        newJoinedRows.add(newRow);
                     } else if (!ctx.join.onConditions.isEmpty()) {
                         for (int k = 0; k < rightSrcKeys.size(); k++) {
                             evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
                         }
-                        if (!evaluateConditions(evalRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
-                            continue;
+                        if (evaluateConditions(evalRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
+                            checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
+                            newJoinedRows.add(newRow);
+                            LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
+                                    new Object[]{ctx.join.tableName, ctx.join.onConditions});
                         }
-                        checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
-                        newJoinedRows.add(newRow);
-                        LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
-                                new Object[]{ctx.join.tableName, ctx.join.onConditions});
                     } else {
                         throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
                     }
@@ -2061,35 +2059,28 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         for (QueryParser.Condition condition : conditions) {
             if (Objects.equals(condition.conjunction, SqlKeywords.OR) || condition.not
-                    || condition.operator == QueryParser.Operator.NOT_EQUALS) {
-                continue;
-            }
-            if (condition.isGrouped() || condition.isColumnComparison()) {
-                continue;
-            }
-            if (condition.operator == QueryParser.Operator.LIKE
+                    || condition.operator == QueryParser.Operator.NOT_EQUALS
+                    || condition.isGrouped() || condition.isColumnComparison()
+                    || condition.operator == QueryParser.Operator.LIKE
                     || condition.operator == QueryParser.Operator.NOT_LIKE
                     || condition.operator == QueryParser.Operator.IS_NULL
                     || condition.operator == QueryParser.Operator.IS_NOT_NULL) {
-                continue;
-            }
-            String columnName = normalizeColumnName(condition.column, tableName);
-            if (columnName == null) {
-                continue;
-            }
-            String unqualified = normalizeColumnKey(columnName, tableName);
-            if (table.getIndex(unqualified) != null) {
-                continue;
-            }
-            if (table.hasClusteredIndex() && unqualified.equals(table.getClusteredIndexColumn())) {
-                continue;
-            }
-            try {
-                table.createBTreeIndex(unqualified);
-                LOGGER.warning("Auto-created index on " + tableName + "." + unqualified + " for WHERE filtering");
-            } catch (RuntimeException e) {
-                LOGGER.log(Level.FINE, "Skipped auto-creating index on {0}.{1}: {2}",
-                        new Object[]{tableName, unqualified, e.getMessage()});
+                // skip conditions unsuitable for auto-indexing
+            } else {
+                String columnName = normalizeColumnName(condition.column, tableName);
+                if (columnName != null) {
+                    String unqualified = normalizeColumnKey(columnName, tableName);
+                    if (table.getIndex(unqualified) == null
+                            && !(table.hasClusteredIndex() && unqualified.equals(table.getClusteredIndexColumn()))) {
+                        try {
+                            table.createBTreeIndex(unqualified);
+                            LOGGER.warning("Auto-created index on " + tableName + "." + unqualified + " for WHERE filtering");
+                        } catch (RuntimeException e) {
+                            LOGGER.log(Level.FINE, "Skipped auto-creating index on {0}.{1}: {2}",
+                                    new Object[]{tableName, unqualified, e.getMessage()});
+                        }
+                    }
+                }
             }
         }
     }
@@ -2114,24 +2105,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (QueryParser.Condition condition : conditions) {
             // Negated conditions (NOT IN / NOT EQUALS / ...) must not use the index
             // pre-filter: the index lookup returns the rows the condition rejects.
-            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) {
-                continue;
-            }
+            if (!condition.isGrouped() && !condition.isColumnComparison() && !condition.not) {
+                String columnName = normalizeColumnName(condition.column, tableName);
+                String unqualifiedColumn = normalizeColumnKey(columnName, tableName);
+                Index index = table.getIndex(unqualifiedColumn);
+                if (index == null && table.hasClusteredIndex() && unqualifiedColumn.equals(table.getClusteredIndexColumn())) {
+                    index = table.getClusteredIndex();
+                }
 
-            String columnName = normalizeColumnName(condition.column, tableName);
-            String unqualifiedColumn = normalizeColumnKey(columnName, tableName);
-            Index index = table.getIndex(unqualifiedColumn);
-            if (index == null && table.hasClusteredIndex() && unqualifiedColumn.equals(table.getClusteredIndexColumn())) {
-                index = table.getClusteredIndex();
-            }
-
-            if (index == null) {
-                continue;
-            }
-
-            List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn, table);
-            if (rowIndices != null && !rowIndices.isEmpty()) {
-                indexedSets.add(new LinkedHashSet<>(rowIndices));
+                if (index != null) {
+                    List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn, table);
+                    if (rowIndices != null && !rowIndices.isEmpty()) {
+                        indexedSets.add(new LinkedHashSet<>(rowIndices));
+                    }
+                }
             }
         }
 
@@ -2194,35 +2181,40 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // Collect AND-connected equality conditions
         Map<String, Object> equalityColumns = new LinkedHashMap<>();
         for (QueryParser.Condition condition : conditions) {
-            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) continue;
-            if (condition.operator != QueryParser.Operator.EQUALS || condition.value == null) continue;
-            String columnName = normalizeColumnName(condition.column, tableName);
-            if (columnName == null) continue;
-            String unqualified = normalizeColumnKey(columnName, tableName);
-            // Convert condition value to the column's actual type so it matches
-            // the typed keys stored in the composite index (e.g. Integer→Long).
-            Class<?> colType = table.getColumnTypes().get(unqualified);
-            Object converted = colType != null
-                    ? new ConditionEvaluator().convertConditionValue(condition.value, unqualified, colType, table.getColumnTypes())
-                    : condition.value;
-            equalityColumns.put(unqualified, converted);
+            if (!condition.isGrouped() && !condition.isColumnComparison() && !condition.not
+                    && condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
+                String columnName = normalizeColumnName(condition.column, tableName);
+                if (columnName != null) {
+                    String unqualified = normalizeColumnKey(columnName, tableName);
+                    // Convert condition value to the column's actual type so it matches
+                    // the typed keys stored in the composite index (e.g. Integer→Long).
+                    Class<?> colType = table.getColumnTypes().get(unqualified);
+                    Object converted = colType != null
+                            ? new ConditionEvaluator().convertConditionValue(condition.value, unqualified, colType, table.getColumnTypes())
+                            : condition.value;
+                    equalityColumns.put(unqualified, converted);
+                }
+            }
         }
         if (equalityColumns.size() < 2) return null;
 
         // Find best matching composite index
         for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
-            if (!(entry.getValue() instanceof CompositeBTreeIndex compIndex)) continue;
-            List<String> compCols = compIndex.getColumns();
-            // Check if all composite columns are in the equality conditions
-            if (compCols.size() > equalityColumns.size()) continue;
-            List<Object> compositeKey = new ArrayList<>(compCols.size());
-            boolean allMatch = true;
-            for (String col : compCols) {
-                if (!equalityColumns.containsKey(col)) { allMatch = false; break; }
-                compositeKey.add(equalityColumns.get(col));
+            if (entry.getValue() instanceof CompositeBTreeIndex compIndex) {
+                List<String> compCols = compIndex.getColumns();
+                // Check if all composite columns are in the equality conditions
+                if (compCols.size() <= equalityColumns.size()) {
+                    List<Object> compositeKey = new ArrayList<>(compCols.size());
+                    boolean allMatch = true;
+                    for (String col : compCols) {
+                        if (!equalityColumns.containsKey(col)) { allMatch = false; break; }
+                        compositeKey.add(equalityColumns.get(col));
+                    }
+                    if (allMatch) {
+                        return compIndex.search(compositeKey);
+                    }
+                }
             }
-            if (!allMatch) continue;
-            return compIndex.search(compositeKey);
         }
         return null;
     }
@@ -2235,34 +2227,36 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                                         List<QueryParser.Condition> conditions, String tableName) {
         // Find which index was used for the lookup
         for (QueryParser.Condition condition : conditions) {
-            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) continue;
-            String columnName = normalizeColumnName(condition.column, tableName);
-            if (columnName == null) continue;
-            String unqualified = normalizeColumnKey(columnName, tableName);
-            Index index = table.getIndex(unqualified);
-            if (index instanceof CoveringBTreeIndex coverIndex) {
-                // Check if the index covers all SELECT columns
-                Set<String> requiredColumns = new HashSet<>();
-                if (columns != null) {
-                    for (String col : columns) {
-                        if (!col.contains("(") && !col.equals("*")) {
-                            requiredColumns.add(col);
-                        }
-                    }
-                }
-                if (!requiredColumns.isEmpty() && coverIndex.coversColumns(requiredColumns)) {
-                    // Build rows from cover data
-                    List<Map<String, Object>> coveredRows = new ArrayList<>(rowIndices.size());
-                    int tableSize = table.getRawRowCount();
-                    for (int idx : rowIndices) {
-                        if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
-                            Map<String, Object> covered = coverIndex.getCoveredValues(idx);
-                            if (covered != null) {
-                                coveredRows.add(covered);
+            if (!condition.isGrouped() && !condition.isColumnComparison() && !condition.not) {
+                String columnName = normalizeColumnName(condition.column, tableName);
+                if (columnName != null) {
+                    String unqualified = normalizeColumnKey(columnName, tableName);
+                    Index index = table.getIndex(unqualified);
+                    if (index instanceof CoveringBTreeIndex coverIndex) {
+                        // Check if the index covers all SELECT columns
+                        Set<String> requiredColumns = new HashSet<>();
+                        if (columns != null) {
+                            for (String col : columns) {
+                                if (!col.contains("(") && !col.equals("*")) {
+                                    requiredColumns.add(col);
+                                }
                             }
                         }
+                        if (!requiredColumns.isEmpty() && coverIndex.coversColumns(requiredColumns)) {
+                            // Build rows from cover data
+                            List<Map<String, Object>> coveredRows = new ArrayList<>(rowIndices.size());
+                            int tableSize = table.getRawRowCount();
+                            for (int idx : rowIndices) {
+                                if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
+                                    Map<String, Object> covered = coverIndex.getCoveredValues(idx);
+                                    if (covered != null) {
+                                        coveredRows.add(covered);
+                                    }
+                                }
+                            }
+                            return coveredRows;
+                        }
                     }
-                    return coveredRows;
                 }
             }
         }
