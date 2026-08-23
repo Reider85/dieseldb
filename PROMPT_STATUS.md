@@ -123,7 +123,7 @@
 | 62 | DONE (2026-08-23) | HIGH | QueryParser.java, SelectQuery.java | Cognitive Complexity S3776 refactoring | HIGH |
 | 63 | ��� TODO | Columnar storage | HIGH |
 | 64 | DONE (2026-08-23) | CRITICAL | QueryParser.java, SubqueryParser.java, SelectQuery.java | Recursive regex patterns S5998 | CRITICAL |
-| 65 | ��� TODO | Partitioning �+��T� Parquet | MEDIUM |
+| 65 | DONE (2026-08-23) | CRITICAL | SqlKeywords.java, QueryParser.java, SqlLexer.java, SubqueryParser.java, Database.java | Extract repeated string literals S1192 | CRITICAL |
 | 66 | ��� TODO | Compression codecs | MEDIUM |
 | 67 | DONE (2026-08-23) | Remove unused method parameters S1172 | MEDIUM |
 | 68 | ��� TODO | Bloom filters | MEDIUM |

@@ -56,4 +56,81 @@ public final class SqlKeywords {
     public static final String CREATE_HASH_INDEX = "CREATE HASH INDEX";
     public static final String CREATE_UNIQUE_CLUSTERED_INDEX = "CREATE UNIQUE CLUSTERED INDEX";
     public static final String COVERING = "COVERING";
+
+    // Single keywords (used in SqlLexer and elsewhere)
+    public static final String FROM = "FROM";
+    public static final String INTO = "INTO";
+    public static final String CREATE = "CREATE";
+    public static final String INDEX = "INDEX";
+    public static final String HASH = "HASH";
+    public static final String UNIQUE = "UNIQUE";
+    public static final String CLUSTERED = "CLUSTERED";
+    public static final String PRIMARY = "PRIMARY";
+    public static final String KEY = "KEY";
+    public static final String SEQUENCE = "SEQUENCE";
+    public static final String IN = "IN";
+    public static final String IS = "IS";
+    public static final String INNER = "INNER";
+    public static final String LEFT = "LEFT";
+    public static final String RIGHT = "RIGHT";
+    public static final String OUTER = "OUTER";
+    public static final String FULL = "FULL";
+    public static final String CROSS = "CROSS";
+    public static final String GROUP = "GROUP";
+    public static final String BY = "BY";
+    public static final String ORDER = "ORDER";
+    public static final String DESC = "DESC";
+    public static final String DISTINCT = "DISTINCT";
+    public static final String BEGIN = "BEGIN";
+    public static final String TRANSACTION = "TRANSACTION";
+    public static final String COMMIT = "COMMIT";
+    public static final String ROLLBACK = "ROLLBACK";
+    public static final String ISOLATION = "ISOLATION";
+    public static final String LEVEL = "LEVEL";
+    public static final String AUTOCOMMIT = "AUTOCOMMIT";
+
+    // Transaction commands
+    public static final String DELETE_FROM = "DELETE FROM";
+    public static final String BEGIN_TRANSACTION = "BEGIN TRANSACTION";
+    public static final String START_TRANSACTION = "START TRANSACTION";
+    public static final String BEGIN_TRANSACTION_ISOLATION_LEVEL = "BEGIN TRANSACTION ISOLATION LEVEL";
+    public static final String START_TRANSACTION_ISOLATION_LEVEL = "START TRANSACTION ISOLATION LEVEL";
+
+    // Isolation levels
+    public static final String ISOLATION_LEVEL_READ_UNCOMMITTED = "ISOLATION LEVEL READ UNCOMMITTED";
+    public static final String ISOLATION_LEVEL_READ_COMMITTED = "ISOLATION LEVEL READ COMMITTED";
+    public static final String ISOLATION_LEVEL_REPEATABLE_READ = "ISOLATION LEVEL REPEATABLE READ";
+    public static final String ISOLATION_LEVEL_SERIALIZABLE = "ISOLATION LEVEL SERIALIZABLE";
+    public static final String SET_TRANSACTION_ISOLATION_LEVEL_READ_UNCOMMITTED = "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED";
+    public static final String SET_TRANSACTION_ISOLATION_LEVEL_READ_COMMITTED = "SET TRANSACTION ISOLATION LEVEL READ COMMITTED";
+    public static final String SET_TRANSACTION_ISOLATION_LEVEL_REPEATABLE_READ = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ";
+    public static final String SET_TRANSACTION_ISOLATION_LEVEL_SERIALIZABLE = "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE";
+
+    // Join types
+    public static final String LEFT_OUTER_JOIN = "LEFT OUTER JOIN";
+    public static final String RIGHT_OUTER_JOIN = "RIGHT OUTER JOIN";
+    public static final String FULL_JOIN = "FULL JOIN";
+    public static final String FULL_OUTER_JOIN = "FULL OUTER JOIN";
+    public static final String LEFT_INNER_JOIN = "LEFT INNER JOIN";
+    public static final String RIGHT_INNER_JOIN = "RIGHT INNER JOIN";
+    public static final String CROSS_JOIN = "CROSS JOIN";
+
+    // Column types
+    public static final String TYPE_STRING = "STRING";
+    public static final String TYPE_INTEGER = "INTEGER";
+    public static final String TYPE_LONG = "LONG";
+    public static final String TYPE_SHORT = "SHORT";
+    public static final String TYPE_BYTE = "BYTE";
+    public static final String TYPE_BIGDECIMAL = "BIGDECIMAL";
+    public static final String TYPE_FLOAT = "FLOAT";
+    public static final String TYPE_DOUBLE = "DOUBLE";
+    public static final String TYPE_CHAR = "CHAR";
+    public static final String TYPE_UUID = "UUID";
+    public static final String TYPE_BOOLEAN = "BOOLEAN";
+    public static final String TYPE_DATE = "DATE";
+    public static final String TYPE_DATETIME = "DATETIME";
+    public static final String TYPE_DATETIME_MS = "DATETIME_MS";
+
+    // Constraint keywords
+    public static final String PRIMARY_KEY = "PRIMARY KEY";
 }

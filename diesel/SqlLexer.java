@@ -56,12 +56,12 @@ public class SqlLexer {
     }
 
     private static final Set<String> KEYWORDS = new HashSet<>(Set.of(
-            SqlKeywords.SELECT, "FROM", SqlKeywords.WHERE, SqlKeywords.INSERT, "INTO", SqlKeywords.VALUES, SqlKeywords.UPDATE, SqlKeywords.SET, SqlKeywords.DELETE,
-            "CREATE", SqlKeywords.TABLE, "INDEX", "HASH", "UNIQUE", "CLUSTERED", "PRIMARY", "KEY", "SEQUENCE",
-            SqlKeywords.AND, SqlKeywords.OR, SqlKeywords.NOT, SqlKeywords.LIKE, "IN", "IS", SqlKeywords.AS, SqlKeywords.JOIN,
-            "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", SqlKeywords.ON, "GROUP", "BY", "ORDER",
-            SqlKeywords.HAVING, SqlKeywords.LIMIT, SqlKeywords.ASC, "DESC", "DISTINCT", "BEGIN", "TRANSACTION", "COMMIT",
-            "ROLLBACK", "ISOLATION", "LEVEL", "AUTOCOMMIT"));
+            SqlKeywords.SELECT, SqlKeywords.FROM, SqlKeywords.WHERE, SqlKeywords.INSERT, SqlKeywords.INTO, SqlKeywords.VALUES, SqlKeywords.UPDATE, SqlKeywords.SET, SqlKeywords.DELETE,
+            SqlKeywords.CREATE, SqlKeywords.TABLE, SqlKeywords.INDEX, SqlKeywords.HASH, SqlKeywords.UNIQUE, SqlKeywords.CLUSTERED, SqlKeywords.PRIMARY, SqlKeywords.KEY, SqlKeywords.SEQUENCE,
+            SqlKeywords.AND, SqlKeywords.OR, SqlKeywords.NOT, SqlKeywords.LIKE, SqlKeywords.IN, SqlKeywords.IS, SqlKeywords.AS, SqlKeywords.JOIN,
+            SqlKeywords.INNER, SqlKeywords.LEFT, SqlKeywords.RIGHT, SqlKeywords.OUTER, SqlKeywords.FULL, SqlKeywords.CROSS, SqlKeywords.ON, SqlKeywords.GROUP, SqlKeywords.BY, SqlKeywords.ORDER,
+            SqlKeywords.HAVING, SqlKeywords.LIMIT, SqlKeywords.ASC, SqlKeywords.DESC, SqlKeywords.DISTINCT, SqlKeywords.BEGIN, SqlKeywords.TRANSACTION, SqlKeywords.COMMIT,
+            SqlKeywords.ROLLBACK, SqlKeywords.ISOLATION, SqlKeywords.LEVEL, SqlKeywords.AUTOCOMMIT));
 
     private static final Set<String> LITERALS = new HashSet<>(Set.of(SqlKeywords.TRUE, SqlKeywords.FALSE, SqlKeywords.NULL));
 

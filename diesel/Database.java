@@ -617,7 +617,7 @@ class Database {
             }
             return firstIdentifier(parts[1].split("\\s+")[0]);
         }
-        if (normalized.startsWith("DELETE FROM")) {
+        if (normalized.startsWith(SqlKeywords.DELETE_FROM)) {
             String[] parts = normalized.split("(?i)FROM\\s+", 2);
             if (parts.length < 2) {
                 throw new IllegalArgumentException("Cannot extract table name from query: invalid DELETE format");
