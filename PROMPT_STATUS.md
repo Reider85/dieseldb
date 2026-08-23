@@ -1,4 +1,4 @@
-﻿# Prompt Status Tracker
+# Prompt Status Tracker
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -125,7 +125,7 @@
 | 64 | DONE (2026-08-23) | CRITICAL | QueryParser.java, SubqueryParser.java, SelectQuery.java | Recursive regex patterns S5998 | CRITICAL |
 | 65 | ��� TODO | Partitioning �+��T� Parquet | MEDIUM |
 | 66 | ��� TODO | Compression codecs | MEDIUM |
-| 67 | ��� TODO | Statistics metadata | MEDIUM |
+| 67 | DONE (2026-08-23) | Remove unused method parameters S1172 | MEDIUM |
 | 68 | ��� TODO | Bloom filters | MEDIUM |
 | 69 | ��� TODO | QueryCache �-T�TŦ�T¦���T�T�T��- | MEDIUM |
 | 70 | ��� TODO | Cache invalidation T�T�T��-T¦�����T� | MEDIUM |
