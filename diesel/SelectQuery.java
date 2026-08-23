@@ -2081,7 +2081,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return;
         }
         for (QueryParser.Condition condition : conditions) {
-            if (Objects.equals(condition.conjunction, SqlKeywords.OR) || condition.not) {
+            if (Objects.equals(condition.conjunction, SqlKeywords.OR) || condition.not
+                    || condition.operator == QueryParser.Operator.NOT_EQUALS) {
                 continue;
             }
             if (condition.isGrouped() || condition.isColumnComparison()) {
@@ -2149,48 +2150,56 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 continue;
             }
 
-            List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn);
+            List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn, table);
             if (rowIndices != null && !rowIndices.isEmpty()) {
                 indexedSets.add(new LinkedHashSet<>(rowIndices));
             }
         }
 
-        if (indexedSets.isEmpty()) {
+        // Try composite index — must run before the empty-check so a composite
+        // index alone (with no single-column indexes) can still pre-filter rows.
+        List<Integer> compositeRows = lookupCompositeIndex(table, conditions, tableName);
+
+        if (indexedSets.isEmpty() && (compositeRows == null || compositeRows.isEmpty())) {
             return null;
         }
 
-        // Intersect all collected sets — smallest first for efficiency.
-        indexedSets.sort(Comparator.comparingInt(Set::size));
-        Set<Integer> result = new LinkedHashSet<>(indexedSets.get(0));
-        for (int i = 1; i < indexedSets.size(); i++) {
-            result.retainAll(indexedSets.get(i));
-        }
-
-        if (result.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        // Try composite index for potentially better results
-        List<Integer> compositeRows = lookupCompositeIndex(table, conditions, tableName);
-        if (compositeRows != null && !compositeRows.isEmpty()) {
-            // Intersect composite result with existing single-column results
-            Set<Integer> compositeSet = new LinkedHashSet<>(compositeRows);
-            result.retainAll(compositeSet);
+        Set<Integer> result;
+        if (!indexedSets.isEmpty()) {
+            // Intersect all collected sets — smallest first for efficiency.
+            indexedSets.sort(Comparator.comparingInt(Set::size));
+            result = new LinkedHashSet<>(indexedSets.get(0));
+            for (int i = 1; i < indexedSets.size(); i++) {
+                result.retainAll(indexedSets.get(i));
+            }
             if (result.isEmpty()) {
                 return Collections.emptyList();
             }
+            // Intersect with composite index results when both exist.
+            if (compositeRows != null && !compositeRows.isEmpty()) {
+                result.retainAll(new LinkedHashSet<>(compositeRows));
+                if (result.isEmpty()) {
+                    return Collections.emptyList();
+                }
+            }
+        } else {
+            result = new LinkedHashSet<>(compositeRows);
         }
 
+        // Sort row indices to preserve insertion order when no ORDER BY is specified.
+        List<Integer> sortedResult = new ArrayList<>(result);
+        Collections.sort(sortedResult);
+
         // Check for covering index optimization
-        List<Map<String, Object>> coveredRows = tryCoveringIndex(table, result, conditions, tableName);
+        List<Map<String, Object>> coveredRows = tryCoveringIndex(table, new LinkedHashSet<>(sortedResult), conditions, tableName);
         if (coveredRows != null) {
             return coveredRows;
         }
 
-        List<Map<String, Object>> indexedRows = new ArrayList<>(result.size());
+        List<Map<String, Object>> indexedRows = new ArrayList<>(sortedResult.size());
         int tableSize = table.getRawRowCount();
         List<Map<String, Object>> rawRows = table.getRows();
-        for (int idx : result) {
+        for (int idx : sortedResult) {
             if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
                 indexedRows.add(rawRows.get(idx));
             }
@@ -2211,7 +2220,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             String columnName = normalizeColumnName(condition.column, tableName);
             if (columnName == null) continue;
             String unqualified = normalizeColumnKey(columnName, tableName);
-            equalityColumns.put(unqualified, condition.value);
+            // Convert condition value to the column's actual type so it matches
+            // the typed keys stored in the composite index (e.g. Integer→Long).
+            Class<?> colType = table.getColumnTypes().get(unqualified);
+            Object converted = colType != null
+                    ? new ConditionEvaluator().convertConditionValue(condition.value, unqualified, colType, table.getColumnTypes())
+                    : condition.value;
+            equalityColumns.put(unqualified, converted);
         }
         if (equalityColumns.size() < 2) return null;
 
@@ -2280,9 +2295,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * matching row indices, or {@code null} if the condition cannot use an
      * index.
      */
-    private List<Integer> lookupIndex(Index index, QueryParser.Condition condition, String tableName, String unqualifiedColumn) {
+    private List<Integer> lookupIndex(Index index, QueryParser.Condition condition, String tableName, String unqualifiedColumn, Table table) {
+        // Convert condition value to the column's actual type so it matches
+        // the typed keys stored in the index (e.g. parsed Integer → stored Long).
+        Class<?> colType = table.getColumnTypes().get(unqualifiedColumn);
+        ConditionEvaluator evaluator = new ConditionEvaluator();
         if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
-            List<Integer> rowIndices = index.search(condition.value);
+            Object val = colType != null ? evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType, table.getColumnTypes()) : condition.value;
+            List<Integer> rowIndices = index.search(val);
             LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
                     new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
             return rowIndices;
@@ -2290,13 +2310,20 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (condition.isInOperator() && condition.inValues != null) {
             List<Integer> rowIndices = new ArrayList<>();
             for (Object inValue : condition.inValues) {
-                rowIndices.addAll(index.search(inValue));
+                Object val = colType != null ? evaluator.convertConditionValue(inValue, unqualifiedColumn, colType, table.getColumnTypes()) : inValue;
+                rowIndices.addAll(index.search(val));
             }
             LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
                     new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
             return rowIndices;
         }
         if (index instanceof BTreeIndex bTreeIndex) {
+            // Convert condition value for range searches too.
+            if (colType != null && condition.value != null) {
+                Object converted = evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType, table.getColumnTypes());
+                QueryParser.Condition adjusted = new QueryParser.Condition(condition.column, converted, condition.operator, condition.conjunction, condition.not);
+                return lookupBTreeRange(bTreeIndex, adjusted, tableName, unqualifiedColumn);
+            }
             return lookupBTreeRange(bTreeIndex, condition, tableName, unqualifiedColumn);
         }
         return null;

@@ -188,7 +188,9 @@ class BTreeIndex implements Index, Serializable {
         }
 
         if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
-            // Key matches separator at position i — data lives in right child.
+            // Key matches separator — try left child first (regular-insert
+            // convention), then right child (bulk-load convention).
+            remove(x.children.get(i), key, rowIndex);
             remove(x.children.get(i + 1), key, rowIndex);
         } else if (i < x.children.size()) {
             remove(x.children.get(i), key, rowIndex);
@@ -256,7 +258,10 @@ class BTreeIndex implements Index, Serializable {
             i++;
         }
         if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
-            // Key matches separator at position i — data lives in right child.
+            // Key matches separator at position i.  Regular-insert trees keep
+            // the promoted key in the left child; bulk-loaded trees store it
+            // in the right child.  Search both to cover either convention.
+            result.addAll(search(x.children.get(i), key));
             result.addAll(search(x.children.get(i + 1), key));
         } else {
             // Key is strictly less than separator at i (or past all separators).

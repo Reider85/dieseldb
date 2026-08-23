@@ -230,6 +230,12 @@ class Database {
         if (parsedQuery instanceof CreateTableQuery q) {
             return executeCreateTable(q);
         }
+        if (parsedQuery instanceof CreateCompositeIndexQuery q) {
+            return executeCreateCompositeIndex(q, currentTransaction);
+        }
+        if (parsedQuery instanceof CreateCoveringIndexQuery q) {
+            return executeCreateCoveringIndex(q, currentTransaction);
+        }
         if (parsedQuery instanceof CreateIndexQueryBase q) {
             return executeCreateIndex(q, currentTransaction);
         }
@@ -392,6 +398,26 @@ class Database {
         }
         return indexDescription(indexQuery) + " created successfully on "
                 + indexQuery.getTableName() + "." + indexQuery.getColumnName();
+    }
+
+    private Object executeCreateCompositeIndex(CreateCompositeIndexQuery indexQuery, Transaction currentTransaction) {
+        Table table = getTable(indexQuery.getTableName());
+        indexQuery.execute(table);
+        queryCache.invalidateAll();
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            currentTransaction.updateTable(indexQuery.getTableName(), table);
+        }
+        return "Composite index created successfully on " + indexQuery.getTableName() + "." + String.join("+", indexQuery.getColumnNames());
+    }
+
+    private Object executeCreateCoveringIndex(CreateCoveringIndexQuery indexQuery, Transaction currentTransaction) {
+        Table table = getTable(indexQuery.getTableName());
+        indexQuery.execute(table);
+        queryCache.invalidateAll();
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            currentTransaction.updateTable(indexQuery.getTableName(), table);
+        }
+        return "Covering index created successfully on " + indexQuery.getTableName() + "." + indexQuery.getIndexColumn();
     }
 
     private String indexDescription(CreateIndexQueryBase indexQuery) {
