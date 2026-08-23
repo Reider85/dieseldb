@@ -18,7 +18,7 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
    make quick-test
    ```
    (This runs `mvn test -DskipLargeTests` – all unit tests except `@LargeTest`.)  
-   If it fails, fix and repeat until it passes **before** moving to the full acceptance gate.
+   If it fails, fix and repeat until it passes **before** moving to the full acceptance gate. **Max 3 fix attempts** — if still failing, stop and report.
 
 5. Run **full acceptance gate** (includes heavy joins) with `make timing` – this automatically:
   - Builds the project
@@ -104,4 +104,62 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
   make changelog "Fix JOIN OR OOM by implementing hash join spilling"
   ```
   This script auto-appends test results, timing summary, and profile numbers (if profile was run) to `Changelog.md` and creates `changelog_entry.txt` for the commit message.
+
+---
+
+## Anti-Hang Guards
+
+- **Max fix attempts: 3** — if quick tests or isolated tests fail 3 times in a row, stop and report to the user
+- **Timeouts on long commands** — always use `bash` timeout parameter:
+  - Quick tests (`mvn test -DskipLargeTests`): 10 min max
+  - Full suite (`make timing` / `mvn test` with 4GB): 30 min max
+  - ProfileMain: 15 min max
+- **Never run from agent context** — these commands block forever:
+  - `start-server.bat` / `start-server.sh` (long-running TCP server)
+  - `start-client.bat` / `start-client.sh` (interactive REPL)
+- **Isolation rule cap** — max 3 attempts on the isolated test; if still failing, stop and report
+- **Missing make targets** — `make quick-test`, `make changelog`, `make check-profile` may not exist in the Makefile. If `make` fails, fall back to raw Maven commands as shown in the Tests section above
+
+## Subagent Discipline
+
+- **Always pass `timeout_ms`** when spawning subagents — never leave it unset:
+  - `explore` subagent: `timeout_ms: 300000` (5 min)
+  - `general` subagent: `timeout_ms: 600000` (10 min)
+- **On stall notification** (>60s no activity): cancel immediately, fall back to manual grep/glob/read
+- **On UnknownError**: don't retry the same subagent — do the work directly with grep/glob/read
+- **Never wait more than 2 min** for a stalled subagent — cancel and proceed manually
+
+## Plan-Mode Diagnostic Workflow
+
+When plan mode blocks a file write you need for diagnostics (profiling scripts, test scripts, benchmarks):
+
+1. **Option A — Inline bash**: Run profiling commands directly without writing a file:
+   ```bash
+   python -c "import sqlite3; conn = sqlite3.connect('...'); ..."
+   ```
+2. **Option B — Defer to plan**: Document the diagnostic command in the plan file, get approval, then write+run after `plan_exit`
+3. **Option C — Read-only analysis**: Use grep/glob/read to analyze existing data; document findings in the plan
+
+**Never get stuck in analysis paralysis.** If you can't write a diagnostic script, use read-only tools and move on.
+
+## Windows Command Reference (PowerShell)
+
+This project runs on Windows. Do NOT use Unix commands — use PowerShell equivalents:
+
+| Unix | PowerShell | Notes |
+|------|-----------|-------|
+| `wc -l file` | `(Get-Content file).Count` | Count lines |
+| `wc -w file` | `(Get-Content file \| Measure-Object -Word).Words` | Count words |
+| `head -n 10 file` | `Get-Content file -Head 10` | First N lines |
+| `tail -n 10 file` | `Get-Content file -Tail 10` | Last N lines |
+| `grep "pattern" file` | `Select-String -Path file -Pattern "pattern"` | Search in file |
+| `cat file` | `Get-Content file` | Read file |
+| `touch file` | `New-Item -ItemType File -Path file -Force` | Create file |
+| `rm file` | `Remove-Item file` | Delete file |
+| `cp src dst` | `Copy-Item src dst` | Copy file |
+| `mv src dst` | `Move-Item src dst` | Move/rename |
+| `find . -name "*.java"` | `Get-ChildItem -Recurse -Filter "*.java"` | Find files |
+| `sort file` | `Get-Content file \| Sort-Object` | Sort lines |
+| `uniq` | `Select-Object -Unique` | Deduplicate |
+| `diff a b` | `Compare-Object (Get-Content a) (Get-Content b)` | Compare files |
 ```
