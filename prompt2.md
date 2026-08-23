@@ -1007,7 +1007,365 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 61: Параллельное выполнение независимых запросов
+## Раздел 2.1: Исправление ошибок SonarQube по принципу Парето (15 промптов)
+*На основе документа sonaranalytics4.md - топ-15 правил устранят 80% проблем*
+
+### Промпт 61: Замена [A-Za-z0-9_] на \w в регулярных выражениях (java:S6353 - 119 проблем)
+```
+Проблема: В коде используются избыточные character классы [A-Za-z0-9_] вместо краткой формы \w.
+Это нарушает правило java:S6353 и встречается в 119 местах.
+
+Задача:
+1. Найди все regex паттерны с [A-Za-z0-9_] в QueryParser.java, SubqueryParser.java, SqlLexer.java
+2. Замени [A-Za-z0-9_] на \w во всех регулярных выражениях
+3. Проверь что экранирование обратного слэша корректно: "\\w" в Java строках
+4. Добавь тесты на парсинг идентификаторов с цифрами и подчёркиваниями
+
+Пример:
+БЫЛО: Pattern.compile("[A-Za-z0-9_]+")
+СТАЛО: Pattern.compile("\\w+")
+
+Файлы: diesel/QueryParser.java, diesel/SubqueryParser.java, diesel/SqlLexer.java
+Тесты: ParserTest, SqlLexerTest
+Приоритет: HIGH (#1 в Pareto - 119 проблем, 14.5% от всех)
+```
+
+### Промпт 62: Рефакторинг методов с высокой Cognitive Complexity (java:S3776 - 94 проблемы)
+```
+Проблема: Методы имеют Cognitive Complexity > 15 (порог), некоторые достигают 38.
+Это нарушает правило java:S3776 и встречается в 94 местах.
+
+Задача:
+1. Найди методы с complexity > 15 через SonarQube или IntelliJ
+2. Примени рефакторинг:
+   - Вынеси nested if/else в отдельные методы
+   - Используй guard clauses для ранних возвратов
+   - Замени сложные условия на именованные boolean переменные
+   - Применяй Strategy pattern для вариативной логики
+3. Особое внимание: QueryParser.parseSelect(), SelectQuery.execute()
+
+Цель: Каждый метод имеет complexity ≤ 15
+Добавь test что рефакторинг не изменил поведение.
+
+Файлы: diesel/QueryParser.java, diesel/SelectQuery.java, diesel/SubqueryParser.java
+Тесты: ParserTest, SelectQueryTest
+Приоритет: CRITICAL (#2 в Pareto - 94 проблемы, 11.5% от всех)
+```
+
+### Промпт 63: Использование instanceof pattern matching (Java 16+) (java:S6201 - 84 проблемы)
+```
+Проблема: Используется устаревший паттерн instanceof + cast вместо pattern matching.
+Это нарушает правило java:S6201 и встречается в 84 местах.
+
+Задача:
+1. Найди все случаи instanceof с последующим cast
+2. Замени на pattern matching (требуется Java 16+):
+
+БЫЛО:
+if (obj instanceof Query) {
+    Query q = (Query) obj;
+    q.execute();
+}
+
+СТАЛО:
+if (obj instanceof Query q) {
+    q.execute();
+}
+
+3. Обнови pom.xml: <maven.compiler.release>16</maven.compiler.release>
+4. Проверь совместимость с целевой JVM
+
+Файлы: diesel/*.java (по всему проекту)
+Тесты: Все существующие тесты должны проходить
+Приоритет: HIGH (#3 в Pareto - 84 проблемы, 10.2% от всех)
+```
+
+### Промпт 64: Устранение рекурсивных паттернов в regex (java:S5998 - 57 проблем)
+```
+Проблема: Регулярные выражения с чрезмерной вложенностью могут вызвать StackOverflowError.
+Это нарушает правило java:S5998 (BUG) и встречается в 57 местах.
+
+Задача:
+1. Найди regex с вложенными квантификаторами: (a+)+, (.*?)+, (.*)* 
+2. Замени на:
+   - Possessive quantifiers: a++, .*+, .?+
+   - Atomic groups: (?>...)
+   - Явные лимиты повторений: {1,100} вместо +
+3. Для парсинга вложенных структур используй ручной парсер вместо regex
+
+Пример:
+БЫЛО: Pattern.compile("(\\([^)]*\\))+")  // может вызвать SO
+СТАЛО: Pattern.compile("(?>\\([^()]*\\))+")  // atomic group
+
+Файлы: diesel/QueryParser.java, diesel/SubqueryParser.java
+Тесты: ParserTest (добавь тесты с глубиной вложенности 100+)
+Приоритет: CRITICAL (#4 в Pareto - BUG, риск падения production)
+```
+
+### Промпт 65: Вынос дублирующихся строковых литералов в константы (java:S1192 - 43 проблемы)
+```
+Проблема: Строковые литералы повторяются 3+ раз в коде.
+Это нарушает правило java:S1192 и встречается в 43 местах.
+
+Задача:
+1. Найди повторяющиеся литералы через SonarQube inspection
+2. Вынеси в класс SqlConstants:
+   - SQL keywords: "SELECT", "INSERT", "WHERE", "JOIN"
+   - Операторы: "=", "<>", "LIKE", "IN"
+   - Типы данных: "INTEGER", "VARCHAR", "BOOLEAN"
+   - Системные имена: "null", "true", "false"
+
+Пример:
+БЫЛО: if (token.equals("SELECT")) { ... }
+СТАЛО: if (token.equals(SqlKeywords.SELECT)) { ... }
+
+Файлы: diesel/SqlConstants.java (новый), diesel/QueryParser.java
+Тесты: ParserTest
+Приоритет: CRITICAL (#5 в Pareto - 43 проблемы, улучшает maintainability)
+```
+
+### Промпт 66: Удаление неиспользуемых импортов (java:S1128 - 36 проблем)
+```
+Проблема: В файлах присутствуют unused import statements.
+Это нарушает правило java:S1128 и встречается в 36 местах.
+
+Задача:
+1. Запусти IntelliJ: Code → Optimize Imports (Ctrl+Alt+O)
+2. Или mvn clean compile для детекции через Maven
+3. Удали все неиспользуемые импорты
+4. Особое внимание: diesel.ThreeValuedLogic.FALSE (упомянуто в отчете)
+
+Автоматизация:
+mvn org.apache.maven.plugins:maven-checkstyle-plugin:check -Dcheckstyle.config.location=google_checks.xml
+
+Файлы: Все .java файлы проекта
+Тесты: Не требуются (не меняет логику)
+Приоритет: MEDIUM (#6 в Pareto - 36 проблем, быстрая победа)
+```
+
+### Промпт 67: Удаление неиспользуемых параметров методов (java:S1172 - 30 проблем)
+```
+Проблема: Методы имеют параметры которые не используются в теле метода.
+Это нарушает правило java:S1172 и встречается в 30 местах.
+
+Задача:
+1. Найди методы с unused parameters через SonarQube
+2. Если параметр действительно не нужен - удали его
+3. Если параметр нужен для интерфейса/наследования - добавь @SuppressWarnings("unused")
+4. Особое внимание: параметр "not" (упомянут в отчете)
+
+Пример:
+БЫЛО: public void process(String data, boolean debug) { ... } // debug не используется
+СТАЛО: public void process(String data) { ... }
+
+Файлы: diesel/*.java (по всему проекту)
+Тесты: Все тесты должны проходить после удаления параметров
+Приоритет: MAJOR (#7 в Pareto - 30 проблем)
+```
+
+### Промпт 68: Уменьшение break/continue в циклах (java:S135 - 30 проблем)
+```
+Проблема: Циклы содержат множественные break/continue statements.
+Это нарушает правило java:S135 и встречается в 30 местах.
+
+Задача:
+1. Найди циклы с >1 break/continue
+2. Рефакторинг:
+   - Замени break на boolean flag с проверкой в условии цикла
+   - Вынеси тело цикла в отдельный метод с ранним return
+   - Используй Stream API где уместно
+
+Пример:
+БЫЛО:
+for (Row row : rows) {
+    if (!condition1) continue;
+    if (!condition2) break;
+    process(row);
+}
+
+СТАЛО:
+for (Row row : rows) {
+    if (condition1 && condition2) {
+        process(row);
+    }
+}
+
+Файлы: diesel/SelectQuery.java, diesel/QueryParser.java
+Тесты: ParserTest, SelectQueryTest
+Приоритет: MINOR (#8 в Pareto - 30 проблем, улучшает читаемость)
+```
+
+### Промпт 69: Заполнение или удаление пустых блоков кода (java:S108 - 28 проблем)
+```
+Проблема: В коде присутствуют пустые блоки else, catch, finally.
+Это нарушает правило java:S108 и встречается в 28 местах.
+
+Задача:
+1. Найди пустые блоки через SonarQube inspection
+2. Варианты решения:
+   - Удали блок если он действительно не нужен
+   - Добавь комментарий // intentionally empty
+   - Выброси исключение: throw new UnsupportedOperationException("Not implemented")
+   - Добавь логирование: logger.warn("Empty catch block for exception: {}", e)
+
+Пример:
+БЫЛО:
+try {
+    riskyOperation();
+} catch (Exception e) {
+}
+
+СТАЛО:
+try {
+    riskyOperation();
+} catch (Exception e) {
+    logger.warn("Ignored exception during operation: {}", e.getMessage());
+}
+
+Файлы: diesel/*.java (по всему проекту)
+Тесты: Проверить что обработка ошибок работает корректно
+Приоритет: MAJOR (#9 в Pareto - 28 проблем, скрывает ошибки)
+```
+
+### Промпт 70: Удаление использования deprecated setScale() (java:S1874 - 28 проблем)
+```
+Проблема: Используется deprecated метод BigDecimal.setScale().
+Это нарушает правило java:S1874 и встречается в 28 местах.
+
+Задача:
+1. Найди все вызовы setScale() без второго аргумента
+2. Замени на setScale(int scale, RoundingMode mode):
+
+БЫЛО: bigDecimal.setScale(2)
+СТАЛО: bigDecimal.setScale(2, RoundingMode.HALF_UP)
+
+3. Импортируй: import java.math.RoundingMode;
+4. Выбери подходящий режим округления (обычно HALF_UP для финансов)
+
+Файлы: diesel/*.java (поиск по setScale)
+Тесты: ArithmeticTest, агрегатные функции с decimal
+Приоритет: MINOR (#10 в Pareto - 28 проблем, future-proofing)
+```
+
+### Промпт 71: Удаление неиспользуемых локальных переменных (java:S1481 - 26 проблем)
+```
+Проблема: Объявлены локальные переменные которые не используются.
+Это нарушает правило java:S1481 и встречается в 26 местах.
+
+Задача:
+1. Найди unused local variables через SonarQube
+2. Удали объявления неиспользуемых переменных
+3. Особое внимание: переменная "ck2" (упомянута в отчете)
+
+Пример:
+БЫЛО:
+int count = 0;
+String ck2 = checkKey();
+return count;
+
+СТАЛО:
+int count = 0;
+return count;
+
+Файлы: diesel/*.java (по всему проекту)
+Тесты: Не требуются (не меняет логику)
+Приоритет: MINOR (#11 в Pareto - 26 проблем, чистота кода)
+```
+
+### Промпт 72: Удаление бесполезных присваиваний (java:S1854 - 23 проблемы)
+```
+Проблема: Переменным присваиваются значения которые никогда не читаются.
+Это нарушает правило java:S1854 и встречается в 23 местах.
+
+Задача:
+1. Найди useless assignments через SonarQube
+2. Удали лишние присваивания
+3. Особое внимание: переменная "joins" (упомянута в отчете)
+
+Пример:
+БЫЛО:
+List<String> joins = new ArrayList<>();
+joins = getJoins(); // первое присваивание бесполезно
+
+СТАЛО:
+List<String> joins = getJoins();
+
+Файлы: diesel/SelectQuery.java, diesel/QueryParser.java
+Тесты: JoinTest, ParserTest
+Приоритет: MAJOR (#12 в Pareto - 23 проблемы, wasted computation)
+```
+
+### Промпт 73: Исправление неиспользуемых первых аргументов методов (java:S3457 - 23 проблемы)
+```
+Проблема: Первый аргумент методов не используется в теле метода.
+Это нарушает правило java:S3457 и встречается в 23 местах.
+
+Задача:
+1. Найди методы где первый параметр игнорируется
+2. Варианты решения:
+   - Удали параметр если он не нужен
+   - Используй параметр в логике метода
+   - Если это интерфейс - оставь с @SuppressWarnings
+
+Пример:
+БЫЛО: public Result execute(Connection conn, Query q) { return q.run(); }
+СТАЛО: public Result execute(Query q) { return q.run(); }
+
+Файлы: diesel/*.java (по всему проекту)
+Тесты: Все тесты должны проходить
+Приоритет: MAJOR (#13 в Pareto - 23 проблемы)
+```
+
+### Промпт 74: Уменьшение количества параметров конструктора (java:S107 - 22 проблемы)
+```
+Проблема: Конструкторы имеют > 7 параметров (порог), некоторые достигают 14.
+Это нарушает правило java:S107 и встречается в 22 местах.
+
+Задача:
+1. Найди конструкторы с большим количеством параметров
+2. Примени рефакторинг:
+   - Builder pattern для сложных объектов
+   - Parameter Object pattern (объедини связанные параметры в класс)
+   - Методы setter вместо конструктора
+
+Пример (Builder):
+БЫЛО: new SelectQuery(table, columns, where, joins, groupBy, orderBy, limit, offset, ...)
+СТАЛО:
+new SelectQuery.Builder()
+    .table(table)
+    .columns(columns)
+    .where(where)
+    .limit(limit)
+    .build();
+
+Файлы: diesel/SelectQuery.java, diesel/QueryParser.java
+Тесты: Все тесты должны проходить
+Приоритет: MAJOR (#14 в Pareto - 22 проблемы, улучшает API)
+```
+
+### Промпт 75: Упрощение сложных регулярных выражений (java:S5843 - 21 проблема)
+```
+Проблема: Регулярные выражения имеют complexity > 20 (порог), некоторые достигают 23.
+Это нарушает правило java:S5843 и встречается в 21 местах.
+
+Задача:
+1. Найди regex с complexity > 20 через SonarQube
+2. Оптимизируй:
+   - Упрости alternations: (a|b|c) → [abc] где возможно
+   - Убери избыточные группы: (?:...) вместо (...)
+   - Разбей сложный regex на несколько простых
+   - Используй possessive quantifiers для предотвращения backtracking
+
+Пример:
+БЫЛО: Pattern.compile("(\\d+)|(\\w+)|([A-Z][a-z]+)")
+СТАЛО: Pattern.compile("\\d+|\\w+|[A-Z][a-z]+")
+
+Файлы: diesel/QueryParser.java, diesel/SqlLexer.java
+Тесты: ParserTest (добавь тесты на сложные SQL паттерны)
+Приоритет: MAJOR (#15 в Pareto - 21 проблема, performance + maintainability)
+```
+
+### Промпт 76: Параллельное выполнение независимых запросов
 ```
 Проблема: Запросы выполняются последовательно даже если независимы.
 
@@ -1020,7 +1378,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 62: Асинхронный I/O для сетевых операций
+### Промпт 77: Асинхронный I/O для сетевых операций
 ```
 Проблема: Синхронный I/O блокирует потоки на чтение/запись в сокет.
 
@@ -1033,7 +1391,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 63: Compression для сетевых ответов
+### Промпт 78: Compression для сетевых ответов
 ```
 Проблема: Большие результаты передаются без сжатия.
 
@@ -1046,7 +1404,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 64: Prepared Statements caching
+### Промпт 79: Prepared Statements caching
 ```
 Проблема: Каждый запрос парсится заново.
 
@@ -1059,7 +1417,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 65: Batch execution support
+### Промпт 80: Batch execution support
 ```
 Проблема: Нет пакетного выполнения запросов.
 
@@ -1072,7 +1430,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 66: Query result pagination
+### Промпт 81: Query result pagination
 ```
 Проблема: Клиент получает весь результат сразу (OOM risk).
 
@@ -1085,7 +1443,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 67: Adaptive query execution
+### Промпт 82: Adaptive query execution
 ```
 Проблема: План выполнения выбирается один раз и не меняется.
 
@@ -1098,7 +1456,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 68: Index-only scans
+### Промпт 83: Index-only scans
 ```
 Проблема: Даже при наличии индекса читается вся таблица.
 
@@ -1111,7 +1469,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 69: Parallel index scan
+### Промпт 84: Parallel index scan
 ```
 Проблема: Сканирование индекса однопоточное.
 
@@ -1124,7 +1482,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 70: SIMD векторизация для агрегатов
+### Промпт 85: SIMD векторизация для агрегатов
 ```
 Проблема: Агрегатные функции (SUM, AVG) обрабатывают строки по одной.
 
@@ -1139,7 +1497,7 @@ for (Row row : rows) {
 
 ## Раздел 3: Parquet Storage и Query Cache (20 промптов)
 
-### Промпт 71: Интеграция Apache Parquet библиотеки
+### Промпт 86: Интеграция Apache Parquet библиотеки
 ```
 Добавь зависимость Apache Parquet в pom.xml:
 ```xml
@@ -1155,7 +1513,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 72: ParquetReader для чтения данных
+### Промпт 87: ParquetReader для чтения данных
 ```
 Реализуй ParquetReader который:
 1. Читает Parquet файлы в Row объекты
@@ -1166,7 +1524,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 73: Columnar storage для аналитических запросов
+### Промпт 88: Columnar storage для аналитических запросов
 ```
 Для таблиц >1M строк предлагай columnar storage (Parquet):
 1. Конвертация row-based → columnar (async background job)
@@ -1177,7 +1535,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 74: Schema evolution для Parquet
+### Промпт 89: Schema evolution для Parquet
 ```
 Поддержи эволюцию схемы Parquet файлов:
 1. Добавление новых колонок (nullable)
@@ -1188,7 +1546,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 75: Partitioning для Parquet таблиц
+### Промпт 90: Partitioning для Parquet таблиц
 ```
 Реализуй partitioning по дате/категории:
 1. Directory structure: /table/date=2024-01-01/data.parquet
@@ -1199,7 +1557,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 76: Compression codecs для Parquet
+### Промпт 91: Compression codecs для Parquet
 ```
 Поддержи разные codecs:
 1. UNCOMPRESSED - быстро, большой размер
@@ -1212,7 +1570,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 77: Statistics в Parquet metadata
+### Промпт 92: Statistics в Parquet metadata
 ```
 Используй встроенную статистику Parquet:
 1. Min/max значения для каждой колонки в row group
@@ -1223,7 +1581,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 78: Bloom filters для Parquet
+### Промпт 93: Bloom filters для Parquet
 ```
 Добавь bloom filters для fast lookup:
 1. Bloom filter на первичный ключ
@@ -1234,7 +1592,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 79: QueryCache архитектура
+### Промпт 94: QueryCache архитектура
 ```
 Создай QueryCache с:
 1. Ключ: normalized SQL + parameter types
@@ -1246,7 +1604,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 80: Cache invalidation策略
+### Промпт 95: Cache invalidation策略
 ```
 Реализуй инвалидацию кэша:
 1. INSERT/UPDATE/DELETE → invalidate cache для этой таблицы
@@ -1258,7 +1616,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 81: Интеграция QueryCache в SelectQuery.java
+### Промпт 96: Интеграция QueryCache в SelectQuery.java
 ```
 Модифицируй SelectQuery.execute():
 1. Перед выполнением: check cache
@@ -1270,7 +1628,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 82: Инвалидация кэша при INSERT
+### Промпт 97: Инвалидация кэша при INSERT
 ```
 При INSERT в таблицу:
 1. Найди все cached queries для этой таблицы
@@ -1281,7 +1639,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 83: Инвалидация кэша при UPDATE
+### Промпт 98: Инвалидация кэша при UPDATE
 ```
 При UPDATE таблицы:
 1. Invalidate все cached SELECT queries к этой таблице
@@ -1292,7 +1650,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 84: Инвалидация кэша при DELETE
+### Промпт 99: Инвалидация кэша при DELETE
 ```
 При DELETE из таблицы:
 1. Invalidate все cached queries к этой таблице
@@ -1302,7 +1660,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 85: Инвалидация кэша при DDL операциях
+### Промпт 100: Инвалидация кэша при DDL операциях
 ```
 При DDL (CREATE TABLE, ALTER TABLE, DROP TABLE):
 1. CREATE TABLE: no invalidation needed (новая таблица)
@@ -1313,7 +1671,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 86: Мониторинг QueryCache
+### Промпт 101: Мониторинг QueryCache
 ```
 Добавь JMX metrics для QueryCache:
 1. Cache size (entries count)
@@ -1326,7 +1684,7 @@ for (Row row : rows) {
 Приоритет: LOW
 ```
 
-### Промпт 87: Тестирование Parquet storage
+### Промпт 102: Тестирование Parquet storage
 ```
 Напиши тесты для Parquet integration:
 1. Write table to Parquet → read back → compare data
@@ -1338,7 +1696,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 88: Тестирование QueryCache
+### Промпт 103: Тестирование QueryCache
 ```
 Напиши тесты для QueryCache:
 1. Cache hit: одинаковый запрос → cache hit
@@ -1351,7 +1709,7 @@ for (Row row : rows) {
 Приоритет: HIGH
 ```
 
-### Промпт 89: Integration test Parquet + Cache
+### Промпт 104: Integration test Parquet + Cache
 ```
 Комплексный тест:
 1. Создай таблицу с 1M строк
@@ -1365,7 +1723,7 @@ for (Row row : rows) {
 Приоритет: MEDIUM
 ```
 
-### Промпт 90: Документация Parquet формата
+### Промпт 105: Документация Parquet формата
 ```
 Создай документацию:
 1. Как включить Parquet storage (config)
@@ -1379,7 +1737,7 @@ for (Row row : rows) {
 
 ## Раздел 4: Дополнительные улучшения (20 промптов)
 
-### Промпт 91: Конфигурация Parquet на уровне таблицы
+### Промпт 106: Конфигурация Parquet на уровне таблицы
 ```
 Добавь возможность настройки Parquet per table:
 ```sql
@@ -1398,7 +1756,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 92: Lazy загрузка Parquet файлов
+### Промпт 107: Lazy загрузка Parquet файлов
 ```
 Не загружай все Parquet файлы в память:
 1. Открывай файл только когда нужны данные из него
@@ -1409,7 +1767,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 93: Predicate pushdown для Parquet
+### Промпт 108: Predicate pushdown для Parquet
 ```
 Передавай WHERE условия в ParquetReader:
 1. Parquet filter row groups по statistics (min/max)
@@ -1420,7 +1778,7 @@ CREATE TABLE analytics (
 Приоритет: HIGH
 ```
 
-### Промпт 94: Параллельное чтение Parquet
+### Промпт 109: Параллельное чтение Parquet
 ```
 Читай多个 Parquet файлы параллельно:
 1. Один файл → один поток (или один row group → один поток)
@@ -1431,7 +1789,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 95: Статистика использования кэша
+### Промпт 110: Статистика использования кэша
 ```
 Собирай detailed статистику:
 1. Per-query cache performance (hit/miss/ttl)
@@ -1442,7 +1800,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 96: Настройка Database.java для Parquet by default
+### Промпт 111: Настройка Database.java для Parquet by default
 ```
 Для новых таблиц по умолчанию используй Parquet если:
 1. Таблица >100K строк (estimated)
@@ -1454,7 +1812,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 97: Обработка ошибок при миграции
+### Промпт 112: Обработка ошибок при миграции
 ```
 При конвертации table → Parquet:
 1. Валидируй данные перед записью (no nulls в NOT NULL columns)
@@ -1465,7 +1823,7 @@ CREATE TABLE analytics (
 Приоритет: MEDIUM
 ```
 
-### Промпт 98: Поддержка partitioned tables в Parquet
+### Промпт 113: Поддержка partitioned tables в Parquet
 ```
 Расширь поддержку partitioning:
 1. Multi-level partitioning: date=.../category=.../data.parquet
@@ -1476,7 +1834,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 99: Оптимизация Dictionary encoding для строк
+### Промпт 114: Оптимизация Dictionary encoding для строк
 ```
 Для string колонок с low cardinality:
 1. Dictionary encoding: map strings → integers
@@ -1487,7 +1845,7 @@ CREATE TABLE analytics (
 Приоритет: LOW
 ```
 
-### Промпт 100: Compression tuning (ZSTD levels)
+### Промпт 115: Compression tuning (ZSTD levels)
 ```
 ZSTD поддерживает уровни сжатия 1-22:
 1. Level 1-3: fast compression, good ratio (default)
@@ -1499,7 +1857,7 @@ ZSTD поддерживает уровни сжатия 1-22:
 Приоритет: LOW
 ```
 
-### Промпт 101: Row group size tuning
+### Промпт 116: Row group size tuning
 ```
 Parquet row group size влияет на performance:
 1. Small groups (1MB): better pruning, more overhead
@@ -1510,7 +1868,7 @@ Parquet row group size влияет на performance:
 Приоритет: LOW
 ```
 
-### Промпт 102: Column statistics в Parquet metadata
+### Промпт 117: Column statistics в Parquet metadata
 ```
 Включи сбор статистики для всех колонок:
 1. Min, max, null count, distinct count (approximate)
@@ -1521,7 +1879,7 @@ Parquet row group size влияет на performance:
 Приоритет: MEDIUM
 ```
 
-### Промпт 103: Bloom filters для Parquet
+### Промпт 118: Bloom filters для Parquet
 ```
 Добавь bloom filters для быстрого lookup:
 1. Один bloom filter на колонку на row group
@@ -1532,7 +1890,7 @@ Parquet row group size влияет на performance:
 Приоритет: LOW
 ```
 
-### Промпт 104: Query Cache warm-up strategy
+### Промпт 119: Query Cache warm-up strategy
 ```
 При старте сервера:
 1. Load frequently used queries from persistent cache
@@ -1543,7 +1901,7 @@ Parquet row group size влияет на performance:
 Приоритет: LOW
 ```
 
-### Промпт 105: Adaptive TTL для кэша
+### Промпт 120: Adaptive TTL для кэша
 ```
 Dynamic TTL based on table activity:
 1. High write frequency → shorter TTL
@@ -1554,7 +1912,7 @@ Dynamic TTL based on table activity:
 Приоритет: LOW
 ```
 
-### Промпт 106: Query normalization improvements
+### Промпт 121: Query normalization improvements
 ```
 Улучши нормализацию SQL для cache key:
 1. Ignore whitespace differences
@@ -1566,7 +1924,7 @@ Dynamic TTL based on table activity:
 Приоритет: MEDIUM
 ```
 
-### Промпт 107: Parameterized query caching
+### Промпт 122: Parameterized query caching
 ```
 Кэшируй параметризованные запросы:
 1. Key: normalized SQL с placeholders
@@ -1577,7 +1935,7 @@ Dynamic TTL based on table activity:
 Приоритет: MEDIUM
 ```
 
-### Промпт 108: Multi-level cache (L1/L2)
+### Промпт 123: Multi-level cache (L1/L2)
 ```
 Двухуровневый кэш:
 1. L1: in-memory, fast, small (100 entries, TTL 1 min)
@@ -1588,7 +1946,7 @@ Dynamic TTL based on table activity:
 Приоритет: LOW
 ```
 
-### Промпт 109: Cache persistence across restarts
+### Промпт 124: Cache persistence across restarts
 ```
 Персистентный кэш:
 1. Save cache to disk on graceful shutdown
@@ -1599,7 +1957,7 @@ Dynamic TTL based on table activity:
 Приоритет: LOW
 ```
 
-### Промпт 110: Final integration testing and documentation
+### Промпт 125: Final integration testing and documentation
 ```
 Финальные задачи:
 1. Full regression test suite (все тесты проходят)
