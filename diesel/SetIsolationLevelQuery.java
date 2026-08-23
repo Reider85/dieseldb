@@ -37,6 +37,7 @@ class SetIsolationLevelQuery implements Query<String> {
      * @throws UnsupportedOperationException always
      */
     @Override
+    @SuppressWarnings("unused")
     public String execute(Table table) {
         throw new UnsupportedOperationException("SetIsolationLevelQuery should be handled by Database directly");
     }

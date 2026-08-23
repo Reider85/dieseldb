@@ -76,9 +76,9 @@ public class SubqueryParser {
                 Matcher inMatcher = inSubqueryPattern.matcher(normalizedQuery);
                 if (inMatcher.matches()) {
                     LOGGER.log(Level.FINE, "Detected IN-subquery pattern, using custom parsing");
-                    return parseSelectQuery(query, normalizedQuery, database);
+                    return parseSelectQuery(query, database);
                 }
-                return parseSelectQuery(query, normalizedQuery, database);
+                return parseSelectQuery(query, database);
             } else {
                 LOGGER.log(Level.FINE, "Non-SELECT query, delegating to QueryParser: {0}", query);
                 return queryParser.parse(query, database);
@@ -121,7 +121,7 @@ public class SubqueryParser {
         return normalized;
     }
 
-    private Query<List<Map<String, Object>>> parseSelectQuery(String originalQuery, String normalizedQuery, Database database) {
+    private Query<List<Map<String, Object>>> parseSelectQuery(String originalQuery, Database database) {
         int fromIndex = findMainFromClause(originalQuery);
         if (fromIndex == -1) {
             throw new IllegalArgumentException("Invalid SELECT query: missing FROM clause");
@@ -518,8 +518,8 @@ public class SubqueryParser {
             case SqlKeywords.JOIN, SqlKeywords.INNER_JOIN -> QueryParser.JoinType.INNER;
             case SqlKeywords.LEFT_JOIN -> QueryParser.JoinType.LEFT_OUTER;
             case SqlKeywords.RIGHT_JOIN -> QueryParser.JoinType.RIGHT_OUTER;
-            case "FULL JOIN" -> QueryParser.JoinType.FULL_OUTER;
-            case "CROSS JOIN" -> QueryParser.JoinType.CROSS;
+            case SqlKeywords.FULL_JOIN -> QueryParser.JoinType.FULL_OUTER;
+            case SqlKeywords.CROSS_JOIN -> QueryParser.JoinType.CROSS;
             default -> throw new IllegalArgumentException("Unsupported join type: " + joinTypeStr);
         };
     }

@@ -16,6 +16,7 @@ class CommitTransactionQuery implements TransactionQuery {
      * @throws UnsupportedOperationException always
      */
     @Override
+    @SuppressWarnings("unused")
     public String execute(Table table) {
         throw new UnsupportedOperationException("CommitTransactionQuery should be handled by Database directly");
     }

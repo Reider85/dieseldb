@@ -301,8 +301,7 @@ class Table implements Serializable {
      * validation and clustered index creation (indexes are rebuilt at the end).
      */
     private Table(Database database, String name, List<String> columns,
-                  Map<String, Class<?>> columnTypes, String primaryKeyColumn,
-                  boolean skipInit) {
+                  Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
         this.database = database;
         this.name = name;
         this.columns = columns;
@@ -336,7 +335,7 @@ class Table implements Serializable {
         Table copy = new Table(this.database, this.name,
                 new ArrayList<>(this.columns),
                 new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }},
-                this.primaryKeyColumn, true);
+                this.primaryKeyColumn);
 
         // Deep-copy rows: new list, each row Map shallow-copied.
         for (Map<String, Object> row : this.rows) {

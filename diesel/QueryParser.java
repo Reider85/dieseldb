@@ -587,7 +587,7 @@ class QueryParser {
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
-                return parseExplainQuery(n, o, d);
+                return parseExplainQuery(o, d);
             }
         });
         strategies.add(new QueryParseStrategy() {
@@ -623,7 +623,7 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith("DELETE FROM");
+                return n.startsWith(SqlKeywords.DELETE_FROM);
             }
             @Override
             public Query<?> parse(String n, String o, Database d) {
@@ -636,6 +636,7 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.CREATE_TABLE);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseCreateTableQuery(o);
             }
@@ -646,6 +647,7 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseCreateUniqueDurableClusteredIndexQuery(n);
             }
@@ -656,6 +658,7 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseCreateUniqueIndexQuery(n);
             }
@@ -666,6 +669,7 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.CREATE_HASH_INDEX);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseCreateHashIndexQuery(n);
             }
@@ -676,6 +680,7 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.CREATE_INDEX);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseCreateIndexQuery(n);
             }
@@ -683,21 +688,22 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.equals("BEGIN") || n.equals("BEGIN TRANSACTION")
-                        || n.equals("START TRANSACTION")
-                        || n.startsWith("BEGIN TRANSACTION ISOLATION LEVEL")
-                        || n.startsWith("START TRANSACTION ISOLATION LEVEL");
+                return n.equals(SqlKeywords.BEGIN) || n.equals(SqlKeywords.BEGIN_TRANSACTION)
+                        || n.equals(SqlKeywords.START_TRANSACTION)
+                        || n.startsWith(SqlKeywords.BEGIN_TRANSACTION_ISOLATION_LEVEL)
+                        || n.startsWith(SqlKeywords.START_TRANSACTION_ISOLATION_LEVEL);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 IsolationLevel isolationLevel = null;
-                if (n.contains("ISOLATION LEVEL READ UNCOMMITTED")) {
+                if (n.contains(SqlKeywords.ISOLATION_LEVEL_READ_UNCOMMITTED)) {
                     isolationLevel = IsolationLevel.READ_UNCOMMITTED;
-                } else if (n.contains("ISOLATION LEVEL READ COMMITTED")) {
+                } else if (n.contains(SqlKeywords.ISOLATION_LEVEL_READ_COMMITTED)) {
                     isolationLevel = IsolationLevel.READ_COMMITTED;
-                } else if (n.contains("ISOLATION LEVEL REPEATABLE READ")) {
+                } else if (n.contains(SqlKeywords.ISOLATION_LEVEL_REPEATABLE_READ)) {
                     isolationLevel = IsolationLevel.REPEATABLE_READ;
-                } else if (n.contains("ISOLATION LEVEL SERIALIZABLE")) {
+                } else if (n.contains(SqlKeywords.ISOLATION_LEVEL_SERIALIZABLE)) {
                     isolationLevel = IsolationLevel.SERIALIZABLE;
                 }
                 return new BeginTransactionQuery(isolationLevel);
@@ -706,9 +712,10 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.equals(SqlKeywords.COMMIT_TRANSACTION) || n.equals("COMMIT");
+                return n.equals(SqlKeywords.COMMIT_TRANSACTION) || n.equals(SqlKeywords.COMMIT);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return new CommitTransactionQuery();
             }
@@ -716,9 +723,10 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.equals(SqlKeywords.ROLLBACK_TRANSACTION) || n.equals("ROLLBACK");
+                return n.equals(SqlKeywords.ROLLBACK_TRANSACTION) || n.equals(SqlKeywords.ROLLBACK);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return new RollbackTransactionQuery();
             }
@@ -729,17 +737,18 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.SET);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 Query<String> setAutoCommitQuery = parseSetAutoCommitQuery(n);
                 if (setAutoCommitQuery != null) {
                     return setAutoCommitQuery;
-                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")) {
+                } else if (n.equals(SqlKeywords.SET_TRANSACTION_ISOLATION_LEVEL_READ_UNCOMMITTED)) {
                     return new SetIsolationLevelQuery(IsolationLevel.READ_UNCOMMITTED);
-                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")) {
+                } else if (n.equals(SqlKeywords.SET_TRANSACTION_ISOLATION_LEVEL_READ_COMMITTED)) {
                     return new SetIsolationLevelQuery(IsolationLevel.READ_COMMITTED);
-                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")) {
+                } else if (n.equals(SqlKeywords.SET_TRANSACTION_ISOLATION_LEVEL_REPEATABLE_READ)) {
                     return new SetIsolationLevelQuery(IsolationLevel.REPEATABLE_READ);
-                } else if (n.equals("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")) {
+                } else if (n.equals(SqlKeywords.SET_TRANSACTION_ISOLATION_LEVEL_SERIALIZABLE)) {
                     return new SetIsolationLevelQuery(IsolationLevel.SERIALIZABLE);
                 }
                 throw new IllegalArgumentException("Unsupported query type");
@@ -751,6 +760,7 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.ANALYZE);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseAnalyzeTableQuery(n);
             }
@@ -859,7 +869,7 @@ class QueryParser {
      * {@link ExplainQuery}. EXPLAIN supports only data statements, so DDL and
      * transaction commands are rejected.
      */
-    private Query<?> parseExplainQuery(String normalized, String original, Database database) {
+    private Query<?> parseExplainQuery(String original, Database database) {
         String rest = stripLeadingKeyword(original, SqlKeywords.EXPLAIN);
         boolean analyze = false;
         if (rest.toUpperCase().startsWith(SqlKeywords.ANALYZE)) {
@@ -1032,13 +1042,13 @@ class QueryParser {
             String colName = unquoteIdentifier(colParts[0]);
             String type = colParts[1].toUpperCase();
             String constraints = colParts.length > 2 ? colParts[2].toUpperCase() : "";
-            boolean isPrimaryKey = constraints.contains("PRIMARY KEY");
-            boolean hasSequence = constraints.contains("SEQUENCE") || type.endsWith("_SEQUENCE");
+            boolean isPrimaryKey = constraints.contains(SqlKeywords.PRIMARY_KEY);
+            boolean hasSequence = constraints.contains(SqlKeywords.SEQUENCE) || type.endsWith("_SEQUENCE");
 
             columns.add(colName);
 
             if (hasSequence) {
-                if (!type.equals("LONG") && !type.equals("INTEGER") && !type.startsWith("LONG_SEQUENCE") && !type.startsWith("INTEGER_SEQUENCE")) {
+                if (!type.equals(SqlKeywords.TYPE_LONG) && !type.equals(SqlKeywords.TYPE_INTEGER) && !type.startsWith("LONG_SEQUENCE") && !type.startsWith("INTEGER_SEQUENCE")) {
                     throw new IllegalArgumentException("Sequence is only supported for LONG or INTEGER types: " + colDef);
                 }
                 String seqDef;
@@ -1054,49 +1064,49 @@ class QueryParser {
                 String seqName = seqParts[0];
                 long start = Long.parseLong(seqParts[1]);
                 long increment = Long.parseLong(seqParts[2]);
-                Class<?> seqType = type.equals("LONG") || type.startsWith("LONG_SEQUENCE") ? Long.class : Integer.class;
+                Class<?> seqType = type.equals(SqlKeywords.TYPE_LONG) || type.startsWith("LONG_SEQUENCE") ? Long.class : Integer.class;
                 sequences.put(colName, new Sequence(seqName, seqType, start, increment));
                 columnTypes.put(colName, seqType);
             } else {
                 switch (type) {
-                    case "STRING":
+                    case SqlKeywords.TYPE_STRING:
                         columnTypes.put(colName, String.class);
                         break;
-                    case "INTEGER":
+                    case SqlKeywords.TYPE_INTEGER:
                         columnTypes.put(colName, Integer.class);
                         break;
-                    case "LONG":
+                    case SqlKeywords.TYPE_LONG:
                         columnTypes.put(colName, Long.class);
                         break;
-                    case "SHORT":
+                    case SqlKeywords.TYPE_SHORT:
                         columnTypes.put(colName, Short.class);
                         break;
-                    case "BYTE":
+                    case SqlKeywords.TYPE_BYTE:
                         columnTypes.put(colName, Byte.class);
                         break;
-                    case "BIGDECIMAL":
+                    case SqlKeywords.TYPE_BIGDECIMAL:
                         columnTypes.put(colName, BigDecimal.class);
                         break;
-                    case "FLOAT":
+                    case SqlKeywords.TYPE_FLOAT:
                         columnTypes.put(colName, Float.class);
                         break;
-                    case "DOUBLE":
+                    case SqlKeywords.TYPE_DOUBLE:
                         columnTypes.put(colName, Double.class);
                         break;
-                    case "CHAR":
+                    case SqlKeywords.TYPE_CHAR:
                         columnTypes.put(colName, Character.class);
                         break;
-                    case "UUID":
+                    case SqlKeywords.TYPE_UUID:
                         columnTypes.put(colName, UUID.class);
                         break;
-                    case "BOOLEAN":
+                    case SqlKeywords.TYPE_BOOLEAN:
                         columnTypes.put(colName, Boolean.class);
                         break;
-                    case "DATE":
+                    case SqlKeywords.TYPE_DATE:
                         columnTypes.put(colName, LocalDate.class);
                         break;
-                    case "DATETIME":
-                    case "DATETIME_MS":
+                    case SqlKeywords.TYPE_DATETIME:
+                    case SqlKeywords.TYPE_DATETIME_MS:
                         columnTypes.put(colName, LocalDateTime.class);
                         break;
                     default:
@@ -1620,12 +1630,12 @@ class QueryParser {
     private JoinType parseJoinType(String joinTypeStr) {
         return switch (joinTypeStr.toUpperCase()) {
             case SqlKeywords.JOIN, SqlKeywords.INNER_JOIN -> JoinType.INNER;
-            case SqlKeywords.LEFT_JOIN, "LEFT OUTER JOIN" -> JoinType.LEFT_OUTER;
-            case SqlKeywords.RIGHT_JOIN, "RIGHT OUTER JOIN" -> JoinType.RIGHT_OUTER;
-            case "FULL JOIN", "FULL OUTER JOIN" -> JoinType.FULL_OUTER;
-            case "LEFT INNER JOIN" -> JoinType.LEFT_INNER;
-            case "RIGHT INNER JOIN" -> JoinType.RIGHT_INNER;
-            case "CROSS JOIN" -> JoinType.CROSS;
+            case SqlKeywords.LEFT_JOIN, SqlKeywords.LEFT_OUTER_JOIN -> JoinType.LEFT_OUTER;
+            case SqlKeywords.RIGHT_JOIN, SqlKeywords.RIGHT_OUTER_JOIN -> JoinType.RIGHT_OUTER;
+            case SqlKeywords.FULL_JOIN, SqlKeywords.FULL_OUTER_JOIN -> JoinType.FULL_OUTER;
+            case SqlKeywords.LEFT_INNER_JOIN -> JoinType.LEFT_INNER;
+            case SqlKeywords.RIGHT_INNER_JOIN -> JoinType.RIGHT_INNER;
+            case SqlKeywords.CROSS_JOIN -> JoinType.CROSS;
             default -> throw new IllegalArgumentException("Неподдерживаемый тип соединения: " + joinTypeStr);
         };
     }
