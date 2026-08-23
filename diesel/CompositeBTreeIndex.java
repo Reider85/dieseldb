@@ -20,7 +20,8 @@ class CompositeBTreeIndex implements Index, Serializable {
     /**
      * Composite key wrapper that implements element-by-element comparison.
      */
-    record CompositeKey(List<Object> values) implements Comparable<CompositeKey> {
+    record CompositeKey(List<Object> values) implements Comparable<CompositeKey>, Serializable {
+        private static final long serialVersionUID = 1L;
         @Override
         public int compareTo(CompositeKey other) {
             int minLen = Math.min(values.size(), other.values.size());

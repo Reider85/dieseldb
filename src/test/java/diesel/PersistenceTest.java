@@ -7,9 +7,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -287,5 +293,211 @@ public class PersistenceTest {
         assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
         assertTrue(!new File(TABLE + ".csv").exists(), "CSV file deleted after drop");
         LOGGER.log(Level.INFO, "Test testDropTableDeletesFiles: DONE");
+    }
+
+    // --- Prompt 59: Serialized index state tests ---
+
+    @Test
+    void testBTreeIndexSerializedRoundTrip() {
+        LOGGER.log(Level.INFO, "Starting test: testBTreeIndexSerializedRoundTrip");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
+        db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE)", null);
+        for (int i = 1; i <= 20; i++) {
+            db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE) VALUES ('ID" + i + "', 'Name" + i + "', " + (20 + i) + ")", null);
+        }
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded");
+        assertTrue(loaded.getIndexes().containsKey("AGE"), "BTree index present after load");
+        assertTrue(loaded.getIndex("AGE") instanceof BTreeIndex, "Index is BTreeIndex (restored from serialization)");
+        // Verify the index actually works
+        List<Integer> hits = loaded.getIndex("AGE").search(25);
+        assertEquals(1, hits.size(), "BTree index search returns one hit");
+        LOGGER.log(Level.INFO, "Test testBTreeIndexSerializedRoundTrip: DONE");
+    }
+
+    @Test
+    void testHashIndexSerializedRoundTrip() {
+        LOGGER.log(Level.INFO, "Starting test: testHashIndexSerializedRoundTrip");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
+        db.executeQuery("CREATE HASH INDEX ON " + TABLE + " (NAME)", null);
+        for (int i = 1; i <= 20; i++) {
+            db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE) VALUES ('ID" + i + "', 'Name" + i + "', " + (20 + i) + ")", null);
+        }
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded");
+        assertTrue(loaded.getIndexes().containsKey("NAME"), "Hash index present after load");
+        assertTrue(loaded.getIndex("NAME") instanceof HashIndex, "Index is HashIndex (restored from serialization)");
+        List<Integer> hits = loaded.getIndex("NAME").search("Name10");
+        assertEquals(1, hits.size(), "Hash index search returns one hit");
+        LOGGER.log(Level.INFO, "Test testHashIndexSerializedRoundTrip: DONE");
+    }
+
+    @Test
+    void testUniqueIndexSerializedRoundTrip() {
+        LOGGER.log(Level.INFO, "Starting test: testUniqueIndexSerializedRoundTrip");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING)", null);
+        db.executeQuery("CREATE UNIQUE INDEX ON " + TABLE + " (NAME)", null);
+        for (int i = 1; i <= 10; i++) {
+            db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME) VALUES ('ID" + i + "', 'Unique" + i + "')", null);
+        }
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded");
+        assertTrue(loaded.getIndexes().containsKey("NAME"), "Unique index present after load");
+        assertTrue(loaded.getIndex("NAME") instanceof UniqueIndex, "Index is UniqueIndex (restored from serialization)");
+        List<Integer> hits = loaded.getIndex("NAME").search("Unique5");
+        assertEquals(1, hits.size(), "Unique index search returns one hit");
+        LOGGER.log(Level.INFO, "Test testUniqueIndexSerializedRoundTrip: DONE");
+    }
+
+    @Test
+    void testCompositeIndexSerializedRoundTrip() {
+        LOGGER.log(Level.INFO, "Starting test: testCompositeIndexSerializedRoundTrip");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, CITY STRING)", null);
+        db.executeQuery("CREATE INDEX ON " + TABLE + " (NAME, AGE)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID1', 'Alice', 25, 'NYC')", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID2', 'Bob', 30, 'LA')", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID3', 'Alice', 30, 'NYC')", null);
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded");
+        assertTrue(loaded.getIndexes().containsKey("NAME+AGE"), "Composite index present after load");
+        assertTrue(loaded.getIndex("NAME+AGE") instanceof CompositeBTreeIndex, "Index is CompositeBTreeIndex (restored from serialization)");
+        List<Integer> hits = loaded.getIndex("NAME+AGE").search(List.of("Alice", 25));
+        assertEquals(1, hits.size(), "Composite index search returns one hit");
+        LOGGER.log(Level.INFO, "Test testCompositeIndexSerializedRoundTrip: DONE");
+    }
+
+    @Test
+    void testCoveringIndexSerializedRoundTrip() {
+        LOGGER.log(Level.INFO, "Starting test: testCoveringIndexSerializedRoundTrip");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, SALARY DOUBLE)", null);
+        db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE) COVERING (NAME, SALARY)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID1', 'Alice', 25, 50000.0)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID2', 'Bob', 30, 60000.0)", null);
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded");
+        assertTrue(loaded.getIndexes().containsKey("AGE"), "Covering index present after load");
+        assertTrue(loaded.getIndex("AGE") instanceof CoveringBTreeIndex, "Index is CoveringBTreeIndex (restored from serialization)");
+        List<String> coverCols = loaded.getCoverColumnNames("AGE");
+        assertEquals(List.of("NAME", "SALARY"), coverCols, "Cover columns preserved");
+        LOGGER.log(Level.INFO, "Test testCoveringIndexSerializedRoundTrip: DONE");
+    }
+
+    @Test
+    void testClusteredIndexSerializedRoundTrip() {
+        LOGGER.log(Level.INFO, "Starting test: testClusteredIndexSerializedRoundTrip");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
+        for (int i = 1; i <= 20; i++) {
+            db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('User" + i + "')", null);
+        }
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded");
+        assertTrue(loaded.hasClusteredIndex(), "Clustered index present after load");
+        assertTrue(loaded.getClusteredIndex() instanceof BTreeClusteredIndex,
+                "Clustered index is BTreeClusteredIndex (restored from serialization)");
+        LOGGER.log(Level.INFO, "Test testClusteredIndexSerializedRoundTrip: DONE");
+    }
+
+    @Test
+    void testChecksumFailureTriggersRebuild() {
+        LOGGER.log(Level.INFO, "Starting test: testChecksumFailureTriggersRebuild");
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
+        db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE)", null);
+        db.executeQuery("CREATE HASH INDEX ON " + TABLE + " (NAME)", null);
+        for (int i = 1; i <= 10; i++) {
+            db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE) VALUES ('ID" + i + "', 'Name" + i + "', " + (20 + i) + ")", null);
+        }
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+
+        // Corrupt the serialized file: flip a byte in the middle to break checksums.
+        File file = new File(TABLE + ".table");
+        try {
+            byte[] data;
+            try (FileInputStream fis = new FileInputStream(file)) {
+                data = fis.readAllBytes();
+            }
+            // Flip a byte near the end of the secondary index section (skip the header).
+            int corruptPos = Math.min(data.length - 20, data.length / 2);
+            data[corruptPos] = (byte) (data[corruptPos] ^ 0xFF);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(data);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to corrupt file", e);
+        }
+
+        // Load the corrupted file — should not throw, indexes should be rebuilt from rows.
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded despite corrupted index data");
+        assertTrue(loaded.getIndexes().containsKey("AGE"), "BTree index rebuilt from rows after checksum failure");
+        assertTrue(loaded.getIndexes().containsKey("NAME"), "Hash index rebuilt from rows after checksum failure");
+        List<Integer> hits = loaded.getIndex("AGE").search(25);
+        assertEquals(1, hits.size(), "Rebuilt BTree index works correctly");
+        LOGGER.log(Level.INFO, "Test testChecksumFailureTriggersRebuild: DONE");
+    }
+
+    @Test
+    void testBackwardCompatV2File() {
+        LOGGER.log(Level.INFO, "Starting test: testBackwardCompatV2File");
+        // Simulate a v2 format file (no serialized indexes) by writing a Table
+        // with formatVersion=2 and no index data after deletedRows.
+        Database db = new Database();
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
+        db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE) VALUES ('ID1', 'Alice', 25)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE) VALUES ('ID2', 'Bob', 30)", null);
+
+        // Save current table state, then overwrite formatVersion to 2
+        // to simulate a legacy file.
+        db.getTable(TABLE).saveToSerializedFile(TABLE);
+        File file = new File(TABLE + ".table");
+        try {
+            // Re-write the table with formatVersion=2 by doing a manual serialization
+            // that skips the v3 index block.
+            Table table = db.getTable(TABLE);
+            try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(file))) {
+                // Simulate v2: use default serialization + sequences + deletedRows only
+                java.lang.reflect.Field fvField = Table.class.getDeclaredField("formatVersion");
+                fvField.setAccessible(true);
+                fvField.setInt(table, 2);
+                oos.writeObject(table);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create v2-format file", e);
+        }
+
+        // Load — should rebuild indexes from rows (backward compat).
+        Database reloaded = new Database();
+        Table loaded = Table.loadFromFile(reloaded, TABLE);
+        assertNotNull(loaded, "Table loaded from v2 format file");
+        assertTrue(loaded.getIndexes().containsKey("AGE"), "BTree index rebuilt from rows (v2 compat)");
+        List<Integer> hits = loaded.getIndex("AGE").search(25);
+        assertEquals(1, hits.size(), "Rebuilt index works correctly after v2 load");
+        LOGGER.log(Level.INFO, "Test testBackwardCompatV2File: DONE");
     }
 }

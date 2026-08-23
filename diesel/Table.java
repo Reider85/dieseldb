@@ -1,6 +1,8 @@
 package diesel;
 
 import java.io.BufferedWriter;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -41,6 +43,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.zip.CRC32;
 
 /**
  * Contract implemented by every index (secondary and clustered) that maps
@@ -127,7 +130,7 @@ interface Index {
  */
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
-    private static final int CURRENT_FORMAT_VERSION = 2;
+    private static final int CURRENT_FORMAT_VERSION = 3;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final String name;
     private final List<String> columns;
@@ -1179,6 +1182,22 @@ class Table implements Serializable {
         }
     }
 
+    private static byte[] serializeToBytes(Serializable obj) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        new ObjectOutputStream(baos).writeObject(obj);
+        return baos.toByteArray();
+    }
+
+    private static long computeChecksum(Serializable obj) throws IOException {
+        return computeChecksumFromBytes(serializeToBytes(obj));
+    }
+
+    private static long computeChecksumFromBytes(byte[] data) {
+        CRC32 crc = new CRC32();
+        crc.update(data);
+        return crc.getValue();
+    }
+
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
         // Only transient fields need explicit serialization.
@@ -1186,6 +1205,21 @@ class Table implements Serializable {
         // indexDefinitions, coverColumnDefinitions) are handled by defaultWriteObject().
         oos.writeObject(sequences);
         oos.writeObject(deletedRows != null ? deletedRows : new BitSet());
+        // Serialize secondary indexes with checksums for integrity validation.
+        oos.writeInt(indexes.size());
+        for (Map.Entry<String, Index> entry : indexes.entrySet()) {
+            oos.writeUTF(entry.getKey());
+            byte[] indexBytes = serializeToBytes((Serializable) entry.getValue());
+            oos.writeObject(indexBytes);
+            oos.writeLong(computeChecksum((Serializable) entry.getValue()));
+        }
+        // Serialize clustered index.
+        oos.writeBoolean(clusteredIndex != null);
+        if (clusteredIndex != null) {
+            byte[] clusterBytes = serializeToBytes(clusteredIndex);
+            oos.writeObject(clusterBytes);
+            oos.writeLong(computeChecksum(clusteredIndex));
+        }
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
@@ -1210,9 +1244,64 @@ class Table implements Serializable {
         } catch (Exception e) {
             this.deletedRows = new BitSet();
         }
-        if (hasClusteredIndex) {
+        // Format v3+ stores serialized indexes with checksums.
+        boolean restoredClustered = false;
+        if (formatVersion >= 3) {
+            // Restore secondary indexes from serialized data.
+            int indexCount = ois.readInt();
+            for (int i = 0; i < indexCount; i++) {
+                String key = ois.readUTF();
+                byte[] indexBytes = (byte[]) ois.readObject();
+                long storedChecksum = ois.readLong();
+                long computedChecksum = computeChecksumFromBytes(indexBytes);
+                if (storedChecksum != computedChecksum) {
+                    LOGGER.log(Level.WARNING,
+                            "Checksum mismatch for index ''{0}'' in table {1}, will rebuild",
+                            new Object[]{key, name});
+                    continue;
+                }
+                try {
+                    Index idx = (Index) new ObjectInputStream(
+                            new ByteArrayInputStream(indexBytes)).readObject();
+                    indexes.put(key, idx);
+                    LOGGER.log(Level.FINE,
+                            "Restored index ''{0}'' from serialized data for table {1}",
+                            new Object[]{key, name});
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING,
+                            "Failed to deserialize index ''{0}'' in table {1}: {2}",
+                            new Object[]{key, name, e.getMessage()});
+                }
+            }
+            // Restore clustered index from serialized data.
+            boolean hasSerializedClustered = ois.readBoolean();
+            if (hasSerializedClustered) {
+                byte[] clusterBytes = (byte[]) ois.readObject();
+                long storedChecksum = ois.readLong();
+                long computedChecksum = computeChecksumFromBytes(clusterBytes);
+                if (storedChecksum == computedChecksum) {
+                    try {
+                        this.clusteredIndex = (BTreeClusteredIndex) new ObjectInputStream(
+                                new ByteArrayInputStream(clusterBytes)).readObject();
+                        restoredClustered = true;
+                        LOGGER.log(Level.FINE,
+                                "Restored clustered index from serialized data for table {0}",
+                                name);
+                    } catch (Exception e) {
+                        LOGGER.log(Level.WARNING,
+                                "Failed to deserialize clustered index for table {0}: {1}",
+                                new Object[]{name, e.getMessage()});
+                    }
+                } else {
+                    LOGGER.log(Level.WARNING,
+                            "Checksum mismatch for clustered index in table {0}, will rebuild",
+                            name);
+                }
+            }
+        }
+        // Fallback: rebuild clustered index from rows if not restored from serialized data.
+        if (!restoredClustered && hasClusteredIndex) {
             this.clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
-            // Rows are already sorted by key (clustered table); bulk-load in O(N).
             List<Object> keys = new ArrayList<>(rows.size());
             List<Integer> indices = new ArrayList<>(rows.size());
             for (int i = 0; i < rows.size(); i++) {
@@ -1223,10 +1312,12 @@ class Table implements Serializable {
                 }
             }
             clusteredIndex.bulkLoad(keys, indices);
+            LOGGER.log(Level.FINE,
+                    "Rebuilt clustered index from rows for table {0}", name);
         }
-        // Rebuild all secondary indexes from their persisted definitions.
+        // Rebuild only secondary indexes that weren't restored from serialized data.
         if (indexDefinitions != null && !indexDefinitions.isEmpty()) {
-            rebuildSecondaryIndexes();
+            rebuildMissingSecondaryIndexes();
         } else {
             LOGGER.log(Level.FINE,
                     "No secondary index definitions found for table {0} during deserialization",
@@ -1819,6 +1910,153 @@ class Table implements Serializable {
                     btree.bulkLoad(sortedKeys, sortedIdx);
                 } else {
                     // Fallback: one-by-one insert for Hash/Unique indexes.
+                    for (int i = 0; i < n; i++) {
+                        Object key = rows.get(i).get(column);
+                        if (key != null) {
+                            index.insert(key, i);
+                        }
+                    }
+                }
+                return Map.entry(column, index);
+            }));
+        }
+
+        for (Future<Map.Entry<String, Index>> future : futures) {
+            try {
+                Map.Entry<String, Index> result = future.get();
+                if (result != null) {
+                    indexes.put(result.getKey(), result.getValue());
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Secondary index build interrupted", e);
+            } catch (ExecutionException e) {
+                throw new RuntimeException("Secondary index build failed", e.getCause());
+            }
+        }
+    }
+
+    /**
+     * Rebuilds only secondary indexes that are missing from the in-memory
+     * {@code indexes} map. Used during deserialization when some indexes were
+     * restored from serialized data and others need to be rebuilt from rows.
+     */
+    private void rebuildMissingSecondaryIndexes() {
+        if (indexDefinitions.isEmpty()) return;
+        int n = rows.size();
+
+        List<Future<Map.Entry<String, Index>>> futures = new ArrayList<>();
+        for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
+            if (indexes.containsKey(entry.getKey())) continue;
+            futures.add(INDEX_BUILD_POOL.submit(() -> {
+                String column = entry.getKey();
+                Class<?> keyType = columnTypes.get(column);
+                Index index;
+                switch (entry.getValue()) {
+                    case ErrorMessages.INDEX_BTREE:
+                        index = new BTreeIndex(keyType);
+                        break;
+                    case ErrorMessages.INDEX_HASH:
+                        index = new HashIndex(keyType);
+                        break;
+                    case ErrorMessages.INDEX_UNIQUE:
+                        index = new UniqueIndex(keyType);
+                        break;
+                    case ErrorMessages.INDEX_COMPOSITE_BTREE: {
+                        String[] colNames = column.split("\\+");
+                        List<String> cols = List.of(colNames);
+                        CompositeBTreeIndex compIndex = new CompositeBTreeIndex(cols);
+                        List<List<Object>> compositeKeys = new ArrayList<>(n);
+                        List<Integer> compositeIndices = new ArrayList<>(n);
+                        for (int i = 0; i < n; i++) {
+                            List<Object> ck = new ArrayList<>(cols.size());
+                            boolean skip = false;
+                            for (String c : cols) {
+                                Object val = rows.get(i).get(c);
+                                if (val == null) { skip = true; break; }
+                                ck.add(val);
+                            }
+                            if (!skip) {
+                                compositeKeys.add(ck);
+                                compositeIndices.add(i);
+                            }
+                        }
+                        List<int[]> cpairs = new ArrayList<>(compositeKeys.size());
+                        for (int i = 0; i < compositeKeys.size(); i++) cpairs.add(new int[]{i});
+                        cpairs.sort((a, b) -> {
+                            CompositeBTreeIndex.CompositeKey k1 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(a[0]));
+                            CompositeBTreeIndex.CompositeKey k2 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(b[0]));
+                            return k1.compareTo(k2);
+                        });
+                        List<List<Object>> sortedCK = new ArrayList<>(compositeKeys.size());
+                        List<Integer> sortedCI = new ArrayList<>(compositeKeys.size());
+                        for (int[] p : cpairs) {
+                            sortedCK.add(compositeKeys.get(p[0]));
+                            sortedCI.add(compositeIndices.get(p[0]));
+                        }
+                        compIndex.bulkLoad(sortedCK, sortedCI);
+                        return Map.entry(column, compIndex);
+                    }
+                    case ErrorMessages.INDEX_COVERING_BTREE: {
+                        CoveringBTreeIndex coverIndex = new CoveringBTreeIndex(keyType, column, getCoverColumnNames(column));
+                        List<Object> cKeys = new ArrayList<>(n);
+                        List<Integer> cIndices = new ArrayList<>(n);
+                        for (int i = 0; i < n; i++) {
+                            Object key = rows.get(i).get(column);
+                            if (key != null) {
+                                cKeys.add(key);
+                                cIndices.add(i);
+                            }
+                        }
+                        List<int[]> cPairs = new ArrayList<>(cKeys.size());
+                        for (int i = 0; i < cKeys.size(); i++) cPairs.add(new int[]{i});
+                        cPairs.sort((a, b) -> {
+                            @SuppressWarnings("unchecked")
+                            Comparable<Object> c1 = (Comparable<Object>) cKeys.get(a[0]);
+                            return c1.compareTo(cKeys.get(b[0]));
+                        });
+                        List<Object> sortedCK2 = new ArrayList<>(cKeys.size());
+                        List<Integer> sortedCI2 = new ArrayList<>(cKeys.size());
+                        for (int[] p : cPairs) {
+                            sortedCK2.add(cKeys.get(p[0]));
+                            sortedCI2.add(cIndices.get(p[0]));
+                        }
+                        coverIndex.bulkLoadWithCover(sortedCK2, sortedCI2, rows);
+                        return Map.entry(column, coverIndex);
+                    }
+                    default:
+                        LOGGER.log(Level.WARNING,
+                                "Unknown index type ''{0}'' for column ''{1}'' in table {2}, skipping rebuild",
+                                new Object[]{entry.getValue(), column, name});
+                        return null;
+                }
+                if (index instanceof BTreeIndex btree) {
+                    List<Object> keys = new ArrayList<>(n);
+                    List<Integer> indices = new ArrayList<>(n);
+                    for (int i = 0; i < n; i++) {
+                        Object key = rows.get(i).get(column);
+                        if (key != null) {
+                            keys.add(key);
+                            indices.add(i);
+                        }
+                    }
+                    List<int[]> pairs = new ArrayList<>(keys.size());
+                    for (int i = 0; i < keys.size(); i++) {
+                        pairs.add(new int[]{i});
+                    }
+                    pairs.sort((a, b) -> {
+                        @SuppressWarnings("unchecked")
+                        Comparable<Object> c1 = (Comparable<Object>) keys.get(a[0]);
+                        return c1.compareTo(keys.get(b[0]));
+                    });
+                    List<Object> sortedKeys = new ArrayList<>(keys.size());
+                    List<Integer> sortedIdx = new ArrayList<>(keys.size());
+                    for (int[] pair : pairs) {
+                        sortedKeys.add(keys.get(pair[0]));
+                        sortedIdx.add(indices.get(pair[0]));
+                    }
+                    btree.bulkLoad(sortedKeys, sortedIdx);
+                } else {
                     for (int i = 0; i < n; i++) {
                         Object key = rows.get(i).get(column);
                         if (key != null) {

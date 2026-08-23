@@ -2,179 +2,179 @@
 
 ## Priority Queue (Pareto 20% - Critical First)
 
-| òÄÖ | ¦áTÂ¦-TÂTÃTÁ | ¦ßTÀ¦¬¦-TÀ¦¬TÂ¦¦TÂ | ¦ä¦-¦¦¦¬TË | ¦ßTÀ¦-¦-¦¬¦¦¦-¦- |
+| ï¿½ï¿½ï¿½ | ï¿½ï¿½TÂ¦-Tï¿½Tï¿½Tï¿½ | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½TÂ¦ï¿½Tï¿½ | ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½Tï¿½ | ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½- |
 |---|--------|-----------|-------|----------|
-| 1 | òÝÌ TODO | CRITICAL | SelectQuery.java, QueryParser.java | JOIN OR òÆÒ OOM (¦+¦¦¦¦¦-TÀTÂ¦-¦-¦- ¦¬TÀ¦-¦¬¦¬¦-¦¦¦+¦¦¦-¦¬¦¦) |
-| 5 | òÝÌ TODO | CRITICAL | QueryParser.java | IN + AND ¦¬¦¦¦-¦-TÀ¦¬TÀTÃ¦¦TÂTÁTÏ (¦¦TÀ¦¬TÂ¦¬TÇ¦-¦-TÏ TÄ¦¬¦¬TÌTÂTÀ¦-TÆ¦¬TÏ) |
-| 3 | òÝÌ TODO | HIGH | SelectQuery.java | GROUP BY ¦¬¦- TÃ¦-¦¬¦¦¦-¦¬TÌ¦-TË¦- ¦¬¦-¦-TÇ¦¦¦-¦¬TÏ¦- òÆÒ 1 TÁTÂTÀ¦-¦¦¦- ¦-¦-¦¦TÁTÂ¦- N |
-| 4 | òÝÌ TODO | HIGH | QueryParser.java | IN TÁ¦- TÁ¦¬¦¬TÁ¦¦¦-¦- ¦¬¦-¦-TÇ¦¦¦-¦¬¦¦ ¦-¦¦ TÀ¦-¦-¦-TÂ¦-¦¦TÂ |
-| 22 | òÝÌ TODO | HIGH | Multiple (13 ¦-¦¦TÁTÂ) | Null Pointer Dereference |
-| 17 | òÝÌ TODO | MEDIUM | pom.xml, tests | ¦à¦-¦¬¦+¦¦¦¬¦¬TÂTÌ TÂ¦¦TÁTÂTË ¦-¦- @LargeTest ¦+¦¬TÏ CI TÁ¦¦¦-TÀ¦-TÁTÂ¦¬ |
-| 29 | òÜÔ DONE (2026-08-17) | MEDIUM | SelectQuery.java | Refactor execute() complexity=59 |
-| 28 | òÜÔ DONE (2026-08-17) | MEDIUM | QueryParser.java | Cognitive Complexity ¦-¦¬TÂ¦¬¦-¦¬¦¬¦-TÆ¦¬TÏ |
-| 41 | òÜÔ DONE (2026-08-19) | HIGH | QueryParser.java, SubqueryParser.java, SelectQuery.java | ¦×¦-¦-¦¦¦-¦- '[A-Za-z0-9_]' ¦-¦- '\w' ¦- regex (S6353, 119 ¦¬TÀ¦-¦-¦¬¦¦¦-) |
-| 42 | òÜÔ DONE (2026-08-19) | CRITICAL | QueryParser.java, SubqueryParser.java, SelectQuery.java | ¦à¦¦TÄ¦-¦¦TÂ¦-TÀ¦¬¦-¦¦ ¦-¦¦TÂ¦-¦+¦-¦- TÁ ¦-TËTÁ¦-¦¦¦-¦¦ Cognitive Complexity (S3776, 92 ¦¬TÀ¦-¦-¦¬¦¦¦-TË) |
-| 43 | òÜÔ DONE (2026-08-19) | MEDIUM | Database.java, SelectQuery.java, ConditionEvaluator.java, ExplainQuery.java, DatabaseClient.java, CliRepl.java, SubqueryParser.java, Table.java, BTreeIndex.java, BTreeClusteredIndex.java, DatabaseServer.java, DeleteQuery.java | Pattern matching ¦+¦¬TÏ instanceof (S6201, 55 ¦¬TÀ¦¦¦-¦-TÀ¦-¦¬¦-¦-¦-¦-¦¬¦¦) |
-| 44 | òÜÔ DONE (2026-08-19) | HIGH | QueryParser.java, SubqueryParser.java, SelectQuery.java, RegexRobustnessTest.java | ¦ãTÁTÂTÀ¦-¦-¦¦¦-¦¬¦¦ TÀ¦¦¦¦TÃTÀTÁ¦¬¦-¦-TËTÅ ¦¬¦-TÂTÂ¦¦TÀ¦-¦-¦- ¦- regex (S5998, 57 ¦¬TÀ¦-¦-¦¬¦¦¦-) + fix parseRightPart bug |
-| 45 | ? DONE (2026-08-19) | MEDIUM | 14 engine files | Èçâëå÷åíèå äóáëèðóþùèõñÿ ñòðîêîâûõ ëèòåðàëîâ â ErrorMessages (S1192) |
-| 46 | ? DONE (2026-08-19) | LOW | 7 files | Óäàëåíèå íåèñïîëüçóåìûõ èìïîðòîâ (S1128, 13 issues) |
-| 47 | ? DONE (2026-08-19) | LOW | SelectQuery, QueryParser, ConditionEvaluator, SubqueryParser | Îãðàíè÷åíèå break/continue â öèêëàõ (S135) |
-| 48 | ? DONE (2026-08-19) | MEDIUM | QueryParser, SelectQuery, SubqueryParser | Óäàëåíèå íåèñïîëüçóåìûõ ïàðàìåòðîâ ìåòîäîâ (S1172, 10 params) |
-| 49 | ? DONE (2026-08-19) | HIGH | SelectQuery, 10 test files | Çàïîëíåíèå ïóñòûõ áëîêîâ êîäà (S108, 25 blocks) |
-| 50 | ? DONE (2026-08-19) | MEDIUM | — | Deprecated setScale() (S1874) — audit, 0 issues |
+| 1 | ï¿½ï¿½ï¿½ TODO | CRITICAL | SelectQuery.java, QueryParser.java | JOIN OR ï¿½ï¿½ï¿½ OOM (ï¿½+ï¿½ï¿½ï¿½ï¿½ï¿½-Tï¿½TÂ¦-ï¿½-ï¿½- ï¿½ï¿½Tï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½+ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½) |
+| 5 | ï¿½ï¿½ï¿½ TODO | CRITICAL | QueryParser.java | IN + AND ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½-Tï¿½ï¿½ï¿½Tï¿½TÃ¦ï¿½Tï¿½Tï¿½Tï¿½ (ï¿½ï¿½Tï¿½ï¿½ï¿½TÂ¦ï¿½TÇ¦-ï¿½-Tï¿½ TÄ¦ï¿½ï¿½ï¿½Tï¿½Tï¿½Tï¿½ï¿½-TÆ¦ï¿½Tï¿½) |
+| 3 | ï¿½ï¿½ï¿½ TODO | HIGH | SelectQuery.java | GROUP BY ï¿½ï¿½ï¿½- TÃ¦-ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½TÌ¦-TË¦- ï¿½ï¿½ï¿½-ï¿½-TÇ¦ï¿½ï¿½-ï¿½ï¿½TÏ¦- ï¿½ï¿½ï¿½ 1 Tï¿½Tï¿½Tï¿½ï¿½-ï¿½ï¿½ï¿½- ï¿½-ï¿½-ï¿½ï¿½Tï¿½TÂ¦- N |
+| 4 | ï¿½ï¿½ï¿½ TODO | HIGH | QueryParser.java | IN Tï¿½ï¿½- Tï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½- ï¿½ï¿½ï¿½-ï¿½-TÇ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ ï¿½-ï¿½ï¿½ Tï¿½ï¿½-ï¿½-ï¿½-TÂ¦-ï¿½ï¿½Tï¿½ |
+| 22 | ï¿½ï¿½ï¿½ TODO | HIGH | Multiple (13 ï¿½-ï¿½ï¿½Tï¿½Tï¿½) | Null Pointer Dereference |
+| 17 | ï¿½ï¿½ï¿½ TODO | MEDIUM | pom.xml, tests | ï¿½ï¿½-ï¿½ï¿½ï¿½+ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½Tï¿½ TÂ¦ï¿½Tï¿½Tï¿½Tï¿½ ï¿½-ï¿½- @LargeTest ï¿½+ï¿½ï¿½Tï¿½ CI Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½-Tï¿½TÂ¦ï¿½ |
+| 29 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | MEDIUM | SelectQuery.java | Refactor execute() complexity=59 |
+| 28 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | MEDIUM | QueryParser.java | Cognitive Complexity ï¿½-ï¿½ï¿½TÂ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-TÆ¦ï¿½Tï¿½ |
+| 41 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | HIGH | QueryParser.java, SubqueryParser.java, SelectQuery.java | ï¿½×¦-ï¿½-ï¿½ï¿½ï¿½-ï¿½- '[A-Za-z0-9_]' ï¿½-ï¿½- '\w' ï¿½- regex (S6353, 119 ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-) |
+| 42 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | CRITICAL | QueryParser.java, SubqueryParser.java, SelectQuery.java | ï¿½à¦¦TÄ¦-ï¿½ï¿½TÂ¦-Tï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ ï¿½-ï¿½ï¿½TÂ¦-ï¿½+ï¿½-ï¿½- Tï¿½ ï¿½-Tï¿½Tï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ Cognitive Complexity (S3776, 92 ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-Tï¿½) |
+| 43 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | MEDIUM | Database.java, SelectQuery.java, ConditionEvaluator.java, ExplainQuery.java, DatabaseClient.java, CliRepl.java, SubqueryParser.java, Table.java, BTreeIndex.java, BTreeClusteredIndex.java, DatabaseServer.java, DeleteQuery.java | Pattern matching ï¿½+ï¿½ï¿½Tï¿½ instanceof (S6201, 55 ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-Tï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½) |
+| 44 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | HIGH | QueryParser.java, SubqueryParser.java, SelectQuery.java, RegexRobustnessTest.java | ï¿½ï¿½Tï¿½Tï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ Tï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½Tï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-Tï¿½Tï¿½ ï¿½ï¿½ï¿½-Tï¿½TÂ¦ï¿½Tï¿½ï¿½-ï¿½-ï¿½- ï¿½- regex (S5998, 57 ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-) + fix parseRightPart bug |
+| 45 | ? DONE (2026-08-19) | MEDIUM | 14 engine files | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ ErrorMessages (S1192) |
+| 46 | ? DONE (2026-08-19) | LOW | 7 files | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (S1128, 13 issues) |
+| 47 | ? DONE (2026-08-19) | LOW | SelectQuery, QueryParser, ConditionEvaluator, SubqueryParser | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ break/continue ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (S135) |
+| 48 | ? DONE (2026-08-19) | MEDIUM | QueryParser, SelectQuery, SubqueryParser | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (S1172, 10 params) |
+| 49 | ? DONE (2026-08-19) | HIGH | SelectQuery, 10 test files | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (S108, 25 blocks) |
+| 50 | ? DONE (2026-08-19) | MEDIUM | ï¿½ | Deprecated setScale() (S1874) ï¿½ audit, 0 issues |
 
 ## Full Status (Prompts 1-100)
 
 ### Section 0: Priority Retrospective Fixes (1-20)
 
-| òÄÖ | ¦áTÂ¦-TÂTÃTÁ | ¦Ý¦-¦¬¦-¦-¦-¦¬¦¦ | ¦ßTÀ¦¬¦-TÀ¦¬TÂ¦¦TÂ |
+| ï¿½ï¿½ï¿½ | ï¿½ï¿½TÂ¦-Tï¿½Tï¿½Tï¿½ | ï¿½Ý¦-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½TÂ¦ï¿½Tï¿½ |
 |---|--------|----------|-----------|
-| 1 | òÝÌ TODO | JOIN TÁ OR ¦- TÃTÁ¦¬¦-¦-¦¬¦¬ (OOM) | CRITICAL |
-| 2 | òÝÌ TODO | ¦Þ¦¬TÂ¦¬¦-¦¬¦¬¦-TÆ¦¬TÏ ¦¬¦-¦-TÏTÂ¦¬ Cross Join (streaming) | HIGH |
-| 3 | òÝÌ TODO | GROUP BY TÁ TÃ¦-¦¬¦¦¦-¦¬TÌ¦-TË¦-¦¬ ¦¬¦-¦-TÇ¦¦¦-¦¬TÏ¦-¦¬ | HIGH |
-| 4 | òÝÌ TODO | IN TÁ¦- TÁ¦¬¦¬TÁ¦¦¦-¦- ¦¬¦-¦-TÇ¦¦¦-¦¬¦¦ | HIGH |
-| 5 | òÝÌ TODO | IN TÁ ¦+¦-¦¬¦-¦¬¦-¦¬TÂ¦¦¦¬TÌ¦-TË¦-¦¬ TÃTÁ¦¬¦-¦-¦¬TÏ¦-¦¬ (AND/OR) | CRITICAL |
-| 6 | òÝÌ TODO | LIMIT ¦-¦¦¦¬ OFFSET | MEDIUM |
-| 7 | òÝÌ TODO | OFFSET ¦-¦¦¦¬ LIMIT | MEDIUM |
-| 8 | òÝÌ TODO | LIMIT + OFFSET ¦-¦-¦¦TÁTÂ¦¦ | MEDIUM |
-| 9 | òÝÌ TODO | LIMIT ¦- ¦¬¦-¦+¦¬¦-¦¬TÀ¦-TÁ¦-TÅ | MEDIUM |
-| 10 | òÝÌ TODO | Hash Join ¦-¦¬TÂ¦¬¦-¦¬¦¬¦-TÆ¦¬TÏ | MEDIUM |
-| 11 | òÝÌ TODO | EXPLAIN ¦¬¦¬¦-¦- ¦-TË¦¬¦-¦¬¦-¦¦¦-¦¬TÏ | LOW |
-| 12 | òÝÌ TODO | ¦Û¦¬¦-¦¬TÂ ¦-¦- ¦-¦-¦¦TÁ. ¦¦¦-¦¬¦¬TÇ¦¦TÁTÂ¦-¦- TÁTÂTÀ¦-¦¦ | MEDIUM |
-| 13 | òÝÌ TODO | ¦ã¦¬TÃTÇTÈ¦¦¦-¦¬¦¦ ¦-TÈ¦¬¦-¦-¦¦ OOM | MEDIUM |
-| 14 | òÝÌ TODO | ¦Ð¦-TÂ¦-¦-¦-TÂ¦¬TÇ¦¦TÁ¦¦¦-TÏ TÁTÂ¦-TÂ¦¬TÁTÂ¦¬¦¦¦- | LOW |
-| 15 | òÝÌ TODO | ¦Ø¦-¦+¦¦¦¦TÁTË ¦+¦¬TÏ JOIN | MEDIUM |
-| 16 | òÝÌ TODO | ¦ÚTÍTÈ¦¬TÀ¦-¦-¦-¦-¦¬¦¦ ¦¬¦¬¦-¦-¦-¦- | LOW |
-| 17 | òÝÌ TODO | ¦ã¦-¦¦¦-TÌTÈ¦¦¦-¦¬¦¦ heap ¦+¦¬TÏ TÂ¦¦TÁTÂ¦-¦- | MEDIUM |
-| 18 | òÜÔ DONE (2026-08-16) | ¦ßTÀ¦-TÄ¦¬¦¬¦¬TÀ¦-¦-TÉ¦¬¦¦ ¦¬TÀ¦-¦¬¦¬¦-¦-¦+¦¬TÂ¦¦¦¬TÌ¦-¦-TÁTÂ¦¬ | LOW |
-| 19 | òÝÌ TODO | ¦â¦¦TÁTÂTË ¦-¦- TÀ¦¦¦¦TÀ¦¦TÁTÁ¦¬TÎ | MEDIUM |
-| 20 | òÜÔ DONE (2026-08-16) | ¦Ô¦-¦¦TÃ¦-¦¦¦-TÂ¦-TÆ¦¬TÏ ¦-¦¦TÀ¦-¦-¦¬TÇ¦¦¦-¦¬¦¦ | LOW |
+| 1 | ï¿½ï¿½ï¿½ TODO | JOIN Tï¿½ OR ï¿½- Tï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ (OOM) | CRITICAL |
+| 2 | ï¿½ï¿½ï¿½ TODO | ï¿½Þ¦ï¿½TÂ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-TÆ¦ï¿½Tï¿½ ï¿½ï¿½ï¿½-ï¿½-Tï¿½TÂ¦ï¿½ Cross Join (streaming) | HIGH |
+| 3 | ï¿½ï¿½ï¿½ TODO | GROUP BY Tï¿½ TÃ¦-ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½TÌ¦-TË¦-ï¿½ï¿½ ï¿½ï¿½ï¿½-ï¿½-TÇ¦ï¿½ï¿½-ï¿½ï¿½TÏ¦-ï¿½ï¿½ | HIGH |
+| 4 | ï¿½ï¿½ï¿½ TODO | IN Tï¿½ï¿½- Tï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½- ï¿½ï¿½ï¿½-ï¿½-TÇ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ | HIGH |
+| 5 | ï¿½ï¿½ï¿½ TODO | IN Tï¿½ ï¿½+ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½TÂ¦ï¿½ï¿½ï¿½TÌ¦-TË¦-ï¿½ï¿½ Tï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-ï¿½ï¿½TÏ¦-ï¿½ï¿½ (AND/OR) | CRITICAL |
+| 6 | ï¿½ï¿½ï¿½ TODO | LIMIT ï¿½-ï¿½ï¿½ï¿½ï¿½ OFFSET | MEDIUM |
+| 7 | ï¿½ï¿½ï¿½ TODO | OFFSET ï¿½-ï¿½ï¿½ï¿½ï¿½ LIMIT | MEDIUM |
+| 8 | ï¿½ï¿½ï¿½ TODO | LIMIT + OFFSET ï¿½-ï¿½-ï¿½ï¿½Tï¿½TÂ¦ï¿½ | MEDIUM |
+| 9 | ï¿½ï¿½ï¿½ TODO | LIMIT ï¿½- ï¿½ï¿½ï¿½-ï¿½+ï¿½ï¿½ï¿½-ï¿½ï¿½Tï¿½ï¿½-Tï¿½ï¿½-Tï¿½ | MEDIUM |
+| 10 | ï¿½ï¿½ï¿½ TODO | Hash Join ï¿½-ï¿½ï¿½TÂ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-TÆ¦ï¿½Tï¿½ | MEDIUM |
+| 11 | ï¿½ï¿½ï¿½ TODO | EXPLAIN ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½- ï¿½-TË¦ï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½Tï¿½ | LOW |
+| 12 | ï¿½ï¿½ï¿½ TODO | ï¿½Û¦ï¿½ï¿½-ï¿½ï¿½Tï¿½ ï¿½-ï¿½- ï¿½-ï¿½-ï¿½ï¿½Tï¿½. ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½TÇ¦ï¿½Tï¿½TÂ¦-ï¿½- Tï¿½Tï¿½Tï¿½ï¿½-ï¿½ï¿½ | MEDIUM |
+| 13 | ï¿½ï¿½ï¿½ TODO | ï¿½ã¦¬Tï¿½Tï¿½TÈ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ ï¿½-TÈ¦ï¿½ï¿½-ï¿½-ï¿½ï¿½ OOM | MEDIUM |
+| 14 | ï¿½ï¿½ï¿½ TODO | ï¿½Ð¦-TÂ¦-ï¿½-ï¿½-TÂ¦ï¿½TÇ¦ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ Tï¿½TÂ¦-TÂ¦ï¿½Tï¿½TÂ¦ï¿½ï¿½ï¿½ï¿½- | LOW |
+| 15 | ï¿½ï¿½ï¿½ TODO | ï¿½Ø¦-ï¿½+ï¿½ï¿½ï¿½ï¿½Tï¿½Tï¿½ ï¿½+ï¿½ï¿½Tï¿½ JOIN | MEDIUM |
+| 16 | ï¿½ï¿½ï¿½ TODO | ï¿½ï¿½Tï¿½TÈ¦ï¿½Tï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½- | LOW |
+| 17 | ï¿½ï¿½ï¿½ TODO | ï¿½ï¿½-ï¿½ï¿½ï¿½-Tï¿½TÈ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ heap ï¿½+ï¿½ï¿½Tï¿½ TÂ¦ï¿½Tï¿½TÂ¦-ï¿½- | MEDIUM |
+| 18 | ï¿½ï¿½ï¿½ DONE (2026-08-16) | ï¿½ï¿½Tï¿½ï¿½-TÄ¦ï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½ï¿½-ï¿½-TÉ¦ï¿½ï¿½ï¿½ ï¿½ï¿½Tï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½-ï¿½+ï¿½ï¿½TÂ¦ï¿½ï¿½ï¿½TÌ¦-ï¿½-Tï¿½TÂ¦ï¿½ | LOW |
+| 19 | ï¿½ï¿½ï¿½ TODO | ï¿½â¦¦Tï¿½Tï¿½Tï¿½ ï¿½-ï¿½- Tï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½ï¿½ï¿½Tï¿½Tï¿½ï¿½ï¿½Tï¿½ | MEDIUM |
+| 20 | ï¿½ï¿½ï¿½ DONE (2026-08-16) | ï¿½Ô¦-ï¿½ï¿½TÃ¦-ï¿½ï¿½ï¿½-TÂ¦-TÆ¦ï¿½Tï¿½ ï¿½-ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½TÇ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ | LOW |
 
 ### Section 1: Sonar Code Smells (21-40)
 
-| òÄÖ | ¦áTÂ¦-TÂTÃTÁ | ¦Ý¦-¦¬¦-¦-¦-¦¬¦¦ | ¦ßTÀ¦¬¦-TÀ¦¬TÂ¦¦TÂ |
+| ï¿½ï¿½ï¿½ | ï¿½ï¿½TÂ¦-Tï¿½Tï¿½Tï¿½ | ï¿½Ý¦-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½TÂ¦ï¿½Tï¿½ |
 |---|--------|----------|-----------|
-| 21 | òÜÔ DONE (2026-08-16) | StackOverflow ¦- regex (S5998) | HIGH |
-| 22 | òÜÔ DONE (2026-08-16) | Null Pointer Dereference (S2259) | HIGH |
-| 23 | òÜÔ DONE (2026-08-16) | ¦ã¦+¦-¦¬¦¦¦-¦¬¦¦ ¦-TÑTÀTÂ¦-¦-¦¦¦- ¦¦¦-¦+¦- (S2583, S108, S1144, S1068) | LOW |
-| 24 | òÜÔ DONE (2026-08-16) | Double Brace Initialization (S3599) | LOW |
-| 25 | òÜÔ DONE (2026-08-16) | ¦Ø¦¦¦-¦-TÀ¦¬TÀ¦-¦-¦-¦-¦¬¦¦ ¦-¦-¦¬¦-TÀ¦-TÉ¦-¦¦¦-TËTÅ ¦¬¦-¦-TÇ¦¦¦-¦¬¦¦ (S899) | MEDIUM |
-| 26 | òÜÔ DONE (2026-08-17) | Regex grouping (S5850) | MEDIUM |
-| 27 | òÜÔ DONE (2026-08-17) | Regex repeated patterns (S5842) | MEDIUM |
-| 28 | òÜÔ DONE (2026-08-17) | Cognitive Complexity QueryParser (S3776) | MEDIUM |
-| 29 | òÜÔ DONE (2026-08-17) | Refactor SelectQuery.execute() (complexity=59) | HIGH |
-| 30 | òÜÔ DONE (2026-08-17) | ¦Þ¦¬TÂ¦¬¦-¦¬¦¬¦-TÆ¦¬TÏ regex (S5869, S6353) | LOW |
-| 31 | òÜÔ DONE (2026-08-17) | String literals ¦- ¦¦¦-¦-TÁTÂ¦-¦-TÂTË (S1192) | LOW |
-| 32 | òÜÔ DONE (2026-08-18) | ¦ß¦-TÀ¦-¦-¦¦TÂTÀTË ¦-¦¦TÂ¦-¦+¦-¦- (S107) | LOW |
-| 33 | òÜÔ DONE (2026-08-18) | Boolean null (S2447) | MEDIUM |
-| 34 | òÜÔ DONE (2026-08-18) | Serializable ¦¬¦-¦¬TÏ (S1948) | LOW |
-| 35 | òÜÔ DONE (2026-08-18) | Logger ¦-¦-¦¦TÁTÂ¦- System.out (S106) | LOW |
-| 36 | òÜÔ DONE (2026-08-18) | ¦á¦¬¦¦TÆ¦¬TÄ¦¬TÇ¦-TË¦¦ ¦¬TÁ¦¦¦¬TÎTÇ¦¦¦-¦¬TÏ (S112) | LOW |
-| 37 | òÜÔ DONE (2026-08-18) | ¦Þ¦-TÀ¦-¦-¦-TÂ¦¦¦- ¦¬TÁ¦¦¦¬TÎTÇ¦¦¦-¦¬¦¦ (S2139, S1141) | LOW |
-| 38 | òÜÔ DONE (2026-08-18) | Unused ¦¬¦-TÀ¦-¦-¦¦TÂTÀTË/¦¬¦¦TÀ¦¦¦-¦¦¦-¦-TË¦¦/¦¬¦-¦¬¦-TÀTÂTË | LOW |
-| 39 | òÜÔ DONE (2026-08-18) | ¦ã¦¬TÀ¦-TÉ¦¦¦-¦¬¦¦ TÃTÁ¦¬¦-¦-¦¬¦¦ | LOW |
-| 40 | òÜÔ DONE (2026-08-18) | ¦ä¦¬¦-¦-¦¬TÌ¦-¦-TÏ ¦-TÇ¦¬TÁTÂ¦¦¦- CODE_SMELL | LOW |
+| 21 | ï¿½ï¿½ï¿½ DONE (2026-08-16) | StackOverflow ï¿½- regex (S5998) | HIGH |
+| 22 | ï¿½ï¿½ï¿½ DONE (2026-08-16) | Null Pointer Dereference (S2259) | HIGH |
+| 23 | ï¿½ï¿½ï¿½ DONE (2026-08-16) | ï¿½ï¿½+ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ ï¿½-Tï¿½Tï¿½TÂ¦-ï¿½-ï¿½ï¿½ï¿½- ï¿½ï¿½ï¿½-ï¿½+ï¿½- (S2583, S108, S1144, S1068) | LOW |
+| 24 | ï¿½ï¿½ï¿½ DONE (2026-08-16) | Double Brace Initialization (S3599) | LOW |
+| 25 | ï¿½ï¿½ï¿½ DONE (2026-08-16) | ï¿½Ø¦ï¿½ï¿½-ï¿½-Tï¿½ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ ï¿½-ï¿½-ï¿½ï¿½ï¿½-Tï¿½ï¿½-TÉ¦-ï¿½ï¿½ï¿½-Tï¿½Tï¿½ ï¿½ï¿½ï¿½-ï¿½-TÇ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ (S899) | MEDIUM |
+| 26 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | Regex grouping (S5850) | MEDIUM |
+| 27 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | Regex repeated patterns (S5842) | MEDIUM |
+| 28 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | Cognitive Complexity QueryParser (S3776) | MEDIUM |
+| 29 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | Refactor SelectQuery.execute() (complexity=59) | HIGH |
+| 30 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | ï¿½Þ¦ï¿½TÂ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-TÆ¦ï¿½Tï¿½ regex (S5869, S6353) | LOW |
+| 31 | ï¿½ï¿½ï¿½ DONE (2026-08-17) | String literals ï¿½- ï¿½ï¿½ï¿½-ï¿½-Tï¿½TÂ¦-ï¿½-Tï¿½Tï¿½ (S1192) | LOW |
+| 32 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | ï¿½ß¦-Tï¿½ï¿½-ï¿½-ï¿½ï¿½Tï¿½Tï¿½Tï¿½ ï¿½-ï¿½ï¿½TÂ¦-ï¿½+ï¿½-ï¿½- (S107) | LOW |
+| 33 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | Boolean null (S2447) | MEDIUM |
+| 34 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | Serializable ï¿½ï¿½ï¿½-ï¿½ï¿½Tï¿½ (S1948) | LOW |
+| 35 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | Logger ï¿½-ï¿½-ï¿½ï¿½Tï¿½TÂ¦- System.out (S106) | LOW |
+| 36 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | ï¿½á¦¬ï¿½ï¿½TÆ¦ï¿½TÄ¦ï¿½TÇ¦-TË¦ï¿½ ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½TÇ¦ï¿½ï¿½-ï¿½ï¿½Tï¿½ (S112) | LOW |
+| 37 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | ï¿½Þ¦-Tï¿½ï¿½-ï¿½-ï¿½-TÂ¦ï¿½ï¿½- ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½TÇ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ (S2139, S1141) | LOW |
+| 38 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | Unused ï¿½ï¿½ï¿½-Tï¿½ï¿½-ï¿½-ï¿½ï¿½Tï¿½Tï¿½Tï¿½/ï¿½ï¿½ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½-TË¦ï¿½/ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½-Tï¿½Tï¿½Tï¿½ | LOW |
+| 39 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | ï¿½ã¦¬Tï¿½ï¿½-TÉ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ Tï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | LOW |
+| 40 | ï¿½ï¿½ï¿½ DONE (2026-08-18) | ï¿½ä¦¬ï¿½-ï¿½-ï¿½ï¿½TÌ¦-ï¿½-Tï¿½ ï¿½-TÇ¦ï¿½Tï¿½TÂ¦ï¿½ï¿½- CODE_SMELL | LOW |
 
 ### Section 2: Sonar Top-10 Pareto (41-50)
 
-| òÄÖ | ¦áTÂ¦-TÂTÃTÁ | ¦Ý¦-¦¬¦-¦-¦-¦¬¦¦ | ¦ßTÀ¦¬¦-TÀ¦¬TÂ¦¦TÂ |
+| ï¿½ï¿½ï¿½ | ï¿½ï¿½TÂ¦-Tï¿½Tï¿½Tï¿½ | ï¿½Ý¦-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½TÂ¦ï¿½Tï¿½ |
 |---|--------|----------|-----------|
-| 41 | òÜÔ DONE (2026-08-19) | ¦×¦-¦-¦¦¦-¦- '[A-Za-z0-9_]' ¦-¦- '\w' ¦- regex (S6353, 119 ¦¬TÀ¦-¦-¦¬¦¦¦-) | HIGH |
-| 42 | òÜÔ DONE (2026-08-19) | ¦à¦¦TÄ¦-¦¦TÂ¦-TÀ¦¬¦-¦¦ ¦-¦¦TÂ¦-¦+¦-¦- TÁ ¦-TËTÁ¦-¦¦¦-¦¦ Cognitive Complexity (S3776, 92 ¦¬TÀ¦-¦-¦¬¦¦¦-TË) | CRITICAL |
-| 43 | òÜÔ DONE (2026-08-19) | Pattern matching ¦+¦¬TÏ instanceof (S6201, 55 ¦¬TÀ¦¦¦-¦-TÀ¦-¦¬¦-¦-¦-¦-¦¬¦¦) | MEDIUM |
-| 44 | òÜÔ DONE (2026-08-19) | ¦ãTÁTÂTÀ¦-¦-¦¦¦-¦¬¦¦ TÀ¦¦¦¦TÃTÀTÁ¦¬¦-¦-TËTÅ ¦¬¦-TÂTÂ¦¦TÀ¦-¦-¦- ¦- regex (S5998, 57 ¦¬TÀ¦-¦-¦¬¦¦¦-) + fix parseRightPart bug | HIGH |
-| 45 | ? DONE (2026-08-19) | Èçâëå÷åíèå äóáëèðóþùèõñÿ ñòðîêîâûõ ëèòåðàëîâ â ErrorMessages (S1192) | MEDIUM |
-| 46 | ? DONE (2026-08-19) | Óäàëåíèå íåèñïîëüçóåìûõ èìïîðòîâ (S1128, 13 issues) | LOW |
-| 47 | ? DONE (2026-08-19) | Îãðàíè÷åíèå break/continue â öèêëàõ (S135) | LOW |
-| 48 | ? DONE (2026-08-19) | Óäàëåíèå íåèñïîëüçóåìûõ ïàðàìåòðîâ ìåòîäîâ (S1172, 10 params) | MEDIUM |
+| 41 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | ï¿½×¦-ï¿½-ï¿½ï¿½ï¿½-ï¿½- '[A-Za-z0-9_]' ï¿½-ï¿½- '\w' ï¿½- regex (S6353, 119 ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-) | HIGH |
+| 42 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | ï¿½à¦¦TÄ¦-ï¿½ï¿½TÂ¦-Tï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ ï¿½-ï¿½ï¿½TÂ¦-ï¿½+ï¿½-ï¿½- Tï¿½ ï¿½-Tï¿½Tï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ Cognitive Complexity (S3776, 92 ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-Tï¿½) | CRITICAL |
+| 43 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | Pattern matching ï¿½+ï¿½ï¿½Tï¿½ instanceof (S6201, 55 ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-Tï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½) | MEDIUM |
+| 44 | ï¿½ï¿½ï¿½ DONE (2026-08-19) | ï¿½ï¿½Tï¿½Tï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ Tï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½Tï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-Tï¿½Tï¿½ ï¿½ï¿½ï¿½-Tï¿½TÂ¦ï¿½Tï¿½ï¿½-ï¿½-ï¿½- ï¿½- regex (S5998, 57 ï¿½ï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½-) + fix parseRightPart bug | HIGH |
+| 45 | ? DONE (2026-08-19) | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ ErrorMessages (S1192) | MEDIUM |
+| 46 | ? DONE (2026-08-19) | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (S1128, 13 issues) | LOW |
+| 47 | ? DONE (2026-08-19) | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ break/continue ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (S135) | LOW |
+| 48 | ? DONE (2026-08-19) | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (S1172, 10 params) | MEDIUM |
 
-| 49 | ? DONE (2026-08-19) | Çàïîëíåíèå ïóñòûõ áëîêîâ êîäà (S108, 25 blocks) | HIGH |
-| 50 | ? DONE (2026-08-19) | Deprecated setScale() (S1874) — audit, 0 issues | MEDIUM |
+| 49 | ? DONE (2026-08-19) | ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (S108, 25 blocks) | HIGH |
+| 50 | ? DONE (2026-08-19) | Deprecated setScale() (S1874) ï¿½ audit, 0 issues | MEDIUM |
 ### Section 3: Performance Optimizations (41-60)
 
-| òÄÖ | ¦áTÂ¦-TÂTÃTÁ | ¦Ý¦-¦¬¦-¦-¦-¦¬¦¦ | ¦ßTÀ¦¬¦-TÀ¦¬TÂ¦¦TÂ |
+| ï¿½ï¿½ï¿½ | ï¿½ï¿½TÂ¦-Tï¿½Tï¿½Tï¿½ | ï¿½Ý¦-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½TÂ¦ï¿½Tï¿½ |
 |---|--------|----------|-----------|
-| 41 |? DONE (2026-08-19)| updateIndicesAfterInsert O(n+×m+×log n) | HIGH |
-| 42 |? DONE (2026-08-19)| Nested Loop òÆÒ Hash Join | HIGH |
-| 43 | òÝÌ TODO | ¦Ø¦-¦+¦¦¦¦TÁTË ¦¬¦-TÁ¦¬¦¦ DELETE | MEDIUM |
-| 44 | òÝÌ TODO | ¦Ú¦¬¦-TÁTÂ¦¦TÀ¦¬¦¬¦-¦-¦-¦-¦-TË¦¦ ¦¬¦-¦+¦¦¦¦TÁ TÁ¦-¦¬¦+¦-¦-¦¬¦¦ | MEDIUM |
-| 45 | òÝÌ TODO | ¦ß¦-¦¦¦¦TÂ¦-¦-TÏ ¦-TÁTÂ¦-¦-¦¦¦- ¦¬TÀ¦¬ ¦¬¦-¦¦TÀTÃ¦¬¦¦¦¦ | MEDIUM |
-| 46 | òÝÌ TODO | ¦Ø¦-¦+¦¦¦¦TÁTË ¦+¦¬TÏ WHERE TÃTÁ¦¬¦-¦-¦¬¦¦ | MEDIUM |
-| 47 | ? DONE (2026-08-23) | ¦Ü¦-TÁTÁ¦-¦-TË¦¦ UPDATE | MEDIUM |
-| 48 | ? DONE (2026-08-23) | indexDefinitions TÁ¦¦TÀ¦¬¦-¦¬¦¬¦¬¦-TÆ¦¬TÏ | MEDIUM |
-| 49 | òÝÌ TODO | ¦á¦-TÁTÂ¦-TÏ¦-¦¬¦¦ ¦¬¦-¦+¦¦¦¦TÁ¦-¦- ¦- TÁ¦¦TÀ¦¬¦-¦¬¦¬¦¬¦-TÆ¦¬¦¬ | MEDIUM |
-| 50 | òÝÌ TODO | Copy-on-Write ¦+¦¬TÏ TÂTÀ¦-¦-¦¬¦-¦¦TÆ¦¬¦¦ | HIGH |
-| 51 | òÝÌ TODO | ¦ß¦-TÀ¦-¦¬¦¬¦¦¦¬TÌ¦-¦-¦¦ ¦-TË¦¬¦-¦¬¦-¦¦¦-¦¬¦¦ ¦¬¦-¦¬TÀ¦-TÁ¦-¦- | LOW |
-| 52 | òÝÌ TODO | ¦ÐTÁ¦¬¦-TÅTÀ¦-¦-¦-TË¦¦ I/O | LOW |
-| 53 | òÝÌ TODO | Compression ¦+¦¬TÏ TÁ¦¦TÂ¦¬ | LOW |
-| 54 | òÝÌ TODO | Prepared Statements caching | MEDIUM |
-| 55 | òÝÌ TODO | Batch execution | MEDIUM |
-| 56 | òÝÌ TODO | Pagination TÀ¦¦¦¬TÃ¦¬TÌTÂ¦-TÂ¦-¦- | MEDIUM |
-| 57 | òÝÌ TODO | Adaptive query execution | LOW |
-| 58 | òÝÌ TODO | Index-only scans | LOW |
-| 59 | òÝÌ TODO | Parallel index scan | LOW |
-| 60 | òÝÌ TODO | SIMD ¦-¦¦¦¦TÂ¦-TÀ¦¬¦¬¦-TÆ¦¬TÏ ¦-¦¦TÀ¦¦¦¦¦-TÂ¦-¦- | LOW |
+| 41 |? DONE (2026-08-19)| updateIndicesAfterInsert O(n+ï¿½m+ï¿½log n) | HIGH |
+| 42 |? DONE (2026-08-19)| Nested Loop ï¿½ï¿½ï¿½ Hash Join | HIGH |
+| 43 | ï¿½ï¿½ï¿½ TODO | ï¿½Ø¦-ï¿½+ï¿½ï¿½ï¿½ï¿½Tï¿½Tï¿½ ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½ï¿½ï¿½ DELETE | MEDIUM |
+| 44 | ï¿½ï¿½ï¿½ TODO | ï¿½Ú¦ï¿½ï¿½-Tï¿½TÂ¦ï¿½Tï¿½ï¿½ï¿½ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½-TË¦ï¿½ ï¿½ï¿½ï¿½-ï¿½+ï¿½ï¿½ï¿½ï¿½Tï¿½ Tï¿½ï¿½-ï¿½ï¿½ï¿½+ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | MEDIUM |
+| 45 | ï¿½ï¿½ï¿½ TODO | ï¿½ß¦-ï¿½ï¿½ï¿½ï¿½TÂ¦-ï¿½-Tï¿½ ï¿½-Tï¿½TÂ¦-ï¿½-ï¿½ï¿½ï¿½- ï¿½ï¿½Tï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½-ï¿½ï¿½Tï¿½TÃ¦ï¿½ï¿½ï¿½ï¿½ï¿½ | MEDIUM |
+| 46 | ï¿½ï¿½ï¿½ TODO | ï¿½Ø¦-ï¿½+ï¿½ï¿½ï¿½ï¿½Tï¿½Tï¿½ ï¿½+ï¿½ï¿½Tï¿½ WHERE Tï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | MEDIUM |
+| 47 | ? DONE (2026-08-23) | ï¿½Ü¦-Tï¿½Tï¿½ï¿½-ï¿½-TË¦ï¿½ UPDATE | MEDIUM |
+| 48 | ? DONE (2026-08-23) | indexDefinitions Tï¿½ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½-TÆ¦ï¿½Tï¿½ | MEDIUM |
+| 49 | ï¿½ï¿½ï¿½ TODO | ï¿½ï¿½-Tï¿½TÂ¦-TÏ¦-ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½-ï¿½+ï¿½ï¿½ï¿½ï¿½Tï¿½ï¿½-ï¿½- ï¿½- Tï¿½ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½-TÆ¦ï¿½ï¿½ï¿½ | MEDIUM |
+| 50 | ï¿½ï¿½ï¿½ TODO | Copy-on-Write ï¿½+ï¿½ï¿½Tï¿½ Tï¿½Tï¿½ï¿½-ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½TÆ¦ï¿½ï¿½ï¿½ | HIGH |
+| 51 | ï¿½ï¿½ï¿½ TODO | ï¿½ß¦-Tï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½TÌ¦-ï¿½-ï¿½ï¿½ ï¿½-TË¦ï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½-ï¿½ï¿½Tï¿½ï¿½-Tï¿½ï¿½-ï¿½- | LOW |
+| 52 | ï¿½ï¿½ï¿½ TODO | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½Tï¿½ï¿½-ï¿½-ï¿½-TË¦ï¿½ I/O | LOW |
+| 53 | ï¿½ï¿½ï¿½ TODO | Compression ï¿½+ï¿½ï¿½Tï¿½ Tï¿½ï¿½ï¿½TÂ¦ï¿½ | LOW |
+| 54 | ï¿½ï¿½ï¿½ TODO | Prepared Statements caching | MEDIUM |
+| 55 | ï¿½ï¿½ï¿½ TODO | Batch execution | MEDIUM |
+| 56 | ï¿½ï¿½ï¿½ TODO | Pagination Tï¿½ï¿½ï¿½ï¿½ï¿½TÃ¦ï¿½Tï¿½TÂ¦-TÂ¦-ï¿½- | MEDIUM |
+| 57 | ï¿½ï¿½ï¿½ TODO | Adaptive query execution | LOW |
+| 58 | ï¿½ï¿½ï¿½ TODO | Index-only scans | LOW |
+| 59 |  DONE (2026-08-23) | Serialized index persistence | LOW |
+| 60 | ï¿½ï¿½ï¿½ TODO | SIMD ï¿½-ï¿½ï¿½ï¿½ï¿½TÂ¦-Tï¿½ï¿½ï¿½ï¿½ï¿½ï¿½-TÆ¦ï¿½Tï¿½ ï¿½-ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½ï¿½ï¿½-TÂ¦-ï¿½- | LOW |
 
 ### Section 4: Parquet Integration (61-92)
 
-| òÄÖ | ¦áTÂ¦-TÂTÃTÁ | ¦Ý¦-¦¬¦-¦-¦-¦¬¦¦ | ¦ßTÀ¦¬¦-TÀ¦¬TÂ¦¦TÂ |
+| ï¿½ï¿½ï¿½ | ï¿½ï¿½TÂ¦-Tï¿½Tï¿½Tï¿½ | ï¿½Ý¦-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½TÂ¦ï¿½Tï¿½ |
 |---|--------|----------|-----------|
-| 61 | òÝÌ TODO | Apache Parquet ¦¬¦-TÂ¦¦¦¦TÀ¦-TÆ¦¬TÏ | HIGH |
-| 62 | òÝÌ TODO | ParquetReader | HIGH |
-| 63 | òÝÌ TODO | Columnar storage | HIGH |
-| 64 | òÝÌ TODO | Schema evolution | MEDIUM |
-| 65 | òÝÌ TODO | Partitioning ¦+¦¬TÏ Parquet | MEDIUM |
-| 66 | òÝÌ TODO | Compression codecs | MEDIUM |
-| 67 | òÝÌ TODO | Statistics metadata | MEDIUM |
-| 68 | òÝÌ TODO | Bloom filters | MEDIUM |
-| 69 | òÝÌ TODO | QueryCache ¦-TÀTÅ¦¬TÂ¦¦¦¦TÂTÃTÀ¦- | MEDIUM |
-| 70 | òÝÌ TODO | Cache invalidation TÁTÂTÀ¦-TÂ¦¦¦¦¦¬TÏ | MEDIUM |
-| 71 | òÝÌ TODO | QueryCache ¦- SelectQuery | MEDIUM |
-| 72 | òÝÌ TODO | ¦Ø¦-¦-¦-¦¬¦¬¦+¦-TÆ¦¬TÏ ¦¬TÀ¦¬ INSERT | MEDIUM |
-| 73 | òÝÌ TODO | ¦Ø¦-¦-¦-¦¬¦¬¦+¦-TÆ¦¬TÏ ¦¬TÀ¦¬ UPDATE | MEDIUM |
-| 74 | òÝÌ TODO | ¦Ø¦-¦-¦-¦¬¦¬¦+¦-TÆ¦¬TÏ ¦¬TÀ¦¬ DELETE | MEDIUM |
-| 75 | òÝÌ TODO | ¦Ø¦-¦-¦-¦¬¦¬¦+¦-TÆ¦¬TÏ ¦¬TÀ¦¬ DDL | MEDIUM |
-| 76 | òÝÌ TODO | ¦Ü¦-¦-¦¬TÂ¦-TÀ¦¬¦-¦¦ QueryCache | LOW |
-| 77 | òÝÌ TODO | ¦â¦¦TÁTÂ¦¬TÀ¦-¦-¦-¦-¦¬¦¦ Parquet | HIGH |
-| 78 | òÝÌ TODO | ¦â¦¦TÁTÂ¦¬TÀ¦-¦-¦-¦-¦¬¦¦ QueryCache | MEDIUM |
-| 79 | òÝÌ TODO | Integration test Parquet+Cache | HIGH |
-| 80 | òÝÌ TODO | ¦Ô¦-¦¦TÃ¦-¦¦¦-TÂ¦-TÆ¦¬TÏ Parquet | LOW |
-| 81 | òÝÌ TODO | ¦Ú¦-¦-TÄ¦¬¦¦TÃTÀ¦-TÆ¦¬TÏ Parquet ¦-¦- TÃTÀ¦-¦-¦-¦¦ TÂ¦-¦-¦¬¦¬TÆTË | MEDIUM |
-| 82 | òÝÌ TODO | Lazy ¦¬¦-¦¦TÀTÃ¦¬¦¦¦- Parquet | MEDIUM |
-| 83 | òÝÌ TODO | Predicate pushdown | HIGH |
-| 84 | òÝÌ TODO | ¦ß¦-TÀ¦-¦¬¦¬¦¦¦¬TÌ¦-¦-¦¦ TÇTÂ¦¦¦-¦¬¦¦ Parquet | MEDIUM |
-| 85 | òÝÌ TODO | ¦áTÂ¦-TÂ¦¬TÁTÂ¦¬¦¦¦- ¦¬TÁ¦¬¦-¦¬TÌ¦¬¦-¦-¦-¦-¦¬TÏ ¦¦TÍTÈ¦- | LOW |
-| 86 | òÝÌ TODO | Database.java ¦+¦¬TÏ Parquet default | MEDIUM |
-| 87 | òÝÌ TODO | ¦Þ¦-TÀ¦-¦-¦-TÂ¦¦¦- ¦-TÈ¦¬¦-¦-¦¦ ¦-¦¬¦¦TÀ¦-TÆ¦¬¦¬ | MEDIUM |
-| 88 | òÝÌ TODO | Partitioned tables ¦- Parquet | MEDIUM |
-| 89 | òÝÌ TODO | Dictionary encoding ¦+¦¬TÏ TÁTÂTÀ¦-¦¦ | LOW |
-| 90 | òÝÌ TODO | Compression tuning (ZSTD) | LOW |
-| 91 | òÝÌ TODO | Row group size tuning | LOW |
-| 92 | òÝÌ TODO | Column statistics metadata | LOW |
+| 61 | ï¿½ï¿½ï¿½ TODO | Apache Parquet ï¿½ï¿½ï¿½-TÂ¦ï¿½ï¿½ï¿½Tï¿½ï¿½-TÆ¦ï¿½Tï¿½ | HIGH |
+| 62 | ï¿½ï¿½ï¿½ TODO | ParquetReader | HIGH |
+| 63 | ï¿½ï¿½ï¿½ TODO | Columnar storage | HIGH |
+| 64 | ï¿½ï¿½ï¿½ TODO | Schema evolution | MEDIUM |
+| 65 | ï¿½ï¿½ï¿½ TODO | Partitioning ï¿½+ï¿½ï¿½Tï¿½ Parquet | MEDIUM |
+| 66 | ï¿½ï¿½ï¿½ TODO | Compression codecs | MEDIUM |
+| 67 | ï¿½ï¿½ï¿½ TODO | Statistics metadata | MEDIUM |
+| 68 | ï¿½ï¿½ï¿½ TODO | Bloom filters | MEDIUM |
+| 69 | ï¿½ï¿½ï¿½ TODO | QueryCache ï¿½-Tï¿½TÅ¦ï¿½TÂ¦ï¿½ï¿½ï¿½Tï¿½Tï¿½Tï¿½ï¿½- | MEDIUM |
+| 70 | ï¿½ï¿½ï¿½ TODO | Cache invalidation Tï¿½Tï¿½Tï¿½ï¿½-TÂ¦ï¿½ï¿½ï¿½ï¿½ï¿½Tï¿½ | MEDIUM |
+| 71 | ï¿½ï¿½ï¿½ TODO | QueryCache ï¿½- SelectQuery | MEDIUM |
+| 72 | ï¿½ï¿½ï¿½ TODO | ï¿½Ø¦-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½+ï¿½-TÆ¦ï¿½Tï¿½ ï¿½ï¿½Tï¿½ï¿½ï¿½ INSERT | MEDIUM |
+| 73 | ï¿½ï¿½ï¿½ TODO | ï¿½Ø¦-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½+ï¿½-TÆ¦ï¿½Tï¿½ ï¿½ï¿½Tï¿½ï¿½ï¿½ UPDATE | MEDIUM |
+| 74 | ï¿½ï¿½ï¿½ TODO | ï¿½Ø¦-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½+ï¿½-TÆ¦ï¿½Tï¿½ ï¿½ï¿½Tï¿½ï¿½ï¿½ DELETE | MEDIUM |
+| 75 | ï¿½ï¿½ï¿½ TODO | ï¿½Ø¦-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½+ï¿½-TÆ¦ï¿½Tï¿½ ï¿½ï¿½Tï¿½ï¿½ï¿½ DDL | MEDIUM |
+| 76 | ï¿½ï¿½ï¿½ TODO | ï¿½Ü¦-ï¿½-ï¿½ï¿½TÂ¦-Tï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½ QueryCache | LOW |
+| 77 | ï¿½ï¿½ï¿½ TODO | ï¿½â¦¦Tï¿½TÂ¦ï¿½Tï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ Parquet | HIGH |
+| 78 | ï¿½ï¿½ï¿½ TODO | ï¿½â¦¦Tï¿½TÂ¦ï¿½Tï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ QueryCache | MEDIUM |
+| 79 | ï¿½ï¿½ï¿½ TODO | Integration test Parquet+Cache | HIGH |
+| 80 | ï¿½ï¿½ï¿½ TODO | ï¿½Ô¦-ï¿½ï¿½TÃ¦-ï¿½ï¿½ï¿½-TÂ¦-TÆ¦ï¿½Tï¿½ Parquet | LOW |
+| 81 | ï¿½ï¿½ï¿½ TODO | ï¿½Ú¦-ï¿½-TÄ¦ï¿½ï¿½ï¿½Tï¿½Tï¿½ï¿½-TÆ¦ï¿½Tï¿½ Parquet ï¿½-ï¿½- Tï¿½Tï¿½ï¿½-ï¿½-ï¿½-ï¿½ï¿½ TÂ¦-ï¿½-ï¿½ï¿½ï¿½ï¿½Tï¿½Tï¿½ | MEDIUM |
+| 82 | ï¿½ï¿½ï¿½ TODO | Lazy ï¿½ï¿½ï¿½-ï¿½ï¿½Tï¿½TÃ¦ï¿½ï¿½ï¿½ï¿½- Parquet | MEDIUM |
+| 83 | ï¿½ï¿½ï¿½ TODO | Predicate pushdown | HIGH |
+| 84 | ï¿½ï¿½ï¿½ TODO | ï¿½ß¦-Tï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½TÌ¦-ï¿½-ï¿½ï¿½ Tï¿½TÂ¦ï¿½ï¿½-ï¿½ï¿½ï¿½ï¿½ Parquet | MEDIUM |
+| 85 | ï¿½ï¿½ï¿½ TODO | ï¿½ï¿½TÂ¦-TÂ¦ï¿½Tï¿½TÂ¦ï¿½ï¿½ï¿½ï¿½- ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-ï¿½ï¿½TÌ¦ï¿½ï¿½-ï¿½-ï¿½-ï¿½-ï¿½ï¿½Tï¿½ ï¿½ï¿½Tï¿½TÈ¦- | LOW |
+| 86 | ï¿½ï¿½ï¿½ TODO | Database.java ï¿½+ï¿½ï¿½Tï¿½ Parquet default | MEDIUM |
+| 87 | ï¿½ï¿½ï¿½ TODO | ï¿½Þ¦-Tï¿½ï¿½-ï¿½-ï¿½-TÂ¦ï¿½ï¿½- ï¿½-TÈ¦ï¿½ï¿½-ï¿½-ï¿½ï¿½ ï¿½-ï¿½ï¿½ï¿½ï¿½Tï¿½ï¿½-TÆ¦ï¿½ï¿½ï¿½ | MEDIUM |
+| 88 | ï¿½ï¿½ï¿½ TODO | Partitioned tables ï¿½- Parquet | MEDIUM |
+| 89 | ï¿½ï¿½ï¿½ TODO | Dictionary encoding ï¿½+ï¿½ï¿½Tï¿½ Tï¿½Tï¿½Tï¿½ï¿½-ï¿½ï¿½ | LOW |
+| 90 | ï¿½ï¿½ï¿½ TODO | Compression tuning (ZSTD) | LOW |
+| 91 | ï¿½ï¿½ï¿½ TODO | Row group size tuning | LOW |
+| 92 | ï¿½ï¿½ï¿½ TODO | Column statistics metadata | LOW |
 
 ### Section 5: Advanced Features (93-100)
 
-| òÄÖ | ¦áTÂ¦-TÂTÃTÁ | ¦Ý¦-¦¬¦-¦-¦-¦¬¦¦ | ¦ßTÀ¦¬¦-TÀ¦¬TÂ¦¦TÂ |
+| ï¿½ï¿½ï¿½ | ï¿½ï¿½TÂ¦-Tï¿½Tï¿½Tï¿½ | ï¿½Ý¦-ï¿½ï¿½ï¿½-ï¿½-ï¿½-ï¿½ï¿½ï¿½ï¿½ | ï¿½ï¿½Tï¿½ï¿½ï¿½ï¿½-Tï¿½ï¿½ï¿½TÂ¦ï¿½Tï¿½ |
 |---|--------|----------|-----------|
-| 93 | òÝÌ TODO | Bloom filters ¦+¦¬TÏ Parquet | MEDIUM |
-| 94 | òÝÌ TODO | Cache warm-up strategy | LOW |
-| 95 | òÝÌ TODO | Adaptive TTL ¦+¦¬TÏ ¦¦TÍTÈ¦- | LOW |
-| 96 | òÝÌ TODO | Query normalization improvements | MEDIUM |
-| 97 | òÝÌ TODO | Parameterized query caching | MEDIUM |
-| 98 | òÝÌ TODO | Multi-level cache (L1/L2) | LOW |
-| 99 | òÝÌ TODO | Cache persistence across restarts | LOW |
-| 100 | òÝÌ TODO | Final integration testing & docs | HIGH |
+| 93 | ï¿½ï¿½ï¿½ TODO | Bloom filters ï¿½+ï¿½ï¿½Tï¿½ Parquet | MEDIUM |
+| 94 | ï¿½ï¿½ï¿½ TODO | Cache warm-up strategy | LOW |
+| 95 | ï¿½ï¿½ï¿½ TODO | Adaptive TTL ï¿½+ï¿½ï¿½Tï¿½ ï¿½ï¿½Tï¿½TÈ¦- | LOW |
+| 96 | ï¿½ï¿½ï¿½ TODO | Query normalization improvements | MEDIUM |
+| 97 | ï¿½ï¿½ï¿½ TODO | Parameterized query caching | MEDIUM |
+| 98 | ï¿½ï¿½ï¿½ TODO | Multi-level cache (L1/L2) | LOW |
+| 99 | ï¿½ï¿½ï¿½ TODO | Cache persistence across restarts | LOW |
+| 100 | ï¿½ï¿½ï¿½ TODO | Final integration testing & docs | HIGH |
 
 ## Legend
 
-- òÝÌ TODO - Not started
-- ¨ßÔÄ IN_PROGRESS - Currently working
-- òÜÅ DONE - Completed
-- òÚàÿ¬Ï BLOCKED - Blocked by dependency
+- ï¿½ï¿½ï¿½ TODO - Not started
+- ï¿½ï¿½ï¿½ï¿½ IN_PROGRESS - Currently working
+- ï¿½ï¿½ï¿½ DONE - Completed
+- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ BLOCKED - Blocked by dependency
 
 ## How to Update
 
 1. Choose next prompt from Priority Queue (top of table)
-2. Change status to ¨ßÔÄ IN_PROGRESS
-3. After implementation and tests pass, change to òÜÅ DONE
-4. Add date completed in format `òÜÅ DONE (2025-01-15)`
+2. Change status to ï¿½ï¿½ï¿½ï¿½ IN_PROGRESS
+3. After implementation and tests pass, change to ï¿½ï¿½ï¿½ DONE
+4. Add date completed in format `ï¿½ï¿½ï¿½ DONE (2025-01-15)`
