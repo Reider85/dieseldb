@@ -128,7 +128,7 @@
 | 67 | DONE (2026-08-23) | Remove unused method parameters S1172 | MEDIUM |
 | 68 | ��� TODO | Bloom filters | MEDIUM |
 | 69 | ��� TODO | QueryCache �-T�TŦ�T¦���T�T�T��- | MEDIUM |
-| 70 | ��� TODO | Cache invalidation T�T�T��-T¦�����T� | MEDIUM |
+| 70 | DONE (2026-08-24) | Remove deprecated setScale() S1874 | MEDIUM |
 | 71 | ��� TODO | QueryCache �- SelectQuery | MEDIUM |
 | 72 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� INSERT | MEDIUM |
 | 73 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� UPDATE | MEDIUM |
