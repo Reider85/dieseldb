@@ -1,4 +1,4 @@
-# Prompt Status Tracker
+﻿# Prompt Status Tracker
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -120,7 +120,7 @@
 | ��� | ��T¦-T�T�T� | �ݦ-���-�-�-���� | ��T����-T���T¦�T� |
 |---|--------|----------|-----------|
 | 61 | ��� TODO | Apache Parquet ���-T¦���T��-TƦ�T� | HIGH |
-| 62 | ��� TODO | ParquetReader | HIGH |
+| 62 | DONE (2026-08-23) | HIGH | QueryParser.java, SelectQuery.java | Cognitive Complexity S3776 refactoring | HIGH |
 | 63 | ��� TODO | Columnar storage | HIGH |
 | 64 | ��� TODO | Schema evolution | MEDIUM |
 | 65 | ��� TODO | Partitioning �+��T� Parquet | MEDIUM |

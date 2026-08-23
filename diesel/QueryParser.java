@@ -1001,7 +1001,12 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid CREATE TABLE query format: missing or mismatched parentheses");
         }
 
-        String tableName = unquoteIdentifier(original.substring(0, firstParen).replace(SqlKeywords.CREATE_TABLE, "").trim());
+        String rawName = original.substring(0, firstParen).replace(SqlKeywords.CREATE_TABLE, "").trim();
+        boolean quoted = rawName.length() >= 2 && rawName.charAt(0) == '"' && rawName.charAt(rawName.length() - 1) == '"';
+        String tableName = unquoteIdentifier(rawName);
+        if (!quoted) {
+            tableName = tableName.toUpperCase();
+        }
         String columnsPart = original.substring(firstParen + 1, lastParen).trim();
 
         List<String> columnDefs = splitColumnDefinitions(columnsPart);
@@ -1363,135 +1368,96 @@ class QueryParser {
         List<SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern countPattern = Pattern.compile("(?i)^COUNT\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern minPattern = Pattern.compile("(?i)^MIN\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern maxPattern = Pattern.compile("(?i)^MAX\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern avgPattern = Pattern.compile("(?i)^AVG\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern sumPattern = Pattern.compile("(?i)^SUM\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        // Single unified pattern: FUNC_NAME ( ARG ) [AS alias]
+        // Group 1 = function name (case-insensitive), group 2 = argument, group 3 = alias
+        Pattern aggPattern = Pattern.compile(
+                "(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
-            Matcher countMatcher = countPattern.matcher(trimmedItem);
-            Matcher minMatcher = minPattern.matcher(trimmedItem);
-            Matcher maxMatcher = maxPattern.matcher(trimmedItem);
-            Matcher avgMatcher = avgPattern.matcher(trimmedItem);
-            Matcher sumMatcher = sumPattern.matcher(trimmedItem);
-            Matcher columnMatcher = columnPattern.matcher(trimmedItem);
-            Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
+            Matcher aggMatcher = aggPattern.matcher(trimmedItem);
+            if (aggMatcher.matches()) {
+                aggregates.add(parseAggregateArg(aggMatcher.group(1), aggMatcher.group(2),
+                        unquoteIdentifier(aggMatcher.group(3)), database));
+                continue;
+            }
 
-            if (countMatcher.matches()) {
-                String countArg = countMatcher.group(1);
-                String alias = unquoteIdentifier(countMatcher.group(2));
-                if (countArg.startsWith("(") && countArg.endsWith(")")) {
-                    String subQueryStr = countArg.substring(1, countArg.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction(SqlKeywords.COUNT, new SubQuery(subQuery, null), alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: COUNT(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
-                } else {
-                    String column = countArg.equals("*") ? null : unquoteQualifiedIdentifier(countArg);
-                    aggregates.add(new AggregateFunction(SqlKeywords.COUNT, column, alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: COUNT({0}){1}",
-                            new Object[]{column == null ? "*" : column, alias != null ? " AS " + alias : ""});
-                }
-            } else if (minMatcher.matches()) {
-                String column = minMatcher.group(1);
-                String alias = unquoteIdentifier(minMatcher.group(2));
-                if (column.startsWith("(") && column.endsWith(")")) {
-                    String subQueryStr = column.substring(1, column.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction(SqlKeywords.MIN, new SubQuery(subQuery, null), alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MIN(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
-                } else {
-                    column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction(SqlKeywords.MIN, column, alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MIN({0}){1}",
-                            new Object[]{column, alias != null ? " AS " + alias : ""});
-                }
-            } else if (maxMatcher.matches()) {
-                String column = maxMatcher.group(1);
-                String alias = unquoteIdentifier(maxMatcher.group(2));
-                if (column.startsWith("(") && column.endsWith(")")) {
-                    String subQueryStr = column.substring(1, column.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction(SqlKeywords.MAX, new SubQuery(subQuery, null), alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MAX(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
-                } else {
-                    column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction(SqlKeywords.MAX, column, alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: MAX({0}){1}",
-                            new Object[]{column, alias != null ? " AS " + alias : ""});
-                }
-            } else if (avgMatcher.matches()) {
-                String column = avgMatcher.group(1);
-                String alias = unquoteIdentifier(avgMatcher.group(2));
-                if (column.startsWith("(") && column.endsWith(")")) {
-                    String subQueryStr = column.substring(1, column.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction(SqlKeywords.AVG, new SubQuery(subQuery, null), alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: AVG(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
-                } else {
-                    column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction(SqlKeywords.AVG, column, alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: AVG({0}){1}",
-                            new Object[]{column, alias != null ? " AS " + alias : ""});
-                }
-            } else if (sumMatcher.matches()) {
-                String column = sumMatcher.group(1);
-                String alias = unquoteIdentifier(sumMatcher.group(2));
-                if (column.startsWith("(") && column.endsWith(")")) {
-                    String subQueryStr = column.substring(1, column.length() - 1).trim();
-                    Query<?> subQuery = parse(subQueryStr, database);
-                    aggregates.add(new AggregateFunction(SqlKeywords.SUM, new SubQuery(subQuery, null), alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: SUM(подзапрос){0}", new Object[]{alias != null ? " AS " + alias : ""});
-                } else {
-                    column = unquoteQualifiedIdentifier(column);
-                    aggregates.add(new AggregateFunction(SqlKeywords.SUM, column, alias));
-                    LOGGER.log(Level.FINE, "Разобранная агрегатная функция: SUM({0}){1}",
-                            new Object[]{column, alias != null ? " AS " + alias : ""});
-                }
-            } else if (subQueryMatcher.matches()) {
-                int subQueryEnd = findMatchingParenthesis(trimmedItem, 0);
-                if (subQueryEnd == -1) {
-                    LOGGER.log(Level.SEVERE, "Не удалось найти парную скобку для подзапроса: {0}", trimmedItem);
-                    throw new IllegalArgumentException("Недопустимый синтаксис подзапроса в SELECT: " + trimmedItem);
-                }
-                String subQueryStr = trimmedItem.substring(1, subQueryEnd).trim();
-                if (subQueryStr.isEmpty()) {
-                    LOGGER.log(Level.SEVERE, "Обнаружен пустой подзапрос в SELECT: {0}", trimmedItem);
-                    throw new IllegalArgumentException("Пустой подзапрос в SELECT: " + trimmedItem);
-                }
-                String alias = unquoteIdentifier(subQueryMatcher.group(1));
-                Query<?> subQuery = parse(subQueryStr, database);
-                SubQuery newSubQuery = new SubQuery(subQuery, alias);
-                subQueries.add(newSubQuery);
-                if (alias != null) {
-                    String subQueryKey = "SUBQUERY_" + subQueries.size();
-                    columnAliases.put(subQueryKey, alias);
-                    LOGGER.log(Level.FINE, "Добавлен алиас подзапроса в columnAliases: {0} -> {1}", new Object[]{subQueryKey, alias});
-                }
-                LOGGER.log(Level.FINE, "Разобран подзапрос в SELECT: {0}{1}, размер subQueries: {2}, подзапрос: {3}",
-                        new Object[]{subQueryStr, alias != null ? " AS " + alias : "", subQueries.size(), newSubQuery});
-            } else if (columnMatcher.matches()) {
-                String column = unquoteQualifiedIdentifier(columnMatcher.group(1));
-                String alias = unquoteIdentifier(columnMatcher.group(2));
-                columns.add(column);
-                if (alias != null) {
-                    columnAliases.put(column, alias);
-                    LOGGER.log(Level.FINE, "Разобран столбец с алиасом: {0} AS {1}", new Object[]{column, alias});
-                } else {
-                    LOGGER.log(Level.FINE, "Разобран столбец: {0}", new Object[]{column});
-                }
-            } else if (trimmedItem.equals("*")) {
+            Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
+            if (subQueryMatcher.matches()) {
+                parseSelectSubQuery(trimmedItem, subQueryMatcher, subQueries, columnAliases, database);
+                continue;
+            }
+
+            Matcher columnMatcher = columnPattern.matcher(trimmedItem);
+            if (columnMatcher.matches()) {
+                parseSelectColumn(columnMatcher, columns, columnAliases);
+                continue;
+            }
+
+            if (trimmedItem.equals("*")) {
                 columns.add("*");
                 LOGGER.log(Level.FINE, "Разобран столбец: *");
-            } else {
-                throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
+                continue;
             }
+
+            throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
         }
 
         return new SelectItems(columns, aggregates, subQueries, columnAliases);
+    }
+
+    private AggregateFunction parseAggregateArg(String funcName, String arg, String alias, Database database) {
+        boolean isSubQuery = arg.startsWith("(") && arg.endsWith(")");
+        String subQueryStr = isSubQuery ? arg.substring(1, arg.length() - 1).trim() : null;
+        String column = isSubQuery ? null
+                : (arg.equals("*") ? null : unquoteQualifiedIdentifier(arg));
+
+        if (isSubQuery) {
+            Query<?> subQuery = parse(subQueryStr, database);
+            LOGGER.log(Level.FINE, "Parsed {0}(subquery){1}",
+                    new Object[]{funcName, alias != null ? " AS " + alias : ""});
+            return new AggregateFunction(funcName, new SubQuery(subQuery, null), alias);
+        } else {
+            LOGGER.log(Level.FINE, "Parsed {0}({1}){2}",
+                    new Object[]{funcName, column == null ? "*" : column, alias != null ? " AS " + alias : ""});
+            return new AggregateFunction(funcName, column, alias);
+        }
+    }
+
+    private void parseSelectSubQuery(String trimmedItem, Matcher subQueryMatcher,
+                                      List<SubQuery> subQueries, Map<String, String> columnAliases, Database database) {
+        int subQueryEnd = findMatchingParenthesis(trimmedItem, 0);
+        if (subQueryEnd == -1) {
+            throw new IllegalArgumentException("Недопустимый синтаксис подзапроса в SELECT: " + trimmedItem);
+        }
+        String subQueryStr = trimmedItem.substring(1, subQueryEnd).trim();
+        if (subQueryStr.isEmpty()) {
+            throw new IllegalArgumentException("Пустой подзапрос в SELECT: " + trimmedItem);
+        }
+        String alias = unquoteIdentifier(subQueryMatcher.group(1));
+        Query<?> subQuery = parse(subQueryStr, database);
+        SubQuery newSubQuery = new SubQuery(subQuery, alias);
+        subQueries.add(newSubQuery);
+        if (alias != null) {
+            String subQueryKey = "SUBQUERY_" + subQueries.size();
+            columnAliases.put(subQueryKey, alias);
+        }
+        LOGGER.log(Level.FINE, "Parsed SELECT subquery: {0}{1}",
+                new Object[]{subQueryStr, alias != null ? " AS " + alias : ""});
+    }
+
+    private void parseSelectColumn(Matcher columnMatcher, List<String> columns, Map<String, String> columnAliases) {
+        String column = unquoteQualifiedIdentifier(columnMatcher.group(1));
+        String alias = unquoteIdentifier(columnMatcher.group(2));
+        columns.add(column);
+        if (alias != null) {
+            columnAliases.put(column, alias);
+            LOGGER.log(Level.FINE, "Разобран столбец с алиасом: {0} AS {1}", new Object[]{column, alias});
+        } else {
+            LOGGER.log(Level.FINE, "Разобран столбец: {0}", new Object[]{column});
+        }
     }
 
     // Парсит таблицы и соединения
@@ -1658,122 +1624,145 @@ class QueryParser {
     // Парсит дополнительные клаузы (WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET)
     private AdditionalClauses parseAdditionalClauses(String tableAndJoinsOriginal, ParseContext ctx,
                                                      List<AggregateFunction> aggregates, List<SubQuery> subQueries) {
-        String conditionStr = null;
         List<Condition> conditions = new ArrayList<>();
         List<String> groupBy = new ArrayList<>();
         List<HavingCondition> havingConditions = new ArrayList<>();
         List<OrderByInfo> orderBy = new ArrayList<>();
         Integer limit = null;
         Integer offset = null;
-
-        // Проверяем наличие ключевых слов
         Map<String, String> groupBySubQueries = new HashMap<>();
+
+        // Parse GROUP BY (and HAVING)
         int groupByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.GROUP_BY);
         if (groupByIndex != -1) {
-            int orderByIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.ORDER_BY);
-            int limitIndexForEnd = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
-            int groupByEndIndex = tableAndJoinsOriginal.length();
-            for (int idx : new int[]{orderByIndexForEnd, limitIndexForEnd}) {
-                if (idx != -1 && idx > groupByIndex && idx < groupByEndIndex) {
-                    groupByEndIndex = idx;
-                }
-            }
-            String groupByClause = tableAndJoinsOriginal.substring(groupByIndex + 8, groupByEndIndex).trim();
-            int havingIndex = findClauseOutsideSubquery(groupByClause, SqlKeywords.HAVING);
-            String havingClause = null;
-            if (havingIndex != -1) {
-                havingClause = groupByClause.substring(havingIndex + 6).trim();
-                groupByClause = groupByClause.substring(0, havingIndex).trim();
-            }
-            groupBy = parseGroupByClause(groupByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
-                    ctx.tableAliases, ctx.columnAliases, groupBySubQueries);
-            if (havingClause != null) {
-                havingConditions = parseHavingConditions(havingClause, ctx, aggregates);
-            }
-            String beforeGroupBy = tableAndJoinsOriginal.substring(0, groupByIndex).trim();
-            String afterGroupBy = tableAndJoinsOriginal.substring(groupByEndIndex).trim();
-            tableAndJoinsOriginal = (beforeGroupBy + " " + afterGroupBy).trim();
-            LOGGER.log(Level.FINE, "Разобранная клауза GROUP BY: {0}, HAVING: {1}", new Object[]{groupBy, havingConditions});
+            ParsedGroupBy parsedGroupBy = extractGroupBy(tableAndJoinsOriginal, groupByIndex,
+                    ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes, ctx.tableAliases,
+                    ctx.columnAliases, groupBySubQueries, aggregates, ctx);
+            groupBy = parsedGroupBy.groupBy;
+            havingConditions = parsedGroupBy.havingConditions;
+            tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, groupByIndex, parsedGroupBy.endIndex);
         }
 
+        // Parse ORDER BY
         int orderByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.ORDER_BY);
         if (orderByIndex != -1) {
-            String beforeOrderBy = tableAndJoinsOriginal.substring(0, orderByIndex).trim();
-            String orderByClause = tableAndJoinsOriginal.substring(orderByIndex + 8).trim();
-            // The trailing LIMIT (and OFFSET) or a standalone OFFSET clause
-            // must be stripped from the ORDER BY text before parsing, otherwise
-            // "ID DESC LIMIT 3" or "ID DESC OFFSET 3" is rejected as an invalid
-            // ORDER BY item. Subqueries may still contain their own LIMIT, so
-            // only a clause anchored at the very end is removed. The stripped
-            // clause is re-appended to the remaining text so the LIMIT/OFFSET
-            // parsing below still sees it (it would otherwise be discarded when
-            // the ORDER BY section is cut off).
-            Pattern orderByLimitPattern = Pattern.compile("(?i)\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?|OFFSET\\s+\\d+)\\s*$", Pattern.DOTALL);
-            Matcher orderByLimitMatcher = orderByLimitPattern.matcher(orderByClause);
-            if (orderByLimitMatcher.find()) {
-                String trailingLimit = orderByClause.substring(orderByLimitMatcher.start()).trim();
-                orderByClause = orderByClause.substring(0, orderByLimitMatcher.start()).trim();
-                beforeOrderBy = (beforeOrderBy + " " + trailingLimit).trim();
-            }
-            orderBy = parseOrderByClause(orderByClause, ctx.defaultTableName, ctx.combinedColumnTypes,
-                    ctx.tableAliases, ctx.columnAliases, subQueries); // Updated call
-            tableAndJoinsOriginal = beforeOrderBy;
-            LOGGER.log(Level.FINE, "Разобранная клауза ORDER BY: {0}", orderBy);
+            ParsedOrderBy parsedOrderBy = extractOrderBy(tableAndJoinsOriginal, orderByIndex,
+                    ctx.defaultTableName, ctx.combinedColumnTypes, ctx.tableAliases,
+                    ctx.columnAliases, subQueries);
+            orderBy = parsedOrderBy.orderBy;
+            // ORDER BY ends where LIMIT/OFFSET starts, not at end of string
+            int orderByEnd = tableAndJoinsOriginal.length();
+            int limIdx = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
+            int offIdx = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET);
+            if (limIdx > orderByIndex) orderByEnd = Math.min(orderByEnd, limIdx);
+            if (offIdx > orderByIndex) orderByEnd = Math.min(orderByEnd, offIdx);
+            tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, orderByIndex, orderByEnd);
         }
 
+        // Parse LIMIT (and optional trailing OFFSET)
         int limitIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
         if (limitIndex != -1) {
-            String beforeLimit = tableAndJoinsOriginal.substring(0, limitIndex).trim();
-            String afterLimit = tableAndJoinsOriginal.substring(limitIndex + 5).trim();
-            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+)|(?:\\s*;\\s*)?\\s*$)");
-            Matcher limitMatcher = limitPattern.matcher(afterLimit);
-            if (limitMatcher.find()) {
-                String limitValue = limitMatcher.group(1);
-                try {
-                    limit = Integer.parseInt(limitValue);
-                    LOGGER.log(Level.FINE, "Разобранное значение LIMIT: {0}", limitValue);
-                } catch (NumberFormatException e) {
-                    LOGGER.log(Level.SEVERE, "Недопустимое значение LIMIT: {0}", limitValue);
-                    throw new IllegalArgumentException("Недопустимое значение LIMIT: " + limitValue);
-                }
-                String[] limitOffsetSplit = afterLimit.split("(?i)\\s+OFFSET\\s+", 2);
-                if (limitOffsetSplit.length > 1 && !limitOffsetSplit[1].trim().isEmpty()) {
-                    offset = parseOffsetClause("OFFSET " + limitOffsetSplit[1].trim());
-                }
-            } else {
-                LOGGER.log(Level.SEVERE, "Недопустимый формат LIMIT: {0}", afterLimit);
-                throw new IllegalArgumentException("Недопустимый формат LIMIT: " + afterLimit);
-            }
-            tableAndJoinsOriginal = beforeLimit;
+            ParsedLimitOffset parsedLimit = extractLimit(tableAndJoinsOriginal, limitIndex);
+            limit = parsedLimit.limit;
+            offset = parsedLimit.offset;
+            tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, limitIndex, tableAndJoinsOriginal.length());
         }
 
-        // Standalone OFFSET without LIMIT: "SELECT ... FROM t OFFSET n".
-        // When LIMIT is present its branch already consumed "LIMIT n" and any
-        // trailing "OFFSET m", so this only applies to an OFFSET that appears
-        // without a preceding LIMIT.
-        int offsetIndex = limitIndex == -1 ? findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET) : -1;
-        if (offsetIndex != -1) {
-            String beforeOffset = tableAndJoinsOriginal.substring(0, offsetIndex).trim();
-            String afterOffset = tableAndJoinsOriginal.substring(offsetIndex + 6).trim();
-            Pattern offsetPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
-            Matcher offsetMatcher = offsetPattern.matcher(afterOffset);
-            if (offsetMatcher.find()) {
-                offset = Integer.parseInt(offsetMatcher.group(1));
-                LOGGER.log(Level.FINE, "Разобранное значение OFFSET: {0}", offset);
-            } else {
-                LOGGER.log(Level.SEVERE, "Недопустимый формат OFFSET: {0}", afterOffset);
-                throw new IllegalArgumentException("Недопустимый формат OFFSET: " + afterOffset);
+        // Parse standalone OFFSET without LIMIT
+        if (limitIndex == -1) {
+            int offsetIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET);
+            if (offsetIndex != -1) {
+                offset = extractOffset(tableAndJoinsOriginal, offsetIndex);
+                tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, offsetIndex, tableAndJoinsOriginal.length());
             }
-            tableAndJoinsOriginal = beforeOffset;
         }
 
+        // Parse WHERE
         int whereIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.WHERE);
         if (whereIndex != -1) {
-            conditionStr = tableAndJoinsOriginal.substring(whereIndex + 6).trim();
+            String conditionStr = tableAndJoinsOriginal.substring(whereIndex + 6).trim();
             conditions = parseConditions(conditionStr, ctx);
         }
 
         return new AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset, groupBySubQueries);
+    }
+
+    private String removeClause(String text, int clauseIndex, int endIndex) {
+        String before = text.substring(0, clauseIndex).trim();
+        String after = (endIndex < text.length()) ? text.substring(endIndex).trim() : "";
+        return (before + " " + after).trim();
+    }
+
+    private record ParsedGroupBy(List<String> groupBy, List<HavingCondition> havingConditions, int endIndex) {}
+    private record ParsedOrderBy(List<OrderByInfo> orderBy) {}
+    private record ParsedLimitOffset(Integer limit, Integer offset) {}
+
+    private ParsedGroupBy extractGroupBy(String text, int groupByIndex, String tableName, Database database,
+            Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
+            Map<String, String> columnAliases, Map<String, String> groupBySubQueries,
+            List<AggregateFunction> aggregates, ParseContext ctx) {
+        int orderByIndex = findClauseOutsideSubquery(text, SqlKeywords.ORDER_BY);
+        int limitIndex = findClauseOutsideSubquery(text, SqlKeywords.LIMIT);
+        int endIndex = text.length();
+        for (int idx : new int[]{orderByIndex, limitIndex}) {
+            if (idx != -1 && idx > groupByIndex && idx < endIndex) {
+                endIndex = idx;
+            }
+        }
+        String groupByClause = text.substring(groupByIndex + 8, endIndex).trim();
+        int havingIndex = findClauseOutsideSubquery(groupByClause, SqlKeywords.HAVING);
+        String havingClause = null;
+        if (havingIndex != -1) {
+            havingClause = groupByClause.substring(havingIndex + 6).trim();
+            groupByClause = groupByClause.substring(0, havingIndex).trim();
+        }
+        List<String> groupBy = parseGroupByClause(groupByClause, tableName, database,
+                combinedColumnTypes, tableAliases, columnAliases, groupBySubQueries);
+        List<HavingCondition> havingConditions = havingClause != null
+                ? parseHavingConditions(havingClause, ctx, aggregates) : new ArrayList<>();
+        return new ParsedGroupBy(groupBy, havingConditions, endIndex);
+    }
+
+    private ParsedOrderBy extractOrderBy(String text, int orderByIndex, String defaultTableName,
+            Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
+            Map<String, String> columnAliases, List<SubQuery> subQueries) {
+        String orderByClause = text.substring(orderByIndex + 8).trim();
+        Pattern orderByLimitPattern = Pattern.compile(
+                "(?i)\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?|OFFSET\\s+\\d+)\\s*$", Pattern.DOTALL);
+        Matcher orderByLimitMatcher = orderByLimitPattern.matcher(orderByClause);
+        if (orderByLimitMatcher.find()) {
+            orderByClause = orderByClause.substring(0, orderByLimitMatcher.start()).trim();
+        }
+        List<OrderByInfo> orderBy = parseOrderByClause(orderByClause, defaultTableName,
+                combinedColumnTypes, tableAliases, columnAliases, subQueries);
+        return new ParsedOrderBy(orderBy);
+    }
+
+    private ParsedLimitOffset extractLimit(String text, int limitIndex) {
+        String afterLimit = text.substring(limitIndex + 5).trim();
+        Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+\\d+)|(?:\\s*;\\s*)?\\s*$)");
+        Matcher limitMatcher = limitPattern.matcher(afterLimit);
+        if (!limitMatcher.find()) {
+            throw new IllegalArgumentException("Недопустимый формат LIMIT: " + afterLimit);
+        }
+        Integer limitVal = Integer.parseInt(limitMatcher.group(1));
+        Integer offsetVal = null;
+        Pattern offsetTailPattern = Pattern.compile("(?i)\\s+OFFSET\\s+(\\d+)");
+        Matcher offsetTailMatcher = offsetTailPattern.matcher(afterLimit);
+        if (offsetTailMatcher.find()) {
+            offsetVal = Integer.parseInt(offsetTailMatcher.group(1));
+        }
+        return new ParsedLimitOffset(limitVal, offsetVal);
+    }
+
+    private Integer extractOffset(String text, int offsetIndex) {
+        String afterOffset = text.substring(offsetIndex + 6).trim();
+        Pattern offsetPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
+        Matcher offsetMatcher = offsetPattern.matcher(afterOffset);
+        if (!offsetMatcher.find()) {
+            throw new IllegalArgumentException("Недопустимый формат OFFSET: " + afterOffset);
+        }
+        return Integer.parseInt(offsetMatcher.group(1));
     }
 
     private int findClauseOutsideSubquery(String query, String clause) {
@@ -2243,74 +2232,90 @@ class QueryParser {
                 return null;
             }
             if (valueStr.startsWith("'") && valueStr.endsWith("'")) {
-                String strippedValue = SqlLexer.extractStringLiteral(valueStr);
-                if (columnType == String.class) {
-                    return strippedValue;
-                } else if (columnType == LocalDate.class && CharOps.isLocalDateLiteral(strippedValue)) {
-                    return LocalDate.parse(strippedValue);
-                } else if (columnType == LocalDateTime.class && CharOps.isLocalDateTimeMillisLiteral(strippedValue)) {
-                    return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
-                } else if (columnType == LocalDateTime.class && CharOps.isLocalDateTimeLiteral(strippedValue)) {
-                    return LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
-                } else if (columnType == UUID.class && strippedValue.matches(UUID_PATTERN)) {
-                    return UUID.fromString(strippedValue);
-                } else if (columnType == Character.class && strippedValue.length() == 1) {
-                    return strippedValue.charAt(0);
-                } else {
-                    throw new IllegalArgumentException("Value '" + strippedValue + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
-                }
-            } else if (valueStr.equalsIgnoreCase(SqlKeywords.TRUE) || valueStr.equalsIgnoreCase(SqlKeywords.FALSE)) {
-                if (columnType == Boolean.class) {
-                    return Boolean.parseBoolean(valueStr);
-                } else {
+                return parseStringLiteral(valueStr, columnType);
+            }
+            if (valueStr.equalsIgnoreCase(SqlKeywords.TRUE) || valueStr.equalsIgnoreCase(SqlKeywords.FALSE)) {
+                if (columnType != Boolean.class) {
                     throw new IllegalArgumentException("Boolean value '" + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
                 }
-            } else {
-                try {
-                    if (columnType == BigDecimal.class) {
-                        return new BigDecimal(valueStr);
-                    } else if (columnType == Float.class) {
-                        BigDecimal bd = new BigDecimal(valueStr);
-                        float floatValue = bd.floatValue();
-                        if (Float.isInfinite(floatValue) || Float.isNaN(floatValue)) {
-                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Float");
-                        }
-                        return floatValue;
-                    } else if (columnType == Double.class) {
-                        BigDecimal bd = new BigDecimal(valueStr);
-                        double doubleValue = bd.doubleValue();
-                        if (Double.isInfinite(doubleValue) || Double.isNaN(doubleValue)) {
-                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Double");
-                        }
-                        return doubleValue;
-                    } else if (columnType == Byte.class) {
-                        long parsedLong = Long.parseLong(valueStr);
-                        if (parsedLong >= Byte.MIN_VALUE && parsedLong <= Byte.MAX_VALUE) {
-                            return (byte) parsedLong;
-                        } else {
-                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Byte");
-                        }
-                    } else if (columnType == Short.class) {
-                        long parsedLong = Long.parseLong(valueStr);
-                        if (parsedLong >= Short.MIN_VALUE && parsedLong <= Short.MAX_VALUE) {
-                            return (short) parsedLong;
-                        } else {
-                            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Short");
-                        }
-                    } else if (columnType == Integer.class) {
-                        return Integer.parseInt(valueStr);
-                    } else if (columnType == Long.class) {
-                        return Long.parseLong(valueStr);
-                    } else {
-                        throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
-                    }
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("Invalid numeric value '" + valueStr + "' for column type: " + columnType.getSimpleName());
-                }
+                return Boolean.parseBoolean(valueStr);
             }
+            return parseNumericLiteral(valueStr, columnType);
         } catch (IllegalArgumentException e) {
             throw e;
         }
+    }
+
+    private Object parseStringLiteral(String valueStr, Class<?> columnType) {
+        String strippedValue = SqlLexer.extractStringLiteral(valueStr);
+        if (columnType == String.class) return strippedValue;
+        if (columnType == LocalDate.class && CharOps.isLocalDateLiteral(strippedValue)) return LocalDate.parse(strippedValue);
+        if (columnType == LocalDateTime.class && CharOps.isLocalDateTimeMillisLiteral(strippedValue)) return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
+        if (columnType == LocalDateTime.class && CharOps.isLocalDateTimeLiteral(strippedValue)) return LocalDateTime.parse(strippedValue, DATETIME_FORMATTER);
+        if (columnType == UUID.class && strippedValue.matches(UUID_PATTERN)) return UUID.fromString(strippedValue);
+        if (columnType == Character.class && strippedValue.length() == 1) return strippedValue.charAt(0);
+        throw new IllegalArgumentException("Value '" + strippedValue + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
+    }
+
+    private Object parseNumericLiteral(String valueStr, Class<?> columnType) {
+        try {
+            if (columnType == BigDecimal.class) {
+                return new BigDecimal(valueStr);
+            }
+            if (columnType == Float.class) {
+                return parseBoundedFloat(valueStr);
+            }
+            if (columnType == Double.class) {
+                return parseBoundedDouble(valueStr);
+            }
+            if (columnType == Byte.class) {
+                return parseBoundedByte(valueStr);
+            }
+            if (columnType == Short.class) {
+                return parseBoundedShort(valueStr);
+            }
+            if (columnType == Integer.class) {
+                return Integer.parseInt(valueStr);
+            }
+            if (columnType == Long.class) {
+                return Long.parseLong(valueStr);
+            }
+            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid numeric value '" + valueStr + "' for column type: " + columnType.getSimpleName());
+        }
+    }
+
+    private float parseBoundedFloat(String valueStr) {
+        float f = new BigDecimal(valueStr).floatValue();
+        if (Float.isInfinite(f) || Float.isNaN(f)) {
+            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Float");
+        }
+        return f;
+    }
+
+    private double parseBoundedDouble(String valueStr) {
+        double d = new BigDecimal(valueStr).doubleValue();
+        if (Double.isInfinite(d) || Double.isNaN(d)) {
+            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Double");
+        }
+        return d;
+    }
+
+    private byte parseBoundedByte(String valueStr) {
+        long v = Long.parseLong(valueStr);
+        if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Byte");
+        }
+        return (byte) v;
+    }
+
+    private short parseBoundedShort(String valueStr) {
+        long v = Long.parseLong(valueStr);
+        if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
+            throw new IllegalArgumentException(ErrorMessages.NUMERIC_VALUE_PREFIX + valueStr + "' out of range for Short");
+        }
+        return (short) v;
     }
 
     private List<Condition> parseConditions(String conditionStr, ParseContext ctx) {

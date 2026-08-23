@@ -1799,21 +1799,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 return null;
             }
             BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, RoundingMode.HALF_UP);
-            Class<?> columnType = combinedColumnTypes.get(columnKey);
-            if (columnType == Float.class) {
-                return avg.floatValue();
-            } else if (columnType == Double.class) {
-                return avg.doubleValue();
-            } else if (columnType == Integer.class) {
-                return avg.intValue();
-            } else if (columnType == Long.class) {
-                return avg.longValue();
-            } else if (columnType == Short.class) {
-                return avg.shortValue();
-            } else if (columnType == Byte.class) {
-                return avg.byteValue();
-            }
-            return avg;
+            return coerceNumericResult(avg, combinedColumnTypes.get(columnKey));
         } else if (agg.functionName.equals(SqlKeywords.SUM)) {
             if (agg.column == null) {
                 throw new IllegalArgumentException("SUM requires a column argument");
@@ -1830,21 +1816,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     sum = sum.add(new BigDecimal(value.toString()));
                 }
             }
-            Class<?> columnType = combinedColumnTypes.get(columnKey);
-            if (columnType == Float.class) {
-                return sum.floatValue();
-            } else if (columnType == Double.class) {
-                return sum.doubleValue();
-            } else if (columnType == Integer.class) {
-                return sum.intValue();
-            } else if (columnType == Long.class) {
-                return sum.longValue();
-            } else if (columnType == Short.class) {
-                return sum.shortValue();
-            } else if (columnType == Byte.class) {
-                return sum.byteValue();
-            }
-            return sum;
+            return coerceNumericResult(sum, combinedColumnTypes.get(columnKey));
         } else {
             throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
         }
@@ -2619,39 +2591,54 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (left == null || right == null) {
             return left == right ? 0 : (left == null ? -1 : 1);
         }
-
-        if (left instanceof Number && right instanceof Number) {
-            if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
-                return lbd.compareTo(rbd);
-            }
-            // Fast paths for the common integral types: exact and allocation-free.
-            // Mixed integral types compare as long, matching decimal ordering.
-            if (isIntegral(left) && isIntegral(right)) {
-                return Long.compare(((Number) left).longValue(), ((Number) right).longValue());
-            }
-            BigDecimal leftBD = new BigDecimal(left.toString());
-            BigDecimal rightBD = new BigDecimal(right.toString());
-            return leftBD.compareTo(rightBD);
-        } else if (left instanceof LocalDate ld1 && right instanceof LocalDate ld2) {
-            return ld1.compareTo(ld2);
-        } else if (left instanceof LocalDateTime ldt1 && right instanceof LocalDateTime ldt2) {
-            return ldt1.compareTo(ldt2);
-        } else if (left instanceof Boolean b1 && right instanceof Boolean b2) {
-            return b1.compareTo(b2);
-        } else if (left instanceof UUID u1 && right instanceof UUID u2) {
-            return u1.compareTo(u2);
-        } else if (left instanceof String s1 && right instanceof String s2) {
-            return s1.compareTo(s2);
-        } else if (left instanceof Character c1 && right instanceof Character rc) {
-            return c1.compareTo(rc);
-        } else {
-            throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
+        if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
+            return lbd.compareTo(rbd);
         }
+        if (left instanceof Number lNum && right instanceof Number rNum) {
+            if (isIntegral(left) && isIntegral(right)) {
+                return Long.compare(lNum.longValue(), rNum.longValue());
+            }
+            return new BigDecimal(lNum.toString()).compareTo(new BigDecimal(rNum.toString()));
+        }
+        if (left instanceof LocalDate ld1 && right instanceof LocalDate ld2) {
+            return ld1.compareTo(ld2);
+        }
+        if (left instanceof LocalDateTime ldt1 && right instanceof LocalDateTime ldt2) {
+            return ldt1.compareTo(ldt2);
+        }
+        if (left instanceof Boolean b1 && right instanceof Boolean b2) {
+            return b1.compareTo(b2);
+        }
+        if (left instanceof UUID u1 && right instanceof UUID u2) {
+            return u1.compareTo(u2);
+        }
+        if (left instanceof String s1 && right instanceof String s2) {
+            return s1.compareTo(s2);
+        }
+        if (left instanceof Character c1 && right instanceof Character rc) {
+            return c1.compareTo(rc);
+        }
+        throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
     }
 
     private static boolean isIntegral(Object value) {
         return value instanceof Integer || value instanceof Long
                 || value instanceof Short || value instanceof Byte;
+    }
+
+    /**
+     * Coerces a {@link BigDecimal} aggregate result to the column's declared
+     * Java type so the returned value matches what the table stores.
+     */
+    private static Object coerceNumericResult(BigDecimal value, Class<?> columnType) {
+        if (columnType == null) return value;
+        if (columnType == Float.class) return value.floatValue();
+        if (columnType == Double.class) return value.doubleValue();
+        if (columnType == Integer.class) return value.intValue();
+        if (columnType == Long.class) return value.longValue();
+        if (columnType == Short.class) return value.shortValue();
+        if (columnType == Byte.class) return value.byteValue();
+        return value;
     }
 
     private boolean likeComparison(Object value, Object pattern) {
