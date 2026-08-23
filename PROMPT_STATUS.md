@@ -122,7 +122,7 @@
 | 61 | ��� TODO | Apache Parquet ���-T¦���T��-TƦ�T� | HIGH |
 | 62 | DONE (2026-08-23) | HIGH | QueryParser.java, SelectQuery.java | Cognitive Complexity S3776 refactoring | HIGH |
 | 63 | ��� TODO | Columnar storage | HIGH |
-| 64 | ��� TODO | Schema evolution | MEDIUM |
+| 64 | DONE (2026-08-23) | CRITICAL | QueryParser.java, SubqueryParser.java, SelectQuery.java | Recursive regex patterns S5998 | CRITICAL |
 | 65 | ��� TODO | Partitioning �+��T� Parquet | MEDIUM |
 | 66 | ��� TODO | Compression codecs | MEDIUM |
 | 67 | ��� TODO | Statistics metadata | MEDIUM |

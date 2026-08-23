@@ -2649,7 +2649,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         String patternStr = pattern.toString();
         Pattern compiled = likePatternCache.get(patternStr);
         if (compiled == null) {
-            compiled = Pattern.compile(patternStr.replace("%", ".*").replace("_", "."));
+            compiled = Pattern.compile(patternStr.replaceAll("%+", "%").replace("%", ".*").replace("_", "."));
             likePatternCache.put(patternStr, compiled);
         }
         return compiled.matcher(valueStr).matches();

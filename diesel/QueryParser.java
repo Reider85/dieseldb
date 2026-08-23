@@ -550,10 +550,19 @@ class QueryParser {
         }
 
         String regex = escapedPattern.toString()
+                .replaceAll("%+", "%")
                 .replace("%", ".*")
                 .replace("_", ".");
 
         return "^" + regex + "$";
+    }
+
+    private static String extractSequenceDef(String input) {
+        int start = input.indexOf("SEQUENCE(");
+        if (start < 0) return "";
+        int end = input.indexOf(')', start + 9);
+        if (end < 0) return "";
+        return input.substring(start + 9, end).trim();
     }
 
     /**
@@ -1034,9 +1043,9 @@ class QueryParser {
                 }
                 String seqDef;
                 if (type.endsWith("_SEQUENCE")) {
-                    seqDef = colParts.length > 2 ? colParts[2].replaceAll(".*SEQUENCE\\(([^)]+)\\).*", "$1").trim() : "";
+                    seqDef = colParts.length > 2 ? extractSequenceDef(colParts[2]) : "";
                 } else {
-                    seqDef = constraints.replaceAll(".*SEQUENCE\\(([^)]+)\\).*", "$1").trim();
+                    seqDef = extractSequenceDef(constraints);
                 }
                 String[] seqParts = seqDef.split("\\s+");
                 if (seqParts.length < 3) {
@@ -1371,9 +1380,9 @@ class QueryParser {
         // Single unified pattern: FUNC_NAME ( ARG ) [AS alias]
         // Group 1 = function name (case-insensitive), group 2 = argument, group 3 = alias
         Pattern aggPattern = Pattern.compile(
-                "(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(.*?\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+                "(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\([^()]*+\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+.*?\\s*\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+[^()]*+\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -1974,7 +1983,7 @@ class QueryParser {
                                             Map<String, String> columnAliases, Map<String, String> groupBySubQueries) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitSelectItems(groupByClause);
-        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+.*?\\))$", Pattern.DOTALL);
+        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+[^()]*+\\))$", Pattern.DOTALL);
 
         for (String item : items) {
             String trimmedItem = item.trim();
@@ -2792,7 +2801,7 @@ class QueryParser {
 
     private boolean isSubQueryCondition(String condStr) {
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+[^)]*+)\\)$",
                 Pattern.DOTALL
         );
         return subQueryPattern.matcher(condStr).matches();
@@ -2800,7 +2809,7 @@ class QueryParser {
 
     private Condition parseSubQueryCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+.*?)\\)$",
+                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*\\((SELECT\\s+[^)]*+)\\)$",
                 Pattern.DOTALL
         );
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
@@ -3165,7 +3174,7 @@ class QueryParser {
         }
 
         if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(.*?\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
+            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\([^()]*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
             Matcher aggMatcher = aggPattern.matcher(leftPart);
             if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);
@@ -3263,7 +3272,7 @@ class QueryParser {
                         String subQueryStr = str.substring(startIndex, i + 1);
                         // Проверка структуры подзапроса с использованием регулярного выражения
                         Pattern selectPattern = Pattern.compile(
-                                "\\s*\\(\\s*SELECT\\s+.*?\\s+FROM\\s+.*?\\s*\\)",
+                                "\\s*\\(\\s*SELECT\\s+[^()]*+\\s+FROM\\s+[^()]*+\\s*\\)",
                                 Pattern.CASE_INSENSITIVE | Pattern.DOTALL
                         );
                         if (!selectPattern.matcher(subQueryStr).matches()) {
