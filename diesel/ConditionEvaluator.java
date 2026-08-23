@@ -100,12 +100,11 @@ class ConditionEvaluator {
 
         boolean result;
         if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
-            if (!(rowValue instanceof String) || !(conditionValue instanceof String)) {
+            if (!(rowValue instanceof String rowStr) || !(conditionValue instanceof String condStr)) {
                 throw new IllegalArgumentException("LIKE and NOT LIKE operators are only supported for String types");
             }
-            String rowStr = (String) rowValue;
             try {
-                String regex = QueryParser.convertLikePatternToRegex((String) conditionValue);
+                String regex = QueryParser.convertLikePatternToRegex(condStr);
                 boolean matches = rowStr.matches(regex);
                 result = condition.operator == QueryParser.Operator.LIKE ? matches : !matches;
             } catch (IllegalArgumentException e) {
