@@ -224,6 +224,7 @@ class QueryProfiler implements DynamicMBean {
                 }
             } catch (NumberFormatException ignored) {
                 // Fall through to the config file / default
+                LOGGER.debug("Invalid slow threshold property, using config file/default: {}", ignored.getMessage());
             }
         }
         try {
@@ -243,6 +244,7 @@ class QueryProfiler implements DynamicMBean {
             }
         } catch (Exception ignored) {
             // Keep the default on any config error
+            LOGGER.debug("Config file error, using default: {}", ignored.getMessage());
         }
         return DEFAULT_SLOW_THRESHOLD_MS;
     }
@@ -253,6 +255,7 @@ class QueryProfiler implements DynamicMBean {
             server.registerMBean(this, new ObjectName(OBJECT_NAME));
         } catch (InstanceAlreadyExistsException ignored) {
             // Already registered on an earlier touch in this JVM
+            LOGGER.debug("MBean already registered: {}", ignored.getMessage());
         } catch (Exception e) {
             LOGGER.warn("Failed to register QueryProfiler MBean: {}", e.getMessage());
         }
@@ -301,6 +304,7 @@ class QueryProfiler implements DynamicMBean {
                 result.add(new Attribute(attribute, getAttribute(attribute)));
             } catch (Exception ignored) {
                 // Skip attributes that cannot be read
+                LOGGER.debug("Skipping unreadable attribute: {}", attribute);
             }
         }
         return result;

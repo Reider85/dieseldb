@@ -1010,6 +1010,7 @@ class Table implements Serializable {
                 return Math.max(1, total / Math.min(n, rows.size()));
             } catch (ConcurrentModificationException ignored) {
                 // Rows changed while measuring; retry.
+                LOGGER.log(Level.FINE, "Concurrent modification during row size estimation, retrying");
             }
         }
         return estimateAverageRowSizeBytes();

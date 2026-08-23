@@ -226,6 +226,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         } catch (Exception ignored) {
             // Keep the defaults on any config error
+            LOGGER.fine("Config error, using defaults: " + ignored.getMessage());
         }
         MAX_IN_MEMORY_ROWS = inMemoryRows;
         MAX_HASH_TABLE_SIZE_BYTES = hashMb * 1024L * 1024L;
@@ -1050,6 +1051,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     }
                 } catch (IOException ignored) {
                     // Best-effort drain; row is added directly below on failure
+                    LOGGER.fine("Best-effort spill drain failed: " + ignored.getMessage());
                 } finally {
                     spill.close();
                 }
@@ -1223,6 +1225,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     Files.deleteIfExists(tempFile.toPath());
                 } catch (IOException ignored) {
                     // Temp spill files are best-effort; leftover files are cleaned on the next run
+                    LOGGER.fine("Temp spill file cleanup failed: " + ignored.getMessage());
                 }
             }
         }
@@ -1230,6 +1233,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             Files.deleteIfExists(tempDir.toPath());
         } catch (IOException ignored) {
             // Temp spill dir is best-effort; leftover dirs are cleaned on the next run
+            LOGGER.fine("Temp spill dir cleanup failed: " + ignored.getMessage());
         }
 
         lastHashJoinTableSize = totalHashEntries;
@@ -1675,6 +1679,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             } catch (IOException ignored) {
                 // Best-effort close; failure is non-critical
+                LOGGER.fine("Best-effort writer close failed: " + ignored.getMessage());
             }
             try {
                 if (reader != null) {
@@ -1682,12 +1687,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             } catch (IOException ignored) {
                 // Best-effort close; failure is non-critical
+                LOGGER.fine("Best-effort reader close failed: " + ignored.getMessage());
             }
             if (spillFile != null) {
                 try {
                     Files.deleteIfExists(spillFile.toPath());
                 } catch (IOException ignored) {
                     // Best-effort temp file cleanup
+                    LOGGER.fine("Best-effort spill file cleanup failed: " + ignored.getMessage());
                 }
             }
         }

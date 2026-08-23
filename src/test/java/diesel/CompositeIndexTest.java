@@ -27,7 +27,7 @@ public class CompositeIndexTest {
     @AfterEach
     void tearDown() {
         for (String name : new String[]{"T1"}) {
-            try { database.dropTable(name); } catch (TableNotFoundException ignored) {}
+            try { database.dropTable(name); } catch (TableNotFoundException ignored) { /* intentionally empty */ }
         }
     }
 

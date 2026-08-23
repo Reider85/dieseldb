@@ -14,7 +14,7 @@ class BulkInsertTest {
     @BeforeEach
     void setUp() {
         database = new Database();
-        try { database.dropTable("BULK"); } catch (TableNotFoundException ignored) { }
+        try { database.dropTable("BULK"); } catch (TableNotFoundException ignored) { /* intentionally empty */ }
     }
 
     // ── helpers ──────────────────────────────────────────────────────

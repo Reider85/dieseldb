@@ -607,6 +607,7 @@ public class SubqueryParser {
             }
         } else {
             // Разрешаем другие типы условий (например, сравнение с константой)
+            LOGGER.log(Level.FINEST, "Allowing non-column condition type: {0}", cond);
         }
     }
 
