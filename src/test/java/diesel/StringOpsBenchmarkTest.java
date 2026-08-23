@@ -56,9 +56,9 @@ public class StringOpsBenchmarkTest {
 
     @Test
     void asciiIdentifierStringOpsEquivalentAndFaster() {
-        assertEquivalent("asciiIdentifier", Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*"),
+        assertEquivalent("asciiIdentifier", Pattern.compile("[a-zA-Z_]\\w*"),
                 IDENTIFIER_SAMPLES, CharOps::isAsciiIdentifier);
-        benchmark("asciiIdentifier", Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*"),
+        benchmark("asciiIdentifier", Pattern.compile("[a-zA-Z_]\\w*"),
                 IDENTIFIER_SAMPLES, CharOps::isAsciiIdentifier);
     }
 

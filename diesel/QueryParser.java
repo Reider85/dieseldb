@@ -2368,7 +2368,7 @@ class QueryParser {
         patterns.add(Map.entry("Comparison String Condition",
                 Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*+')")));
         patterns.add(Map.entry("Comparison Number Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*([0-9]+(?:\\.[0-9]+)?)")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(\\d+(?:\\.\\d+)?)")));
         patterns.add(Map.entry("Comparison Column Condition",
                 Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + ")")));
 

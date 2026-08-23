@@ -13,7 +13,7 @@ public final class CharOps {
     }
 
     /**
-     * Exact equivalent of {@code s.matches("[a-zA-Z_][a-zA-Z0-9_]*")}.
+     * Exact equivalent of {@code s.matches("[a-zA-Z_]\\w*")}.
      */
     public static boolean isAsciiIdentifier(String s) {
         if (s.isEmpty()) {

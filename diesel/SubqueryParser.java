@@ -979,7 +979,7 @@ public class SubqueryParser {
         patterns.add(Map.entry("Null Condition",
                 Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
         patterns.add(Map.entry("Comparison Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|'[^']*'|[-]?[0-9]+(?:\\.[0-9]*)?)")));
+                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|'[^']*'|[-]?\\d+(?:\\.\\d*)?)")));
         patterns.add(Map.entry("Table Alias", Pattern.compile("(?i)\\b" + SIMPLE_IDENTIFIER_PATTERN + "(?=\\s*\\." + SIMPLE_IDENTIFIER_PATTERN + "\\b)")));
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
         patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
