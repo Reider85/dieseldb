@@ -113,7 +113,7 @@
 | 57 | ��� TODO | Adaptive query execution | LOW |
 | 58 | ��� TODO | Index-only scans | LOW |
 | 59 |  DONE (2026-08-23) | Serialized index persistence | LOW |
-| 60 | ��� TODO | SIMD �-����T¦-T������-TƦ�T� �-��T������-T¦-�- | LOW |
+| 60 | DONE (2026-08-23) | Copy-on-Write transaction isolation | LOW |
 
 ### Section 4: Parquet Integration (61-92)
 

@@ -32,6 +32,7 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
@@ -160,6 +161,11 @@ class Table implements Serializable {
     private long rowCount;
     private long avgRowSizeBytes;
     private long lastAnalyzedMillis;
+    /**
+     * Monotonically increasing version counter, incremented on every DML
+     * mutation. Used for optimistic concurrency control at COMMIT time.
+     */
+    private transient AtomicLong version = new AtomicLong(0);
     private transient Object statsLock = new Object();
     private transient volatile boolean statsDirty;
     private transient volatile boolean statsRefreshScheduled;
@@ -288,6 +294,84 @@ class Table implements Serializable {
      */
     public void attachDatabase(Database database) {
         this.database = database;
+    }
+
+    /**
+     * Private constructor for {@link #copyForTransaction()} — skips schema
+     * validation and clustered index creation (indexes are rebuilt at the end).
+     */
+    private Table(Database database, String name, List<String> columns,
+                  Map<String, Class<?>> columnTypes, String primaryKeyColumn,
+                  boolean skipInit) {
+        this.database = database;
+        this.name = name;
+        this.columns = columns;
+        this.columnTypes = columnTypes;
+        this.primaryKeyColumn = primaryKeyColumn;
+        this.rows = new ArrayList<>();
+        this.rowLocks = new ConcurrentHashMap<>();
+        this.indexes = new ConcurrentHashMap<>();
+        this.sequences = new ConcurrentHashMap<>();
+        this.deletedRows = new BitSet();
+        this.tableLock = new ReentrantReadWriteLock();
+        this.statsLock = new Object();
+        this.statsDirty = false;
+        this.statsRefreshScheduled = false;
+        this.indicesDisabled = false;
+        this.deferredIndexOps = null;
+        this.formatVersion = CURRENT_FORMAT_VERSION;
+        this.version = new AtomicLong(0);
+    }
+
+    /**
+     * Creates an independent copy of this table for use inside a transaction.
+     * Copies rows and metadata directly, avoiding ObjectOutputStream/ObjectInputStream
+     * overhead. Indexes are rebuilt from scratch (same cost as deserialization).
+     *
+     * <p>Row values are shallow-copied ({@code new HashMap<>(row)}) because
+     * DieselDB stores only immutable types (Integer, Long, String, BigDecimal,
+     * LocalDate, LocalDateTime, UUID, Boolean).
+     */
+    public Table copyForTransaction() {
+        Table copy = new Table(this.database, this.name,
+                new ArrayList<>(this.columns),
+                new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }},
+                this.primaryKeyColumn, true);
+
+        // Deep-copy rows: new list, each row Map shallow-copied.
+        for (Map<String, Object> row : this.rows) {
+            copy.rows.add(new HashMap<>(row));
+        }
+
+        // Deep-copy deletedRows BitSet.
+        copy.deletedRows = this.deletedRows != null ? (BitSet) this.deletedRows.clone() : new BitSet();
+
+        // Share sequences — Sequence.nextValue() is synchronized.
+        copy.sequences = new ConcurrentHashMap<>(this.sequences);
+
+        // Copy index metadata.
+        copy.indexDefinitions.putAll(this.indexDefinitions);
+        copy.coverColumnDefinitions.putAll(this.coverColumnDefinitions);
+
+        // Copy clustered index metadata.
+        copy.hasClusteredIndex = this.hasClusteredIndex;
+        copy.clusteredIndexColumn = this.clusteredIndexColumn;
+
+        // Copy stats.
+        copy.rowCount = this.rowCount;
+        copy.avgRowSizeBytes = this.avgRowSizeBytes;
+        copy.lastAnalyzedMillis = this.lastAnalyzedMillis;
+
+        copy.isFileInitialized = this.isFileInitialized;
+        copy.formatVersion = this.formatVersion;
+
+        // Snapshot the source version at copy time.
+        copy.version = new AtomicLong(this.version.get());
+
+        // Rebuild all indexes from the copied rows.
+        copy.rebuildAllIndexes();
+
+        return copy;
     }
 
     private void validateSchema(List<String> columns, Map<String, Class<?>> columnTypes) {
@@ -829,6 +913,11 @@ class Table implements Serializable {
         }
     }
 
+    /** Returns the current version of this table (incremented on every DML mutation). */
+    public long getVersion() {
+        return version.get();
+    }
+
     /**
      * Synchronously recomputes the statistics (exact row count, measured
      * average row size and the last-analyzed timestamp) and returns them. This
@@ -1105,6 +1194,7 @@ class Table implements Serializable {
             rowLocks.remove(i);
         }
         rowCount--;
+        version.incrementAndGet();
         markStatsDirty();
     }
 
@@ -1120,6 +1210,7 @@ class Table implements Serializable {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
         deletedRows.set(rowIndex);
+        version.incrementAndGet();
         markStatsDirty();
     }
 
@@ -1325,6 +1416,7 @@ class Table implements Serializable {
         }
         this.database = null;
         this.statsLock = new Object();
+        this.version = new AtomicLong(0);
         // Restore statistics: old serialized files carry zeroed stats fields.
         this.rowCount = rows.size();
         if (this.lastAnalyzedMillis == 0 && this.avgRowSizeBytes == 0) {
@@ -1392,6 +1484,7 @@ class Table implements Serializable {
             insertAtEnd(validatedRow);
         }
         rowCount++;
+        version.incrementAndGet();
         markStatsDirty();
         LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
     }

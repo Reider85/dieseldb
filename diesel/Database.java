@@ -363,6 +363,21 @@ class Database {
         if (currentTransaction == null || !currentTransaction.isActive()) {
             throw new TransactionException("No active transaction to commit");
         }
+        // Optimistic concurrency check: verify shared tables haven't changed since snapshot.
+        for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
+            String tableName = entry.getKey();
+            Table modifiedTable = entry.getValue();
+            if (modifiedTable == null) continue;
+            Table sharedTable = tables.get(tableName);
+            if (sharedTable == null) continue;
+            Long snapshotVersion = currentTransaction.getSnapshotVersions().get(tableName);
+            if (snapshotVersion != null && sharedTable.getVersion() != snapshotVersion) {
+                throw new TransactionException(
+                    "Write-write conflict on table " + tableName
+                    + ": shared table version changed from " + snapshotVersion
+                    + " to " + sharedTable.getVersion() + " since transaction began");
+            }
+        }
         persistModifiedTables(currentTransaction.getModifiedTables(), true);
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
@@ -507,14 +522,21 @@ class Database {
             }
         }
 
-        // DML inside an explicit transaction records a copy for the eventual COMMIT.
+        // DML inside an explicit transaction: copy-on-write.
         if (isDml) {
-            Object dmlResult = parsedQuery.execute(table);
             if (currentTransaction != null && currentTransaction.isActive()) {
-                currentTransaction.updateTable(tableName, table);
-            } else {
-                table.saveToFile(tableName);
+                // Copy-on-write: copy the shared table into the transaction's
+                // modifiedTables BEFORE executing the DML (first DML only).
+                if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
+                    currentTransaction.updateTable(tableName, table);
+                }
+                // Execute DML on the transaction's private copy, not the shared table.
+                Table txnTable = currentTransaction.getModifiedTables().get(tableName);
+                return parsedQuery.execute(txnTable);
             }
+            // No active transaction: execute on shared table and persist immediately.
+            Object dmlResult = parsedQuery.execute(table);
+            table.saveToFile(tableName);
             return dmlResult;
         }
 
