@@ -130,7 +130,7 @@
 | 69 | DONE (2026-08-24) | Fill/remove empty code blocks S108 | MEDIUM |
 | 70 | DONE (2026-08-24) | Remove deprecated setScale() S1874 | MEDIUM |
 | 71 | DONE (2026-08-28) | Remove unused local variables (S1481) | MINOR |
-| 72 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� INSERT | MEDIUM |
+| 72 | DONE (2026-08-28) | Remove useless assignments (S1854) | MEDIUM |
 | 73 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� UPDATE | MEDIUM |
 | 74 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� DELETE | MEDIUM |
 | 75 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� DDL | MEDIUM |
