@@ -73,9 +73,9 @@ class ExplainQuery implements Query<String> {
 
     private String executeDml(Table table) {
         String operation;
-        if (innerQuery instanceof InsertQuery iq) {
+        if (innerQuery instanceof InsertQuery) {
             operation = SqlKeywords.INSERT;
-        } else if (innerQuery instanceof UpdateQuery uq) {
+        } else if (innerQuery instanceof UpdateQuery) {
             operation = SqlKeywords.UPDATE;
         } else {
             operation = SqlKeywords.DELETE;

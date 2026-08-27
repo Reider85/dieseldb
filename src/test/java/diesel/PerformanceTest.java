@@ -152,9 +152,6 @@ public class PerformanceTest {
         try {
             LOGGER.info("Starting INSERT performance test for {} records", RECORD_COUNT);
 
-            List<String> columns = Arrays.asList("ID", "USER_CODE", "NAME", "AGE", "ACTIVE", "BIRTHDATE", "LASTLOGIN", "LASTACTION", "USERSCORE", "LEVEL", "RANK", "BALANCE", "SCORE", "PRECISION", "INITIAL", "SESSION_ID");
-            Random random = new Random();
-
             for (int i = 0; i < WARMUP_RUNS; i++) {
                 LOGGER.info("Warmup run {}", i);
                 dropTable();
@@ -299,7 +296,6 @@ public class PerformanceTest {
         LOGGER.info("Тестирование производительности READ UNCOMMITTED с {} записями", RECORD_COUNT);
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
-        Random random = new Random();
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
             LOGGER.info("Прогревочный запуск {}", i);

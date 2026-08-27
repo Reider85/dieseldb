@@ -129,7 +129,7 @@
 | 68 | DONE (2026-08-24) | Reduce break/continue in loops S135 | MINOR |
 | 69 | DONE (2026-08-24) | Fill/remove empty code blocks S108 | MEDIUM |
 | 70 | DONE (2026-08-24) | Remove deprecated setScale() S1874 | MEDIUM |
-| 71 | ��� TODO | QueryCache �- SelectQuery | MEDIUM |
+| 71 | DONE (2026-08-28) | Remove unused local variables (S1481) | MINOR |
 | 72 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� INSERT | MEDIUM |
 | 73 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� UPDATE | MEDIUM |
 | 74 | ��� TODO | �ئ-�-�-�����+�-TƦ�T� ��T��� DELETE | MEDIUM |

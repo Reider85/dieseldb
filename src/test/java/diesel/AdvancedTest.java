@@ -4,7 +4,6 @@ import diesel.Database;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.Random;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,7 +31,6 @@ public class AdvancedTest {
 
     private void insertRecords() {
         Table table = database.getTable("USERS");
-        Random random = new Random();
         for (int i = 1; i <= RECORD_COUNT; i++) {
             String query = String.format(
                     "INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE) VALUES ('CODE%d', 'User%d', %d, %s)",

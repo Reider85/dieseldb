@@ -2339,7 +2339,6 @@ class QueryParser {
         String trimmedConditionStr = trimToClause(conditionStr);
         LOGGER.log(Level.FINE, "Условие обрезано до: {0}", trimmedConditionStr);
 
-        List<Condition> conditions = new ArrayList<>();
         List<Token> tokens = tokenizeConditions(trimmedConditionStr);
         return parseTokenizedConditions(tokens, ctx, null, false);
     }

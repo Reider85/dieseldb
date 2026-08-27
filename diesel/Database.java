@@ -221,10 +221,10 @@ class Database {
         if (parsedQuery instanceof BeginTransactionQuery q) {
             return executeBeginTransaction(q, currentTransaction);
         }
-        if (parsedQuery instanceof CommitTransactionQuery q) {
+        if (parsedQuery instanceof CommitTransactionQuery) {
             return executeCommit(currentTransaction, transactionId);
         }
-        if (parsedQuery instanceof RollbackTransactionQuery q) {
+        if (parsedQuery instanceof RollbackTransactionQuery) {
             return executeRollback(currentTransaction, transactionId);
         }
         if (parsedQuery instanceof CreateTableQuery q) {

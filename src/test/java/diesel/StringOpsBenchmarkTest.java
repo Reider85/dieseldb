@@ -126,7 +126,7 @@ public class StringOpsBenchmarkTest {
     private static long runRound(Pattern pattern, String[] corpus, int calls) {
         long start = System.nanoTime();
         for (int i = 0; i < calls; i++) {
-            boolean ignored = pattern.matcher(corpus[i % corpus.length]).matches();
+            pattern.matcher(corpus[i % corpus.length]).matches();
         }
         return (System.nanoTime() - start) / 1_000_000;
     }
@@ -134,7 +134,7 @@ public class StringOpsBenchmarkTest {
     private static long runRound(StringCheck check, String[] corpus, int calls) {
         long start = System.nanoTime();
         for (int i = 0; i < calls; i++) {
-            boolean ignored = check.test(corpus[i % corpus.length]);
+            check.test(corpus[i % corpus.length]);
         }
         return (System.nanoTime() - start) / 1_000_000;
     }
