@@ -291,6 +291,7 @@ class QueryProfiler implements DynamicMBean {
     }
 
     @Override
+    @SuppressWarnings("unused")
     public void setAttribute(Attribute attribute)
             throws AttributeNotFoundException, InvalidAttributeValueException, MBeanException, ReflectionException {
         throw new AttributeNotFoundException("QueryProfiler attributes are read-only");
@@ -311,11 +312,13 @@ class QueryProfiler implements DynamicMBean {
     }
 
     @Override
+    @SuppressWarnings("unused")
     public AttributeList setAttributes(AttributeList attributes) {
         return new AttributeList();
     }
 
     @Override
+    @SuppressWarnings("unused")
     public Object invoke(String actionName, Object[] params, String[] signature)
             throws MBeanException, ReflectionException {
         throw new ReflectionException(new UnsupportedOperationException(

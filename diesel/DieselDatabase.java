@@ -55,6 +55,7 @@ public class DieselDatabase {
      *
      * @param args not used
      */
+    @SuppressWarnings("unused")
     public static void main(String[] args) {
         // Load and log configuration parameters
         Properties config = loadConfig();

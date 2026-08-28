@@ -586,6 +586,7 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.EXPLAIN);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseExplainQuery(o, d);
             }
@@ -596,8 +597,9 @@ class QueryParser {
                 return n.startsWith(SqlKeywords.SELECT);
             }
             @Override
+            @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
-                return parseSelectQuery(n, o, d);
+                return parseSelectQuery(o, d);
             }
         });
         strategies.add(new QueryParseStrategy() {
@@ -828,7 +830,7 @@ class QueryParser {
             }
             switch (statementType) {
                 case SqlKeywords.SELECT:
-                    return parseSelectQuery(normalizedQuery, originalQuery, database);
+                    return parseSelectQuery(originalQuery, database);
                 case SqlKeywords.INSERT:
                     return parseInsertQuery(normalizedQuery, originalQuery, database);
                 case SqlKeywords.UPDATE:
@@ -1312,7 +1314,7 @@ class QueryParser {
         LOGGER.log(Level.FINEST, "Основной FROM не найден в запросе: {0}", query);
         return -1;
     }
-    private Query<List<Map<String, Object>>> parseSelectQuery(String normalized, String original, Database database) {
+    private Query<List<Map<String, Object>>> parseSelectQuery(String original, Database database) {
         // Находим индекс основного FROM
         int fromIndex = findMainFromClause(original);
         if (fromIndex == -1) {
@@ -2826,6 +2828,7 @@ class QueryParser {
         validateSubquery("(" + subQueryStr + ")");
         Query<?> subQuery = new Query<List<?>>() {
             @Override
+            @SuppressWarnings("unused")
             public List<?> execute(Table table) {
                 throw new UnsupportedOperationException("Subquery execution should be handled by SelectQuery: " + subQueryStr);
             }
