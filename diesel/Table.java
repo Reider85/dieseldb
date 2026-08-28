@@ -94,7 +94,7 @@ interface Index {
      * Returns {@code true} when this index stores all of the given columns
      * and can serve as a covering index for them.
      */
-    default boolean coversColumns(Set<String> columns) {
+    default @SuppressWarnings("java:S3457") boolean coversColumns(Set<String> columns) {
         return false;
     }
 
@@ -102,7 +102,7 @@ interface Index {
      * Returns the covered column values for the given row index, or
      * {@code null} when the index does not store row data.
      */
-    default Map<String, Object> getCoveredValues(int rowIndex) {
+    default @SuppressWarnings("java:S3457") Map<String, Object> getCoveredValues(int rowIndex) {
         return null;
     }
 }

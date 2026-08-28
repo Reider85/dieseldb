@@ -1180,6 +1180,7 @@ public class SubqueryParser {
     private Query<?> createSubQueryHolder(String subQueryStr) {
         return new Query<List<?>>() {
             @Override
+            @SuppressWarnings("java:S3457")
             public List<?> execute(Table table) {
                 throw new UnsupportedOperationException("Subquery execution should be handled by SelectQuery: " + subQueryStr);
             }

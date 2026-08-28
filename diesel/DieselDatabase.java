@@ -51,10 +51,11 @@ public class DieselDatabase {
     }
 
     /**
-     * Runs the demo scenario described in the class documentation.
+     * Main entry point for the DieselDB database.
      *
      * @param args not used
      */
+    @SuppressWarnings("java:S3457")
     public static void main(String[] args) {
         // Load and log configuration parameters
         Properties config = loadConfig();

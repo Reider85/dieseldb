@@ -37,7 +37,7 @@ class BeginTransactionQuery implements TransactionQuery {
      * @throws UnsupportedOperationException always
      */
     @Override
-    @SuppressWarnings("unused")
+    @SuppressWarnings("java:S3457")
     public String execute(Table table) {
         throw new UnsupportedOperationException("BeginTransactionQuery should be handled by Database directly");
     }

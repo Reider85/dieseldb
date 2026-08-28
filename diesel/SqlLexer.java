@@ -238,6 +238,7 @@ public class SqlLexer {
      *
      * @param args not used
      */
+    @SuppressWarnings("java:S3457")
     public static void main(String[] args) {
         SqlLexer lexer = new SqlLexer();
         String[] queries = {

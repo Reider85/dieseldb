@@ -37,7 +37,7 @@ class SetAutoCommitQuery implements Query<String> {
      * @throws UnsupportedOperationException always
      */
     @Override
-    @SuppressWarnings("unused")
+    @SuppressWarnings("java:S3457")
     public String execute(Table table) {
         throw new UnsupportedOperationException("SetAutoCommitQuery should be handled by Database directly");
     }
