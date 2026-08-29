@@ -1,8 +1,1 @@
-2.9.64 prompt 74 Refactor SelectQuery constructor to use parameter objects (java:S107) - reduced constructor parameters from 15 to 7 via parameter object pattern
-Refactored SelectQuery constructor to use parameter objects (java:S107):
-- Created parameter object classes: SelectQueryCore, SelectQueryJoins, SelectQueryWhere, SelectQueryGroupBy, SelectQueryOrderBy, SelectQueryLimitOffset, SelectQueryMetadata
-- Modified SelectQuery constructors (14 and 15 parameters) to accept 7 parameter objects instead
-- Updated SelectQuery.Builder.build() to construct and pass parameter objects
-- Refactored QueryParser.extractGroupBy method to reduce parameters from 10 to 5 by using ParseContext values
-
-Verification: quick gate 42/0 BUILD SUCCESS; full acceptance gate -Ddiesel.largeTests=true -Dtest.heap=4g test 42/0 BUILD SUCCESS.
+sonar6: Added SonarQube analysis results file with detailed metrics and issue breakdown for DieselDB project
