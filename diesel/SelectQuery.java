@@ -376,9 +376,23 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param columnTypes       the combined column types
      */
     /**
-     * Creates a SELECT query over the given table. Use {@link #builder()} to
-     * construct an instance, since the fifteen-argument constructor is too
-     * unwieldy (java:S107, Prompt 32).
+     * Creates a SELECT query over the given table, without subqueries in the
+     * GROUP BY clause.
+     *
+     * @param tableName         the main table name
+     * @param tableAlias        the main table alias, or null
+     * @param columns           the selected columns (or aggregates/subqueries)
+     * @param aggregates        the parsed aggregate functions
+     * @param joins             the parsed join clauses
+     * @param conditions        the WHERE conditions
+     * @param groupBy           the GROUP BY columns
+     * @param havingConditions  the HAVING conditions
+     * @param orderBy           the ORDER BY list
+     * @param limit             the LIMIT, or null
+     * @param offset            the OFFSET, or null
+     * @param tableAliases      the alias to table name mapping
+     * @param extraTableAliases extra aliases from joins
+     * @param columnTypes       the combined column types
      */
     private SelectQuery(String tableName, String tableAlias, List<String> columns,
                         List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
@@ -387,8 +401,39 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         Integer limit, Integer offset,
                         Map<String, String> tableAliases, Map<String, String> extraTableAliases,
                         Map<String, Class<?>> columnTypes) {
-        this(tableName, tableAlias, columns, aggregates, joins, conditions, groupBy, havingConditions, orderBy,
-                limit, offset, tableAliases, extraTableAliases, columnTypes, new HashMap<>());
+        SelectQueryCore core = new SelectQueryCore(tableName, tableAlias, columns, aggregates);
+        SelectQueryJoins joinsObj = new SelectQueryJoins(joins);
+        SelectQueryWhere where = new SelectQueryWhere(conditions);
+        SelectQueryGroupBy groupByObj = new SelectQueryGroupBy(groupBy, havingConditions, new HashMap<>());
+        SelectQueryOrderBy orderByObj = new SelectQueryOrderBy(orderBy);
+        SelectQueryLimitOffset limitOffset = new SelectQueryLimitOffset(limit, offset);
+        SelectQueryMetadata metadata = new SelectQueryMetadata(tableAliases, extraTableAliases, columnTypes);
+        
+        this.columns = core.getColumns();
+        this.aggregates = core.getAggregates();
+        this.conditions = where.getConditions();
+        this.joins = joinsObj.getJoins();
+        this.mainTableName = core.getTableName(); // Используем tableName вместо mainTableName
+        this.limit = limitOffset.getLimit();
+        this.offset = limitOffset.getOffset();
+        this.orderBy = orderByObj.getOrderBy();
+        this.groupBy = groupByObj.getGroupBy();
+        this.havingConditions = groupByObj.getHavingConditions();
+        this.tableAliases = metadata.getTableAliases();
+        this.groupBySubQueries = groupByObj.getGroupBySubQueries();
+        this.transactionId = UUID.randomUUID(); // Генерируем UUID, если он не передан
+        // Добавляем tableAlias в tableAliases, если он не null
+        String aliasFromCore = core.getTableAlias();
+        if (aliasFromCore != null && !aliasFromCore.isEmpty()) {
+            this.tableAliases.put(aliasFromCore, this.mainTableName);
+        }
+        // Добавляем mainTableName в tableAliases
+        this.tableAliases.putIfAbsent(this.mainTableName, this.mainTableName);
+        // Обрабатываем extraTableAliases
+        Map<String, String> extra = metadata.getExtraTableAliases();
+        if (!extra.isEmpty()) {
+            this.tableAliases.putAll(extra);
+        }
     }
 
     /**
@@ -396,35 +441,192 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * the GROUP BY clause. Use {@link #builder()} to construct an instance
      * (java:S107, Prompt 32).
      */
-    private SelectQuery(String tableName, String tableAlias, List<String> columns,
-                        List<QueryParser.AggregateFunction> aggregates, List<QueryParser.JoinInfo> joins,
-                        List<QueryParser.Condition> conditions, List<String> groupBy,
-                        List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
-                        Integer limit, Integer offset,
-                        Map<String, String> tableAliases, Map<String, String> extraTableAliases,
-                        Map<String, Class<?>> columnTypes, Map<String, String> groupBySubQueries) {
-        this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
-        this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
-        this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
-        this.joins = joins != null ? new ArrayList<>(joins) : new ArrayList<>();
-        this.mainTableName = tableName; // Используем tableName вместо mainTableName
-        this.limit = limit;
-        this.offset = offset;
-        this.orderBy = orderBy != null ? new ArrayList<>(orderBy) : new ArrayList<>();
-        this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
-        this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
-        this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
-        this.groupBySubQueries = groupBySubQueries != null ? new HashMap<>(groupBySubQueries) : new HashMap<>();
+    private SelectQuery(SelectQueryCore core, SelectQueryJoins joins,
+                        SelectQueryWhere where, SelectQueryGroupBy groupBy,
+                        SelectQueryOrderBy orderBy, SelectQueryLimitOffset limitOffset,
+                        SelectQueryMetadata metadata) {
+        this.columns = core.getColumns();
+        this.aggregates = core.getAggregates();
+        this.conditions = where.getConditions();
+        this.joins = joins.getJoins();
+        this.mainTableName = core.getTableName(); // Используем tableName вместо mainTableName
+        this.limit = limitOffset.getLimit();
+        this.offset = limitOffset.getOffset();
+        this.orderBy = orderBy.getOrderBy();
+        this.groupBy = groupBy.getGroupBy();
+        this.havingConditions = groupBy.getHavingConditions();
+        this.tableAliases = metadata.getTableAliases();
+        this.groupBySubQueries = groupBy.getGroupBySubQueries();
         this.transactionId = UUID.randomUUID(); // Генерируем UUID, если он не передан
         // Добавляем tableAlias в tableAliases, если он не null
+        String tableAlias = core.getTableAlias();
         if (tableAlias != null && !tableAlias.isEmpty()) {
-            this.tableAliases.put(tableAlias, tableName);
+            this.tableAliases.put(tableAlias, this.mainTableName);
         }
         // Добавляем mainTableName в tableAliases
-        this.tableAliases.putIfAbsent(tableName, tableName);
+        this.tableAliases.putIfAbsent(this.mainTableName, this.mainTableName);
         // Обрабатываем extraTableAliases
-        if (extraTableAliases != null) {
-            this.tableAliases.putAll(extraTableAliases);
+        Map<String, String> extra = metadata.getExtraTableAliases();
+        if (!extra.isEmpty()) {
+            this.tableAliases.putAll(extra);
+        }
+    }
+
+    /**
+     * Parameter object for core SELECT query elements: table identification and selection.
+     */
+    public static final class SelectQueryCore {
+        private final String tableName;
+        private final String tableAlias;
+        private final List<String> columns;
+        private final List<QueryParser.AggregateFunction> aggregates;
+
+        public SelectQueryCore(String tableName, String tableAlias,
+                               List<String> columns, List<QueryParser.AggregateFunction> aggregates) {
+            this.tableName = tableName;
+            this.tableAlias = tableAlias;
+            this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
+            this.aggregates = aggregates != null ? new ArrayList<>(aggregates) : new ArrayList<>();
+        }
+
+        public String getTableName() {
+            return tableName;
+        }
+
+        public String getTableAlias() {
+            return tableAlias;
+        }
+
+        public List<String> getColumns() {
+            return new ArrayList<>(columns);
+        }
+
+        public List<QueryParser.AggregateFunction> getAggregates() {
+            return new ArrayList<>(aggregates);
+        }
+    }
+
+    /**
+     * Parameter object for JOIN clauses in a SELECT query.
+     */
+    public static final class SelectQueryJoins {
+        private final List<QueryParser.JoinInfo> joins;
+
+        public SelectQueryJoins(List<QueryParser.JoinInfo> joins) {
+            this.joins = joins != null ? new ArrayList<>(joins) : new ArrayList<>();
+        }
+
+        public List<QueryParser.JoinInfo> getJoins() {
+            return new ArrayList<>(joins);
+        }
+    }
+
+    /**
+     * Parameter object for WHERE conditions in a SELECT query.
+     */
+    public static final class SelectQueryWhere {
+        private final List<QueryParser.Condition> conditions;
+
+        public SelectQueryWhere(List<QueryParser.Condition> conditions) {
+            this.conditions = conditions != null ? new ArrayList<>(conditions) : new ArrayList<>();
+        }
+
+        public List<QueryParser.Condition> getConditions() {
+            return new ArrayList<>(conditions);
+        }
+    }
+
+    /**
+     * Parameter object for GROUP BY and HAVING clauses in a SELECT query.
+     */
+    public static final class SelectQueryGroupBy {
+        private final List<String> groupBy;
+        private final List<QueryParser.HavingCondition> havingConditions;
+        private final Map<String, String> groupBySubQueries;
+
+        public SelectQueryGroupBy(List<String> groupBy,
+                                  List<QueryParser.HavingCondition> havingConditions,
+                                  Map<String, String> groupBySubQueries) {
+            this.groupBy = groupBy != null ? new ArrayList<>(groupBy) : new ArrayList<>();
+            this.havingConditions = havingConditions != null ? new ArrayList<>(havingConditions) : new ArrayList<>();
+            this.groupBySubQueries = groupBySubQueries != null ? new HashMap<>(groupBySubQueries) : new HashMap<>();
+        }
+
+        public List<String> getGroupBy() {
+            return new ArrayList<>(groupBy);
+        }
+
+        public List<QueryParser.HavingCondition> getHavingConditions() {
+            return new ArrayList<>(havingConditions);
+        }
+
+        public Map<String, String> getGroupBySubQueries() {
+            return new HashMap<>(groupBySubQueries);
+        }
+    }
+
+    /**
+     * Parameter object for ORDER BY clause in a SELECT query.
+     */
+    public static final class SelectQueryOrderBy {
+        private final List<QueryParser.OrderByInfo> orderBy;
+
+        public SelectQueryOrderBy(List<QueryParser.OrderByInfo> orderBy) {
+            this.orderBy = orderBy != null ? new ArrayList<>(orderBy) : new ArrayList<>();
+        }
+
+        public List<QueryParser.OrderByInfo> getOrderBy() {
+            return new ArrayList<>(orderBy);
+        }
+    }
+
+    /**
+     * Parameter object for LIMIT and OFFSET clauses in a SELECT query.
+     */
+    public static final class SelectQueryLimitOffset {
+        private final Integer limit;
+        private final Integer offset;
+
+        public SelectQueryLimitOffset(Integer limit, Integer offset) {
+            this.limit = limit;
+            this.offset = offset;
+        }
+
+        public Integer getLimit() {
+            return limit;
+        }
+
+        public Integer getOffset() {
+            return offset;
+        }
+    }
+
+    /**
+     * Parameter object for table and column metadata in a SELECT query.
+     */
+    public static final class SelectQueryMetadata {
+        private final Map<String, String> tableAliases;
+        private final Map<String, String> extraTableAliases;
+        private final Map<String, Class<?>> columnTypes;
+
+        public SelectQueryMetadata(Map<String, String> tableAliases,
+                                   Map<String, String> extraTableAliases,
+                                   Map<String, Class<?>> columnTypes) {
+            this.tableAliases = tableAliases != null ? new HashMap<>(tableAliases) : new HashMap<>();
+            this.extraTableAliases = extraTableAliases != null ? new HashMap<>(extraTableAliases) : new HashMap<>();
+            this.columnTypes = columnTypes != null ? new HashMap<>(columnTypes) : new HashMap<>();
+        }
+
+        public Map<String, String> getTableAliases() {
+            return new HashMap<>(tableAliases);
+        }
+
+        public Map<String, String> getExtraTableAliases() {
+            return new HashMap<>(extraTableAliases);
+        }
+
+        public Map<String, Class<?>> getColumnTypes() {
+            return new HashMap<>(columnTypes);
         }
     }
 
@@ -529,9 +731,15 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         public SelectQuery build() {
-            return new SelectQuery(tableName, tableAlias, columns, aggregates, joins, conditions, groupBy,
-                    havingConditions, orderBy, limit, offset, tableAliases, extraTableAliases, columnTypes,
-                    groupBySubQueries);
+            SelectQueryCore core = new SelectQueryCore(tableName, tableAlias, columns, aggregates);
+            SelectQueryJoins joinsObj = new SelectQueryJoins(joins);
+            SelectQueryWhere where = new SelectQueryWhere(conditions);
+            SelectQueryGroupBy groupByObj = new SelectQueryGroupBy(groupBy, havingConditions, groupBySubQueries);
+            SelectQueryOrderBy orderByObj = new SelectQueryOrderBy(orderBy);
+            SelectQueryLimitOffset limitOffset = new SelectQueryLimitOffset(limit, offset);
+            SelectQueryMetadata metadata = new SelectQueryMetadata(tableAliases, extraTableAliases, columnTypes);
+            
+            return new SelectQuery(core, joinsObj, where, groupByObj, orderByObj, limitOffset, metadata);
         }
     }
 
