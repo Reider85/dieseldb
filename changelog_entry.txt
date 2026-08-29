@@ -1,1 +1,10 @@
-sonar6: Added SonarQube analysis results file with detailed metrics and issue breakdown for DieselDB project
+Install sonar-maven-plugin and verify SonarScanner CLI installation  
+  
+  
+Изменения: pom.xml (added sonar-maven-plugin)  
+Тесты: Verified sonar-maven-plugin is recognized by Maven, SonarScanner CLI 4.8.0.2856 is installed and responding to version command  
+Тайминг: N/A (tooling installation)  
+Сложность: no changes to engine code  
+  
+Установлен sonar-maven-plugin (3.9.1.2184) в pom.xml для включения сканирования SonarQube через Maven.  
+Проверено, что SonarScanner CLI установлен в C:\\tools\\sonar-scanner\\sonar-scanner-4.8.0.2856 и функционален. 
