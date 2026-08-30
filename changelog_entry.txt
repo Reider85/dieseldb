@@ -1,1 +1,1 @@
-sonar6: Added SonarQube analysis results file with detailed metrics and issue breakdown for DieselDB project
+sonar6: Live SonarQube 10.7 scan (SonarScanner 6.2.1) + detailed report in analytics/sonar6.md — 458 open issues (439 smells, 19 bugs), ncloc=12771, quality gate ERROR; analysis only, no engine changes
