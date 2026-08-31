@@ -54,6 +54,7 @@ public class DatabaseServer {
 
     public DatabaseServer(int port, int socketTimeout) {
         this.port = port;
+        this.socketTimeout = socketTimeout;
     }
 
     public DatabaseServer(int port, int socketTimeout, Database database) {
@@ -365,39 +366,29 @@ public class DatabaseServer {
      * Processes a QueryMessage by submitting it to the query executor.
      */
     private void processQueryMessage(SocketChannel channel, ConnectionState state, QueryMessage queryMessage) {
-        List<String> queries = queryMessage.getQueries();
+        String query = queryMessage.getQuery();
         UUID transactionId = queryMessage.getTransactionId();
         
         // Store transaction ID in connection state
         state.transactionId = transactionId;
         
-        // Execute queries in parallel when they are independent
+        // Execute query
         try {
-            List<Object> results = queryExecutor.executeQueries(queries, transactionId);
-            
-            // For backward compatibility, if there was only one query, send just that result
-            // Otherwise, send the list of results
-            Object response;
-            if (results.size() == 1) {
-                response = results.get(0);
-            } else {
-                response = results;
-            }
+            Object result = database.executeQuery(query, transactionId);
             
             // Serialize the response using ObjectOutputStream to the socket's output stream
             try (ObjectOutputStream out = new ObjectOutputStream(state.socket.getOutputStream())) {
-                out.writeObject(response);
+                out.writeObject(result);
                 out.flush();
             } catch (IOException e) {
                 LOGGER.log(Level.SEVERE, "Error writing response to {0}: {1}", 
                         new Object[]{channel.getRemoteAddress(), e.getMessage()});
             }
         } catch (OutOfMemoryError e) {
-            String firstQuery = queries.isEmpty() ? "" : queries.get(0);
-            handleOutOfMemory(firstQuery, e);
+            handleOutOfMemory(query, e);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
-                    new Object[]{queries.isEmpty() ? "" : queries.get(0), e.getMessage()});
+                    new Object[]{query, e.getMessage()});
             try {
                 ObjectOutputStream out = new ObjectOutputStream(state.socket.getOutputStream());
                 out.writeObject("Error: " + e.getMessage());
