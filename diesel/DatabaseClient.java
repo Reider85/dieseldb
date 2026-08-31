@@ -5,9 +5,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.net.*;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import diesel.BatchQueryMessage;
 
 /**
  * TCP client for a {@link DatabaseServer}: connects over a socket, sends SQL
@@ -101,6 +103,50 @@ public class DatabaseClient {
         } catch (IOException | ClassNotFoundException e) {
             LOGGER.error("Query execution failed: {}, Error: {}", query, e.getMessage());
             throw new DieselIOException("Query failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Executes a batch of queries, allowing the server to execute independent queries in parallel.
+     * 
+     * @param queries the list of SQL queries to execute
+     * @return list of query results in the same order as input queries
+     * @throws RuntimeException if the batch fails on the server or the communication breaks
+     */
+    public List<Object> executeBatch(List<String> queries) {
+        // Prompt 22 (java:S2259): out/in are only assigned by connect(); a
+        // query before connect() would NPE on out.writeObject below and mask
+        // the real cause, so fail with a clear message instead.
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
+        if (queries == null || queries.isEmpty()) {
+            return Collections.emptyList();
+        }
+        try {
+            out.writeObject(new BatchQueryMessage(queries, transactionId));
+            out.flush();
+            Object result = in.readObject();
+            
+            // Handle transaction state changes from batch execution
+            if (result instanceof String s && s.startsWith("Transaction started: ")) {
+                transactionId = UUID.fromString(s.split(": ")[1]);
+            } else if (result instanceof String s &&
+                    (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
+                transactionId = null;
+            }
+            if (result instanceof String s && s.startsWith("Error: ")) {
+                LOGGER.error("Server error for batch query: {}", result);
+                throw new DieselException(s);
+            }
+            
+            @SuppressWarnings("unchecked")
+            List<Object> results = (List<Object>) result;
+            LOGGER.info("Batch query executed: {} queries", queries.size());
+            return results;
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.error("Batch query execution failed: {}, Error: {}", queries, e.getMessage());
+            throw new DieselIOException("Batch query failed: " + e.getMessage(), e);
         }
     }
 

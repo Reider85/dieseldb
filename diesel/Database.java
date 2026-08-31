@@ -4,12 +4,21 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -640,6 +649,257 @@ class Database {
             return firstIdentifier(parts[1].split("\\s+")[0]);
         }
         throw new IllegalArgumentException("Cannot extract table name from query: unsupported query type");
+    }
+
+    /**
+     * Extracts all table names referenced in a query (simplified implementation).
+     * For parallel execution detection, we identify the main tables involved.
+     * 
+     * @param query the SQL query
+     * @return set of table names referenced in the query
+     */
+    private Set<String> extractAllTableNames(String query) {
+        Set<String> tables = new HashSet<>();
+        String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
+        
+        try {
+            // Handle SELECT queries with potential JOINs
+            if (normalized.startsWith(SqlKeywords.SELECT)) {
+                // Extract main table from FROM clause
+                String[] fromParts = normalized.split("(?i)FROM\\s+", 2);
+                if (fromParts.length >= 2) {
+                    String afterFrom = fromParts[1];
+                    // Split by JOIN or WHERE to get the first table reference
+                    String[] joinSplit = afterFrom.split("(?i)(INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|WHERE)\\s+", 2);
+                    String firstTablePart = joinSplit[0].trim();
+                    if (!firstTablePart.isEmpty()) {
+                        String firstTable = firstIdentifier(firstTablePart.split("\\s+")[0]);
+                        tables.add(firstTable);
+                    }
+                    
+                    // Extract joined tables
+                    if (joinSplit.length > 1) {
+                        // Process the rest looking for JOIN clauses
+                        String remaining = afterFrom;
+                        int pos = 0;
+                        while ((pos = remaining.toUpperCase().indexOf(" JOIN", pos)) != -1) {
+                            // Find the start of this JOIN
+                            int joinStart = pos;
+                            while (joinStart > 0 && !Character.isWhitespace(remaining.charAt(joinStart - 1))) {
+                                joinStart--;
+                            }
+                            // Find the end of the JOIN table name (next space or JOIN/WHERE)
+                            int tableEnd = joinStart;
+                            while (tableEnd < remaining.length() && 
+                                   !Character.isWhitespace(remaining.charAt(tableEnd)) &&
+                                   remaining.charAt(tableEnd) != '(' &&
+                                   remaining.charAt(tableEnd) != ')') {
+                                tableEnd++;
+                            }
+                            String tableName = remaining.substring(joinStart, tableEnd).trim();
+                            if (!tableName.isEmpty()) {
+                                String cleanTableName = firstIdentifier(tableName.split("\\s+")[0]);
+                                tables.add(cleanTableName);
+                            }
+                            pos = tableEnd;
+                        }
+                    }
+                }
+            } 
+            // Handle INSERT INTO
+            else if (normalized.startsWith(SqlKeywords.INSERT_INTO)) {
+                String[] parts = normalized.split("(?i)INSERT INTO\\s+", 2);
+                if (parts.length >= 2) {
+                    String tablePart = parts[1].split("\\s+|\\(")[0];
+                    tables.add(firstIdentifier(tablePart));
+                }
+            }
+            // Handle UPDATE
+            else if (normalized.startsWith(SqlKeywords.UPDATE)) {
+                String[] parts = normalized.split("(?i)UPDATE\\s+", 2);
+                if (parts.length >= 2) {
+                    String tablePart = parts[1].split("\\s+")[0];
+                    tables.add(firstIdentifier(tablePart));
+                }
+            }
+            // Handle DELETE FROM
+            else if (normalized.startsWith(SqlKeywords.DELETE_FROM)) {
+                String[] parts = normalized.split("(?i)FROM\\s+", 2);
+                if (parts.length >= 2) {
+                    String tablePart = parts[1].split("(?i)WHERE\\s*", 2)[0].trim();
+                    tables.add(firstIdentifier(tablePart.split("\\s+")[0]));
+                }
+            }
+            // Handle CREATE TABLE
+            else if (normalized.startsWith(SqlKeywords.CREATE_TABLE)) {
+                String[] parts = normalized.split("(?i)CREATE TABLE\\s+", 2);
+                if (parts.length >= 2) {
+                    String tablePart = parts[1].split("\\s+")[0];
+                    tables.add(firstIdentifier(tablePart));
+                }
+            }
+            // Handle CREATE INDEX variants
+            else if (normalized.startsWith(SqlKeywords.CREATE_INDEX) || 
+                     normalized.startsWith(SqlKeywords.CREATE_HASH_INDEX) ||
+                     normalized.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX) ||
+                     normalized.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX)) {
+                String[] parts = normalized.split("(?i)ON\\s+", 2);
+                if (parts.length >= 2) {
+                    String tablePart = parts[1].split("\\s+")[0];
+                    // Remove potential parentheses or other modifiers
+                    tablePart = tablePart.split("[\\(\\)]")[0];
+                    tables.add(firstIdentifier(tablePart));
+                }
+            }
+        } catch (Exception e) {
+            // If parsing fails, fall back to single table extraction
+            try {
+                String singleTable = extractTableName(query);
+                if (singleTable != null && !singleTable.isEmpty()) {
+                    tables.add(singleTable);
+                }
+            } catch (Exception ex) {
+                // If all else fails, return empty set
+            }
+        }
+        
+        return tables;
+    }
+
+    /**
+     * Executes a batch of queries, running independent queries in parallel.
+     * Queries are considered independent if they don't share any tables.
+     * 
+     * @param queries       the list of SQL queries to execute
+     * @param transactionId the caller's transaction id, or null for auto-commit
+     * @return list of query results in the same order as input queries
+     */
+    public List<Object> executeBatch(List<String> queries, UUID transactionId) {
+        // If sequential execution is forced or only one query, execute normally
+        if (queries == null || queries.isEmpty()) {
+            return Collections.emptyList();
+        }
+        if (queries.size() == 1) {
+            return Collections.singletonList(executeQuery(queries.get(0), transactionId));
+        }
+        
+        // Check if we're in a transaction - if so, execute sequentially for consistency
+        boolean inTransaction = transactionId != null && isInTransaction(transactionId);
+        if (inTransaction) {
+            List<Object> results = new ArrayList<>(queries.size());
+            for (String query : queries) {
+                results.add(executeQuery(query, transactionId));
+            }
+            return results;
+        }
+        
+        // Analyze table dependencies for each query
+        List<Set<String>> queryTables = new ArrayList<>(queries.size());
+        for (String query : queries) {
+            queryTables.add(extractAllTableNames(query));
+        }
+        
+        // Build dependency graph: queries that share tables cannot run in parallel
+        boolean[] dependencies = new boolean[queries.size() * queries.size()];
+        for (int i = 0; i < queries.size(); i++) {
+            for (int j = i + 1; j < queries.size(); j++) {
+                Set<String> tables1 = queryTables.get(i);
+                Set<String> tables2 = queryTables.get(j);
+                // Check if tables intersect
+                boolean hasCommonTables = false;
+                for (String table : tables1) {
+                    if (tables2.contains(table)) {
+                        hasCommonTables = true;
+                        break;
+                    }
+                }
+                if (hasCommonTables) {
+                    dependencies[i * queries.size() + j] = true;
+                    dependencies[j * queries.size() + i] = true;
+                }
+            }
+        }
+        
+        // Group queries into independent batches using greedy coloring
+        List<List<Integer>> batches = new ArrayList<>();
+        boolean[] assigned = new boolean[queries.size()];
+        
+        for (int i = 0; i < queries.size(); i++) {
+            if (assigned[i]) continue;
+            
+            // Start a new batch with query i
+            List<Integer> currentBatch = new ArrayList<>();
+            currentBatch.add(i);
+            assigned[i] = true;
+            
+            // Find all queries that can run in parallel with this batch
+            for (int j = i + 1; j < queries.size(); j++) {
+                if (assigned[j]) continue;
+                
+                // Check if query j conflicts with any query in current batch
+                boolean canJoinBatch = true;
+                for (Integer batchQueryIdx : currentBatch) {
+                    if (dependencies[batchQueryIdx * queries.size() + j]) {
+                        canJoinBatch = false;
+                        break;
+                    }
+                }
+                
+                if (canJoinBatch) {
+                    currentBatch.add(j);
+                    assigned[j] = true;
+                }
+            }
+            
+            batches.add(currentBatch);
+        }
+        
+        // Execute each batch in parallel, collect results in order
+        List<Object> results = new ArrayList<>(Collections.nCopies(queries.size(), null));
+        ExecutorService executor = Executors.newFixedThreadPool(
+                Math.min(batches.size(), Runtime.getRuntime().availableProcessors()));
+        
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            
+            for (List<Integer> batch : batches) {
+                Future<?> future = executor.submit(() -> {
+                    for (Integer queryIdx : batch) {
+                        try {
+                            Object result = executeQuery(queries.get(queryIdx), transactionId);
+                            results.set(queryIdx, result);
+                        } catch (Exception e) {
+                            // Store the exception as the result for this query
+                            results.set(queryIdx, e);
+                        }
+                    }
+                });
+                futures.add(future);
+            }
+            
+            // Wait for all batches to complete
+            for (Future<?> future : futures) {
+                future.get(); // This will throw ExecutionException if any task failed
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Batch query execution interrupted", e);
+        } catch (ExecutionException e) {
+            throw new RuntimeException("Error executing batch queries", e.getCause());
+        } finally {
+            executor.shutdownNow();
+        }
+        
+        // Check for exceptions in results and throw the first one
+        for (Object result : results) {
+            if (result instanceof Exception) {
+                throw new RuntimeException((Exception) result);
+            }
+        }
+        
+        @SuppressWarnings("unchecked")
+        List<Object> typedResults = (List<Object>) results;
+        return typedResults;
     }
 
     private String firstIdentifier(String token) {

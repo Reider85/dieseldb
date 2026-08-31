@@ -3169,7 +3169,7 @@ class QueryParser {
         }
 
         if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(?:\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\s*\\([^()]*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
+            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\([^()]*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
             Matcher aggMatcher = aggPattern.matcher(leftPart);
             if (aggMatcher.matches()) {
                 String funcName = aggMatcher.group(1);
