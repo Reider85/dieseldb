@@ -1,8 +1,1 @@
-2.9.79 prompt 79 - Prepared Statements caching (prompt2.md line 1407)
-
-Modified files: diesel/PreparedStatement.java (new), diesel/QueryParser.java (parsePrepared helper)
-Test results: quick gate 42/0 BUILD SUCCESS (pre-existing Prompt69/70 network failures unrelated)
-Timing: no engine timing change (new feature only)
-Complexity: no new O(n^2)/O(n!) - LRU cache is O(1) lookup/insert
-
-Created PreparedStatement class with LRU-cached parsed AST (maxSize=1000) and parameter binding via ? placeholder substitution. Added QueryParser.parsePrepared() integration method.
+Make performance-related hardcoded constants configurable via config.properties (PreparedStatement.MAX_CACHE_SIZE, DatabaseServer.POOL_SIZE/QUEUE_CAPACITY, SelectQuery.HASH_JOIN_OVERHEAD_ROWS/MEMORY_SAMPLE_INTERVAL, BloomFilter.DEFAULT_NUM_HASHES/DEFAULT_FPP, compression settings).

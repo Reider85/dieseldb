@@ -16,8 +16,21 @@ import java.util.BitSet;
  */
 class BloomFilter implements Serializable {
     private static final long serialVersionUID = 1L;
-    private static final int DEFAULT_NUM_HASHES = 7;
-    private static final double DEFAULT_FPP = 0.01;
+    private static int DEFAULT_NUM_HASHES = 7;
+    private static double DEFAULT_FPP = 0.01;
+
+    static {
+        try {
+            java.util.Properties props = new java.util.Properties();
+            java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
+            props.load(fis);
+            fis.close();
+            String val = props.getProperty("bloom.filter.hashes");
+            if (val != null) DEFAULT_NUM_HASHES = Integer.parseInt(val.trim());
+            String val2 = props.getProperty("bloom.filter.fpp");
+            if (val2 != null) DEFAULT_FPP = Double.parseDouble(val2.trim());
+        } catch (Exception ignored) {}
+    }
 
     private final BitSet bits;
     private final int numHashes;

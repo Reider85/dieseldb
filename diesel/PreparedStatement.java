@@ -11,7 +11,19 @@ public class PreparedStatement {
     private final List<Object> boundParams = new ArrayList<>();
 
     // LRU cache for parsed AST, maxSize = 1000
-    private static final int MAX_CACHE_SIZE = 1000;
+    private static int MAX_CACHE_SIZE = 1000;
+
+    static {
+        try {
+            java.util.Properties props = new java.util.Properties();
+            java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
+            props.load(fis);
+            fis.close();
+            String val = props.getProperty("query.cache.max.size");
+            if (val != null) MAX_CACHE_SIZE = Integer.parseInt(val.trim());
+        } catch (Exception ignored) {}
+    }
+
     private static final Map<String, Query<?>> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Query<?>> eldest) {

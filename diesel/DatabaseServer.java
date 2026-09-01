@@ -24,10 +24,23 @@ import java.util.zip.Deflater;
  * @see Database
  */
 public class DatabaseServer {
+    static {
+        try {
+            java.util.Properties props = new java.util.Properties();
+            java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
+            props.load(fis);
+            fis.close();
+            String val = props.getProperty("server.pool.size");
+            if (val != null) POOL_SIZE = Integer.parseInt(val.trim());
+            String val2 = props.getProperty("server.queue.capacity");
+            if (val2 != null) QUEUE_CAPACITY = Integer.parseInt(val2.trim());
+        } catch (Exception ignored) {}
+    }
+
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
     private static final String CONFIG_FILE = ErrorMessages.CONFIG_FILE;
-    private static final int POOL_SIZE = 100;
-    private static final int QUEUE_CAPACITY = 100;
+    private static int POOL_SIZE = 100;
+    private static int QUEUE_CAPACITY = 100;
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
@@ -207,8 +220,22 @@ public class DatabaseServer {
         private ObjectInputStream in;
         private UUID transactionId;
         
-        private static final int DEFAULT_COMPRESSION_THRESHOLD = 1024;
-        private static final int DEFAULT_COMPRESSION_LEVEL = 6;
+        private static int DEFAULT_COMPRESSION_THRESHOLD = 1024;
+        private static int DEFAULT_COMPRESSION_LEVEL = 6;
+
+        static {
+            try {
+                java.util.Properties props = new java.util.Properties();
+                java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
+                props.load(fis);
+                fis.close();
+                String val = props.getProperty("compression.threshold.bytes");
+                if (val != null) DEFAULT_COMPRESSION_THRESHOLD = Integer.parseInt(val.trim());
+                String val2 = props.getProperty("compression.level");
+                if (val2 != null) DEFAULT_COMPRESSION_LEVEL = Integer.parseInt(val2.trim());
+            } catch (Exception ignored) {}
+        }
+
         private static final String DEFAULT_ALGORITHM = "GZIP";
         
         private int compressionThreshold;

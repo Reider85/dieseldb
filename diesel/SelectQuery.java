@@ -188,7 +188,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * table and hashes every key, which only pays off once the inputs are
      * large enough that the nested-loop row product exceeds this constant.
      */
-    private static final long HASH_JOIN_OVERHEAD_ROWS = 1000;
+    private static long HASH_JOIN_OVERHEAD_ROWS = 1000;
 
     static {
         loadHashJoinConfig();
@@ -222,6 +222,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 String rawResult = props.getProperty("max.result.rows");
                 if (rawResult != null) {
                     maxResultRows = Long.parseLong(rawResult.trim());
+                }
+                String rawHashOverhead = props.getProperty("hash.join.overhead.rows");
+                if (rawHashOverhead != null) {
+                    HASH_JOIN_OVERHEAD_ROWS = Long.parseLong(rawHashOverhead.trim());
+                }
+                String rawMemorySample = props.getProperty("select.memory.sample.interval");
+                if (rawMemorySample != null) {
+                    MEMORY_SAMPLE_INTERVAL = Long.parseLong(rawMemorySample.trim());
                 }
             }
         } catch (Exception ignored) {
@@ -266,7 +274,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private boolean resultLimitWarningLogged;
 
     /** Rows produced between two consecutive heap-memory samples. */
-    private static final long MEMORY_SAMPLE_INTERVAL = 4096;
+    private static long MEMORY_SAMPLE_INTERVAL = 4096;
 
     /**
      * Per-thread snapshot of the peak memory and row-count metrics of the most
