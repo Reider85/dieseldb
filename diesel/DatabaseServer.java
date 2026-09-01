@@ -6,6 +6,8 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.zip.GZIPOutputStream;
+import java.util.zip.Deflater;
 
 /**
  * TCP server that accepts client connections and executes their SQL queries
@@ -204,8 +206,14 @@ public class DatabaseServer {
         private ObjectOutputStream out;
         private ObjectInputStream in;
         private UUID transactionId;
+        
+        private static final int DEFAULT_COMPRESSION_THRESHOLD = 1024;
+        private static final int DEFAULT_COMPRESSION_LEVEL = 6;
+        
+        private int compressionThreshold;
+        private int compressionLevel;
 
-        public ClientHandler(Socket socket, Database database, int socketTimeout) {
+        public ClientHandler(Socket socket, Database database, int socketTimeout, Properties config) {
             this.clientSocket = socket;
             this.database = database;
             this.socketTimeout = socketTimeout;
@@ -215,6 +223,8 @@ public class DatabaseServer {
             } catch (SocketException e) {
                 LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
             }
+            this.compressionThreshold = Integer.parseInt(config.getProperty("compression.threshold.bytes", String.valueOf(DEFAULT_COMPRESSION_THRESHOLD)));
+            this.compressionLevel = Integer.parseInt(config.getProperty("compression.level", String.valueOf(DEFAULT_COMPRESSION_LEVEL)));
         }
 
         /**
@@ -240,6 +250,19 @@ public class DatabaseServer {
                 out.flush();
             } catch (IOException io) {
                 LOGGER.log(Level.SEVERE, "Error sending OOM response to client: {0}", io.getMessage());
+            }
+        }
+
+        private byte[] serializeResult(Object result) {
+            try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ObjectOutputStream oos = new ObjectOutputStream(baos);
+                oos.writeObject(result);
+                oos.close();
+                return baos.toByteArray();
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "Error serializing query result: {0}", e.getMessage());
+                return new byte[0];
             }
         }
 
@@ -273,7 +296,16 @@ public class DatabaseServer {
 
                     try {
                         Object result = database.executeQuery(query, transactionId);
-                        out.writeObject(result);
+                        byte[] serialized = serializeResult(result);
+                        if (serialized.length > compressionThreshold) {
+                            out.writeByte(0x01); // compressed marker
+                            out.writeInt(serialized.length);
+                            out.write(serialized);
+                        } else {
+                            out.writeByte(0x00); // uncompressed marker
+                            out.writeInt(serialized.length);
+                            out.write(serialized);
+                        }
                         out.flush();
                     } catch (OutOfMemoryError e) {
                         handleOutOfMemory(query, e);

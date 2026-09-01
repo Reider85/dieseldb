@@ -87,7 +87,34 @@ public class DatabaseClient {
             String normalizedQuery = query.trim();
             out.writeObject(new QueryMessage(normalizedQuery, transactionId));
             out.flush();
-            Object result = in.readObject();
+            // Read compression marker byte (0x00 = uncompressed, 0x01 = GZIP compressed)
+            try {
+                int marker = in.read();
+                if (marker == 0x01) { // compressed
+                    int dataLength = in.readInt();
+                    byte[] compressedData = new byte[dataLength];
+                    in.readFully(compressedData);
+                    java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
+                            new java.io.ByteArrayInputStream(compressedData));
+                    java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
+                    result = ois.readObject();
+                    ois.close();
+                } else { // uncompressed (marker 0x00 or any other value)
+                    // Put the marker byte back by creating a wrapper - 
+                    // instead we just read the object directly since marker was already consumed
+                    // Actually, we need to re-read. Let's use a different approach.
+                    // Read the length and the object
+                    int dataLength = in.readInt();
+                    byte[] uncompressedData = new byte[dataLength];
+                    in.readFully(uncompressedData);
+                    java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
+                            new java.io.ByteArrayInputStream(uncompressedData));
+                    result = ois.readObject();
+                    ois.close();
+                }
+            } catch (IOException | ClassNotFoundException e) {
+                throw new DieselIOException("Failed to read query result: " + e.getMessage(), e);
+            }
             if (result instanceof String s && s.startsWith("Transaction started: ")) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
             } else if (result instanceof String s &&

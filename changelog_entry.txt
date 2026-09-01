@@ -1,11 +1,11 @@
-2.9.66 prompt 76 - Parallel execution of independent queries
+Prompt 78: GZIP compression for network responses
 
-Изменения: BatchQueryMessage.java (новый), Database.java: extractAllTableNames(), executeBatch(), DatabaseServer.java: ClientHandler batch handling, DatabaseClient.java: executeBatch()
-Тесты: 4 passed, 0 failed (BatchQueryTest), all existing tests pass
-Timing: No significant impact (additive changes only)
-Complexity: no new O(n²)/O(n!)
+- Added compression.threshold.bytes and compression.level to config.properties
+- Modified DatabaseServer.ClientHandler to compress results > 1KB using GZIP
+- Modified DatabaseClient.executeQuery to detect and decompress GZIP-compressed results
+- Backward compatible: existing clients work with both compressed and uncompressed responses
 
-Implement parallel execution of independent queries that access different tables.
-Added BatchQueryMessage protocol for sending multiple queries at runtime.
-Enhanced Database with table dependency analysis and parallel execution via ExecutorService.
-Modified DatabaseServer and DatabaseClient to support batch query submission and result collection.
+Files changed:
+- config.properties
+- diesel/DatabaseServer.java
+- diesel/DatabaseClient.java

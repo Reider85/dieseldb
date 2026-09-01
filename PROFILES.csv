@@ -1,0 +1,11 @@
+PROFILE_ID,USER_ID,PROFILE_AGE,PROFILE_NAME,PROFILE_CODE,NON_INDEXED
+1,1,19,"Profile1","PCODE1","Non1"
+2,2,20,"Profile2","PCODE2","Non2"
+3,3,21,"Profile3","PCODE3","Non3"
+4,4,22,"Profile4","PCODE4","Non4"
+5,5,23,"Profile5","PCODE5","Non5"
+6,6,24,"Profile6","PCODE6","Non6"
+7,7,25,"Profile7","PCODE7","Non7"
+8,8,26,"Profile8","PCODE8","Non8"
+9,9,27,"Profile9","PCODE9","Non9"
+10,10,28,"Profile10","PCODE10","Non10"

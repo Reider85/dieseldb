@@ -1,0 +1,11 @@
+DETAIL_ID,USER_ID,USER_CODE,NAME,AGE,INFO,BALANCE
+1,1,"CODE1","User1",19,"Info1",101.00
+2,2,"CODE2","User2",20,"Info2",102.00
+3,3,"CODE3","User3",21,"Info3",103.00
+4,4,"CODE4","User4",22,"Info4",104.00
+5,5,"CODE5","User5",23,"Info5",105.00
+6,6,"CODE6","User6",24,"Info6",106.00
+7,7,"CODE7","User7",25,"Info7",107.00
+8,8,"CODE8","User8",26,"Info8",108.00
+9,9,"CODE9","User9",27,"Info9",109.00
+10,10,"CODE10","User10",28,"Info10",110.00
