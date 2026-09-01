@@ -2,66 +2,74 @@ package diesel;
 
 import java.io.*;
 import java.net.*;
-import java.nio.*;
-import java.nio.channels.*;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.*;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
+/**
+ * TCP server that accepts client connections and executes their SQL queries
+ * against a shared {@link Database}.
+ *
+ * <p>Each accepted client is handled on a worker thread from a fixed-size
+ * pool ({@code POOL_SIZE} workers, bounded queue). Queries arrive as
+ * serialized {@link QueryMessage} objects and the result object is written
+ * back; server-side errors are returned as {@code Error: } prefixed Strings.
+ * On startup the database is populated from the data directory, and on exit
+ * the shutdown hook stops the server gracefully.
+ *
+ * @see DatabaseClient
+ * @see Database
+ */
 public class DatabaseServer {
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
     private static final String CONFIG_FILE = ErrorMessages.CONFIG_FILE;
     private static final int POOL_SIZE = 100;
     private static final int QUEUE_CAPACITY = 100;
-    private static final int MAX_CONNECTIONS = POOL_SIZE + QUEUE_CAPACITY;
-    private static final int IDLE_TIMEOUT_MS = 30000; // 30 seconds idle timeout
-
-    private int port;
-    private Database database;
-    private Selector selector;
-    private ServerSocketChannel serverSocketChannel;
+    private final int port;
+    private final Database database;
+    private ServerSocket serverSocket;
     private volatile boolean running;
-    private Thread selectorThread;
-    private QueryExecutor queryExecutor;
-    private final AtomicInteger connectionCount = new AtomicInteger(0);
-    private int socketTimeout;
+    private final ThreadPoolExecutor executor;
+    private final int socketTimeout;
 
-    // Per-connection state
-    private static class ConnectionState {
-        final SocketChannel channel;
-        final Socket socket;
-        final ByteBuffer readBuffer = ByteBuffer.allocate(8192);
-        final ByteBuffer writeBuffer = ByteBuffer.allocate(8192);
-        UUID transactionId;
-        long lastActivityTime;
-        boolean closed;
-
-        ConnectionState(SocketChannel channel, Socket socket, UUID transactionId) {
-            this.channel = channel;
-            this.socket = socket;
-            this.transactionId = transactionId;
-            this.lastActivityTime = System.currentTimeMillis();
-            this.closed = false;
-        }
-    }
-
-    private final Map<SocketChannel, ConnectionState> connections = new HashMap<>();
-
+    /**
+     * Creates a server on the given port with the default socket timeout.
+     *
+     * @param port the port to listen on
+     */
     public DatabaseServer(int port) {
-        this.port = port;
+        this(port, -1);
     }
 
+    /**
+     * Creates a server on the given port with the given socket timeout.
+     *
+     * @param port          the port to listen on
+     * @param socketTimeout the per-client socket read timeout in milliseconds,
+     *                      or -1 to load it from the configuration file
+     */
     public DatabaseServer(int port, int socketTimeout) {
-        this.port = port;
-        this.socketTimeout = socketTimeout;
+        this(port, socketTimeout, new Database());
     }
 
+    /**
+     * Creates a server on the given port with the given socket timeout and
+     * database.
+     *
+     * @param port          the port to listen on
+     * @param socketTimeout the per-client socket read timeout in milliseconds,
+     *                      or -1 to load it from the configuration file
+     * @param database      the database instance to serve
+     */
     public DatabaseServer(int port, int socketTimeout, Database database) {
         this.port = port;
         this.socketTimeout = socketTimeout;
         this.database = database;
-        this.queryExecutor = new QueryExecutor(POOL_SIZE, database);
+        this.executor = new ThreadPoolExecutor(
+                POOL_SIZE, POOL_SIZE, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(QUEUE_CAPACITY),
+                new ThreadPoolExecutor.AbortPolicy());
     }
 
     // Load configuration and return Properties object
@@ -117,20 +125,6 @@ public class DatabaseServer {
         }
     }
 
-    // Handles OutOfMemoryError during query execution.
-    private void handleOutOfMemory(String query, OutOfMemoryError e) {
-        long usedBytes = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-        LOGGER.log(Level.SEVERE, "OutOfMemoryError while executing query: {0}", query);
-        LOGGER.log(Level.SEVERE, "  Query context: rows produced={0}, peak memory used={1} bytes at {2} rows, heap used now={3} bytes, cause={4}",
-                new Object[]{
-                        SelectQuery.getLastQueryRowCount(),
-                        SelectQuery.getLastQueryPeakMemoryBytes(),
-                        SelectQuery.getLastQueryRowsAtPeak(),
-                        usedBytes,
-                        String.valueOf(e.getMessage())
-                });
-    }
-
     /**
      * Loads the configuration, populates the database from disk and starts the
      * accept loop. Each connection is served on a worker thread; the loop runs
@@ -147,376 +141,165 @@ public class DatabaseServer {
         running = true;
         database.loadTablesFromDisk();
         try {
-            selector = Selector.open();
-            serverSocketChannel = ServerSocketChannel.open();
-            serverSocketChannel.configureBlocking(false);
-            serverSocketChannel.socket().bind(new InetSocketAddress(port));
-            selectorThread = new Thread(this::selectorLoop, "DatabaseServer-Selector");
-            selectorThread.start();
+            serverSocket = new ServerSocket(port);
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to start server: {0}", e.getMessage());
-            running = false;
-        }
-    }
 
-    /**
-     * The main selector event loop. Runs in a dedicated thread.
-     * Handles accepting new connections, reading requests, writing responses,
-     * and timing out idle connections.
-     */
-    private void selectorLoop() {
-        try {
             while (running) {
                 try {
-                    // Select with timeout to allow checking running flag and idle connections
-                    int readyCount = selector.select(IDLE_TIMEOUT_MS);
-                    
-                    // Process idle connections
-                    if (running) {
-                        processIdleConnections();
-                    }
-                    
-                    if (readyCount == 0) {
-                        // Timeout - just continue to check running flag and idle connections again
-                        continue;
-                    }
-                    
-                    // Process selected keys
-                    Iterator<SelectionKey> keys = selector.selectedKeys().iterator();
-                    while (keys.hasNext() && running) {
-                        SelectionKey key = keys.next();
-                        keys.remove();
-                        
-                        if (!key.isValid()) {
-                            continue;
-                        }
-                        
+                    Socket clientSocket = serverSocket.accept();
+                    LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
+                    try {
+                        executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout));
+                    } catch (RejectedExecutionException e) {
+                        LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
+                                new Object[]{clientSocket.getInetAddress(), e.getMessage()});
                         try {
-                            if (key.isAcceptable()) {
-                                acceptConnection(key);
-                            } else if (key.isReadable()) {
-                                readFromConnection(key);
-                            } else if (key.isWritable()) {
-                                writeToConnection(key);
-                            }
-                        } catch (IOException e) {
-                            LOGGER.log(Level.WARNING, "I/O error on connection: {0}", e.getMessage());
-                            closeConnection(key);
+                            clientSocket.close();
+                        } catch (IOException io) {
+                            LOGGER.log(Level.SEVERE, "Error closing rejected client socket: {0}", io.getMessage());
                         }
                     }
-                } catch (Exception e) {
+                } catch (IOException e) {
                     if (running) {
-                        LOGGER.log(Level.SEVERE, "Selector error: {0}", e.getMessage());
+                        LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
                     }
-                    // Continue loop if still running
                 }
             }
-        } finally {
-            // Cleanup resources
-            try {
-                selector.close();
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Error closing selector: {0}", e.getMessage());
-            }
-            try {
-                serverSocketChannel.close();
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Error closing server socket channel: {0}", e.getMessage());
-            }
-            // Close all connections
-            for (ConnectionState state : connections.values()) {
-                try {
-                    if (state.socket != null) {
-                        state.socket.close();
-                    }
-                } catch (IOException e) {
-                    // Ignore
-                }
-            }
-            connections.clear();
-            LOGGER.log(Level.INFO, "Selector loop terminated");
-        }
-    }
-
-    /**
-     * Processes idle connections and closes those that have exceeded IDLE_TIMEOUT_MS.
-     */
-    private void processIdleConnections() {
-        long now = System.currentTimeMillis();
-        Iterator<Map.Entry<SocketChannel, ConnectionState>> iter = connections.entrySet().iterator();
-        while (iter.hasNext()) {
-            Map.Entry<SocketChannel, ConnectionState> entry = iter.next();
-            ConnectionState state = entry.getValue();
-            if (now - state.lastActivityTime > IDLE_TIMEOUT_MS) {
-                try {
-                    SocketAddress remoteAddr = state.channel.getRemoteAddress();
-                    LOGGER.log(Level.FINE, "Closing idle connection: {0}", remoteAddr != null ? remoteAddr.toString() : "unknown");
-                } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Error getting remote address: {0}", e.getMessage());
-                    LOGGER.log(Level.FINE, "Closing idle connection: {0}", "unknown");
-                }
-                closeConnection(state.channel);
-                iter.remove(); // Remove from map
-            }
-        }
-    }
-
-    /**
-     * Accepts a new connection and registers it with the selector for reading.
-     */
-    private void acceptConnection(SelectionKey key) throws IOException {
-        ServerSocketChannel serverChannel = (ServerSocketChannel) key.channel();
-        SocketChannel clientChannel = serverChannel.accept();
-        
-        if (clientChannel == null) {
-            return; // No connection pending
-        }
-        
-        // Check connection limit
-        if (connectionCount.get() >= MAX_CONNECTIONS) {
-            LOGGER.log(Level.WARNING, "Connection limit exceeded ({0}), rejecting connection from {1}",
-                    new Object[]{MAX_CONNECTIONS, clientChannel.getRemoteAddress()});
-            clientChannel.close();
-            return;
-        }
-        
-        // Configure the channel
-        clientChannel.configureBlocking(false);
-        
-        // Get the socket and set options
-        Socket socket = clientChannel.socket();
-        if (socketTimeout >= 0) {
-            socket.setSoTimeout(socketTimeout);
-        }
-        // Set TCP_NODELAY for better latency (disable Nagle's algorithm)
-        socket.setTcpNoDelay(true);
-        
-        // Create connection state
-        ConnectionState state = new ConnectionState(clientChannel, socket, null);
-        
-        // Register for reading
-        SelectionKey clientKey = clientChannel.register(selector, SelectionKey.OP_READ);
-        clientKey.attach(state);
-        
-        // Increment connection counter and store in map
-        if (connectionCount.incrementAndGet() > MAX_CONNECTIONS) {
-            // This shouldn't happen due to check above, but just in case
-            connectionCount.decrementAndGet();
-            clientChannel.close();
-            return;
-        }
-        
-        connections.put(clientChannel, state);
-        
-        LOGGER.log(Level.INFO, "New client connected: {0} (total: {1})",
-                new Object[]{clientChannel.getRemoteAddress(), connectionCount.get()});
-    }
-
-    /**
-     * Reads data from a connection and deserializes a QueryMessage.
-     * Uses the Socket's ObjectInputStream for backward compatibility with DatabaseClient.
-     * The selector tells us when data is available, and we read using the traditional streams.
-     */
-    private void readFromConnection(SelectionKey key) throws IOException, ClassNotFoundException {
-        SocketChannel channel = (SocketChannel) key.channel();
-        ConnectionState state = (ConnectionState) key.attachment();
-        
-        if (state == null || state.closed) {
-            key.cancel();
-            channel.close();
-            return;
-        }
-        
-        // Update last activity time
-        state.lastActivityTime = System.currentTimeMillis();
-        
-        try {
-            // For backward compatibility, use the socket's ObjectInputStream
-            // The selector tells us when data is available, and we read using the traditional streams
-            try (ObjectInputStream in = new ObjectInputStream(state.socket.getInputStream())) {
-                Object input = in.readObject();
-                
-                // Process the QueryMessage
-                if (input instanceof QueryMessage queryMessage) {
-                    processQueryMessage(channel, state, queryMessage);
-                } else if (input instanceof String && ((String) input).equals(ErrorMessages.EXIT_COMMAND)) {
-                    // EXIT command
-                    LOGGER.log(Level.FINE, "Received EXIT command from {0}", channel.getRemoteAddress());
-                    closeConnection(key);
-                } else {
-                    // Invalid message type
-                    LOGGER.log(Level.WARNING, "Invalid message type received from {0}: {1}",
-                            new Object[]{channel.getRemoteAddress(), input.getClass().getName()});
-                    writeError(channel, state, "Error: Invalid query message");
-                }
-            }
-        } catch (EOFException e) {
-            // End of stream - client closed connection
-            LOGGER.log(Level.FINE, "Client closed connection: {0}", channel.getRemoteAddress());
-            closeConnection(key);
-        } catch (ClassNotFoundException e) {
-            LOGGER.log(Level.WARNING, "Class not found reading from {0}: {1}", 
-                    new Object[]{channel.getRemoteAddress(), e.getMessage()});
-            closeConnection(key);
-        }
-    }
-
-    /**
-     * Processes a QueryMessage by submitting it to the query executor.
-     */
-    private void processQueryMessage(SocketChannel channel, ConnectionState state, QueryMessage queryMessage) {
-        String query = queryMessage.getQuery();
-        UUID transactionId = queryMessage.getTransactionId();
-        
-        // Store transaction ID in connection state
-        state.transactionId = transactionId;
-        
-        // Execute query
-        try {
-            Object result = database.executeQuery(query, transactionId);
-            
-            // Serialize the response using ObjectOutputStream to the socket's output stream
-            try (ObjectOutputStream out = new ObjectOutputStream(state.socket.getOutputStream())) {
-                out.writeObject(result);
-                out.flush();
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Error writing response to {0}: {1}", 
-                        new Object[]{channel.getRemoteAddress(), e.getMessage()});
-            }
-        } catch (OutOfMemoryError e) {
-            handleOutOfMemory(query, e);
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
-                    new Object[]{query, e.getMessage()});
-            try {
-                ObjectOutputStream out = new ObjectOutputStream(state.socket.getOutputStream());
-                out.writeObject("Error: " + e.getMessage());
-                out.flush();
-            } catch (IOException io) {
-                LOGGER.log(Level.SEVERE, "Error writing error response: {0}", io.getMessage());
-            }
-        }
-    }
-
-    /**
-     * Writes an error message to the connection.
-     */
-    private void writeError(SocketChannel channel, ConnectionState state, String errorMessage) {
-        try (ObjectOutputStream out = new ObjectOutputStream(state.socket.getOutputStream())) {
-            out.writeObject(errorMessage);
-            out.flush();
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Error preparing error message: {0}", e.getMessage());
-            closeConnection(channel.keyFor(selector));
+            LOGGER.log(Level.SEVERE, "Failed to start server: {0}", e.getMessage());
         }
     }
 
     /**
-     * Writes data from a connection's write buffer to the socket.
-     */
-    private void writeToConnection(SelectionKey key) throws IOException {
-        SocketChannel channel = (SocketChannel) key.channel();
-        ConnectionState state = (ConnectionState) key.attachment();
-        
-        if (state == null || state.closed) {
-            key.cancel();
-            channel.close();
-            return;
-        }
-        
-        // For this implementation, writes happen directly when processing messages
-        // The OP_WRITE interest is not needed since we write after each operation
-        // Just ensure the key remains readable
-        int interestOps = key.interestOps();
-        // Keep OP_READ enabled
-        if ((interestOps & SelectionKey.OP_READ) == 0) {
-            key.interestOps(interestOps | SelectionKey.OP_READ);
-        }
-    }
-
-    /**
-     * Closes a connection and cleans up associated resources.
-     */
-    private void closeConnection(SelectionKey key) {
-        SocketChannel channel = (SocketChannel) key.channel();
-        closeConnection(channel);
-    }
-
-    /**
-     * Closes a connection and cleans up associated resources.
-     */
-    private void closeConnection(SocketChannel channel) {
-        ConnectionState state = connections.remove(channel);
-        if (state != null) {
-            state.closed = true;
-            connectionCount.decrementAndGet();
-            try {
-                channel.close();
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Error closing channel: {0}", e.getMessage());
-            }
-            try {
-                if (state.socket != null) {
-                    state.socket.close();
-                }
-            } catch (IOException e) {
-                // Ignore
-            }
-            LOGGER.log(Level.FINE, "Connection closed: {0} (remaining: {1})",
-                    new Object[]{state.socket != null ? state.socket.getInetAddress().getHostAddress() : "unknown", connectionCount.get()});
-        }
-        
-        // Cancel the selection key
-        SelectionKey key = channel.keyFor(selector);
-        if (key != null) {
-            key.cancel();
-        }
-    }
-
-    /**
-     * Stops accepting connections, closes all existing connections, and shuts down
-     * the selector thread and executors.
+     * Stops accepting connections and shuts the worker pool down, giving the
+     * workers up to 2 seconds to finish before forcing termination.
      */
     public void stop() {
         running = false;
-        
-        // Wake up the selector thread if it's blocked
-        if (selector != null) {
-            selector.wakeup();
-        }
-        
         try {
-            if (selectorThread != null) {
-                selectorThread.join(5000); // Wait up to 5 seconds for thread to terminate
-                if (selectorThread.isAlive()) {
-                    LOGGER.log(Level.WARNING, "Selector thread did not terminate within timeout");
-                    selectorThread.interrupt();
-                }
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
+            }
+            LOGGER.log(Level.INFO, "Database server stopped");
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Error stopping server: {0}", e.getMessage());
+        }
+        // Shut down the worker pool: give workers up to 2 seconds to finish, then force terminate
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+                LOGGER.log(Level.WARNING, "Worker threads did not finish within 2 seconds, forcing shutdown");
+                executor.shutdownNow();
             }
         } catch (InterruptedException e) {
+            executor.shutdownNow();
             Thread.currentThread().interrupt();
         }
-        
-        // Close server socket channel (will cause accept to return null)
-        try {
-            if (serverSocketChannel != null) {
-                serverSocketChannel.close();
+    }
+
+    private static class ClientHandler implements Runnable {
+        private final Socket clientSocket;
+        private final Database database;
+        private final int socketTimeout;
+        private ObjectOutputStream out;
+        private ObjectInputStream in;
+        private UUID transactionId;
+
+        public ClientHandler(Socket socket, Database database, int socketTimeout) {
+            this.clientSocket = socket;
+            this.database = database;
+            this.socketTimeout = socketTimeout;
+            this.transactionId = null;
+            try {
+                clientSocket.setSoTimeout(socketTimeout);
+            } catch (SocketException e) {
+                LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
             }
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Error closing server socket channel: {0}", e.getMessage());
         }
-        
-        // Close all connections
-        for (SocketChannel channel : new ArrayList<>(connections.keySet())) {
-            closeConnection(channel);
+
+        /**
+         * Reports an OutOfMemoryError thrown while running a query: logs the
+         * query text together with the query's own peak-memory and row metrics
+         * ({@link SelectQuery}) plus the current heap usage, then answers the
+         * client with a short, actionable error message instead of dropping the
+         * connection.
+         */
+        private void handleOutOfMemory(String query, OutOfMemoryError e) {
+            long usedBytes = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+            LOGGER.log(Level.SEVERE, "OutOfMemoryError while executing query: {0}", query);
+            LOGGER.log(Level.SEVERE, "  Query context: rows produced={0}, peak memory used={1} bytes at {2} rows, heap used now={3} bytes, cause={4}",
+                    new Object[]{
+                            SelectQuery.getLastQueryRowCount(),
+                            SelectQuery.getLastQueryPeakMemoryBytes(),
+                            SelectQuery.getLastQueryRowsAtPeak(),
+                            usedBytes,
+                            String.valueOf(e.getMessage())
+                    });
+            try {
+                out.writeObject("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.");
+                out.flush();
+            } catch (IOException io) {
+                LOGGER.log(Level.SEVERE, "Error sending OOM response to client: {0}", io.getMessage());
+            }
         }
-        
-        LOGGER.log(Level.INFO, "Database server stopped");
-        
-        // Shut down the query executor
-        if (queryExecutor != null) {
-            queryExecutor.shutdown();
+
+        @Override
+        public void run() {
+            try {
+                out = new ObjectOutputStream(clientSocket.getOutputStream());
+                in = new ObjectInputStream(clientSocket.getInputStream());
+
+                while (true) {
+                    Object input;
+                    try {
+                        input = in.readObject();
+                    } catch (SocketTimeoutException e) {
+                        LOGGER.log(Level.WARNING, "Socket timeout while waiting for query from client {0}: {1}",
+                                new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                        break;
+                    }
+                    if (input == null || input.equals(ErrorMessages.EXIT_COMMAND)) {
+                        break;
+                    }
+
+                    if (!(input instanceof QueryMessage qm)) {
+                        out.writeObject("Error: Invalid query message");
+                        out.flush();
+                        continue;
+                    }
+
+                    String query = qm.getQuery();
+                    transactionId = qm.getTransactionId();
+
+                    try {
+                        Object result = database.executeQuery(query, transactionId);
+                        out.writeObject(result);
+                        out.flush();
+                    } catch (OutOfMemoryError e) {
+                        handleOutOfMemory(query, e);
+                    } catch (Exception e) {
+                        out.writeObject("Error: " + e.getMessage());
+                        out.flush();
+                        LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
+                                new Object[]{query, e.getMessage()});
+                    }
+                }
+            } catch (IOException | ClassNotFoundException e) {
+                LOGGER.log(Level.SEVERE, "Client handler error: {0}", e.getMessage());
+            } finally {
+                try {
+                    // Rollback any active transaction for this client
+                    if (transactionId != null && database.isInTransaction(transactionId)) {
+                        database.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION, transactionId);
+                    }
+                    if (out != null) out.close();
+                    if (in != null) in.close();
+                    if (clientSocket != null) clientSocket.close();
+                    LOGGER.log(Level.INFO, "Client disconnected: {0}", clientSocket.getInetAddress());
+                } catch (IOException e) {
+                    LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
+                }
+            }
         }
     }
 
@@ -540,24 +323,20 @@ public class DatabaseServer {
         if (args.length > 1) {
             dataDir = args[1];
         }
-        try {
-            Database database = new Database(dataDir);
-            DatabaseServer server = new DatabaseServer(port, -1, database);
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
-                try {
-                    if (server.serverSocketChannel != null && server.serverSocketChannel.isOpen()) {
-                        server.serverSocketChannel.close();
-                        LOGGER.log(Level.INFO, "ServerSocketChannel closed, no longer accepting new connections");
-                    }
-                } catch (IOException e) {
-                    LOGGER.log(Level.SEVERE, "Error closing ServerSocketChannel in shutdown hook: {0}", e.getMessage());
+        Database database = new Database(dataDir);
+        DatabaseServer server = new DatabaseServer(port, -1, database);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
+            try {
+                if (server.serverSocket != null && !server.serverSocket.isClosed()) {
+                    server.serverSocket.close();
+                    LOGGER.log(Level.INFO, "ServerSocket closed, no longer accepting new connections");
                 }
-                server.stop();
-            }, "shutdown-hook"));
-            server.start();
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to create server: {0}", e.getMessage());
-        }
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "Error closing ServerSocket in shutdown hook: {0}", e.getMessage());
+            }
+            server.stop();
+        }, "shutdown-hook"));
+        server.start();
     }
 }
