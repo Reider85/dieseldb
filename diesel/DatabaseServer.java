@@ -308,7 +308,7 @@ public class DatabaseServer {
             long startTime = System.nanoTime();
             try {
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                try (GZIPOutputStream gzos = new GZIPOutputStream(baos, new Deflater(compressionLevel))) {
+                try (GZIPOutputStream gzos = new GZIPOutputStream(baos)) {
                     gzos.write(data);
                 }
                 byte[] compressed = baos.toByteArray();
@@ -393,6 +393,8 @@ public class DatabaseServer {
             }
         }
 
+        @Override
+        public void run() {
             try {
                 out = new ObjectOutputStream(clientSocket.getOutputStream());
                 in = new ObjectInputStream(clientSocket.getInputStream());
@@ -466,10 +468,11 @@ public class DatabaseServer {
                     LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
                 }
             }
+        }
     }
 
     /**
-     * Entry point: starts a server on the given port (default 3306) with an
+      * Entry point: starts a server on the given port (default 3306) with an
      * optional data directory (default "."). A shutdown hook stops the server
      * gracefully on JVM exit.
      *

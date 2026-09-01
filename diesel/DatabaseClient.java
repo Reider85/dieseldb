@@ -2,8 +2,12 @@ package diesel;
 
 import java.io.*;
 import java.net.*;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * TCP client for a {@link DatabaseServer}: connects over a socket, sends SQL
@@ -38,6 +42,21 @@ public class DatabaseClient {
         this.host = host;
         this.port = port;
         this.transactionId = null;
+    }
+
+    /**
+     * Connects to the server at the configured host and port, opening
+     * the output and input streams and performing the compression handshake.
+     */
+    public void connect() {
+        try {
+            socket = new Socket(host, port);
+            out = new ObjectOutputStream(socket.getOutputStream());
+            in = new ObjectInputStream(socket.getInputStream());
+            performHandshake();
+        } catch (IOException | ClassNotFoundException e) {
+            throw new RuntimeException("Failed to connect to " + host + ":" + port, e);
+        }
     }
 
     /**
