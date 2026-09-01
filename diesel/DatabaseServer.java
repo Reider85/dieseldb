@@ -270,7 +270,7 @@ public class DatabaseServer {
      * Performs compression handshake with client.
      * Reads client handshake message and sends server response with agreed settings.
      */
-    private void performHandshake() throws IOException, ClassNotFoundException {
+    private Object performHandshake() throws IOException, ClassNotFoundException {
         // Read client handshake
         Object input = in.readObject();
         if (input instanceof CompressionHandshakeMessage handshake) {
@@ -311,16 +311,13 @@ public class DatabaseServer {
             out.flush();
             
             LOGGER.log(Level.INFO, "Sent compression handshake response: {0}", response);
+            return null;
         } else {
-            // Client doesn't support handshake - use defaults
+            // Client doesn't support handshake - use defaults, don't send handshake response
             LOGGER.log(Level.INFO, "Client does not support compression handshake, using defaults");
             compressionEnabled = true;
             this.compressionAlgorithm = DEFAULT_ALGORITHM;
-            // Send default response for compatibility
-            CompressionHandshakeResponse response = new CompressionHandshakeResponse(
-                    true, DEFAULT_ALGORITHM, compressionLevel, compressionThreshold);
-            out.writeObject(response);
-            out.flush();
+            return input;
         }
     }
 
@@ -427,16 +424,21 @@ public class DatabaseServer {
                 in = new ObjectInputStream(clientSocket.getInputStream());
 
                 // Perform compression handshake before starting query loop
-                performHandshake();
+                Object pendingInput = performHandshake();
 
                 while (true) {
                     Object input;
-                    try {
-                        input = in.readObject();
-                    } catch (SocketTimeoutException e) {
+                    if (pendingInput != null) {
+                        input = pendingInput;
+                        pendingInput = null;
+                    } else {
+                        try {
+                            input = in.readObject();
+                        } catch (SocketTimeoutException e) {
                         LOGGER.log(Level.WARNING, "Socket timeout while waiting for query from client {0}: {1}",
                                 new Object[]{clientSocket.getInetAddress(), e.getMessage()});
                         break;
+                    }
                     }
                     if (input == null || input.equals(ErrorMessages.EXIT_COMMAND)) {
                         break;

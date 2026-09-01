@@ -1,1 +1,1 @@
-Make performance-related hardcoded constants configurable via config.properties (PreparedStatement.MAX_CACHE_SIZE, DatabaseServer.POOL_SIZE/QUEUE_CAPACITY, SelectQuery.HASH_JOIN_OVERHEAD_ROWS/MEMORY_SAMPLE_INTERVAL, BloomFilter.DEFAULT_NUM_HASHES/DEFAULT_FPP, compression settings).
+Fix DatabaseServer handshake consuming client's first QueryMessage and breaking QuantitativeTest prompt69/prompt70 and OomHandlingTest
