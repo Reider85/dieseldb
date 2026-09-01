@@ -10,6 +10,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -35,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.zip.GZIPInputStream;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -936,7 +938,7 @@ public class QuantitativeTest {
                 out.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
                 out.flush();
                 ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-                Object response = in.readObject();
+                Object response = readSocketResponse(in);
                 check(response != null && !isErrorResponse(response),
                         "Prompt69Test / the long-running client connection is functional (server answers a query without an error)");
 
@@ -962,7 +964,7 @@ public class QuantitativeTest {
                 probeOut.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
                 probeOut.flush();
                 ObjectInputStream probeIn = new ObjectInputStream(probe.getInputStream());
-                Object probeResponse = probeIn.readObject();
+                Object probeResponse = readSocketResponse(probeIn);
                 check(probeResponse != null && !isErrorResponse(probeResponse),
                         "Prompt69Test / the server stays alive and accepts a new connection after the timed-out client was closed");
             }
@@ -1128,6 +1130,24 @@ public class QuantitativeTest {
         }
     }
 
+    private Object readSocketResponse(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        int marker = in.read();
+        if (marker == 0x01) {
+            int dataLength = in.readInt();
+            byte[] compressedData = new byte[dataLength];
+            in.readFully(compressedData);
+            GZIPInputStream gzis = new GZIPInputStream(new ByteArrayInputStream(compressedData));
+            ObjectInputStream ois = new ObjectInputStream(gzis);
+            return ois.readObject();
+        } else {
+            int dataLength = in.readInt();
+            byte[] uncompressedData = new byte[dataLength];
+            in.readFully(uncompressedData);
+            ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(uncompressedData));
+            return ois.readObject();
+        }
+    }
+
     private Object prompt70RoundTrip(ObjectOutputStream out, ObjectInputStream in, String query) throws IOException, ClassNotFoundException {
         return prompt70RoundTrip(out, in, new QueryMessage(query, null));
     }
@@ -1135,7 +1155,7 @@ public class QuantitativeTest {
     private Object prompt70RoundTrip(ObjectOutputStream out, ObjectInputStream in, QueryMessage message) throws IOException, ClassNotFoundException {
         out.writeObject(message);
         out.flush();
-        return in.readObject();
+        return readSocketResponse(in);
     }
 
     private static String resolveSubprocessClasspath() {
