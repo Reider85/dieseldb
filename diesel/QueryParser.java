@@ -3423,4 +3423,12 @@ class QueryParser {
     private static String unquoteQualifiedIdentifier(String identifier) {
         return SqlParsingUtils.unquoteQualifiedIdentifier(identifier);
     }
+
+    /**
+     * Parses a prepared statement by substituting bound parameters and
+     * returning the parsed AST (using PreparedStatement LRU cache).
+     */
+    public Query<?> parsePrepared(PreparedStatement ps, Database database) {
+        return ps.getParsedQuery(database);
+    }
 }

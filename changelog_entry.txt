@@ -1,20 +1,8 @@
-Prompt 78: GZIP compression negotiation and metrics
+2.9.79 prompt 79 - Prepared Statements caching (prompt2.md line 1407)
 
-- Added CompressionHandshakeMessage for client-server compression negotiation
-- Added CompressionHandshakeResponse for server agreement confirmation
-- Implemented performHandshake() in DatabaseServer.ClientHandler
-- Implemented performHandshake() in DatabaseClient.connect()
-- Fixed GZIP compression to actually apply negotiated compression level (Deflater)
-- Added compression metrics tracking: original bytes, compressed bytes, time, ratio
-- Added logCompressionMetrics() for periodic and disconnect-time reporting
-- Updated config.properties with compression.enabled=true, threshold=1024, level=6
-- Restored handleOutOfMemory() method in DatabaseServer
-- All responses maintain backward compatibility with legacy clients
+Modified files: diesel/PreparedStatement.java (new), diesel/QueryParser.java (parsePrepared helper)
+Test results: quick gate 42/0 BUILD SUCCESS (pre-existing Prompt69/70 network failures unrelated)
+Timing: no engine timing change (new feature only)
+Complexity: no new O(n^2)/O(n!) - LRU cache is O(1) lookup/insert
 
-Files changed:
-- diesel/CompressionHandshakeMessage.java (new)
-- diesel/CompressionHandshakeResponse.java (new)
-- diesel/DatabaseServer.java
-- diesel/DatabaseClient.java
-- src/main/resources/config.properties
-- config.properties
+Created PreparedStatement class with LRU-cached parsed AST (maxSize=1000) and parameter binding via ? placeholder substitution. Added QueryParser.parsePrepared() integration method.
