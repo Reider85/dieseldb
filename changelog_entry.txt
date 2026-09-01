@@ -1,11 +1,20 @@
-Prompt 78: GZIP compression for network responses
+Prompt 78: GZIP compression negotiation and metrics
 
-- Added compression.threshold.bytes and compression.level to config.properties
-- Modified DatabaseServer.ClientHandler to compress results > 1KB using GZIP
-- Modified DatabaseClient.executeQuery to detect and decompress GZIP-compressed results
-- Backward compatible: existing clients work with both compressed and uncompressed responses
+- Added CompressionHandshakeMessage for client-server compression negotiation
+- Added CompressionHandshakeResponse for server agreement confirmation
+- Implemented performHandshake() in DatabaseServer.ClientHandler
+- Implemented performHandshake() in DatabaseClient.connect()
+- Fixed GZIP compression to actually apply negotiated compression level (Deflater)
+- Added compression metrics tracking: original bytes, compressed bytes, time, ratio
+- Added logCompressionMetrics() for periodic and disconnect-time reporting
+- Updated config.properties with compression.enabled=true, threshold=1024, level=6
+- Restored handleOutOfMemory() method in DatabaseServer
+- All responses maintain backward compatibility with legacy clients
 
 Files changed:
-- config.properties
+- diesel/CompressionHandshakeMessage.java (new)
+- diesel/CompressionHandshakeResponse.java (new)
 - diesel/DatabaseServer.java
 - diesel/DatabaseClient.java
+- src/main/resources/config.properties
+- config.properties

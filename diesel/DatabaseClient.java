@@ -1,15 +1,9 @@
 package diesel;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.*;
 import java.net.*;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import diesel.BatchQueryMessage;
 
 /**
  * TCP client for a {@link DatabaseServer}: connects over a socket, sends SQL
@@ -47,21 +41,29 @@ public class DatabaseClient {
     }
 
     /**
-     * Opens the socket connection and the object streams to the server.
-     *
-     * @throws RuntimeException if the connection cannot be established
+     * Performs compression handshake with server.
+     * Reads server handshake message and stores agreed compression settings.
      */
-    public void connect() {
-        try {
-            socket = new Socket(host, port);
-            out = new ObjectOutputStream(socket.getOutputStream());
-            in = new ObjectInputStream(socket.getInputStream());
-            LOGGER.info("Connected to server at " + host + ":" + port);
-        } catch (IOException e) {
-            closeQuietly(in);
-            closeQuietly(out);
-            closeQuietly(socket);
-            throw new DieselIOException("Connection failed: " + e.getMessage(), e);
+    private void performHandshake() throws IOException, ClassNotFoundException {
+        // Send client handshake
+        out.writeObject(new CompressionHandshakeMessage(true, List.of("GZIP"), 6, 1024));
+        out.flush();
+        
+        // Read server handshake response
+        Object response = in.readObject();
+        if (response instanceof CompressionHandshakeResponse serverResponse) {
+            LOGGER.info("Received compression handshake response: {}", serverResponse);
+            if (serverResponse.isCompressionEnabled()) {
+                LOGGER.info("Server compression enabled with algorithm: {}, level: {}, threshold: {}",
+                        serverResponse.getAgreedAlgorithm(),
+                        serverResponse.getAgreedCompressionLevel(),
+                        serverResponse.getAgreedThresholdBytes());
+            } else {
+                LOGGER.warn("Server compression disabled, using uncompressed responses");
+            }
+        } else {
+            // Legacy server or unexpected response
+            LOGGER.warn("Unexpected handshake response: {}. Using default compression settings.", response);
         }
     }
 
@@ -84,6 +86,7 @@ public class DatabaseClient {
             throw new IllegalStateException("Client is not connected: call connect() first");
         }
         try {
+            Object result;
             String normalizedQuery = query.trim();
             out.writeObject(new QueryMessage(normalizedQuery, transactionId));
             out.flush();
@@ -127,7 +130,7 @@ public class DatabaseClient {
             }
             LOGGER.info("Query executed: {}, Result: {}", normalizedQuery, result);
             return result;
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException e) {
             LOGGER.error("Query execution failed: {}, Error: {}", query, e.getMessage());
             throw new DieselIOException("Query failed: " + e.getMessage(), e);
         }

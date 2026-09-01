@@ -151,7 +151,7 @@ public class DatabaseServer {
                     Socket clientSocket = serverSocket.accept();
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
                     try {
-                        executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout));
+                        executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout, config));
                     } catch (RejectedExecutionException e) {
                         LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
                                 new Object[]{clientSocket.getInetAddress(), e.getMessage()});
@@ -209,22 +209,149 @@ public class DatabaseServer {
         
         private static final int DEFAULT_COMPRESSION_THRESHOLD = 1024;
         private static final int DEFAULT_COMPRESSION_LEVEL = 6;
+        private static final String DEFAULT_ALGORITHM = "GZIP";
         
         private int compressionThreshold;
         private int compressionLevel;
+        private String compressionAlgorithm;
+        private boolean compressionEnabled;
+        
+        // Metrics
+        private long totalOriginalBytes = 0;
+        private long totalCompressedBytes = 0;
+        private long totalCompressionTimeNanos = 0;
+        private int compressionCount = 0;
 
         public ClientHandler(Socket socket, Database database, int socketTimeout, Properties config) {
             this.clientSocket = socket;
             this.database = database;
             this.socketTimeout = socketTimeout;
             this.transactionId = null;
+            this.compressionAlgorithm = DEFAULT_ALGORITHM;
             try {
                 clientSocket.setSoTimeout(socketTimeout);
             } catch (SocketException e) {
                 LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
             }
+            // Default values, will be updated by handshake
             this.compressionThreshold = Integer.parseInt(config.getProperty("compression.threshold.bytes", String.valueOf(DEFAULT_COMPRESSION_THRESHOLD)));
             this.compressionLevel = Integer.parseInt(config.getProperty("compression.level", String.valueOf(DEFAULT_COMPRESSION_LEVEL)));
+            this.compressionEnabled = true;
+        }
+
+    /**
+     * Performs compression handshake with client.
+     * Reads client handshake message and sends server response with agreed settings.
+     */
+    private void performHandshake() throws IOException, ClassNotFoundException {
+        // Read client handshake
+        Object input = in.readObject();
+        if (input instanceof CompressionHandshakeMessage handshake) {
+            LOGGER.log(Level.INFO, "Received compression handshake from client: {0}", handshake);
+            
+            // Determine agreed settings
+            boolean clientWantsCompression = handshake.isClientSupportsCompression();
+            String agreedAlgorithm = DEFAULT_ALGORITHM;
+            int agreedLevel = compressionLevel;
+            int agreedThreshold = compressionThreshold;
+            
+            // Check if client supports our algorithm
+            if (clientWantsCompression && handshake.getSupportedAlgorithms().contains(DEFAULT_ALGORITHM)) {
+                // Use client's preferred level if reasonable (1-9)
+                int clientPreferredLevel = handshake.getPreferredCompressionLevel();
+                if (clientPreferredLevel >= 1 && clientPreferredLevel <= 9) {
+                    agreedLevel = clientPreferredLevel;
+                }
+                // Use client's threshold if reasonable
+                int clientThreshold = handshake.getCompressionThresholdBytes();
+                if (clientThreshold > 0) {
+                    agreedThreshold = clientThreshold;
+                }
+                compressionEnabled = true;
+            } else {
+                compressionEnabled = false;
+            }
+            
+            // Update instance variables with agreed settings
+            this.compressionAlgorithm = agreedAlgorithm;
+            this.compressionLevel = agreedLevel;
+            this.compressionThreshold = agreedThreshold;
+            
+            // Send response to client
+            CompressionHandshakeResponse response = new CompressionHandshakeResponse(
+                    compressionEnabled, agreedAlgorithm, agreedLevel, agreedThreshold);
+            out.writeObject(response);
+            out.flush();
+            
+            LOGGER.log(Level.INFO, "Sent compression handshake response: {0}", response);
+        } else {
+            // Client doesn't support handshake - use defaults
+            LOGGER.log(Level.INFO, "Client does not support compression handshake, using defaults");
+            compressionEnabled = true;
+            this.compressionAlgorithm = DEFAULT_ALGORITHM;
+            // Send default response for compatibility
+            CompressionHandshakeResponse response = new CompressionHandshakeResponse(
+                    true, DEFAULT_ALGORITHM, compressionLevel, compressionThreshold);
+            out.writeObject(response);
+            out.flush();
+        }
+    }
+
+        /**
+         * Compresses data using GZIP and collects metrics.
+         */
+        private byte[] compressWithMetrics(byte[] data) {
+            if (!compressionEnabled || data.length <= compressionThreshold) {
+                return data; // No compression
+            }
+            
+            long startTime = System.nanoTime();
+            try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                try (GZIPOutputStream gzos = new GZIPOutputStream(baos, new Deflater(compressionLevel))) {
+                    gzos.write(data);
+                }
+                byte[] compressed = baos.toByteArray();
+                long endTime = System.nanoTime();
+                
+                // Collect metrics
+                totalOriginalBytes += data.length;
+                totalCompressedBytes += compressed.length;
+                totalCompressionTimeNanos += (endTime - startTime);
+                compressionCount++;
+                
+                // Log metrics periodically
+                if (compressionCount % 10 == 0) {
+                    logCompressionMetrics();
+                }
+                
+                return compressed;
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Compression failed, sending uncompressed: {0}", e.getMessage());
+                return data;
+            }
+        }
+
+        /**
+         * Logs compression metrics.
+         */
+        private void logCompressionMetrics() {
+            if (compressionCount == 0) return;
+            
+            double ratio = totalOriginalBytes > 0 ? 
+                    (double) totalCompressedBytes / totalOriginalBytes : 0.0;
+            double avgTimeMs = totalCompressionTimeNanos / 1_000_000.0 / compressionCount;
+            
+            LOGGER.log(Level.INFO, 
+                    "Compression metrics [client=%s]: count=%d, totalOriginal=%d bytes, totalCompressed=%d bytes, ratio=%f, avgTime=%fms",
+                    new Object[]{
+                        clientSocket.getInetAddress(),
+                        compressionCount,
+                        totalOriginalBytes,
+                        totalCompressedBytes,
+                        ratio,
+                        avgTimeMs
+                    });
         }
 
         /**
@@ -266,11 +393,12 @@ public class DatabaseServer {
             }
         }
 
-        @Override
-        public void run() {
             try {
                 out = new ObjectOutputStream(clientSocket.getOutputStream());
                 in = new ObjectInputStream(clientSocket.getInputStream());
+
+                // Perform compression handshake before starting query loop
+                performHandshake();
 
                 while (true) {
                     Object input;
@@ -283,6 +411,11 @@ public class DatabaseServer {
                     }
                     if (input == null || input.equals(ErrorMessages.EXIT_COMMAND)) {
                         break;
+                    }
+
+                    if (input instanceof CompressionHandshakeMessage) {
+                        performHandshake();
+                        continue;
                     }
 
                     if (!(input instanceof QueryMessage qm)) {
@@ -328,11 +461,11 @@ public class DatabaseServer {
                     if (in != null) in.close();
                     if (clientSocket != null) clientSocket.close();
                     LOGGER.log(Level.INFO, "Client disconnected: {0}", clientSocket.getInetAddress());
+                    logCompressionMetrics();
                 } catch (IOException e) {
                     LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
                 }
             }
-        }
     }
 
     /**
