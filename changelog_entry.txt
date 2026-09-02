@@ -1,1 +1,1 @@
-Fix DatabaseServer handshake consuming client's first QueryMessage and breaking QuantitativeTest prompt69/prompt70 and OomHandlingTest
+Verify three priority fixes already resolved: JOIN OR OOM, IN+AND, GROUP BY unique (full 42/42 heavy gate green, 0 failures)
