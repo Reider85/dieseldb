@@ -292,6 +292,87 @@ public class DatabaseClient {
     }
 
     /**
+     * Opens a server-side cursor (Prompt 81) over the given SELECT on the
+     * server and returns its opaque id. The result can then be fetched in
+     * paginated batches via {@link #fetchCursor(String)}.
+     *
+     * @param query     the SQL SELECT to run
+     * @param fetchSize the number of rows each fetch returns (must be &gt; 0)
+     * @return the server-assigned cursor id
+     * @throws RuntimeException if the query fails on the server or the
+     *                          communication breaks
+     */
+    public String openCursor(String query, int fetchSize) {
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
+        try {
+            out.writeObject(new OpenCursorMessage(query, fetchSize, transactionId));
+            out.flush();
+            Object result = readResultFromStream();
+            if (result instanceof String s && s.startsWith("Error: ")) {
+                LOGGER.error("Server error for cursor open '{}': {}", query, result);
+                throw new DieselException(s);
+            }
+            LOGGER.info("Opened cursor {} for query: {}, fetchSize={}", result, query, fetchSize);
+            return (String) result;
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.error("Open cursor failed: {}, Error: {}", query, e.getMessage());
+            throw new DieselIOException("Open cursor failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Fetches the next batch of rows from an open server-side cursor
+     * (Prompt 81). Returns an empty list when the cursor is exhausted.
+     *
+     * @param cursorId the cursor id from {@link #openCursor}
+     * @return up to the cursor's fetch size rows, empty when exhausted
+     * @throws RuntimeException if the cursor is unknown or the communication
+     *                          breaks
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> fetchCursor(String cursorId) {
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
+        try {
+            out.writeObject(new FetchCursorMessage(java.util.UUID.fromString(cursorId), transactionId));
+            out.flush();
+            Object result = readResultFromStream();
+            if (result instanceof String s && s.startsWith("Error: ")) {
+                LOGGER.error("Server error fetching cursor '{}': {}", cursorId, result);
+                throw new DieselException(s);
+            }
+            return (List<Map<String, Object>>) result;
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.error("Fetch cursor failed: {}, Error: {}", cursorId, e.getMessage());
+            throw new DieselIOException("Fetch cursor failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Closes a server-side cursor (Prompt 81), releasing the server-held
+     * iterator.
+     *
+     * @param cursorId the cursor id from {@link #openCursor}
+     */
+    public void closeCursor(String cursorId) {
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
+        try {
+            out.writeObject(new CloseCursorMessage(java.util.UUID.fromString(cursorId), transactionId));
+            out.flush();
+            in.readObject();
+            LOGGER.info("Closed cursor {}", cursorId);
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.error("Close cursor failed: {}, Error: {}", cursorId, e.getMessage());
+            throw new DieselIOException("Close cursor failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Reads a result object from the stream, handling the compression marker
      * byte protocol used by the server for query results.
      *

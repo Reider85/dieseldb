@@ -228,8 +228,18 @@ public class DatabaseServer {
          */
         private final Map<String, PreparedStatement> preparedStatements = new java.util.concurrent.ConcurrentHashMap<>();
         
+        /**
+         * Session-scoped registry of open server-side cursors (Prompt 81):
+         * maps a cursor id to the live {@link Cursor}. Cursors are removed on
+         * explicit close and on client disconnect (see {@link #run}).
+         */
+        private final Map<String, Cursor> cursors = new java.util.concurrent.ConcurrentHashMap<>();
+        
         private static int DEFAULT_COMPRESSION_THRESHOLD = 1024;
         private static int DEFAULT_COMPRESSION_LEVEL = 6;
+
+        /** Default rows per cursor fetch when the client does not specify one (Prompt 81). */
+        private static final int DEFAULT_CURSOR_FETCH_SIZE = 1000;
 
         static {
             try {
@@ -472,6 +482,21 @@ public class DatabaseServer {
                         continue;
                     }
 
+                    if (input instanceof OpenCursorMessage ocm) {
+                        handleOpenCursor(ocm);
+                        continue;
+                    }
+
+                    if (input instanceof FetchCursorMessage fcm) {
+                        handleFetchCursor(fcm);
+                        continue;
+                    }
+
+                    if (input instanceof CloseCursorMessage ccm) {
+                        handleCloseCursor(ccm);
+                        continue;
+                    }
+
                     if (!(input instanceof QueryMessage qm)) {
                         out.writeObject("Error: Invalid query message");
                         out.flush();
@@ -502,6 +527,10 @@ public class DatabaseServer {
                         database.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION, transactionId);
                     }
                     preparedStatements.clear();
+                    for (Cursor cursor : cursors.values()) {
+                        cursor.close();
+                    }
+                    cursors.clear();
                     if (out != null) out.close();
                     if (in != null) in.close();
                     if (clientSocket != null) clientSocket.close();
@@ -588,6 +617,72 @@ public class DatabaseServer {
             out.writeObject("Prepared statement closed");
             out.flush();
             LOGGER.log(Level.INFO, "Closed prepared statement {0}", statementId);
+        }
+
+        /**
+         * Handles an {@link OpenCursorMessage}: opens a server-side cursor
+         * (Prompt 81) over the given SELECT and registers it under a fresh id,
+         * replying with the id. Errors are returned as {@code Error: } strings.
+         */
+        private void handleOpenCursor(OpenCursorMessage ocm) throws IOException {
+            transactionId = ocm.getTransactionId();
+            try {
+                int fetchSize = ocm.getFetchSize();
+                if (fetchSize <= 0) {
+                    fetchSize = DEFAULT_CURSOR_FETCH_SIZE;
+                }
+                Cursor cursor = database.executeCursor(ocm.getQuery(), fetchSize, transactionId);
+                String cursorId = cursor.getId().toString();
+                cursors.put(cursorId, cursor);
+                sendSerializedResult(cursorId);
+                LOGGER.log(Level.INFO, "Opened cursor {0} for query: {1} (fetchSize={2})",
+                        new Object[]{cursorId, ocm.getQuery(), fetchSize});
+            } catch (Exception e) {
+                sendSerializedResult("Error: " + e.getMessage());
+                LOGGER.log(Level.SEVERE, "Open cursor failed: {0}, Error: {1}",
+                        new Object[]{ocm.getQuery(), e.getMessage()});
+            }
+        }
+
+        /**
+         * Handles a {@link FetchCursorMessage}: fetches the next batch of rows
+         * from an open cursor and replies with the list (empty when exhausted
+         * or the cursor is unknown/closed).
+         */
+        private void handleFetchCursor(FetchCursorMessage fcm) throws IOException {
+            transactionId = fcm.getTransactionId();
+            Cursor cursor = cursors.get(fcm.getCursorId().toString());
+            if (cursor == null) {
+                sendSerializedResult("Error: Unknown or closed cursor: " + fcm.getCursorId());
+                return;
+            }
+            try {
+                List<Map<String, Object>> batch = cursor.fetch();
+                sendSerializedResult(batch);
+                LOGGER.log(Level.FINE, "Fetched {0} rows from cursor {1}",
+                        new Object[]{batch.size(), fcm.getCursorId()});
+            } catch (Exception e) {
+                sendSerializedResult("Error: " + e.getMessage());
+                LOGGER.log(Level.SEVERE, "Fetch cursor failed: {0}, Error: {1}",
+                        new Object[]{fcm.getCursorId(), e.getMessage()});
+            }
+        }
+
+        /**
+         * Handles a {@link CloseCursorMessage}: closes the given cursor and
+         * removes it from the session registry.
+         */
+        private void handleCloseCursor(CloseCursorMessage ccm) throws IOException {
+            transactionId = ccm.getTransactionId();
+            Cursor cursor = cursors.remove(ccm.getCursorId().toString());
+            if (cursor != null) {
+                cursor.close();
+                out.writeObject("Cursor closed");
+            } else {
+                out.writeObject("Cursor already closed");
+            }
+            out.flush();
+            LOGGER.log(Level.INFO, "Closed cursor {0}", ccm.getCursorId());
         }
     }
 

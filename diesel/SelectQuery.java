@@ -838,6 +838,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return executeSelect(table, database);
     }
 
+    /**
+     * Executes this SELECT and returns its result rows as an iterator, so a
+     * server-side cursor (Prompt 81) can hand the client paginated batches
+     * without the caller receiving the whole list at once. The rows are still
+     * materialised in memory by {@link #execute} (the streaming pipeline is
+     * currently disabled); the iterator simply exposes them lazily.
+     *
+     * @param table the main table
+     * @return an iterator over the projected result rows
+     * @throws IllegalArgumentException if a join table is missing
+     */
+    public Iterator<Map<String, Object>> executeAsIterator(Table table) {
+        List<Map<String, Object>> rows = execute(table);
+        return rows.iterator();
+    }
+
     // Prompt 29 (execute() complexity 59): the main flow is split into
     // focused phases, each under the complexity threshold - executeSelect
     // (setup + orchestration), applyJoins, applyWhereFilter, applyGroupBy,

@@ -216,6 +216,60 @@ class Database {
     }
 
     /**
+     * Opens a server-side cursor over a SELECT query (Prompt 81). The query is
+     * parsed and executed immediately, and the resulting rows are exposed via
+     * the returned {@link Cursor}, which the caller (typically the server's
+     * {@code ClientHandler}) uses to hand the client paginated batches of up to
+     * {@code fetchSize} rows.
+     *
+     * <p>Only plain SELECT statements support cursors; any other statement kind
+     * fails with an {@link IllegalArgumentException}. Transaction resolution,
+     * table lookup and error handling mirror {@link #executeQuery}.
+     *
+     * @param query         the SQL SELECT to run (cursor semantics apply only
+     *                      when the statement is a SELECT)
+     * @param fetchSize     the number of rows each {@link Cursor#fetch()} returns
+     * @param transactionId the caller's transaction id, or null
+     * @return a new open cursor over the query result
+     * @throws IllegalArgumentException when the query is null, not a SELECT, or
+     *                                  references a missing table
+     */
+    public Cursor executeCursor(String query, int fetchSize, UUID transactionId) {
+        if (query == null) {
+            throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
+        }
+        if (fetchSize <= 0) {
+            throw new IllegalArgumentException("Cursor fetch size must be positive, got " + fetchSize);
+        }
+        String cleanQuery = stripMaxRowsHint(query);
+        String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(cleanQuery.trim());
+        if (!normalized.startsWith(SqlKeywords.SELECT)) {
+            throw new IllegalArgumentException(
+                    "Cursor can only be opened over a SELECT query, got: " + cleanQuery.trim());
+        }
+        Query<?> parsedQuery = parse(cleanQuery);
+        Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
+
+        Table table;
+        if (parsedQuery instanceof SelectQuery sq && sq.getDerivedMainTable() != null) {
+            table = sq.getDerivedMainTable();
+        } else {
+            String tableName = extractTableName(cleanQuery);
+            table = getTableForQuery(tableName, currentTransaction);
+            if (table == null) {
+                throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
+            }
+        }
+
+        if (!(parsedQuery instanceof SelectQuery selectQuery)) {
+            throw new IllegalArgumentException(
+                    "Cursor can only be opened over a SELECT query, got: " + cleanQuery.trim());
+        }
+        Iterator<Map<String, Object>> iterator = selectQuery.executeAsIterator(table);
+        return new Cursor(UUID.randomUUID(), cleanQuery.trim(), fetchSize, iterator);
+    }
+
+    /**
      * Executes an already-parsed query (from a {@link PreparedStatement})
      * against the database, reusing the caller's derived bindings but skipping
      * the parse phase (Prompt 79). The query string is the concrete SQL the
