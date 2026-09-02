@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -78,7 +79,12 @@ public class SocketTimeoutTest {
             out.flush();
 
             ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-            Object response = in.readObject();
+            int marker = in.read();
+            int dataLength = in.readInt();
+            byte[] data = new byte[dataLength];
+            in.readFully(data);
+            ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data));
+            Object response = ois.readObject();
             LOGGER.log(Level.INFO, "Received response to round-trip query: " + response);
             assertFalse(response instanceof String && ((String) response).startsWith("Error:"),
                     "Round-trip query should be answered without an error");

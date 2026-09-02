@@ -1,1 +1,13 @@
-Verify three priority fixes already resolved: JOIN OR OOM, IN+AND, GROUP BY unique (full 42/42 heavy gate green, 0 failures)
+Fix 4 pre-existing test failures: PersistenceTest (3) and SocketTimeoutTest (1)
+
+PersistenceTest: Database() no-arg constructor defaults dataDir="data" but tests
+checked files in CWD. Changed all new Database() to new Database(".") in
+PersistenceTest so files resolve to CWD where assertions expect them.
+
+SocketTimeoutTest: Server sends responses via compression wire protocol
+(marker byte + length + serialized bytes through ObjectOutputStream), but
+test read with ObjectInputStream.readObject() which cannot handle TC_BLOCKDATA
+records. Fixed to read using compression protocol (read()+readInt()+readFully()
++ deserialize from ByteArrayInputStream), matching DatabaseClient behavior.
+
+Tests: PersistenceTest 16/0, SocketTimeoutTest 1/0 — full gate 42/0 BUILD SUCCESS
