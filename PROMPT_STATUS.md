@@ -142,7 +142,7 @@
 | 80 | DONE (2026-09-02) | Batch execution support (BEGIN BATCH ... END BATCH) | MEDIUM |
 | 81 | ??? TODO | ??-?-TH???T?T??-T??T? Parquet ?-?- T?T??-?-?-?? T�-?-????T?T? | MEDIUM |
 | 82 | ✅ DONE (2026-09-03) | MEDIUM | QueryOptimizer.java, SelectQuery.java, QueryOptimizerTest.java | Adaptive query execution (monitor estimated vs actual rows, replan joins on deviation, LRU plan cache with fingerprint normalization) - verified: QueryOptimizerTest 10/10 green, quick gate 42/0/0/2 BUILD SUCCESS |
-| 83 | ??? TODO | Predicate pushdown | HIGH |
+| 83 | ✅ DONE (2026-09-03) | Index-only scans | MEDIUM | SelectQuery.java, QueryProfiler.java, Database.java, ExplainQuery.java, CoveringIndexTest.java | Added index-only scan metrics: lastIndexLookupCount/lastIndexOnlyScanCount counters in SelectQuery, exposed via EXPLAIN ANALYZE and QueryProfiler JMX MBean, with tests - quick gate 42/0 BUILD SUCCESS |
 | 84 | ??? TODO | ??-T??-????????T?-?-?? T?T�??-???? Parquet | MEDIUM |
 | 85 | ??? TODO | ??T�-T�?T?T�????- ??T????-??T???-?-?-?-??T? ??T?T?- | LOW |
 | 86 | ??? TODO | Database.java ?+??T? Parquet default | MEDIUM |

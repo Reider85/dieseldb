@@ -103,4 +103,42 @@ public class CoveringIndexTest {
         assertNotNull(rows);
         assertFalse(rows.isEmpty());
     }
+
+    @Test
+    void explainAnalyzeShowsIndexMetrics() {
+        createTable();
+        database.executeQuery("CREATE INDEX ON T1(AGE) COVERING (NAME, SALARY)", null);
+        // Use only covered columns in SELECT so covering index is used
+        String result = explain("EXPLAIN ANALYZE SELECT AGE, NAME, SALARY FROM T1 WHERE AGE = 5");
+        assertTrue(result.contains("index lookups:"), "EXPLAIN ANALYZE should show index lookups: " + result);
+        assertTrue(result.contains("index-only scans:"), "EXPLAIN ANALYZE should show index-only scans: " + result);
+    }
+
+    @Test
+    void coveringIndexMetricsIncrement() {
+        createTable();
+        database.executeQuery("CREATE INDEX ON T1(AGE) COVERING (NAME, SALARY)", null);
+        // Query must only select columns covered by the index: AGE (indexed) + NAME, SALARY
+        query("SELECT AGE, NAME, SALARY FROM T1 WHERE AGE = 5");
+        // Verify EXPLAIN ANALYZE shows non-zero metrics
+        String result = explain("EXPLAIN ANALYZE SELECT AGE, NAME, SALARY FROM T1 WHERE AGE = 5");
+        assertTrue(result.contains("index lookups: 1") || result.contains("index lookups: 2"),
+                "Should have at least 1 index lookup: " + result);
+        assertTrue(result.contains("index-only scans: 1") || result.contains("index-only scans: 2"),
+                "Should have at least 1 index-only scan: " + result);
+    }
+
+    @Test
+    void nonCoveringIndexDoesNotIncrementIndexOnlyScans() {
+        createTable();
+        // Create a plain (non-covering) index on AGE only
+        database.executeQuery("CREATE INDEX ON T1(AGE)", null);
+        // Query SELECTs AGE, NAME, SALARY — not all covered by the plain index
+        query("SELECT AGE, NAME, SALARY FROM T1 WHERE AGE = 5");
+        String result = explain("EXPLAIN ANALYZE SELECT AGE, NAME, SALARY FROM T1 WHERE AGE = 5");
+        assertTrue(result.contains("index lookups: 1") || result.contains("index lookups: 2"),
+                "Should have at least 1 index lookup: " + result);
+        assertTrue(result.contains("index-only scans: 0"),
+                "Plain index should not produce index-only scans: " + result);
+    }
 }

@@ -115,6 +115,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private boolean lastJoinUsedPartitioning;
 
     /**
+     * Prompt 83: index-only scan metrics. {@code lastIndexLookupCount} tracks
+     * the number of single-column index lookups performed during the last
+     * execution; {@code lastIndexOnlyScanCount} tracks how many of those
+     * lookups were served entirely from the covering index without touching
+     * the table rows.
+     */
+    private long lastIndexLookupCount;
+    private long lastIndexOnlyScanCount;
+
+    /**
      * Phase timings of the most recently executed query (Prompt 18): the plan
      * phase (join reordering, ORDER BY key resolution, projection plan), the
      * sort phase (the ORDER BY sort itself) and the execute phase (everything
@@ -154,6 +164,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     boolean isLastJoinUsedPartitioning() {
         return lastJoinUsedPartitioning;
+    }
+
+    /** @return the number of index lookups performed in the last execution (Prompt 83) */
+    long getLastIndexLookupCount() {
+        return lastIndexLookupCount;
+    }
+
+    /** @return the number of index-only scans in the last execution (Prompt 83) */
+    long getLastIndexOnlyScanCount() {
+        return lastIndexOnlyScanCount;
     }
 
     /**
@@ -909,6 +929,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         lastHashJoinBuildTimeMs = 0;
         lastHashJoinProbeTimeMs = 0;
         lastJoinUsedPartitioning = false;
+        lastIndexLookupCount = 0;
+        lastIndexOnlyScanCount = 0;
         resultLimitWarningLogged = false;
         QUERY_MEMORY.get().reset();
         QUERY_MEMORY.get().sample(0);
@@ -2405,6 +2427,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn, table);
                     if (rowIndices != null && !rowIndices.isEmpty()) {
                         indexedSets.add(new LinkedHashSet<>(rowIndices));
+                        lastIndexLookupCount++;
                     }
                 }
             }
@@ -2542,6 +2565,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                     }
                                 }
                             }
+                            lastIndexOnlyScanCount++;
                             return coveredRows;
                         }
                     }

@@ -66,6 +66,10 @@ class QueryProfiler implements DynamicMBean {
     private final AtomicLong totalSortMs = new AtomicLong();
     private final AtomicLong maxTotalMs = new AtomicLong();
 
+    /** Prompt 83: cumulative index-only scan counters. */
+    private final AtomicLong totalIndexLookups = new AtomicLong();
+    private final AtomicLong totalIndexOnlyScans = new AtomicLong();
+
     private volatile long slowThresholdMs;
     private volatile String lastSlowQuery = "";
     private volatile long lastSlowTotalMs;
@@ -74,6 +78,10 @@ class QueryProfiler implements DynamicMBean {
     private volatile long lastExecuteMs;
     private volatile long lastSortMs;
     private volatile long lastTotalMs;
+
+    /** Prompt 83: last-execution index metrics. */
+    private volatile long lastIndexLookups;
+    private volatile long lastIndexOnlyScans;
 
     private QueryProfiler() {
         slowThresholdMs = loadSlowThresholdMs();
@@ -91,13 +99,16 @@ class QueryProfiler implements DynamicMBean {
      * increments the slow-query counter, stores the query and logs the
      * {@code "Slow query breakdown: ..."} line via SLF4J.
      *
-     * @param sql          the executed SQL text
-     * @param parseNanos   time spent parsing the SQL (0 for cached plans)
-     * @param planNanos    time spent on the per-execution plan setup
-     * @param executeNanos time spent on the data processing phases
-     * @param sortNanos    time spent on the ORDER BY phase
+     * @param sql              the executed SQL text
+     * @param parseNanos       time spent parsing the SQL (0 for cached plans)
+     * @param planNanos        time spent on the per-execution plan setup
+     * @param executeNanos     time spent on the data processing phases
+     * @param sortNanos        time spent on the ORDER BY phase
+     * @param indexLookups     number of index lookups in this execution (Prompt 83)
+     * @param indexOnlyScans   number of index-only scans in this execution (Prompt 83)
      */
-    void record(String sql, long parseNanos, long planNanos, long executeNanos, long sortNanos) {
+    void record(String sql, long parseNanos, long planNanos, long executeNanos, long sortNanos,
+                long indexLookups, long indexOnlyScans) {
         long parseMs = parseNanos / 1_000_000;
         long planMs = planNanos / 1_000_000;
         long executeMs = executeNanos / 1_000_000;
@@ -111,11 +122,16 @@ class QueryProfiler implements DynamicMBean {
         totalSortMs.addAndGet(sortMs);
         maxTotalMs.accumulateAndGet(totalMs, Math::max);
 
+        totalIndexLookups.addAndGet(indexLookups);
+        totalIndexOnlyScans.addAndGet(indexOnlyScans);
+
         lastParseMs = parseMs;
         lastPlanMs = planMs;
         lastExecuteMs = executeMs;
         lastSortMs = sortMs;
         lastTotalMs = totalMs;
+        lastIndexLookups = indexLookups;
+        lastIndexOnlyScans = indexOnlyScans;
 
         if (totalMs >= slowThresholdMs) {
             slowQueries.incrementAndGet();
@@ -149,6 +165,8 @@ class QueryProfiler implements DynamicMBean {
         totalExecuteMs.set(0);
         totalSortMs.set(0);
         maxTotalMs.set(0);
+        totalIndexLookups.set(0);
+        totalIndexOnlyScans.set(0);
         lastSlowQuery = "";
         lastSlowTotalMs = 0;
         lastParseMs = 0;
@@ -156,6 +174,8 @@ class QueryProfiler implements DynamicMBean {
         lastExecuteMs = 0;
         lastSortMs = 0;
         lastTotalMs = 0;
+        lastIndexLookups = 0;
+        lastIndexOnlyScans = 0;
     }
 
     long getTotalQueries() {
@@ -212,6 +232,22 @@ class QueryProfiler implements DynamicMBean {
 
     long getLastTotalMs() {
         return lastTotalMs;
+    }
+
+    long getTotalIndexLookups() {
+        return totalIndexLookups.get();
+    }
+
+    long getTotalIndexOnlyScans() {
+        return totalIndexOnlyScans.get();
+    }
+
+    long getLastIndexLookups() {
+        return lastIndexLookups;
+    }
+
+    long getLastIndexOnlyScans() {
+        return lastIndexOnlyScans;
     }
 
     private static long loadSlowThresholdMs() {
@@ -285,6 +321,14 @@ class QueryProfiler implements DynamicMBean {
                 return lastSlowQuery;
             case "LastSlowTotalMs":
                 return lastSlowTotalMs;
+            case "TotalIndexLookups":
+                return totalIndexLookups.get();
+            case "TotalIndexOnlyScans":
+                return totalIndexOnlyScans.get();
+            case "LastIndexLookups":
+                return lastIndexLookups;
+            case "LastIndexOnlyScans":
+                return lastIndexOnlyScans;
             default:
                 throw new AttributeNotFoundException("Unknown attribute: " + attribute);
         }
@@ -329,7 +373,8 @@ class QueryProfiler implements DynamicMBean {
     public MBeanInfo getMBeanInfo() {
         String[] names = {
                 "ThresholdMs", "TotalQueries", "SlowQueryCount", "TotalParseMs", "TotalPlanMs",
-                "TotalExecuteMs", "TotalSortMs", "MaxTotalMs", "LastSlowQuery", "LastSlowTotalMs"
+                "TotalExecuteMs", "TotalSortMs", "MaxTotalMs", "LastSlowQuery", "LastSlowTotalMs",
+                "TotalIndexLookups", "TotalIndexOnlyScans", "LastIndexLookups", "LastIndexOnlyScans"
         };
         String[] descriptions = {
                 "Slow-query threshold in milliseconds",
@@ -341,7 +386,11 @@ class QueryProfiler implements DynamicMBean {
                 "Cumulative sort time in milliseconds",
                 "Maximum query total time in milliseconds",
                 "SQL text of the most recent slow query",
-                "Total time of the most recent slow query in milliseconds"
+                "Total time of the most recent slow query in milliseconds",
+                "Total number of index lookups (Prompt 83)",
+                "Total number of index-only scans (Prompt 83)",
+                "Index lookups in the last query (Prompt 83)",
+                "Index-only scans in the last query (Prompt 83)"
         };
         MBeanAttributeInfo[] attributes = new MBeanAttributeInfo[names.length];
         for (int i = 0; i < names.length; i++) {

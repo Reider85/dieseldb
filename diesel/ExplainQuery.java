@@ -67,6 +67,8 @@ class ExplainQuery implements Query<String> {
                 sb.append("  hash join probe time: ").append(select.getLastHashJoinProbeTimeMs()).append(" ms").append('\n');
                 sb.append("  hash join partitioned: ").append(select.isLastJoinUsedPartitioning()).append('\n');
             }
+            sb.append("  index lookups: ").append(select.getLastIndexLookupCount()).append('\n');
+            sb.append("  index-only scans: ").append(select.getLastIndexOnlyScanCount()).append('\n');
         }
         return sb.toString();
     }

@@ -376,12 +376,17 @@ class Database {
         }
         long planNanos = 0;
         long sortNanos = 0;
+        long indexLookups = 0;
+        long indexOnlyScans = 0;
         if (profiled instanceof SelectQuery sq) {
             planNanos = sq.getLastPlanNanos();
             sortNanos = sq.getLastSortNanos();
+            indexLookups = sq.getLastIndexLookupCount();
+            indexOnlyScans = sq.getLastIndexOnlyScanCount();
         }
         long executeNanos = Math.max(0, execTotalNanos - planNanos - sortNanos);
-        QueryProfiler.getInstance().record(sql, parseNanos, planNanos, executeNanos, sortNanos);
+        QueryProfiler.getInstance().record(sql, parseNanos, planNanos, executeNanos, sortNanos,
+                indexLookups, indexOnlyScans);
     }
 
     private Query<?> parse(String query) {
