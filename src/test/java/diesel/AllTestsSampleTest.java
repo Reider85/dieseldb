@@ -276,14 +276,16 @@ public class AllTestsSampleTest {
     }
 
     private String nextTimingFileName() {
-        if (!new File("timing.md").exists()) {
-            return "timing.md";
+        String dir = "timing";
+        new File(dir).mkdirs();
+        if (!new File(dir + "/timing.md").exists()) {
+            return dir + "/timing.md";
         }
         int counter = 1;
-        while (new File("timing" + counter + ".md").exists()) {
+        while (new File(dir + "/timing" + counter + ".md").exists()) {
             counter++;
         }
-        return "timing" + counter + ".md";
+        return dir + "/timing" + counter + ".md";
     }
 
     private void check(boolean condition, String message) {
@@ -524,8 +526,8 @@ public class AllTestsSampleTest {
                         "VALUES ('Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00', 2000000, 678.90, 88.50, 987654.321098, 'B', '550e8400-e29b-41d4-a716-446655440000')");
         runSelectCount("PersistenceTest", "select from persisted table", "SELECT NAME, AGE FROM PERSIST_TEST WHERE AGE = 25", 1);
         database.getTable("PERSIST_TEST").saveToSerializedFile("PERSIST_TEST");
-        check(new File("PERSIST_TEST.table").exists(), "PersistenceTest / serialized .table file created on disk");
-        check(new File("PERSIST_TEST.csv").exists(), "PersistenceTest / csv file created on disk");
+        check(new File("data/PERSIST_TEST.table").exists(), "PersistenceTest / serialized .table file created on disk");
+        check(new File("data/PERSIST_TEST.csv").exists(), "PersistenceTest / csv file created on disk");
     }
 
     private void runSubqueriesTestQueries() {
@@ -1146,8 +1148,8 @@ public class AllTestsSampleTest {
             check(terminated,
                     "Prompt70Test / the server process terminates within 30 seconds after SIGTERM (destroy took " + destroyElapsed + " ms)");
 
-            File csvFile = new File(tempDir, "PROMPT70_TEST.csv");
-            File tableFile = new File(tempDir, "PROMPT70_TEST.table");
+            File csvFile = new File(tempDir, "data/PROMPT70_TEST.csv");
+            File tableFile = new File(tempDir, "data/PROMPT70_TEST.table");
             check(csvFile.exists(),
                     "Prompt70Test / the PROMPT70_TEST.csv data file is saved on disk after server termination");
             check(tableFile.exists(),

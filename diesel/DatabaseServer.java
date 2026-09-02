@@ -516,7 +516,7 @@ public class DatabaseServer {
                 LOGGER.log(Level.SEVERE, "Invalid port {0}, using default {1}", new Object[]{args[0], port});
             }
         }
-        String dataDir = ".";
+        String dataDir = "data";
         if (args.length > 1) {
             dataDir = args[1];
         }

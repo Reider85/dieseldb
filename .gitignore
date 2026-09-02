@@ -43,6 +43,10 @@ coverage/
 htmlcov/
 .coverage
 
+# Runtime data files
+data/
+timing/
+
 # Compressed files
 *.zip
 *.gz

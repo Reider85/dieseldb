@@ -1082,8 +1082,8 @@ public class QuantitativeTest {
             check(terminated,
                     "Prompt70Test / the server process terminates within 30 seconds after SIGTERM (destroy took " + destroyElapsed + " ms)");
 
-            File csvFile = new File(tempDir, "PROMPT70_TEST.csv");
-            File tableFile = new File(tempDir, "PROMPT70_TEST.table");
+            File csvFile = new File(tempDir, "data/PROMPT70_TEST.csv");
+            File tableFile = new File(tempDir, "data/PROMPT70_TEST.table");
             check(csvFile.exists(),
                     "Prompt70Test / the PROMPT70_TEST.csv data file is saved on disk after server termination");
             check(tableFile.exists(),

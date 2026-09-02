@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 PORT="${1:-3306}"
-DATA_DIR="${2:-.}"
+DATA_DIR="${2:-data}"
 
 build_classpath() {
     local cp="$SCRIPT_DIR/target/classes:$SCRIPT_DIR"

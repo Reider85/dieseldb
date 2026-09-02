@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Timing Regression Check Script
-# Compares timingN.md against baseline timing.md
+# Compares timing/timingN.md against baseline timing/timing.md
 # Fails if any test shows >20% degradation
 # Usage: ./compare-timing.sh [baseline.md] [new.md]
 
-BASELINE="${1:-timing.md}"
-NEW="${2:-timingN.md}"
+BASELINE="${1:-timing/timing.md}"
+NEW="${2:-timing/timingN.md}"
 THRESHOLD=1.2  # 20% degradation threshold
 
 if [ ! -f "$BASELINE" ]; then

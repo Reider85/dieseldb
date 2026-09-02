@@ -31,21 +31,21 @@ large-test:
 timing:
 	@echo "Running timing tests..."
 	$(MVN) -Ddiesel.largeTests=true -Dtest.heap=4g test
-	@echo "Comparing with baseline (timing.md)..."
-	@if [ -f timing.md ]; then \
-		if [ -f timingN.md ]; then \
-			./compare-timing.sh timing.md timingN.md; \
+	@echo "Comparing with baseline (timing/timing.md)..."
+	@if [ -f timing/timing.md ]; then \
+		if [ -f timing/timingN.md ]; then \
+			./compare-timing.sh timing/timing.md timing/timingN.md; \
 		else \
-			echo "Warning: timingN.md not found"; \
+			echo "Warning: timing/timingN.md not found"; \
 		fi; \
 	else \
-		echo "Warning: timing.md baseline not found"; \
+		echo "Warning: timing/timing.md baseline not found"; \
 	fi
 
-## Compare timing results (usage: make compare-timing BASE=timing.md NEW=timingN.md)
+## Compare timing results (usage: make compare-timing BASE=timing/timing.md NEW=timing/timingN.md)
 compare-timing:
 	@if [ -z "$(BASE)" ] || [ -z "$(NEW)" ]; then \
-		echo "Usage: make compare-timing BASE=timing.md NEW=timingN.md"; \
+		echo "Usage: make compare-timing BASE=timing/timing.md NEW=timing/timingN.md"; \
 		exit 1; \
 	fi
 	./compare-timing.sh $(BASE) $(NEW)
@@ -61,12 +61,12 @@ profile:
 clean:
 	@echo "Cleaning..."
 	$(MVN) clean
-	rm -f *.csv *.table *.log timingN.md classpath.txt
+	rm -f data/*.csv data/*.table *.log timing/timingN.md classpath.txt
 
 ## Check timing regression (fail if degradation > 20%)
 check-timing:
-	@if [ ! -f timing.md ] || [ ! -f timingN.md ]; then \
-		echo "Error: timing.md or timingN.md not found"; \
+	@if [ ! -f timing/timing.md ] || [ ! -f timing/timingN.md ]; then \
+		echo "Error: timing/timing.md or timing/timingN.md not found"; \
 		exit 1; \
 	fi
 	@echo "Checking for timing regressions (>20% is failure)..."
@@ -82,7 +82,7 @@ check-timing:
 			} \
 		} \
 	} \
-	END {if(fail) exit 1}' timing.md timingN.md
+	END {if(fail) exit 1}' timing/timing.md timing/timingN.md
 	@echo "Timing check passed (no regressions >20%)"
 
 ## Show help
@@ -107,4 +107,4 @@ help:
 	@echo "  make build"
 	@echo "  make test"
 	@echo "  make timing"
-	@echo "  make check-timing BASE=timing.md NEW=timingN.md"
+	@echo "  make check-timing BASE=timing/timing.md NEW=timing/timingN.md"

@@ -70,7 +70,7 @@ public class CliRepl {
      */
     public static void main(String[] args) {
         if (args.length > 0 && "--local".equals(args[0])) {
-            String dataDir = args.length > 1 ? args[1] : ".";
+            String dataDir = args.length > 1 ? args[1] : "data";
             new CliRepl(new Database(dataDir)).run();
             return;
         }

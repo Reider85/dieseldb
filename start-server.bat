@@ -8,7 +8,7 @@ set PORT=%1
 if "%PORT%"=="" set PORT=3306
 
 set DATA_DIR=%2
-if "%DATA_DIR%"=="" set DATA_DIR=.
+if "%DATA_DIR%"=="" set DATA_DIR=data
 
 set CLASSPATH=%SCRIPT_DIR%target\classes;%SCRIPT_DIR%
 

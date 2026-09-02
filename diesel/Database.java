@@ -51,11 +51,11 @@ class Database {
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
-    private String dataDir = ".";
+    private String dataDir = "data";
 
     /**
      * Creates an empty in-memory database whose data files live in the
-     * current working directory (".").
+     * "data" subdirectory.
      */
     public Database() {
     }

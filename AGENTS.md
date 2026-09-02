@@ -23,8 +23,8 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 5. Run **full acceptance gate** (includes heavy joins) with `make timing` – this automatically:
   - Builds the project
   - Runs the full test suite with `@LargeTest` and 4GB heap
-  - Generates a new timing file (`timingN.md`)
-  - Compares it against the baseline `timing.md` **and fails if real degradation** (see below)
+  - Generates a new timing file (`timing/timingN.md`)
+  - Compares it against the baseline `timing/timing.md` **and fails if real degradation** (see below)
 
 6. **Profile check (Strict Condition):** Look at the current task description in `prompt2.md`. If the description does **NOT** contain the words "JOIN", "hash join", or "performance" — **SKIP this step entirely**. Otherwise, run:
    ```bash
@@ -75,14 +75,14 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 
 - `make timing`:
   1. Builds and runs the full test suite (including two 600x600 ORDER BY joins).
-  2. Generates `timingN.md` in the repo root.
-  3. Executes `compare-timing.sh timing.md timingN.md` – this script:
+  2. Generates `timing/timingN.md` in the `timing/` folder.
+  3. Executes `compare-timing.sh timing/timing.md timing/timingN.md` – this script:
   - Compares each query’s time.
   - **Ignores** any query whose baseline is <11 ms (machine noise).
   - Flags a regression only if a query with baseline ≥11 ms degrades by >20%.
   - Exits with code `1` if any such regression exists, otherwise `0`.
 - You never need to interpret the output manually – just check the exit code. If the script fails, rerun `make timing` once (to rule out random noise) and if it still fails, investigate.
-- `timing.md` is the tracked baseline – never delete it.
+- `timing/timing.md` is the tracked baseline – never delete it.
 
 ---
 
