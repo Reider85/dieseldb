@@ -283,6 +283,9 @@ class Database {
         if (parsedQuery instanceof RollbackTransactionQuery) {
             return executeRollback(currentTransaction, transactionId);
         }
+        if (parsedQuery instanceof BatchQuery batchQuery) {
+            return executeBatchQuery(batchQuery, currentTransaction, transactionId);
+        }
         if (parsedQuery instanceof CreateTableQuery q) {
             return executeCreateTable(q);
         }
@@ -449,6 +452,69 @@ class Database {
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
         return "Transaction rolled back";
+    }
+
+    private Object executeBatchQuery(BatchQuery batchQuery, Transaction currentTransaction, UUID transactionId) {
+        if (batchQuery.getMode() == BatchQuery.Mode.BEGIN_BATCH) {
+            return executeBeginBatch(currentTransaction);
+        } else {
+            return executeEndBatch(currentTransaction, transactionId);
+        }
+    }
+
+    private Object executeBeginBatch(Transaction currentTransaction) {
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            throw new TransactionException("Another transaction is already active for this client");
+        }
+        Transaction transaction = new Transaction(defaultIsolationLevel);
+        transaction.setBatchMode(true);
+        UUID newTransactionId = transaction.getTransactionId();
+        activeTransactions.put(newTransactionId, transaction);
+        for (Map.Entry<String, Table> entry : tables.entrySet()) {
+            transaction.snapshotTable(entry.getKey(), entry.getValue());
+        }
+        setAutoCommit(false);
+        return "Batch started: " + newTransactionId;
+    }
+
+    private Object executeEndBatch(Transaction currentTransaction, UUID transactionId) {
+        if (currentTransaction == null || !currentTransaction.isActive()) {
+            throw new TransactionException("No active batch to end");
+        }
+        if (!currentTransaction.isBatchMode()) {
+            throw new TransactionException("Current transaction is not a batch");
+        }
+        for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
+            String tableName = entry.getKey();
+            Table modifiedTable = entry.getValue();
+            if (modifiedTable == null) continue;
+            Table sharedTable = tables.get(tableName);
+            if (sharedTable == null) continue;
+            Long snapshotVersion = currentTransaction.getSnapshotVersions().get(tableName);
+            if (snapshotVersion != null && sharedTable.getVersion() != snapshotVersion) {
+                throw new TransactionException(
+                    "Write-write conflict on table " + tableName
+                    + ": shared table version changed from " + snapshotVersion
+                    + " to " + sharedTable.getVersion() + " since batch began");
+            }
+        }
+        for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
+            Table modifiedTable = entry.getValue();
+            if (modifiedTable == null) continue;
+            try {
+                modifiedTable.flushDeferredIndexUpdates();
+            } catch (RuntimeException e) {
+                currentTransaction.setInactive();
+                activeTransactions.remove(transactionId);
+                setAutoCommit(false);
+                throw new TransactionException("Batch failed: " + e.getMessage());
+            }
+        }
+        persistModifiedTables(currentTransaction.getModifiedTables(), true);
+        currentTransaction.setInactive();
+        activeTransactions.remove(transactionId);
+        setAutoCommit(false);
+        return "Batch committed";
     }
 
     private Object executeCreateTable(CreateTableQuery createQuery) {

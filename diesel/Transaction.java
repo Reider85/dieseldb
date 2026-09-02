@@ -45,6 +45,7 @@ class Transaction {
     private final Map<String, Table> modifiedTables;
     private final Map<String, Long> snapshotVersions;
     private boolean active;
+    private boolean batchMode;
 
     /**
      * Starts a transaction at the given isolation level, defaulting to
@@ -59,6 +60,7 @@ class Transaction {
         this.modifiedTables = new HashMap<>();
         this.snapshotVersions = new HashMap<>();
         this.active = true;
+        this.batchMode = false;
     }
 
     public UUID getTransactionId() {
@@ -87,7 +89,11 @@ class Transaction {
 
     /** Records a deep copy of {@code table} as the transaction's own modified state. */
     public void updateTable(String tableName, Table table) {
-        modifiedTables.put(tableName, table != null ? table.copyForTransaction() : null);
+        Table copy = table != null ? table.copyForTransaction() : null;
+        if (copy != null && batchMode) {
+            copy.deferIndexUpdates();
+        }
+        modifiedTables.put(tableName, copy);
     }
 
     /**
@@ -109,5 +115,23 @@ class Transaction {
     /** Returns the version of each table at snapshot time. */
     public Map<String, Long> getSnapshotVersions() {
         return snapshotVersions;
+    }
+
+    /**
+     * Returns whether this transaction is in batch mode.
+     *
+     * @return true if in batch mode
+     */
+    public boolean isBatchMode() {
+        return batchMode;
+    }
+
+    /**
+     * Sets the batch mode flag.
+     *
+     * @param batchMode true to enable batch mode
+     */
+    public void setBatchMode(boolean batchMode) {
+        this.batchMode = batchMode;
     }
 }

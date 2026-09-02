@@ -1459,7 +1459,9 @@ class Table implements Serializable {
                 value = row.get(col);
             }
 
-            checkUniqueConstraint(col, value);
+            if (deferredIndexOps == null) {
+                checkUniqueConstraint(col, value);
+            }
 
             Class<?> expectedType = columnTypes.get(col);
             if (expectedType == null) {
@@ -1555,7 +1557,7 @@ class Table implements Serializable {
 
     /** Inserts {@code row} into every secondary index at {@code rowIndex}, skipping NULL keys. */
     private void insertRowIntoIndexes(Map<String, Object> row, int rowIndex) {
-        if (indicesDisabled) {
+        if (indicesDisabled || deferredIndexOps != null) {
             return;
         }
         for (Map.Entry<String, Index> entry : indexes.entrySet()) {
@@ -1609,7 +1611,7 @@ class Table implements Serializable {
 
     /** Shifts the stored row index of every row after an insert into a clustered table. */
     private void updateIndicesAfterInsert(int insertIndex) {
-        if (indicesDisabled) {
+        if (indicesDisabled || deferredIndexOps != null) {
             return;
         }
         for (int i = insertIndex + 1; i < rows.size(); i++) {

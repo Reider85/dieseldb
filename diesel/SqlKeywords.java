@@ -133,4 +133,9 @@ public final class SqlKeywords {
 
     // Constraint keywords
     public static final String PRIMARY_KEY = "PRIMARY KEY";
+
+    // Batch execution
+    public static final String BATCH = "BATCH";
+    public static final String BEGIN_BATCH = "BEGIN BATCH";
+    public static final String END_BATCH = "END BATCH";
 }
