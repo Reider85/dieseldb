@@ -3426,7 +3426,11 @@ class QueryParser {
 
     /**
      * Parses a prepared statement by substituting bound parameters and
-     * returning the parsed AST (using PreparedStatement LRU cache).
+     * returning the parsed AST (using the PreparedStatement LRU cache).
+     *
+     * @param ps       the prepared statement whose bound parameters are used
+     * @param database the database for schema resolution during parsing
+     * @return the parsed query for the currently bound parameters
      */
     public Query<?> parsePrepared(PreparedStatement ps, Database database) {
         return ps.getParsedQuery(database);

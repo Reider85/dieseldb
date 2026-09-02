@@ -219,6 +219,14 @@ public class DatabaseServer {
         private ObjectOutputStream out;
         private ObjectInputStream in;
         private UUID transactionId;
+
+        /**
+         * Session-scoped registry of prepared statements (Prompt 79): maps a
+         * client-assigned statement id to the prepared statement created for
+         * this connection. Ids are generated client-side as UUIDs so they never
+         * collide across connections.
+         */
+        private final Map<String, PreparedStatement> preparedStatements = new java.util.concurrent.ConcurrentHashMap<>();
         
         private static int DEFAULT_COMPRESSION_THRESHOLD = 1024;
         private static int DEFAULT_COMPRESSION_LEVEL = 6;
@@ -449,6 +457,21 @@ public class DatabaseServer {
                         continue;
                     }
 
+                    if (input instanceof PrepareMessage pm) {
+                        handlePrepare(pm);
+                        continue;
+                    }
+
+                    if (input instanceof ExecutePreparedMessage epm) {
+                        handleExecutePrepared(epm);
+                        continue;
+                    }
+
+                    if (input instanceof ClosePreparedMessage cpm) {
+                        handleClosePrepared(cpm);
+                        continue;
+                    }
+
                     if (!(input instanceof QueryMessage qm)) {
                         out.writeObject("Error: Invalid query message");
                         out.flush();
@@ -460,17 +483,7 @@ public class DatabaseServer {
 
                     try {
                         Object result = database.executeQuery(query, transactionId);
-                        byte[] serialized = serializeResult(result);
-                        if (serialized.length > compressionThreshold) {
-                            out.writeByte(0x01); // compressed marker
-                            out.writeInt(serialized.length);
-                            out.write(serialized);
-                        } else {
-                            out.writeByte(0x00); // uncompressed marker
-                            out.writeInt(serialized.length);
-                            out.write(serialized);
-                        }
-                        out.flush();
+                        sendSerializedResult(result);
                     } catch (OutOfMemoryError e) {
                         handleOutOfMemory(query, e);
                     } catch (Exception e) {
@@ -488,6 +501,7 @@ public class DatabaseServer {
                     if (transactionId != null && database.isInTransaction(transactionId)) {
                         database.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION, transactionId);
                     }
+                    preparedStatements.clear();
                     if (out != null) out.close();
                     if (in != null) in.close();
                     if (clientSocket != null) clientSocket.close();
@@ -497,6 +511,83 @@ public class DatabaseServer {
                     LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
                 }
             }
+        }
+
+        /**
+         * Serializes a result and writes it to the client with the compression
+         * marker byte (0x00 uncompressed, 0x01 GZIP compressed).
+         */
+        private void sendSerializedResult(Object result) throws IOException {
+            byte[] serialized = serializeResult(result);
+            if (serialized.length > compressionThreshold) {
+                out.writeByte(0x01); // compressed marker
+                out.writeInt(serialized.length);
+                out.write(serialized);
+            } else {
+                out.writeByte(0x00); // uncompressed marker
+                out.writeInt(serialized.length);
+                out.write(serialized);
+            }
+            out.flush();
+        }
+
+        /**
+         * Handles a {@link PrepareMessage}: registers a prepared statement
+         * (parsed lazily) under a fresh id and answers with the id. The id is
+         * generated server-side so a hostile client cannot collide with an
+         * existing statement.
+         */
+        private void handlePrepare(PrepareMessage pm) throws IOException {
+            String statementId = UUID.randomUUID().toString();
+            PreparedStatement ps = database.prepareStatement(pm.getSqlTemplate());
+            preparedStatements.put(statementId, ps);
+            transactionId = pm.getTransactionId();
+            out.writeObject(statementId);
+            out.flush();
+            LOGGER.log(Level.INFO, "Prepared statement {0} from template: {1}",
+                    new Object[]{statementId, pm.getSqlTemplate()});
+        }
+
+        /**
+         * Handles an {@link ExecutePreparedMessage}: looks up the prepared
+         * statement, binds the parameters and executes it, replying with the
+         * serialized result.
+         */
+        private void handleExecutePrepared(ExecutePreparedMessage epm) throws IOException {
+            String statementId = epm.getStatementId();
+            PreparedStatement ps = preparedStatements.get(statementId);
+            if (ps == null) {
+                sendSerializedResult("Error: Unknown prepared statement: " + statementId);
+                return;
+            }
+            transactionId = epm.getTransactionId();
+            try {
+                ps.bindParameters(epm.getParams());
+                Object result = ps.execute(database, transactionId);
+                sendSerializedResult(result);
+            } catch (OutOfMemoryError e) {
+                handleOutOfMemory(ps.getSqlTemplate(), e);
+            } catch (Exception e) {
+                sendSerializedResult("Error: " + e.getMessage());
+                LOGGER.log(Level.SEVERE, "Prepared statement execution failed: {0}, Error: {1}",
+                        new Object[]{statementId, e.getMessage()});
+            }
+        }
+
+        /**
+         * Handles a {@link ClosePreparedMessage}: removes the prepared
+         * statement from the registry, releasing its cached parsed AST.
+         */
+        private void handleClosePrepared(ClosePreparedMessage cpm) throws IOException {
+            String statementId = cpm.getStatementId();
+            PreparedStatement removed = preparedStatements.remove(statementId);
+            transactionId = cpm.getTransactionId();
+            if (removed != null) {
+                removed.clearCache();
+            }
+            out.writeObject("Prepared statement closed");
+            out.flush();
+            LOGGER.log(Level.INFO, "Closed prepared statement {0}", statementId);
         }
     }
 

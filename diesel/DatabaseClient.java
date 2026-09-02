@@ -2,6 +2,7 @@ package diesel;
 
 import java.io.*;
 import java.net.*;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -196,6 +197,129 @@ public class DatabaseClient {
         } catch (IOException | ClassNotFoundException e) {
             LOGGER.error("Batch query execution failed: {}, Error: {}", queries, e.getMessage());
             throw new DieselIOException("Batch query failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Sends a {@link PrepareMessage} for the given SQL template to the server
+     * and returns the server-assigned prepared-statement id (Prompt 79). The
+     * statement is held on the server until {@link #closePrepared} reaps it.
+     *
+     * @param sqlTemplate the SQL template with {@code ?} placeholders
+     * @return the server-assigned statement id
+     */
+    public String prepareStatement(String sqlTemplate) {
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
+        try {
+            out.writeObject(new PrepareMessage(sqlTemplate, transactionId));
+            out.flush();
+            Object result = in.readObject();
+            if (result instanceof String s && s.startsWith("Error: ")) {
+                throw new DieselException(s);
+            }
+            return (String) result;
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.error("Prepare statement failed: {}, Error: {}", sqlTemplate, e.getMessage());
+            throw new DieselIOException("Prepare statement failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Executes a previously prepared statement on the server with the given
+     * bound parameters, returning the server-serialized result (Prompt 79).
+     *
+     * @param statementId the statement id from {@link #prepareStatement}
+     * @param params      the bound parameter values, in placeholder order
+     * @return the query result (row list, null, or a status String)
+     */
+    public Object executePrepared(String statementId, List<Object> params) {
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
+        try {
+            out.writeObject(new ExecutePreparedMessage(statementId, params, transactionId));
+            out.flush();
+            Object result = readResultFromStream();
+            if (result instanceof String s && s.startsWith("Transaction started: ")) {
+                transactionId = UUID.fromString(s.split(": ")[1]);
+            } else if (result instanceof String s &&
+                    (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
+                transactionId = null;
+            }
+            if (result instanceof String s && s.startsWith("Error: ")) {
+                LOGGER.error("Server error for prepared statement '{}': {}", statementId, result);
+                throw new DieselException(s);
+            }
+            return result;
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.error("Execute prepared statement failed: {}, Error: {}", statementId, e.getMessage());
+            throw new DieselIOException("Execute prepared statement failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Executes a prepared statement with varargs parameters.
+     *
+     * @param statementId the statement id from {@link #prepareStatement}
+     * @param params      the bound parameter values, in placeholder order
+     * @return the query result
+     */
+    public Object executePrepared(String statementId, Object... params) {
+        List<Object> paramList = params == null ? Collections.emptyList() : Arrays.asList(params);
+        return executePrepared(statementId, paramList);
+    }
+
+    /**
+     * Closes a prepared statement on the server, releasing its cached parsed
+     * AST.
+     *
+     * @param statementId the statement id from {@link #prepareStatement}
+     */
+    public void closePrepared(String statementId) {
+        if (out == null || in == null) {
+            throw new IllegalStateException("Client is not connected: call connect() first");
+        }
+        try {
+            out.writeObject(new ClosePreparedMessage(statementId, transactionId));
+            out.flush();
+            in.readObject();
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.error("Close prepared statement failed: {}, Error: {}", statementId, e.getMessage());
+            throw new DieselIOException("Close prepared statement failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Reads a result object from the stream, handling the compression marker
+     * byte protocol used by the server for query results.
+     *
+     * @return the deserialized result object
+     * @throws IOException            on stream errors
+     * @throws ClassNotFoundException if a deserialized type is unknown
+     */
+    private Object readResultFromStream() throws IOException, ClassNotFoundException {
+        int marker = in.read();
+        if (marker == 0x01) { // compressed
+            int dataLength = in.readInt();
+            byte[] compressedData = new byte[dataLength];
+            in.readFully(compressedData);
+            java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
+                    new java.io.ByteArrayInputStream(compressedData));
+            java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
+            Object result = ois.readObject();
+            ois.close();
+            return result;
+        } else { // uncompressed (marker 0x00 or any other value)
+            int dataLength = in.readInt();
+            byte[] uncompressedData = new byte[dataLength];
+            in.readFully(uncompressedData);
+            java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
+                    new java.io.ByteArrayInputStream(uncompressedData));
+            Object result = ois.readObject();
+            ois.close();
+            return result;
         }
     }
 

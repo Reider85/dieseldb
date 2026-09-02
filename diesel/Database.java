@@ -216,6 +216,53 @@ class Database {
     }
 
     /**
+     * Executes an already-parsed query (from a {@link PreparedStatement})
+     * against the database, reusing the caller's derived bindings but skipping
+     * the parse phase (Prompt 79). The query string is the concrete SQL the
+     * prepared statement rendered from its bound parameters; it is used only
+     * for table resolution and profiling, never re-parsed.
+     *
+     * <p>The query is dispatched exactly like a normal {@link #executeQuery}
+     * call: transaction-aware DML, auto-commit persistence and profiling all
+     * behave identically, but the parsed AST from the prepared statement's
+     * cache is executed directly.
+     *
+     * @param parsedQuery   the pre-parsed query (never null)
+     * @param concreteSql   the concrete SQL rendered from the bound parameters
+     * @param transactionId the caller's transaction id, or null
+     * @return the query result (row list, null, or a status String)
+     */
+    public Object executeParsedPrepared(Query<?> parsedQuery, String concreteSql, UUID transactionId) {
+        if (parsedQuery == null || concreteSql == null) {
+            throw new IllegalArgumentException("Parsed query and SQL must not be null");
+        }
+        LOGGER.log(Level.FINE, "Executing prepared query: {0}", concreteSql);
+        Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
+        long execStart = System.nanoTime();
+        try {
+            Object result = dispatch(parsedQuery, concreteSql, currentTransaction, transactionId);
+            recordQueryProfiling(parsedQuery, concreteSql, 0, System.nanoTime() - execStart);
+            return result;
+        } catch (DieselException e) {
+            recordQueryProfiling(parsedQuery, concreteSql, 0, System.nanoTime() - execStart);
+            throw e;
+        } catch (RuntimeException e) {
+            recordQueryProfiling(parsedQuery, concreteSql, 0, System.nanoTime() - execStart);
+            throw e;
+        }
+    }
+
+    /**
+     * Creates a prepared statement from the given SQL template (Prompt 79).
+     *
+     * @param sql the SQL template with {@code ?} placeholders
+     * @return a new prepared statement wrapping the template
+     */
+    public PreparedStatement prepareStatement(String sql) {
+        return new PreparedStatement(sql);
+    }
+
+    /**
      * Routes a parsed query to its execution path. Extracted from
      * {@link #executeQuery} so the execution phase can be timed as a unit for
      * the query profiler.
