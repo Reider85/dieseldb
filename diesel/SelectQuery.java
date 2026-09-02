@@ -56,6 +56,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final Map<String, List<Object>> inSubQueryCache = new HashMap<>();
     private final UUID transactionId; // Changed from String to UUID
 
+    /** Prompt 82: adaptive optimizer singleton. */
+    private static final QueryOptimizer OPTIMIZER = QueryOptimizer.getInstance();
+
+    /** Prompt 82: per-execution adaptive state (null when disabled or no joins). */
+    private transient QueryOptimizer.QueryExecutionState adaptiveState;
+
+    /** Prompt 82: estimated and actual rows for the most recent join iteration. */
+    private transient long lastJoinEstimatedRows;
+    private transient long lastJoinActualRows;
+
     /**
      * Memoizes {@code normalizeColumnName} results so the millions of
      * repeated per-row normalizations in JOIN/WHERE hot loops collapse to a
@@ -902,6 +912,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         resultLimitWarningLogged = false;
         QUERY_MEMORY.get().reset();
         QUERY_MEMORY.get().sample(0);
+
+        // Prompt 82: initialise adaptive execution state from the learned plan cache.
+        // Skip entirely for single-table queries (no joins = no replanning possible).
+        if (!joins.isEmpty()) {
+            List<String> tableNames = new ArrayList<>(tables.keySet());
+            adaptiveState = OPTIMIZER.beginExecution(tableNames, joins);
+        } else {
+            adaptiveState = null;
+        }
+        lastJoinEstimatedRows = 0;
+        lastJoinActualRows = 0;
+
         projectionPlan = buildProjectionPlan();
         lastPlanNanos = System.nanoTime() - planStart;
         execStart = System.nanoTime();
@@ -963,6 +985,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
             lastExecuteNanos += System.nanoTime() - execStart;
             QUERY_MEMORY.get().sample(result.size());
+
+            // Prompt 82: record execution outcome for adaptive learning.
+            if (adaptiveState != null) {
+                OPTIMIZER.recordExecution(adaptiveState, lastExecuteNanos + lastSortNanos, result.size());
+            }
+
             return result;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
@@ -987,6 +1015,23 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (hasOrInOnConditions(join)) {
                 LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
             }
+
+            // Prompt 82: adaptive replan – when the previous join's actual row
+            // count deviated significantly from the statistics estimate, switch
+            // the current join's algorithm (hash ↔ nested loop) so the remaining
+            // pipeline avoids the same miscalculation.
+            if (adaptiveState != QueryOptimizer.QueryExecutionState.DISABLED
+                    && adaptiveState.stepIndex() > 0
+                    && adaptiveState.hasSignificantDeviation()
+                    && !adaptiveState.replanned) {
+                if (useHashJoin) {
+                    useHashJoin = false;
+                    adaptiveState.markReplanned();
+                    LOGGER.log(Level.INFO, "Adaptive replan: switching to nested loop for join on {0} (previous deviation={1})",
+                            new Object[]{join.tableName, String.format("%.2f", adaptiveState.maxDeviation)});
+                }
+            }
+
             LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
 
             // Prompt 15: when a JOIN equality column has no index, one is
@@ -1072,6 +1117,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 newJoinedRows = runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
             }
             joinedRows = newJoinedRows;
+
+            // Prompt 82: record actual row count vs estimate for adaptive learning.
+            // The estimate comes from the join table's statistics; the actual is the
+            // number of rows produced by this join iteration.
+            if (adaptiveState != QueryOptimizer.QueryExecutionState.DISABLED) {
+                long estimatedRowsForJoin = joinTable.getStatistics().getRowCount();
+                long actualRowsProduced = newJoinedRows.size();
+                adaptiveState.reportStep(estimatedRowsForJoin, actualRowsProduced);
+                adaptiveState.chooseAlgorithm(
+                        useHashJoin ? "hash-" + join.tableName : "nl-" + join.tableName);
+            }
         }
         return joinedRows;
     }
