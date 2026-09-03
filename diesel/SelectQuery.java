@@ -2621,25 +2621,25 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private List<Integer> lookupBTreeRange(BTreeIndex bTreeIndex, QueryParser.Condition condition, String tableName, String unqualifiedColumn) {
         return switch (condition.operator) {
             case LESS_THAN -> {
-                List<Integer> r = bTreeIndex.rangeSearchHigh(condition.value);
+                List<Integer> r = bTreeIndex.rangeSearchHighParallel(condition.value);
                 LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for < {2}, found {3} rows",
                         new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
                 yield r;
             }
             case LESS_THAN_OR_EQUALS -> {
-                List<Integer> r = bTreeIndex.rangeSearchHigh(condition.value);
+                List<Integer> r = bTreeIndex.rangeSearchHighParallel(condition.value);
                 LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for <= {2}, found {3} rows",
                         new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
                 yield r;
             }
             case GREATER_THAN -> {
-                List<Integer> r = bTreeIndex.rangeSearchLow(condition.value);
+                List<Integer> r = bTreeIndex.rangeSearchLowParallel(condition.value);
                 LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for > {2}, found {3} rows",
                         new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
                 yield r;
             }
             case GREATER_THAN_OR_EQUALS -> {
-                List<Integer> r = bTreeIndex.rangeSearchLow(condition.value);
+                List<Integer> r = bTreeIndex.rangeSearchLowParallel(condition.value);
                 LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for >= {2}, found {3} rows",
                         new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
                 yield r;
