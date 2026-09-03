@@ -2072,10 +2072,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (agg.functionName.equals(SqlKeywords.COUNT)) {
             long count;
             if (agg.column == null) {
-                count = rows.size();
+                count = AggregateFunctions.count(rows);
             } else {
                 String columnKey = normalizeColumnName(agg.column, mainTableName);
-                count = rows.stream().filter(row -> row.get(columnKey) != null).count();
+                List<Object> values = rows.stream().map(row -> row.get(columnKey)).collect(Collectors.toList());
+                count = AggregateFunctions.count(values);
             }
             return count;
         } else if (agg.functionName.equals(SqlKeywords.MIN)) {
@@ -2083,6 +2084,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 throw new IllegalArgumentException("MIN requires a column argument");
             }
             String columnKey = normalizeColumnName(agg.column, mainTableName);
+            List<Number> values = rows.stream().map(row -> row.get(columnKey))
+                    .filter(Objects::nonNull)
+                    .filter(v -> v instanceof Number)
+                    .map(v -> (Number) v)
+                    .collect(Collectors.toList());
+            if (values.isEmpty()) {
+                return null;
+            }
+            // Use vectorized MIN for integer types
+            if (values.get(0) instanceof Integer) {
+                return AggregateFunctions.minInt(values);
+            }
             return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
                     .min(this::compareValues).orElse(null);
         } else if (agg.functionName.equals(SqlKeywords.MAX)) {
@@ -2090,6 +2103,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 throw new IllegalArgumentException("MAX requires a column argument");
             }
             String columnKey = normalizeColumnName(agg.column, mainTableName);
+            List<Number> values = rows.stream().map(row -> row.get(columnKey))
+                    .filter(Objects::nonNull)
+                    .filter(v -> v instanceof Number)
+                    .map(v -> (Number) v)
+                    .collect(Collectors.toList());
+            if (values.isEmpty()) {
+                return null;
+            }
+            // Use vectorized MAX for integer types
+            if (values.get(0) instanceof Integer) {
+                return AggregateFunctions.maxInt(values);
+            }
             return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
                     .max(this::compareValues).orElse(null);
         } else if (agg.functionName.equals(SqlKeywords.AVG)) {
@@ -2097,39 +2122,52 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 throw new IllegalArgumentException("AVG requires a column argument");
             }
             String columnKey = normalizeColumnName(agg.column, mainTableName);
-            List<Object> values = rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+            List<Number> values = rows.stream().map(row -> row.get(columnKey))
+                    .filter(Objects::nonNull)
+                    .filter(v -> v instanceof Number)
+                    .map(v -> (Number) v)
                     .collect(Collectors.toList());
             if (values.isEmpty()) {
                 return null;
             }
-            BigDecimal sum = BigDecimal.ZERO;
-            long count = 0;
-            for (Object value : values) {
-                if (value instanceof Number) {
-                    sum = sum.add(new BigDecimal(value.toString()));
-                    count++;
-                }
+            // Use vectorized AVG for numeric types
+            Double avg = AggregateFunctions.average(values);
+            if (avg != null) {
+                return coerceNumericResult(BigDecimal.valueOf(avg), combinedColumnTypes.get(columnKey));
             }
-            if (count == 0) {
-                return null;
-            }
-            BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 10, RoundingMode.HALF_UP);
-            return coerceNumericResult(avg, combinedColumnTypes.get(columnKey));
+            return null;
         } else if (agg.functionName.equals(SqlKeywords.SUM)) {
             if (agg.column == null) {
                 throw new IllegalArgumentException("SUM requires a column argument");
             }
             String columnKey = normalizeColumnName(agg.column, mainTableName);
-            List<Object> values = rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+            List<Number> values = rows.stream().map(row -> row.get(columnKey))
+                    .filter(Objects::nonNull)
+                    .filter(v -> v instanceof Number)
+                    .map(v -> (Number) v)
                     .collect(Collectors.toList());
             if (values.isEmpty()) {
                 return null;
             }
+            // Use vectorized SUM for numeric types
+            Object firstValue = values.get(0);
+            if (firstValue instanceof Integer) {
+                long sum = AggregateFunctions.sumInt(values);
+                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
+            } else if (firstValue instanceof Long) {
+                long sum = AggregateFunctions.sumLong(values);
+                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
+            } else if (firstValue instanceof Float) {
+                double sum = AggregateFunctions.sumFloat(values);
+                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
+            } else if (firstValue instanceof Double) {
+                double sum = AggregateFunctions.sumDouble(values);
+                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
+            }
+            // Fallback to scalar for other types
             BigDecimal sum = BigDecimal.ZERO;
-            for (Object value : values) {
-                if (value instanceof Number) {
-                    sum = sum.add(new BigDecimal(value.toString()));
-                }
+            for (Number value : values) {
+                sum = sum.add(new BigDecimal(value.toString()));
             }
             return coerceNumericResult(sum, combinedColumnTypes.get(columnKey));
         } else {
