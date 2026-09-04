@@ -1,1 +1,1 @@
-prompt 87 ParquetReader with projection/predicate pushdown - added diesel/ParquetReader.java and 20-test ParquetReaderTest; quick gate 42/0, full acceptance gate 42/0
+﻿2.9.88 prompt 88 - Columnar storage for analytical queries (dual storage: row-based OLTP + Parquet OLAP, async background conversion, optimizer auto-switch, ColumnarStorageTest 10/10, quick gate 42/0)

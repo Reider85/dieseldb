@@ -58,6 +58,7 @@ class Database {
      * "data" subdirectory.
      */
     public Database() {
+        this("data");
     }
 
     /**
@@ -75,6 +76,19 @@ class Database {
         if (!dir.exists()) {
             dir.mkdirs();
         }
+        // Prompt 88: schedule the background columnar conversion job so
+        // large tables (>1M rows) are automatically converted to Parquet
+        // for efficient OLAP queries.
+        ColumnarConversionJob.schedulePeriodicScans(this);
+    }
+
+    /**
+     * Returns the names of all registered tables.
+     *
+     * @return an unmodifiable set of table names
+     */
+    public Set<String> getTableNames() {
+        return Collections.unmodifiableSet(tables.keySet());
     }
 
     /**

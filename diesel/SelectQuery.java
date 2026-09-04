@@ -953,6 +953,25 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         try {
             ensureWhereIndexes(table, conditions, mainTableName);
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
+
+            // Prompt 88: dual storage auto-switch. For single-table (no-join)
+            // queries detected as OLAP, when the table has an available columnar
+            // (Parquet) backend, read the rows from Parquet with projection and
+            // predicate pushdown instead of the in-memory scan.
+            if (mainRows == null && joins.isEmpty()) {
+                QueryOptimizer.QueryType queryType = OPTIMIZER.classifyQuery(this, table);
+                TableStorage storage = table.getStorageForQuery(queryType);
+                if (storage != table && storage instanceof ColumnarTableStorage colStorage
+                        && colStorage.isAvailable()) {
+                    List<String> neededColumns = collectProjectedColumnNames(mainTableName);
+                    if (conditions != null && !conditions.isEmpty()) {
+                        mainRows = colStorage.getRows(neededColumns, conditions);
+                    } else {
+                        mainRows = colStorage.getRows(neededColumns, null);
+                    }
+                }
+            }
+
             if (mainRows == null) {
                 List<Map<String, Object>> rawRows = table.getRows();
                 mainRows = new ArrayList<>(rawRows.size());
@@ -3035,6 +3054,38 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return plan;
     }
 
+    /**
+     * Collects the unqualified column names needed from the main table for
+     * the SELECT projection. Used for Parquet projection pushdown so that
+     * only the required columns are read from the columnar file.
+     *
+     * @param tableName the main table name
+     * @return the ordered list of column names to project
+     */
+    private List<String> collectProjectedColumnNames(String tableName) {
+        List<ColumnProjection> plan = projectionPlan;
+        if (plan == null) {
+            plan = buildProjectionPlan();
+        }
+        List<String> needed = new ArrayList<>();
+        for (ColumnProjection proj : plan) {
+            if (proj.normalized == null) {
+                // SELECT * — read all columns
+                return null;
+            }
+            // Extract the unqualified column name from the normalized form
+            // "TABLE.COLUMN" → "COLUMN", or use the alias if it's a plain name.
+            String name = proj.normalized;
+            if (name.contains(".")) {
+                name = name.split("\\.", 2)[1];
+            }
+            if (name != null && !name.isBlank()) {
+                needed.add(name);
+            }
+        }
+        return needed;
+    }
+
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {
         List<ColumnProjection> plan = projectionPlan;
         if (plan == null) {
@@ -3249,6 +3300,66 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     public List<QueryParser.HavingCondition> getHavingConditions() {
         return Collections.unmodifiableList(havingConditions);
+    }
+
+    /**
+     * Returns whether this query uses an ORDER BY clause.
+     *
+     * @return true when an ORDER BY is present
+     */
+    public boolean hasOrderBy() {
+        return orderBy != null && !orderBy.isEmpty();
+    }
+
+    /**
+     * Returns whether this query uses a GROUP BY clause.
+     *
+     * @return true when a GROUP BY is present
+     */
+    public boolean hasGroupBy() {
+        return groupBy != null && !groupBy.isEmpty();
+    }
+
+    /**
+     * Returns whether this query uses aggregate functions (COUNT, SUM, AVG,
+     * MIN, MAX, etc.).
+     *
+     * @return true when aggregates are present
+     */
+    public boolean hasAggregates() {
+        return aggregates != null && !aggregates.isEmpty();
+    }
+
+    /**
+     * Returns whether this query involves JOINs.
+     *
+     * @return true when one or more joins are present
+     */
+    public boolean hasJoins() {
+        return joins != null && !joins.isEmpty();
+    }
+
+    /**
+     * Returns whether this query has a single equality condition on the
+     * table's primary key column. Used to detect OLTP point lookups.
+     *
+     * @param table the table being queried
+     * @return true when the WHERE clause is a PK equality
+     */
+    public boolean hasSinglePrimaryKeyEquality(Table table) {
+        String pk = table.getPrimaryKeyColumn();
+        if (pk == null || conditions == null || conditions.isEmpty()) {
+            return false;
+        }
+        for (QueryParser.Condition cond : conditions) {
+            if (cond.column != null
+                    && cond.column.equalsIgnoreCase(pk)
+                    && (cond.operator == QueryParser.Operator.EQUALS
+                        || cond.operator == QueryParser.Operator.IS_NULL)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -147,7 +147,7 @@
 | 85 | DONE (2026-09-04) | SIMD vectorization for aggregates | LOW |
 | 86 | DONE (2026-09-04) | Apache Parquet integration (ParquetWriter) | HIGH |
 | 87 | ✅ DONE (2026-09-04) | ParquetReader reading + projection/predicate pushdown | HIGH |
-| 88 | ??? TODO | Partitioned tables ?- Parquet | MEDIUM |
+| 88 | DONE (2026-09-04) | Columnar storage for analytical queries (dual storage OLTP/OLAP + async conversion) | MEDIUM |
 | 89 | ??? TODO | Dictionary encoding ?+??T? T?T?T??-?? | LOW |
 | 90 | ??? TODO | Compression tuning (ZSTD) | LOW |
 | 91 | ??? TODO | Row group size tuning | LOW |

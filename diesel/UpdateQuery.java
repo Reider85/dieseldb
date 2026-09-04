@@ -155,6 +155,9 @@ class UpdateQuery implements Query<Void> {
                 table.bumpVersion();
             }
             table.markStatsDirty();
+            if (affectedCount > 0) {
+                table.invalidateColumnarStorage();
+            }
             LOGGER.log(Level.INFO, "Updated {0} rows in table {1}",
                     new Object[]{affectedCount, table.getName()});
             lastAffectedRows = affectedCount;

@@ -3,9 +3,21 @@ import java.util.*;
 
 /**
  * Storage contract of a table: row access, schema access and persistence to
- * disk. Implemented by {@link Table}.
+ * disk. Implemented by {@link Table} (row-based) and
+ * {@link ColumnarTableStorage} (Parquet-based columnar storage for OLAP).
  */
 interface TableStorage {
+
+    /**
+     * Enumeration of storage backends supported by DieselDB.
+     */
+    enum StorageType {
+        /** Traditional row-based storage (in-memory ArrayList, persisted as CSV/serialized). */
+        ROW_BASED,
+        /** Columnar storage backed by Apache Parquet files. */
+        COLUMNAR
+    }
+
     /**
      * Returns the table rows.
      *
@@ -47,4 +59,24 @@ interface TableStorage {
      * @param tableName the table name
      */
     void loadFromFile(String tableName);
+
+    /**
+     * Returns the type of this storage backend.
+     *
+     * @return the storage type
+     */
+    default StorageType getStorageType() {
+        return StorageType.ROW_BASED;
+    }
+
+    /**
+     * Returns true when this storage supports predicate pushdown for
+     * analytical queries. Columnar storage backed by Parquet supports
+     * this via row-group statistics.
+     *
+     * @return true if predicate pushdown is available
+     */
+    default boolean supportsPredicatePushdown() {
+        return false;
+    }
 }

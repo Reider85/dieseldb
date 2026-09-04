@@ -15,6 +15,11 @@ import java.util.logging.Level;
  * subsequent executions of structurally similar queries can skip re-optimisation
  * and pick the best-known join strategy directly.
  *
+ * <p>Prompt 88 extends the optimizer with query-type classification (OLTP vs.
+ * OLAP) so that large analytical queries can be served from columnar (Parquet)
+ * storage when available, while point-lookup and small-scan queries continue
+ * to use the in-memory row-based backend.
+ *
  * <p>Thread-safety: every mutable field lives inside a single
  * {@link QueryExecutionState} instance that is created per query execution and
  * never shared between threads; the {@link PlanCache} itself is
@@ -46,6 +51,19 @@ final class QueryOptimizer {
     private static boolean learning      = DEFAULT_LEARNING;
     private static int     cacheSize     = DEFAULT_CACHE_SIZE;
     private static int     samplingRows  = DEFAULT_SAMPLING;
+
+    // ─── Query type classification (Prompt 88) ────────────────────────
+
+    /**
+     * Query workload classification used by the storage-selector to pick
+     * between row-based (OLTP) and columnar (OLAP) backends.
+     */
+    enum QueryType {
+        /** Point lookups, small-range scans, single-row writes. */
+        OLTP,
+        /** Full-table scans, aggregations, multi-table JOINs. */
+        OLAP
+    }
 
     /* ──────────────── singleton (stateless) ──────────────── */
     private static final QueryOptimizer INSTANCE = new QueryOptimizer();
@@ -142,6 +160,71 @@ final class QueryOptimizer {
                     new Object[]{state.fingerprint, state.replanned, totalRows,
                             String.format("%.2f", state.maxDeviation), planCache.size()});
         }
+    }
+
+    // ─── Query type classification (Prompt 88) ────────────────────────
+
+    /**
+     * Classifies a SELECT query as OLTP (point lookups, small-range scans)
+     * or OLAP (full-table scans, aggregations, multi-table JOINs). The
+     * classification drives the storage-selector in
+     * {@link Table#getStorageForQuery(QueryType)}.
+     *
+     * <p>Classification heuristic:
+     * <ol>
+     *   <li>Queries with JOINs are OLAP (multi-table scans).</li>
+     *   <li>Queries with GROUP BY or aggregate functions (COUNT, SUM, AVG,
+     *       MIN, MAX) are OLAP (scan + computation).</li>
+     *   <li>Queries with ORDER BY across many rows are OLAP (full sort).</li>
+     *   <li>Queries with a LIMIT of at most 100 and no aggregate/GROUP BY
+     *       are OLTP (small result, likely a lookup).</li>
+     *   <li>Queries with a WHERE condition on the primary key column are OLTP
+     *       (index point lookup).</li>
+     *   <li>Everything else defaults to OLAP if the table is large (the
+     *       caller should also check {@link Table#COLUMNAR_THRESHOLD_ROWS}).</li>
+     * </ol>
+     *
+     * @param select the parsed SELECT query
+     * @param table  the table being queried
+     * @return OLTP or OLAP classification
+     */
+    QueryType classifyQuery(SelectQuery select, Table table) {
+        if (!enabled) {
+            return QueryType.OLTP; // Optimizer disabled → use row-based
+        }
+
+        // JOINs → OLAP
+        if (select.hasJoins()) {
+            return QueryType.OLAP;
+        }
+
+        // GROUP BY or aggregates → OLAP
+        if (select.hasGroupBy() || select.hasAggregates()) {
+            return QueryType.OLAP;
+        }
+
+        // LIMIT small + no sort → OLTP (point lookup / small fetch)
+        Integer limit = select.getLimit();
+        if (limit != null && limit <= 100 && !select.hasOrderBy()) {
+            // Check for primary-key WHERE equality → OLTP
+            if (select.hasSinglePrimaryKeyEquality(table)) {
+                return QueryType.OLTP;
+            }
+            return QueryType.OLTP;
+        }
+
+        // ORDER BY on large result → OLAP (full sort is expensive)
+        if (select.hasOrderBy()) {
+            return QueryType.OLAP;
+        }
+
+        // Large table + no limit → OLAP (full scan)
+        if (table.getLiveRowCount() > 10_000) {
+            return QueryType.OLAP;
+        }
+
+        // Small table or bounded result → OLTP
+        return QueryType.OLTP;
     }
 
     /* ──────────────────────────────────────────────

@@ -131,7 +131,7 @@ interface Index {
  * @see UniqueIndex
  * @see BTreeClusteredIndex
  */
-class Table implements Serializable {
+class Table implements TableStorage, Serializable {
     private static final long serialVersionUID = 1L;
     private static final int CURRENT_FORMAT_VERSION = 3;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
@@ -151,6 +151,41 @@ class Table implements Serializable {
     private transient BTreeClusteredIndex clusteredIndex;
     private transient Database database;
     private int formatVersion = CURRENT_FORMAT_VERSION;
+
+    // ─── Columnar storage support (Prompt 88) ────────────────────────
+
+    /**
+     * Tracks the state of the background conversion from row-based to
+     * columnar (Parquet) storage. Once a table exceeds
+     * {@link #COLUMNAR_THRESHOLD_ROWS}, the system schedules an async
+     * conversion so that analytical queries can benefit from columnar
+     * I/O without blocking OLTP operations.
+     */
+    enum ColumnarConversionState {
+        /** No Parquet file exists yet. */
+        NOT_STARTED,
+        /** Conversion is in progress (background thread). */
+        IN_PROGRESS,
+        /** Parquet file is ready and available for OLAP reads. */
+        COMPLETED,
+        /** Conversion failed; will retry later. */
+        FAILED
+    }
+
+    /**
+     * Row-count threshold above which the table becomes eligible for
+     * automatic background conversion to columnar storage.
+     */
+    static final long COLUMNAR_THRESHOLD_ROWS = 1_000_000;
+
+    /** Transient columnar storage handle; not serialized. */
+    private transient ColumnarTableStorage columnarStorage;
+
+    /** Current state of the background conversion. */
+    private transient volatile ColumnarConversionState columnarConversionState = ColumnarConversionState.NOT_STARTED;
+
+    /** Timestamp (epoch millis) when the Parquet file was last written. */
+    private transient volatile long columnarLastWrittenMillis;
 
     /**
      * Table statistics used by the optimizer (see {@link #getStatistics()} and
@@ -264,6 +299,9 @@ class Table implements Serializable {
         this.rowCount = 0;
         this.avgRowSizeBytes = estimateAverageRowSizeBytes();
         this.lastAnalyzedMillis = 0;
+        this.columnarStorage = null;
+        this.columnarConversionState = ColumnarConversionState.NOT_STARTED;
+        this.columnarLastWrittenMillis = 0;
 
         validateSchema(columns, columnTypes);
 
@@ -298,6 +336,139 @@ class Table implements Serializable {
         this.database = database;
     }
 
+    // ─── Dual storage support (Prompt 88) ──────────────────────────────
+
+    /**
+     * Returns the columnar storage handle, or {@code null} when no Parquet
+     * file is available (conversion not yet completed or failed).
+     *
+     * @return the columnar storage, or null
+     */
+    public ColumnarTableStorage getColumnarStorage() {
+        return columnarStorage;
+    }
+
+    /**
+     * Returns the current state of the background columnar conversion.
+     *
+     * @return the conversion state
+     */
+    public ColumnarConversionState getColumnarConversionState() {
+        return columnarConversionState;
+    }
+
+    /**
+     * Sets the columnar conversion state. Called by
+     * {@link ColumnarConversionJob} during the async conversion lifecycle.
+     *
+     * @param state the new state
+     */
+    void setColumnarConversionState(ColumnarConversionState state) {
+        this.columnarConversionState = state;
+    }
+
+    /**
+     * Returns the epoch-millis timestamp of the last Parquet file write,
+     * or {@code 0} if no conversion has been performed.
+     *
+     * @return the last-write timestamp
+     */
+    public long getColumnarLastWrittenMillis() {
+        return columnarLastWrittenMillis;
+    }
+
+    /**
+     * Returns the Parquet file path for this table, resolved against the
+     * database data directory. The file extension is {@code .parquet}.
+     *
+     * @return the resolved Parquet file path
+     */
+    public java.nio.file.Path getParquetFilePath() {
+        String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
+        return java.nio.file.Path.of(dir, name + ".parquet");
+    }
+
+    /**
+     * Returns true when the table is eligible for automatic columnar
+     * conversion: it has at least {@link #COLUMNAR_THRESHOLD_ROWS} live
+     * rows and no conversion is currently in progress.
+     *
+     * @return true when the table should be converted to columnar storage
+     */
+    public boolean isEligibleForColumnarConversion() {
+        if (columnarConversionState == ColumnarConversionState.IN_PROGRESS) {
+            return false;
+        }
+        if (columnarConversionState == ColumnarConversionState.COMPLETED) {
+            // Check staleness: reconvert if the Parquet file is older than the last DML mutation.
+            java.nio.file.Path path = getParquetFilePath();
+            if (!java.nio.file.Files.exists(path)) {
+                return true;
+            }
+            return columnarLastWrittenMillis < version.get();
+        }
+        return getLiveRowCount() >= COLUMNAR_THRESHOLD_ROWS;
+    }
+
+    /**
+     * Ensures columnar storage is available, converting on the spot when
+     * needed. This is the synchronous fallback used by the query executor
+     * when the background job has not yet completed.
+     *
+     * @return the columnar storage, never null
+     */
+    public ColumnarTableStorage ensureColumnarStorage() {
+        if (columnarStorage != null && columnarStorage.isAvailable()) {
+            return columnarStorage;
+        }
+        // Trigger synchronous conversion.
+        ColumnarConversionJob.runSynchronous(this);
+        return columnarStorage;
+    }
+
+    /**
+     * Returns the storage backend most suitable for the given query type.
+     * OLAP queries on large tables with available columnar storage are
+     * served from Parquet; all other queries use the in-memory rows.
+     *
+     * @param queryType the query classification
+     * @return the appropriate storage backend
+     */
+    public TableStorage getStorageForQuery(QueryOptimizer.QueryType queryType) {
+        if (queryType == QueryOptimizer.QueryType.OLAP
+                && columnarStorage != null && columnarStorage.isAvailable()) {
+            return columnarStorage;
+        }
+        return this;
+    }
+
+    /**
+     * Invalidates the columnar storage after a DML mutation (INSERT, UPDATE,
+     * DELETE). The background job will reconvert once the table grows large
+     * enough again.
+     */
+    void invalidateColumnarStorage() {
+        if (columnarConversionState == ColumnarConversionState.COMPLETED) {
+            columnarConversionState = ColumnarConversionState.NOT_STARTED;
+            columnarStorage = null;
+            LOGGER.log(Level.FINE, "Invalidated columnar storage for table {0} after DML mutation", name);
+        }
+    }
+
+    /**
+     * Activates columnar storage from an existing Parquet file. Called by
+     * {@link ColumnarConversionJob} after a successful write or when a
+     * previously written file is discovered on disk.
+     *
+     * @param storage the newly created columnar storage
+     */
+    void activateColumnarStorage(ColumnarTableStorage storage) {
+        this.columnarStorage = storage;
+        this.columnarConversionState = ColumnarConversionState.COMPLETED;
+        this.columnarLastWrittenMillis = System.currentTimeMillis();
+        LOGGER.log(Level.INFO, "Activated columnar storage for table {0}", name);
+    }
+
     /**
      * Private constructor for {@link #copyForTransaction()} — skips schema
      * validation and clustered index creation (indexes are rebuilt at the end).
@@ -322,6 +493,9 @@ class Table implements Serializable {
         this.deferredIndexOps = null;
         this.formatVersion = CURRENT_FORMAT_VERSION;
         this.version = new AtomicLong(0);
+        this.columnarStorage = null;
+        this.columnarConversionState = ColumnarConversionState.NOT_STARTED;
+        this.columnarLastWrittenMillis = 0;
     }
 
     /**
@@ -1203,6 +1377,7 @@ class Table implements Serializable {
         rowCount--;
         version.incrementAndGet();
         markStatsDirty();
+        invalidateColumnarStorage();
     }
 
     // ─── Tombstone / lazy-deletion support ────────────────────────────
@@ -1219,6 +1394,7 @@ class Table implements Serializable {
         deletedRows.set(rowIndex);
         version.incrementAndGet();
         markStatsDirty();
+        invalidateColumnarStorage();
     }
 
     /** Returns whether the row at the given raw position is tombstoned. */
@@ -1278,6 +1454,7 @@ class Table implements Serializable {
         } finally {
             tableLock.writeLock().unlock();
         }
+        invalidateColumnarStorage();
     }
 
     private static byte[] serializeToBytes(Serializable obj) throws IOException {
@@ -1424,6 +1601,9 @@ class Table implements Serializable {
         this.database = null;
         this.statsLock = new Object();
         this.version = new AtomicLong(0);
+        this.columnarStorage = null;
+        this.columnarConversionState = ColumnarConversionState.NOT_STARTED;
+        this.columnarLastWrittenMillis = 0;
         // Restore statistics: old serialized files carry zeroed stats fields.
         this.rowCount = rows.size();
         if (this.lastAnalyzedMillis == 0 && this.avgRowSizeBytes == 0) {
@@ -1495,6 +1675,7 @@ class Table implements Serializable {
         rowCount++;
         version.incrementAndGet();
         markStatsDirty();
+        invalidateColumnarStorage();
         LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
     }
 
@@ -1717,6 +1898,7 @@ class Table implements Serializable {
         } finally {
             tableLock.writeLock().unlock();
         }
+        invalidateColumnarStorage();
         LOGGER.log(Level.INFO, "Bulk inserted {0} rows into table {1} (total {2})",
                 new Object[]{validatedRows.size(), name, rows.size()});
     }
@@ -2312,5 +2494,32 @@ class Table implements Serializable {
             LOGGER.log(Level.SEVERE, "Failed to load table {0}: {1}", new Object[]{tableName, e.getMessage()});
             return null;
         }
+    }
+
+    /**
+     * Instance-side {@link TableStorage} load hook. Delegates to the static
+     * loader and copies the deserialized state (rows, columns, types, deleted
+     * bitset, version) into this instance. Used when this table is addressed
+     * through the {@link TableStorage} interface.
+     *
+     * @param tableName the table name, used as the file base name
+     */
+    @Override
+    public void loadFromFile(String tableName) {
+        Table loaded = loadFromFile(this.database, tableName);
+        if (loaded == null) {
+            return;
+        }
+        this.rows.clear();
+        this.rows.addAll(loaded.rows);
+        this.columns.clear();
+        this.columns.addAll(loaded.columns);
+        this.columnTypes.clear();
+        this.columnTypes.putAll(loaded.columnTypes);
+        this.deletedRows.clear();
+        this.deletedRows.or(loaded.deletedRows);
+        this.rowCount = loaded.rowCount;
+        this.version.set(loaded.version.get());
+        this.isFileInitialized = loaded.isFileInitialized;
     }
 }
