@@ -470,6 +470,23 @@ class Table implements TableStorage, Serializable {
     }
 
     /**
+     * Activates columnar storage backed by the primary {@code .parquet} file.
+     * Because primary persistence is Parquet, the same file serves both the
+     * on-disk representation and the columnar OLAP storage — no separate
+     * conversion file is needed.
+     *
+     * @param tableName the table name used for the Parquet file
+     */
+    void activateColumnarStorageFromPrimaryFile(String tableName) {
+        if (!StorageFormat.usesParquet(getLiveRowCount())) {
+            return;
+        }
+        ColumnarTableStorage storage = new ColumnarTableStorage(getParquetFilePath(), tableName);
+        storage.setColumnTypes(columnTypes);
+        activateColumnarStorage(storage);
+    }
+
+    /**
      * Private constructor for {@link #copyForTransaction()} — skips schema
      * validation and clustered index creation (indexes are rebuilt at the end).
      */
@@ -619,6 +636,36 @@ class Table implements TableStorage, Serializable {
      */
     public Map<String, Sequence> getSequences() {
         return sequences;
+    }
+
+    /**
+     * Returns the table's persistent format version, used to detect old on-disk
+     * representations during load and migration.
+     *
+     * @return the current format version
+     */
+    public int getFormatVersion() {
+        return formatVersion;
+    }
+
+    /**
+     * Returns the index definitions recorded for this table, keyed by indexed
+     * column (for single-column indexes) or index name (for composite/covering).
+     *
+     * @return the index definition map
+     */
+    public Map<String, String> getIndexDefinitions() {
+        return indexDefinitions;
+    }
+
+    /**
+     * Returns the covering-column definitions for indices that include extra
+     * columns, keyed by the indexed column/name.
+     *
+     * @return the covering column definition map
+     */
+    public Map<String, List<String>> getCoverColumnDefinitions() {
+        return coverColumnDefinitions;
     }
 
     /**
@@ -1418,6 +1465,42 @@ class Table implements TableStorage, Serializable {
     }
 
     /**
+     * Populates this table's rows from a list read back from the Parquet file.
+     * Inserts rows individually so that the clustered index and secondary
+     * indexes are rebuilt as part of load.
+     *
+     * @param rows the rows to load
+     */
+    void loadRowsFromParquet(List<Map<String, Object>> rows) {
+        this.rows.clear();
+        this.deletedRows = new BitSet();
+        this.rowCount = 0;
+        for (Map<String, Object> row : rows) {
+            this.rows.add(row);
+        }
+        this.rowCount = this.rows.size();
+        rebuildClusteredIndexFromRows();
+    }
+
+    /**
+     * Sets whether this table owns a clustered index over its primary key.
+     *
+     * @param has true when a clustered index is present
+     */
+    void setHasClusteredIndex(boolean has) {
+        this.hasClusteredIndex = has;
+    }
+
+    /**
+     * Sets the column over which the clustered index is built.
+     *
+     * @param column the clustered index column
+     */
+    void setClusteredIndexColumn(String column) {
+        this.clusteredIndexColumn = column;
+    }
+
+    /**
      * Physically removes all tombstoned rows and rebuilds every index.
      * This is the only point where the ArrayList actually shrinks.
      */
@@ -2065,6 +2148,15 @@ class Table implements TableStorage, Serializable {
     }
 
     /**
+     * Package-private hook used by {@link ParquetReader#restoreIndexes(Table, Map)}
+     * to rebuild all secondary indexes after a table is reconstructed from its
+     * Parquet metadata.
+     */
+    void rebuildSecondaryIndexesForLoad() {
+        rebuildSecondaryIndexes();
+    }
+
+    /**
      * Rebuilds all secondary indexes from the current row data.
      * When multiple secondary indexes exist, each is built in parallel
      * via the shared {@link #INDEX_BUILD_POOL}.
@@ -2380,6 +2472,14 @@ class Table implements TableStorage, Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
+        long live = getLiveRowCount();
+        if (StorageFormat.usesParquet(live)) {
+            saveToParquetFile(tableName);
+            return;
+        }
+        if (getDeletedCount() > 0) {
+            compact();
+        }
         tableLock.readLock().lock();
         try {
             String fileName = resolveFilePath(tableName, ".csv");
@@ -2492,6 +2592,88 @@ class Table implements TableStorage, Serializable {
             return table;
         } catch (IOException | ClassNotFoundException e) {
             LOGGER.log(Level.SEVERE, "Failed to load table {0}: {1}", new Object[]{tableName, e.getMessage()});
+            return null;
+        }
+    }
+
+    /**
+     * Persists the live rows and full table metadata to a single {@code .parquet}
+     * file in the data directory. This is the unified persistence path: the same
+     * file serves as both the primary on-disk representation of the table and the
+     * columnar (OLAP) storage used for analytical queries.
+     *
+     * @param tableName the table name, used as the file base name
+     * @throws DieselIOException if the Parquet file cannot be written
+     */
+    public void saveToParquetFile(String tableName) {
+        if (getDeletedCount() > 0) {
+            compact();
+        }
+        tableLock.readLock().lock();
+        try {
+            ParquetWriter.writeTableToParquet(this, tableName);
+            activateColumnarStorageFromPrimaryFile(tableName);
+        } finally {
+            tableLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Loads a table entirely from its {@code .parquet} file, reconstructing the
+     * schema, dictionary metadata and rows. This is the mirror of
+     * {@link #saveToParquetFile(String)} and makes the Parquet file the sole
+     * persistent representation (no separate {@code .table}/{@code .csv}).
+     *
+     * @param database  the database to attach to the loaded table
+     * @param tableName the table name, used as the file base name
+     * @return the loaded table, or null when the file is missing/corrupt
+     */
+    public static Table loadFromParquetFile(Database database, String tableName) {
+        String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
+        java.nio.file.Path path = java.nio.file.Path.of(dir, tableName + ErrorMessages.PARQUET_EXTENSION);
+        if (!java.nio.file.Files.exists(path)) {
+            LOGGER.log(Level.INFO, "Parquet file {0} not found, creating new table {1} with base structure",
+                    new Object[]{path, tableName});
+            Table table = new Table(database, tableName, new ArrayList<>(), new HashMap<>(), null, new HashMap<String, Sequence>());
+            table.formatVersion = CURRENT_FORMAT_VERSION;
+            table.setFileInitialized(false);
+            return table;
+        }
+        try {
+            Map<String, String> meta = ParquetReader.getFileMetadata(path);
+            List<String> columns = ParquetReader.readSchemaColumns(path, meta);
+            Map<String, Class<?>> columnTypes = ParquetReader.readColumnTypes(path, meta, columns);
+            String primaryKey = meta.getOrDefault(ErrorMessages.PARQUET_META_PRIMARY_KEY, "");
+            Map<String, Sequence> sequences = ParquetReader.readSequences(meta);
+
+            Table table = new Table(database, tableName, columns, columnTypes,
+                    primaryKey.isEmpty() ? null : primaryKey, sequences);
+
+            List<Map<String, Object>> rows = ParquetReader.readAll(path);
+            table.loadRowsFromParquet(rows);
+
+            ParquetReader.restoreIndexes(table, meta);
+            if (Boolean.parseBoolean(meta.getOrDefault(ErrorMessages.PARQUET_META_HAS_CLUSTERED, "false"))
+                    && !primaryKey.isEmpty()) {
+                table.setClusteredIndexColumn(primaryKey);
+                table.setHasClusteredIndex(true);
+            }
+            if (meta.containsKey(ErrorMessages.PARQUET_META_FORMAT_VERSION)) {
+                try {
+                    table.formatVersion = Integer.parseInt(meta.get(ErrorMessages.PARQUET_META_FORMAT_VERSION));
+                } catch (NumberFormatException ignored) {
+                    table.formatVersion = CURRENT_FORMAT_VERSION;
+                }
+            }
+            table.database = database;
+            table.setFileInitialized(true);
+            table.activateColumnarStorageFromPrimaryFile(tableName);
+            LOGGER.log(Level.INFO, "Table {0} loaded from Parquet file {1} with {2} rows",
+                    new Object[]{tableName, path, rows.size()});
+            return table;
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Failed to load table {0} from Parquet: {1}",
+                    new Object[]{tableName, e.getMessage()});
             return null;
         }
     }

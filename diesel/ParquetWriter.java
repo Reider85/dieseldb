@@ -32,8 +32,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -185,27 +187,28 @@ class ParquetWriter {
             RecordConsumer recordConsumer = columnIO.getRecordWriter(columnStore);
             GroupWriteSupport.setSchema(schema, conf);
 
-            org.apache.parquet.example.data.GroupWriter groupWriter =
-                    new org.apache.parquet.example.data.GroupWriter(recordConsumer, schema);
-            SimpleGroupFactory factory = new SimpleGroupFactory(schema);
-
-            fileWriter.startBlock(rows.size());
-            for (Map<String, Object> row : rows) {
-                Group group = factory.newGroup();
-                for (int i = 0; i < columns.size(); i++) {
-                    String column = columns.get(i);
-                    Object value = row.get(column);
-                    if (value != null) {
-                        writeValue(group, i, columnTypes.get(column), value);
+            if (!rows.isEmpty()) {
+                fileWriter.startBlock(rows.size());
+                org.apache.parquet.example.data.GroupWriter groupWriter =
+                        new org.apache.parquet.example.data.GroupWriter(recordConsumer, schema);
+                SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+                for (Map<String, Object> row : rows) {
+                    Group group = factory.newGroup();
+                    for (int i = 0; i < columns.size(); i++) {
+                        String column = columns.get(i);
+                        Object value = row.get(column);
+                        if (value != null) {
+                            writeValue(group, i, columnTypes.get(column), value);
+                        }
                     }
+                    groupWriter.write(group);
                 }
-                groupWriter.write(group);
+                recordConsumer.flush();
+                columnStore.flush();
+                pageStore.flushToFileWriter(fileWriter);
+                fileWriter.endBlock();
             }
-            recordConsumer.flush();
-            columnStore.flush();
-            pageStore.flushToFileWriter(fileWriter);
-            fileWriter.endBlock();
-            fileWriter.end(Collections.emptyMap());
+            fileWriter.end(buildMetadata(table));
 
             table.setFileInitialized(true);
             LOGGER.log(Level.INFO, "Table {0} written to Parquet file {1}", new Object[]{tableName, filePath});
@@ -217,6 +220,55 @@ class ParquetWriter {
                 codecFactory.release();
             }
         }
+    }
+
+    /**
+     * Builds the key-value metadata map stored in the Parquet footer. This
+     * captures the full table schema and dictionary information needed to
+     * reconstruct a {@link Table} from the {@code .parquet} file, so the file
+     * can serve as the sole persistent representation of the table.
+     *
+     * <p>Encoded as plain UTF-8 strings, delimited with {@code ';'} between
+     * entries and {@code '::'} between a key and its value.
+     *
+     * @param table the table to describe
+     * @return the footer metadata map
+     */
+    static Map<String, String> buildMetadata(Table table) {
+        Map<String, String> meta = new LinkedHashMap<>();
+        meta.put(ErrorMessages.PARQUET_META_FORMAT_VERSION, String.valueOf(table.getFormatVersion()));
+        meta.put(ErrorMessages.PARQUET_META_PRIMARY_KEY,
+                table.getPrimaryKeyColumn() != null ? table.getPrimaryKeyColumn() : "");
+        meta.put(ErrorMessages.PARQUET_META_HAS_CLUSTERED, String.valueOf(table.hasClusteredIndex()));
+        meta.put(ErrorMessages.PARQUET_META_CLUSTERED_COL,
+                table.getClusteredIndexColumn() != null ? table.getClusteredIndexColumn() : "");
+
+        StringJoiner typeJoiner = new StringJoiner(";");
+        for (Map.Entry<String, Class<?>> e : table.getColumnTypes().entrySet()) {
+            typeJoiner.add(e.getKey() + "::" + e.getValue().getName());
+        }
+        meta.put(ErrorMessages.PARQUET_META_COLUMN_TYPES, typeJoiner.toString());
+
+        StringJoiner seqJoiner = new StringJoiner(";");
+        for (Map.Entry<String, Sequence> e : table.getSequences().entrySet()) {
+            Sequence seq = e.getValue();
+            seqJoiner.add(e.getKey() + "::" + seq.getName() + "::" + seq.getType().getName()
+                    + "::" + seq.getCurrentValue() + "::" + seq.getIncrement());
+        }
+        meta.put(ErrorMessages.PARQUET_META_SEQUENCES, seqJoiner.toString());
+
+        StringJoiner idxJoiner = new StringJoiner(";");
+        for (Map.Entry<String, String> e : table.getIndexDefinitions().entrySet()) {
+            String column = e.getKey();
+            String def = e.getValue();
+            idxJoiner.add(column + "::" + (def != null ? def : ""));
+            List<String> cover = table.getCoverColumnDefinitions().getOrDefault(column, Collections.emptyList());
+            if (!cover.isEmpty()) {
+                idxJoiner.add(column + "::@" + String.join(",", cover));
+            }
+        }
+        meta.put(ErrorMessages.PARQUET_META_INDEXES, idxJoiner.toString());
+        return meta;
     }
 
     private static void writeValue(Group group, int index, Class<?> javaType, Object value) {

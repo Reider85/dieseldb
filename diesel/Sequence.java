@@ -74,4 +74,13 @@ public class Sequence implements Serializable {
     public synchronized long getCurrentValue() {
         return currentValue.get();
     }
+
+    /**
+     * Returns the step between consecutive generated values.
+     *
+     * @return the increment
+     */
+    public long getIncrement() {
+        return increment;
+    }
 }

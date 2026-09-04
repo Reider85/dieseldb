@@ -26,7 +26,25 @@ public final class ErrorMessages {
 
     public static final String CONFIG_FILE = "config.properties";
     public static final String TABLE_EXTENSION = ".table";
+    public static final String PARQUET_EXTENSION = ".parquet";
     public static final String BIN_EXTENSION = ".bin";
+
+    // Persistent storage format selector (storage.format in config.properties).
+    public static final String STORAGE_FORMAT_PARQUET = "PARQUET";
+    public static final String STORAGE_FORMAT_CSV = "CSV";
+    public static final String STORAGE_FORMAT_SERIALIZED = "SERIALIZED";
+    public static final String STORAGE_FORMAT_AUTO = "AUTO";
+
+    // Key-value metadata keys written into the Parquet footer by ParquetWriter.
+    public static final String PARQUET_META_FORMAT_VERSION = "dieseldb.formatVersion";
+    public static final String PARQUET_META_PRIMARY_KEY = "dieseldb.primaryKey";
+    public static final String PARQUET_META_TABLE_VERSION = "dieseldb.version";
+    public static final String PARQUET_META_HAS_CLUSTERED = "dieseldb.hasClusteredIndex";
+    public static final String PARQUET_META_CLUSTERED_COL = "dieseldb.clusteredIndexColumn";
+    public static final String PARQUET_META_SEQUENCES = "dieseldb.sequences";
+    public static final String PARQUET_META_INDEXES = "dieseldb.indexes";
+    public static final String PARQUET_META_COVERING = "dieseldb.covering";
+    public static final String PARQUET_META_COLUMN_TYPES = "dieseldb.columnTypes";
 
     public static final String STAGE_JOIN = "join";
     public static final String STAGE_RESULT = "result";

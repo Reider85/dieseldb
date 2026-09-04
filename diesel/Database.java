@@ -751,7 +751,7 @@ class Database {
             if (modifiedTable != null) {
                 tables.put(tableName, modifiedTable);
                 modifiedTable.saveToFile(tableName);
-                if (writeSerialized) {
+                if (writeSerialized && !StorageFormat.usesParquet(modifiedTable.getLiveRowCount())) {
                     modifiedTable.saveToSerializedFile(tableName);
                 }
             } else {
@@ -1133,9 +1133,11 @@ class Database {
     }
 
     /**
-     * Writes every registered table to disk as a serialized {@code .table}
-     * file in the data directory.
+     * Writes every registered table to disk. The format used per table is
+     * selected by the {@code storage.format} configuration: Parquet (single
+     * {@code .parquet} file) or the legacy serialized {@code .table} file.
      *
+     * @see Table#saveToParquetFile
      * @see Table#saveToSerializedFile
      */
     public void saveTablesToDisk() {
@@ -1144,25 +1146,52 @@ class Database {
             dir.mkdirs();
         }
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
-            entry.getValue().saveToSerializedFile(entry.getKey());
+            Table table = entry.getValue();
+            if (StorageFormat.usesParquet(table.getLiveRowCount())) {
+                table.saveToParquetFile(entry.getKey());
+            } else {
+                table.saveToSerializedFile(entry.getKey());
+            }
         }
         LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
     }
 
     /**
-     * Loads every {@code .table} file found in the data directory back into
-     * the shared table map, skipping corrupt files with a warning.
+     * Loads tables back into the shared table map from disk, skipping corrupt
+     * files with a warning. When {@code storage.format} selects Parquet, tables
+     * are loaded from {@code .parquet} files; legacy {@code .table} files are
+     * auto-migrated to Parquet on first load (the old file is deleted after a
+     * successful conversion). When the format is not Parquet, the legacy
+     * {@code .table} loader is used.
      *
+     * @see Table#loadFromParquetFile
      * @see Table#loadFromFile
      */
     public void loadTablesFromDisk() {
         File dir = new File(dataDir);
+        if (dir.exists()) {
+            loadLegacyTableFiles(dir);
+        }
+        if (StorageFormat.configuredFormat().equals(ErrorMessages.STORAGE_FORMAT_PARQUET)) {
+            loadParquetTableFiles(dir);
+        }
+        queryCache.invalidateAll();
+    }
+
+    private void loadLegacyTableFiles(File dir) {
         File[] files = dir.listFiles((d, name) -> name.endsWith(ErrorMessages.TABLE_EXTENSION));
         if (files == null) {
             return;
         }
         for (File file : files) {
             String tableName = file.getName().substring(0, file.getName().length() - ErrorMessages.TABLE_EXTENSION.length());
+            if (tables.containsKey(tableName)) {
+                continue;
+            }
+            if (StorageFormat.configuredFormat().equals(ErrorMessages.STORAGE_FORMAT_PARQUET)) {
+                migrateTableToParquet(tableName, file);
+                continue;
+            }
             Table table = Table.loadFromFile(this, tableName);
             if (table != null) {
                 tables.put(tableName, table);
@@ -1170,7 +1199,49 @@ class Database {
                         new Object[]{tableName, table.getLiveRowCount()});
             }
         }
-        queryCache.invalidateAll();
+    }
+
+    private void loadParquetTableFiles(File dir) {
+        File[] files = dir.listFiles((d, name) -> name.endsWith(ErrorMessages.PARQUET_EXTENSION));
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            String tableName = file.getName().substring(0, file.getName().length() - ErrorMessages.PARQUET_EXTENSION.length());
+            if (tables.containsKey(tableName)) {
+                continue;
+            }
+            Table table = Table.loadFromParquetFile(this, tableName);
+            if (table != null) {
+                tables.put(tableName, table);
+                LOGGER.log(Level.INFO, "Loaded table {0} from Parquet with {1} rows",
+                        new Object[]{tableName, table.getLiveRowCount()});
+            }
+        }
+    }
+
+    /**
+     * Auto-migrates a legacy {@code .table} file to Parquet: loads the table
+     * from the serialized file, writes it to Parquet, then removes the old
+     * file so a single {@code .parquet} file becomes the sole representation.
+     *
+     * @param tableName the table name
+     * @param legacyFile the legacy {@code .table} file
+     */
+    private void migrateTableToParquet(String tableName, File legacyFile) {
+        Table table = Table.loadFromFile(this, tableName);
+        if (table == null) {
+            return;
+        }
+        tables.put(tableName, table);
+        try {
+            table.saveToParquetFile(tableName);
+            legacyFile.delete();
+            LOGGER.log(Level.INFO, "Migrated table {0} from .table to .parquet", tableName);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to migrate table {0} to Parquet: {1}",
+                    new Object[]{tableName, e.getMessage()});
+        }
     }
 
     private void deleteTableFiles(String tableName) {
@@ -1184,6 +1255,12 @@ class Database {
             Files.deleteIfExists(Path.of(dataDir, tableName + ErrorMessages.TABLE_EXTENSION));
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to delete serialized file for table {0}: {1}",
+                    new Object[]{tableName, e.getMessage()});
+        }
+        try {
+            Files.deleteIfExists(Path.of(dataDir, tableName + ErrorMessages.PARQUET_EXTENSION));
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to delete Parquet file for table {0}: {1}",
                     new Object[]{tableName, e.getMessage()});
         }
     }

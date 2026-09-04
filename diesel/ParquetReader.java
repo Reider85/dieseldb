@@ -246,6 +246,190 @@ class ParquetReader {
         }
     }
 
+    /**
+     * Returns the key-value metadata map stored in the Parquet footer. This is
+     * where {@link ParquetWriter#buildMetadata(Table)} places the table schema
+     * and dictionary information that lets a full {@link Table} be rebuilt.
+     *
+     * @param file the Parquet file
+     * @return the footer metadata map (never null)
+     */
+    public static Map<String, String> getFileMetadata(Path file) {
+        if (file == null) {
+            throw new IllegalArgumentException("File path must not be null");
+        }
+        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            Map<String, String> meta = ParquetFileReader.readFooter(
+                    new ChannelInputFile(channel), ParquetMetadataConverter.NO_FILTER)
+                    .getFileMetaData().getKeyValueMetaData();
+            return meta != null ? meta : new HashMap<>();
+        } catch (IOException e) {
+            throw new DieselIOException("Failed to read Parquet metadata: " + file, e);
+        }
+    }
+
+    /**
+     * Returns the ordered column names for a table reconstructed from Parquet.
+     *
+     * @param file the Parquet file
+     * @param meta the footer metadata
+     * @return the column names in schema order
+     */
+    public static List<String> readSchemaColumns(Path file, Map<String, String> meta) {
+        List<String> columns = new ArrayList<>();
+        String types = meta.get(ErrorMessages.PARQUET_META_COLUMN_TYPES);
+        if (types != null && !types.isBlank()) {
+            for (String entry : types.split(";")) {
+                if (entry.isBlank()) {
+                    continue;
+                }
+                int sep = entry.indexOf("::");
+                String column = sep >= 0 ? entry.substring(0, sep) : entry;
+                columns.add(column);
+            }
+            return columns;
+        }
+        for (Type field : getFileSchema(file).getFields()) {
+            columns.add(field.getName());
+        }
+        return columns;
+    }
+
+    /**
+     * Returns the Java type map for a table reconstructed from Parquet.
+     *
+     * @param file    the Parquet file
+     * @param meta    the footer metadata
+     * @param columns the ordered column names
+     * @return the column name to Java class mapping
+     */
+    public static Map<String, Class<?>> readColumnTypes(Path file, Map<String, String> meta,
+                                                        List<String> columns) {
+        Map<String, Class<?>> types = new HashMap<>();
+        String typesMeta = meta.get(ErrorMessages.PARQUET_META_COLUMN_TYPES);
+        if (typesMeta != null && !typesMeta.isBlank()) {
+            for (String entry : typesMeta.split(";")) {
+                if (entry.isBlank()) {
+                    continue;
+                }
+                int sep = entry.indexOf("::");
+                if (sep < 0) {
+                    continue;
+                }
+                String column = entry.substring(0, sep);
+                String clsName = entry.substring(sep + 2);
+                try {
+                    types.put(column, Class.forName(clsName));
+                } catch (ClassNotFoundException e) {
+                    LOGGER.log(Level.WARNING, "Unknown column type class {0} for column {1}",
+                            new Object[]{clsName, column});
+                }
+            }
+            return types;
+        }
+        // Fallback: infer Java types from the Parquet schema.
+        MessageType schema = getFileSchema(file);
+        for (String column : columns) {
+            Type field = schema.getType(column);
+            if (field == null || !field.isPrimitive()) {
+                continue;
+            }
+            types.put(column, javaTypeFromPrimitive(field.asPrimitiveType()));
+        }
+        return types;
+    }
+
+    private static Class<?> javaTypeFromPrimitive(PrimitiveType primitiveType) {
+        OriginalType originalType = primitiveType.getOriginalType();
+        switch (primitiveType.getPrimitiveTypeName()) {
+            case INT32:
+                return originalType == OriginalType.DATE ? LocalDate.class : Integer.class;
+            case INT64:
+                return originalType == OriginalType.TIMESTAMP_MILLIS ? LocalDateTime.class : Long.class;
+            case FLOAT:
+                return Float.class;
+            case DOUBLE:
+                return Double.class;
+            case BOOLEAN:
+                return Boolean.class;
+            default:
+                return String.class;
+        }
+    }
+
+    /**
+     * Rebuilds the sequences defined on a table reconstructed from Parquet.
+     *
+     * @param meta the footer metadata
+     * @return the sequence map keyed by sequence name
+     */
+    public static Map<String, Sequence> readSequences(Map<String, String> meta) {
+        Map<String, Sequence> sequences = new HashMap<>();
+        String seqMeta = meta.get(ErrorMessages.PARQUET_META_SEQUENCES);
+        if (seqMeta == null || seqMeta.isBlank()) {
+            return sequences;
+        }
+        for (String entry : seqMeta.split(";")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            String[] parts = entry.split("::");
+            if (parts.length < 5) {
+                continue;
+            }
+            try {
+                String mapKey = parts[0];
+                String seqName = parts[1];
+                Class<?> seqType = Class.forName(parts[2]);
+                long currentValue = Long.parseLong(parts[3]);
+                long increment = Long.parseLong(parts[4]);
+                // Reconstruct the sequence so the *next* value equals current+increment.
+                long start = currentValue + increment;
+                sequences.put(mapKey, new Sequence(seqName, seqType, start, increment));
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to restore sequence entry {0}", entry);
+            }
+        }
+        return sequences;
+    }
+
+    /**
+     * Restores secondary index definitions on a table reconstructed from
+     * Parquet so that CREATE INDEX state is preserved across a save/load
+     * round trip.
+     *
+     * @param table the table being rebuilt
+     * @param meta  the footer metadata
+     */
+    public static void restoreIndexes(Table table, Map<String, String> meta) {
+        String idxMeta = meta.get(ErrorMessages.PARQUET_META_INDEXES);
+        if (idxMeta == null || idxMeta.isBlank()) {
+            return;
+        }
+        for (String entry : idxMeta.split(";")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            int sep = entry.indexOf("::");
+            if (sep < 0) {
+                continue;
+            }
+            String column = entry.substring(0, sep);
+            String def = entry.substring(sep + 2);
+            if (def.startsWith("@")) {
+                String cover = def.substring(1);
+                table.getCoverColumnDefinitions().put(column, List.of(cover.split(",")));
+            } else {
+                table.getIndexDefinitions().putIfAbsent(column, def);
+            }
+        }
+        try {
+            table.rebuildSecondaryIndexesForLoad();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to rebuild secondary indexes during load: {0}", e.getMessage());
+        }
+    }
+
     private static MessageType readSchemaFromFile(InputFile inputFile) throws IOException {
         return ParquetFileReader.readFooter(inputFile, ParquetMetadataConverter.NO_FILTER)
                 .getFileMetaData().getSchema();

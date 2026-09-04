@@ -1148,19 +1148,20 @@ public class AllTestsSampleTest {
             check(terminated,
                     "Prompt70Test / the server process terminates within 30 seconds after SIGTERM (destroy took " + destroyElapsed + " ms)");
 
-            File csvFile = new File(tempDir, "data/PROMPT70_TEST.csv");
-            File tableFile = new File(tempDir, "data/PROMPT70_TEST.table");
-            check(csvFile.exists(),
-                    "Prompt70Test / the PROMPT70_TEST.csv data file is saved on disk after server termination");
-            check(tableFile.exists(),
-                    "Prompt70Test / the PROMPT70_TEST.table serialized file is saved on disk after server termination");
-            if (csvFile.exists()) {
-                List<String> csvLines = Files.readAllLines(csvFile.toPath());
-                boolean hasFirst = csvLines.stream().anyMatch(l -> l.contains("prompt70-first"));
-                boolean hasSecond = csvLines.stream().anyMatch(l -> l.contains("prompt70-second"));
-                boolean hasThird = csvLines.stream().anyMatch(l -> l.contains("prompt70-third"));
-                check(hasFirst && hasSecond && hasThird && csvLines.size() == 4,
-                        "Prompt70Test / the saved CSV file contains all 3 inserted rows (header + " + (csvLines.size() - 1) + " data rows)");
+            File parquetFile = new File(tempDir, "data/PROMPT70_TEST.parquet");
+            check(parquetFile.exists(),
+                    "Prompt70Test / the PROMPT70_TEST.parquet file is saved on disk after server termination");
+            if (parquetFile.exists()) {
+                try {
+                    List<Map<String, Object>> savedRows = ParquetReader.readAll(parquetFile.toPath());
+                    boolean hasFirst = savedRows.stream().anyMatch(r -> "prompt70-first".equals(r.get("NAME")));
+                    boolean hasSecond = savedRows.stream().anyMatch(r -> "prompt70-second".equals(r.get("NAME")));
+                    boolean hasThird = savedRows.stream().anyMatch(r -> "prompt70-third".equals(r.get("NAME")));
+                    check(hasFirst && hasSecond && hasThird && savedRows.size() == 3,
+                            "Prompt70Test / the saved Parquet file contains all 3 inserted rows");
+                } catch (Exception e) {
+                    check(false, "Prompt70Test / failed to read saved Parquet file: " + e.getMessage());
+                }
             }
 
             if (isWindows) {
