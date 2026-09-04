@@ -90,11 +90,12 @@ public class DatabaseServer {
     // Load configuration and return Properties object
     private static Properties loadConfig() {
         Properties props = new Properties();
-        try (InputStream input = DatabaseServer.class.getClassLoader().getResourceAsStream(CONFIG_FILE)) {
-            if (input == null) {
-                LOGGER.log(Level.SEVERE, "Configuration file {0} not found", CONFIG_FILE);
-                return props; // Return empty Properties
-            }
+        java.io.File file = new java.io.File(CONFIG_FILE);
+        if (!file.exists()) {
+            LOGGER.log(Level.SEVERE, "Configuration file {0} not found", CONFIG_FILE);
+            return props; // Return empty Properties
+        }
+        try (InputStream input = new java.io.FileInputStream(file)) {
             props.load(input);
             return props;
         } catch (IOException e) {

@@ -50,11 +50,9 @@ class QueryParser {
 
         // Загрузка уровня логирования из config.properties
         Properties props = new Properties();
-        try (InputStream input = QueryParser.class.getClassLoader().getResourceAsStream("config.properties")) {
-            if (input == null) {
-                LOGGER.warning("config.properties not found, using default logging level INFO");
-                LOGGER.setLevel(Level.INFO);
-            } else {
+        java.io.File configFile = new java.io.File("config.properties");
+        if (configFile.exists()) {
+            try (InputStream input = new java.io.FileInputStream(configFile)) {
                 props.load(input);
                 String logLevelStr = props.getProperty("logging.level.diesel", "INFO").toUpperCase();
                 try {
@@ -67,11 +65,14 @@ class QueryParser {
                     LOGGER.setLevel(Level.INFO);
                     handler.setLevel(Level.INFO);
                 }
+            } catch (IOException e) {
+                LOGGER.warning("Failed to load config.properties, defaulting to INFO: " + e.getMessage());
+                LOGGER.setLevel(Level.INFO);
+                handler.setLevel(Level.INFO);
             }
-        } catch (IOException e) {
-            LOGGER.warning("Failed to load config.properties, defaulting to INFO: " + e.getMessage());
+        } else {
+            LOGGER.warning("config.properties not found, using default logging level INFO");
             LOGGER.setLevel(Level.INFO);
-            handler.setLevel(Level.INFO);
         }
     }
     static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
