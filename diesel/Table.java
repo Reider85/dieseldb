@@ -2477,9 +2477,6 @@ class Table implements TableStorage, Serializable {
             saveToParquetFile(tableName);
             return;
         }
-        if (getDeletedCount() > 0) {
-            compact();
-        }
         tableLock.readLock().lock();
         try {
             String fileName = resolveFilePath(tableName, ".csv");

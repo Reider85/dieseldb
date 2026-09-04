@@ -30,6 +30,9 @@ public class ColumnarStorageTest {
     @BeforeEach
     void setUp() {
         StorageFormat.resetCacheForTest();
+        // These tests exercise the PARQUET storage mode; force it explicitly
+        // because the default storage.format is now CSV.
+        StorageFormat.setFormatForTest(ErrorMessages.STORAGE_FORMAT_PARQUET);
         QueryOptimizer.clearCacheForTest();
         cleanup();
         database = new Database(".");
@@ -214,11 +217,11 @@ public class ColumnarStorageTest {
     }
 
     @Test
-    void testCsvFormatFallsBackToCsvPersistence() {
-        // Temporarily force CSV format.
+    void testExplicitParquetSaveWritesParquet() {
+        // An explicit saveToParquetFile() writes a .parquet file regardless of
+        // the configured storage.format (CSV by default).
         StorageFormat.resetCacheForTest();
         try {
-            // PARQUET is the configured default; verify the parquet path via a save.
             database.getTable(TABLE).saveToParquetFile(TABLE);
             assertTrue(new File(TABLE + ".parquet").exists(), "Parquet save writes .parquet");
         } finally {

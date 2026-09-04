@@ -1148,19 +1148,20 @@ public class AllTestsSampleTest {
             check(terminated,
                     "Prompt70Test / the server process terminates within 30 seconds after SIGTERM (destroy took " + destroyElapsed + " ms)");
 
-            File parquetFile = new File(tempDir, "data/PROMPT70_TEST.parquet");
-            check(parquetFile.exists(),
-                    "Prompt70Test / the PROMPT70_TEST.parquet file is saved on disk after server termination");
-            if (parquetFile.exists()) {
+            File csvFile = new File(tempDir, "data/PROMPT70_TEST.csv");
+            check(csvFile.exists(),
+                    "Prompt70Test / the PROMPT70_TEST.csv file is saved on disk after server termination");
+            if (csvFile.exists()) {
                 try {
-                    List<Map<String, Object>> savedRows = ParquetReader.readAll(parquetFile.toPath());
-                    boolean hasFirst = savedRows.stream().anyMatch(r -> "prompt70-first".equals(r.get("NAME")));
-                    boolean hasSecond = savedRows.stream().anyMatch(r -> "prompt70-second".equals(r.get("NAME")));
-                    boolean hasThird = savedRows.stream().anyMatch(r -> "prompt70-third".equals(r.get("NAME")));
-                    check(hasFirst && hasSecond && hasThird && savedRows.size() == 3,
-                            "Prompt70Test / the saved Parquet file contains all 3 inserted rows");
+                    List<String> csvLines = Files.readAllLines(csvFile.toPath());
+                    String csvContent = String.join("\n", csvLines);
+                    boolean hasFirst = csvContent.contains("prompt70-first");
+                    boolean hasSecond = csvContent.contains("prompt70-second");
+                    boolean hasThird = csvContent.contains("prompt70-third");
+                    check(hasFirst && hasSecond && hasThird && csvLines.size() == 4,
+                            "Prompt70Test / the saved CSV file contains all 3 inserted rows");
                 } catch (Exception e) {
-                    check(false, "Prompt70Test / failed to read saved Parquet file: " + e.getMessage());
+                    check(false, "Prompt70Test / failed to read saved CSV file: " + e.getMessage());
                 }
             }
 

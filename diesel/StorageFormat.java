@@ -22,7 +22,10 @@ import java.util.logging.Logger;
  *       {@link Table#COLUMNAR_THRESHOLD_ROWS} live rows, {@code CSV} otherwise.</li>
  * </ul>
  *
- * <p>The default is {@code PARQUET}. Unknown values fall back to {@code PARQUET}.
+ * <p>The default is {@code CSV}. Unknown values fall back to {@code CSV}.
+ * Users who want columnar storage can opt in explicitly with
+ * {@code storage.format=PARQUET} in {@code config.properties} or via
+ * {@code SET storage.format = PARQUET;}.</p>
  */
 final class StorageFormat {
 
@@ -36,7 +39,7 @@ final class StorageFormat {
 
     /**
      * Returns the configured base format string (uppercased), or
-     * {@link ErrorMessages#STORAGE_FORMAT_PARQUET} if not present/invalid.
+     * {@link ErrorMessages#STORAGE_FORMAT_CSV} if not present/invalid.
      *
      * @return the raw configured format
      */
@@ -63,13 +66,13 @@ final class StorageFormat {
                     if (isValid(v)) {
                         return v;
                     }
-                    LOGGER.log(Level.WARNING, "Unknown storage.format '{0}', falling back to PARQUET", val);
+                    LOGGER.log(Level.WARNING, "Unknown storage.format '{0}', falling back to CSV", val);
                 }
             }
         } catch (Exception e) {
             LOGGER.log(Level.FINE, "Failed to read storage.format: {0}", e.getMessage());
         }
-        return ErrorMessages.STORAGE_FORMAT_PARQUET;
+        return ErrorMessages.STORAGE_FORMAT_CSV;
     }
 
     private static boolean isValid(String v) {
@@ -106,5 +109,16 @@ final class StorageFormat {
      */
     static void resetCacheForTest() {
         configuredFormat = null;
+    }
+
+    /**
+     * Forces a specific configured format for tests without touching the
+     * {@code config.properties} file. The next {@link #resetCacheForTest()}
+     * clears the override so the real configuration is read again.
+     *
+     * @param format one of the {@code STORAGE_FORMAT_*} constants
+     */
+    static void setFormatForTest(String format) {
+        configuredFormat = format;
     }
 }
