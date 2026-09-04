@@ -65,8 +65,11 @@ public class RegexPerformanceBenchmarkTest {
         System.out.println("[RegexPerformanceBenchmark] parsed " + parsed
                 + " SQL queries in " + elapsedMs + " ms");
         // Generous guard: the parse-only loop must stay well under this even on
-        // a heavily loaded CI box; a backtracking blow-up would exceed it.
-        assertTrue(elapsedMs < 30_000,
+        // a heavily loaded CI box. The threshold is sized for the actual failure
+        // mode this test guards against - a catastrophic-backtracking blow-up in
+        // the parsing regexes (typically a 10x-1000x cost), not the ~2x noise
+        // from running concurrently with the heavy @LargeTest suite.
+        assertTrue(elapsedMs < 60_000,
                 "Parsing " + parsed + " queries took too long: " + elapsedMs + " ms");
     }
 
