@@ -146,7 +146,7 @@
 | 84 | вњ… DONE (2026-09-03) | Parallel index scan | LOW | BTreeIndex.java, SelectQuery.java, config.properties, ParallelIndexScanTest.java | Added parallel index scanning: BTreeIndex gains rangeSearchParallel/rangeSearchLowParallel/rangeSearchHighParallel using a dedicated ForkJoinPool that splits work by root subtrees (subtreeMayContainInRange), estimates result size (countAllKeys/countKeysAbove/countKeysBelow/estimateBoundedRangeSize) with a configurable parallel.index.scan.threshold (default 10000) below which sequential scan is used; SelectQuery.lookupBTreeRange now calls the parallel variants; new ParallelIndexScanTest (8 tests) verifies parallel results match sequential for 20k-row indexes, boundary values, null bounds, empty ranges, and ascending order. Quick gate 42/0/0/0 BUILD SUCCESS (incl. ParallelIndexScanTest 8/8) |
 | 85 | DONE (2026-09-04) | SIMD vectorization for aggregates | LOW |
 | 86 | DONE (2026-09-04) | Apache Parquet integration (ParquetWriter) | HIGH |
-| 87 | ??? TODO | ??-T??-?-?-TпїЅ??- ?-T???-?-?? ?-????T??-T???? | MEDIUM |
+| 87 | ✅ DONE (2026-09-04) | ParquetReader reading + projection/predicate pushdown | HIGH |
 | 88 | ??? TODO | Partitioned tables ?- Parquet | MEDIUM |
 | 89 | ??? TODO | Dictionary encoding ?+??T? T?T?T??-?? | LOW |
 | 90 | ??? TODO | Compression tuning (ZSTD) | LOW |
