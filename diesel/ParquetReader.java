@@ -1,5 +1,6 @@
 package diesel;
 
+import diesel.format.TableData;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.filter2.compat.FilterCompat;
@@ -269,6 +270,77 @@ class ParquetReader {
     }
 
     /**
+     * Reads a {@code .parquet} file into a {@link TableData} carrier,
+     * reconstructing the engine metadata (format version, primary key,
+     * sequences, index definitions) from the footer. This is the format-handler
+     * entry point.
+     *
+     * @param file the Parquet file
+     * @return the carrier
+     */
+    public static TableData readTableData(Path file) {
+        Map<String, String> meta = getFileMetadata(file);
+        List<String> columns = readSchemaColumns(file, meta);
+        Map<String, Class<?>> columnTypes = readColumnTypes(file, meta, columns);
+        List<Map<String, Object>> rows = readAll(file);
+
+        Map<String, Object> engineMeta = new HashMap<>();
+        engineMeta.put(TableData.META_FORMAT_VERSION,
+                Integer.parseInt(meta.getOrDefault(ErrorMessages.PARQUET_META_FORMAT_VERSION, "0")));
+        engineMeta.put(TableData.META_PRIMARY_KEY,
+                meta.getOrDefault(ErrorMessages.PARQUET_META_PRIMARY_KEY, ""));
+        engineMeta.put(TableData.META_HAS_CLUSTERED_INDEX,
+                Boolean.parseBoolean(meta.getOrDefault(ErrorMessages.PARQUET_META_HAS_CLUSTERED, "false")));
+        engineMeta.put(TableData.META_CLUSTERED_INDEX_COLUMN,
+                meta.getOrDefault(ErrorMessages.PARQUET_META_CLUSTERED_COL, ""));
+        engineMeta.put(TableData.META_SEQUENCES, readSequences(meta));
+        Map<String, String> indexDefs = new HashMap<>();
+        Map<String, List<String>> covers = new HashMap<>();
+        parseIndexMetadata(meta, indexDefs, covers);
+        engineMeta.put(TableData.META_INDEX_DEFINITIONS, indexDefs);
+        engineMeta.put(TableData.META_COVER_COLUMN_DEFINITIONS, covers);
+
+        return TableData.builder()
+                .columns(columns)
+                .columnTypes(columnTypes)
+                .rows(rows)
+                .metadata(engineMeta)
+                .build();
+    }
+
+    /**
+     * Splits the index and covering-column metadata from the Parquet footer
+     * into plain maps, without touching a {@link Table}.
+     *
+     * @param meta      the footer metadata
+     * @param indexDefs receives the indexed column to definition mapping
+     * @param covers    receives the indexed column to covering-column-list mapping
+     */
+    static void parseIndexMetadata(Map<String, String> meta, Map<String, String> indexDefs,
+                                   Map<String, List<String>> covers) {
+        String idxMeta = meta.get(ErrorMessages.PARQUET_META_INDEXES);
+        if (idxMeta == null || idxMeta.isBlank()) {
+            return;
+        }
+        for (String entry : idxMeta.split(";")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            int sep = entry.indexOf("::");
+            if (sep < 0) {
+                continue;
+            }
+            String column = entry.substring(0, sep);
+            String def = entry.substring(sep + 2);
+            if (def.startsWith("@")) {
+                covers.put(column, List.of(def.substring(1).split(",")));
+            } else {
+                indexDefs.put(column, def);
+            }
+        }
+    }
+
+    /**
      * Returns the ordered column names for a table reconstructed from Parquet.
      *
      * @param file the Parquet file
@@ -402,26 +474,12 @@ class ParquetReader {
      * @param meta  the footer metadata
      */
     public static void restoreIndexes(Table table, Map<String, String> meta) {
-        String idxMeta = meta.get(ErrorMessages.PARQUET_META_INDEXES);
-        if (idxMeta == null || idxMeta.isBlank()) {
-            return;
-        }
-        for (String entry : idxMeta.split(";")) {
-            if (entry.isBlank()) {
-                continue;
-            }
-            int sep = entry.indexOf("::");
-            if (sep < 0) {
-                continue;
-            }
-            String column = entry.substring(0, sep);
-            String def = entry.substring(sep + 2);
-            if (def.startsWith("@")) {
-                String cover = def.substring(1);
-                table.getCoverColumnDefinitions().put(column, List.of(cover.split(",")));
-            } else {
-                table.getIndexDefinitions().putIfAbsent(column, def);
-            }
+        Map<String, String> indexDefs = new HashMap<>();
+        Map<String, List<String>> covers = new HashMap<>();
+        parseIndexMetadata(meta, indexDefs, covers);
+        table.getCoverColumnDefinitions().putAll(covers);
+        for (Map.Entry<String, String> entry : indexDefs.entrySet()) {
+            table.getIndexDefinitions().putIfAbsent(entry.getKey(), entry.getValue());
         }
         try {
             table.rebuildSecondaryIndexesForLoad();

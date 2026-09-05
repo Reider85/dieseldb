@@ -751,7 +751,7 @@ class Database {
             if (modifiedTable != null) {
                 tables.put(tableName, modifiedTable);
                 modifiedTable.saveToFile(tableName);
-                if (writeSerialized && !StorageFormat.usesParquet(modifiedTable.getLiveRowCount())) {
+                if (writeSerialized && !StorageFormat.usesParquet(tableName, modifiedTable.getLiveRowCount())) {
                     modifiedTable.saveToSerializedFile(tableName);
                 }
             } else {
@@ -1147,7 +1147,7 @@ class Database {
         }
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             Table table = entry.getValue();
-            if (StorageFormat.usesParquet(table.getLiveRowCount())) {
+            if (StorageFormat.usesParquet(entry.getKey(), table.getLiveRowCount())) {
                 table.saveToParquetFile(entry.getKey());
             } else {
                 table.saveToSerializedFile(entry.getKey());
@@ -1171,8 +1171,6 @@ class Database {
         File dir = new File(dataDir);
         if (dir.exists()) {
             loadLegacyTableFiles(dir);
-        }
-        if (StorageFormat.configuredFormat().equals(ErrorMessages.STORAGE_FORMAT_PARQUET)) {
             loadParquetTableFiles(dir);
         }
         queryCache.invalidateAll();
@@ -1188,7 +1186,7 @@ class Database {
             if (tables.containsKey(tableName)) {
                 continue;
             }
-            if (StorageFormat.configuredFormat().equals(ErrorMessages.STORAGE_FORMAT_PARQUET)) {
+            if (StorageFormat.usesParquet(tableName, 0)) {
                 migrateTableToParquet(tableName, file);
                 continue;
             }
@@ -1209,6 +1207,9 @@ class Database {
         for (File file : files) {
             String tableName = file.getName().substring(0, file.getName().length() - ErrorMessages.PARQUET_EXTENSION.length());
             if (tables.containsKey(tableName)) {
+                continue;
+            }
+            if (!StorageFormat.usesParquet(tableName, 0)) {
                 continue;
             }
             Table table = Table.loadFromParquetFile(this, tableName);

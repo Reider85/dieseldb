@@ -25,6 +25,9 @@ public class ColumnarStorageTest {
     private static final Logger LOGGER = Logger.getLogger(ColumnarStorageTest.class.getName());
     private static final String TABLE = "COLUMNAR_TEST";
 
+    /** Test data directory: Parquet files must be co-located with CSV files in {@code data/}. */
+    private static final String DATA_DIR = "data";
+
     private Database database;
 
     @BeforeEach
@@ -35,7 +38,7 @@ public class ColumnarStorageTest {
         StorageFormat.setFormatForTest(ErrorMessages.STORAGE_FORMAT_PARQUET);
         QueryOptimizer.clearCacheForTest();
         cleanup();
-        database = new Database(".");
+        database = new Database(DATA_DIR);
         database.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, VAL BIGDECIMAL)", null);
     }
 
@@ -47,9 +50,9 @@ public class ColumnarStorageTest {
     }
 
     private void cleanup() {
-        new File(TABLE + ".parquet").delete();
-        new File(TABLE + ".table").delete();
-        new File(TABLE + ".csv").delete();
+        new File(DATA_DIR, TABLE + ".parquet").delete();
+        new File(DATA_DIR, TABLE + ".table").delete();
+        new File(DATA_DIR, TABLE + ".csv").delete();
     }
 
     private void insertRows(int count) {
@@ -65,7 +68,7 @@ public class ColumnarStorageTest {
 
         // In PARQUET mode, auto-commit DML persists to a single .parquet file
         // and activates columnar storage backed by that same file.
-        assertTrue(new File(TABLE + ".parquet").exists(),
+        assertTrue(new File(DATA_DIR, TABLE + ".parquet").exists(),
                 "A single .parquet file is created for the table");
 
         assertNotNull(table.getColumnarStorage(),
@@ -151,10 +154,10 @@ public class ColumnarStorageTest {
 
         // Explicit save persists the whole table (schema, rows, sequences) to Parquet.
         table.saveToParquetFile(TABLE);
-        assertTrue(new File(TABLE + ".parquet").exists(), "Parquet file exists after save");
+        assertTrue(new File(DATA_DIR, TABLE + ".parquet").exists(), "Parquet file exists after save");
 
         // Reload from the single Parquet file.
-        Database reloaded = new Database(".");
+        Database reloaded = new Database(DATA_DIR);
         Table loaded = Table.loadFromParquetFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded from Parquet");
         if (loaded == null) {
@@ -180,7 +183,7 @@ public class ColumnarStorageTest {
         insertRows(8);
         database.saveTablesToDisk();
 
-        Database reloaded = new Database(".");
+        Database reloaded = new Database(DATA_DIR);
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE);
         assertNotNull(table, "Table loaded via loadTablesFromDisk");
@@ -198,12 +201,12 @@ public class ColumnarStorageTest {
         // a legacy-only on-disk state before migration.
         insertRows(3);
         database.getTable(TABLE).saveToSerializedFile(TABLE);
-        new File(TABLE + ".parquet").delete();
-        assertTrue(new File(TABLE + ".table").exists(), "Legacy .table file exists");
-        assertFalse(new File(TABLE + ".parquet").exists(), "No Parquet file yet");
+        new File(DATA_DIR, TABLE + ".parquet").delete();
+        assertTrue(new File(DATA_DIR, TABLE + ".table").exists(), "Legacy .table file exists");
+        assertFalse(new File(DATA_DIR, TABLE + ".parquet").exists(), "No Parquet file yet");
 
         // A fresh Database with PARQUET format auto-migrates the .table file.
-        Database reloaded = new Database(".");
+        Database reloaded = new Database(DATA_DIR);
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE);
         assertNotNull(table, "Table migrated from .table");
@@ -212,8 +215,8 @@ public class ColumnarStorageTest {
         }
         assertEquals(3, table.getLiveRowCount(), "Migrated rows preserved");
         assertEquals("ID", table.getPrimaryKeyColumn(), "Migrated schema preserved");
-        assertTrue(new File(TABLE + ".parquet").exists(), "Parquet file created after migration");
-        assertFalse(new File(TABLE + ".table").exists(), "Legacy .table deleted after migration");
+        assertTrue(new File(DATA_DIR, TABLE + ".parquet").exists(), "Parquet file created after migration");
+        assertFalse(new File(DATA_DIR, TABLE + ".table").exists(), "Legacy .table deleted after migration");
     }
 
     @Test
@@ -223,7 +226,7 @@ public class ColumnarStorageTest {
         StorageFormat.resetCacheForTest();
         try {
             database.getTable(TABLE).saveToParquetFile(TABLE);
-            assertTrue(new File(TABLE + ".parquet").exists(), "Parquet save writes .parquet");
+            assertTrue(new File(DATA_DIR, TABLE + ".parquet").exists(), "Parquet save writes .parquet");
         } finally {
             StorageFormat.resetCacheForTest();
         }
@@ -245,9 +248,9 @@ public class ColumnarStorageTest {
     void testEmptyTableSaveAndLoad() {
         // No rows inserted - saving and reloading an empty table must still work.
         database.getTable(TABLE).saveToParquetFile(TABLE);
-        assertTrue(new File(TABLE + ".parquet").exists(), "Empty table still persisted to Parquet");
+        assertTrue(new File(DATA_DIR, TABLE + ".parquet").exists(), "Empty table still persisted to Parquet");
 
-        Database reloaded = new Database(".");
+        Database reloaded = new Database(DATA_DIR);
         Table loaded = Table.loadFromParquetFile(reloaded, TABLE);
         assertNotNull(loaded, "Empty table loaded from Parquet");
         if (loaded != null) {

@@ -61,7 +61,7 @@ profile:
 clean:
 	@echo "Cleaning..."
 	$(MVN) clean
-	rm -f data/*.csv data/*.table *.log timing/timingN.md classpath.txt
+	rm -f data/*.csv data/*.table data/*.parquet *.parquet *.log timing/timingN.md classpath.txt
 
 ## Check timing regression (fail if degradation > 20%)
 check-timing:

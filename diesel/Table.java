@@ -1,12 +1,14 @@
 package diesel;
 
-import java.io.BufferedWriter;
+import diesel.format.FormatRegistry;
+import diesel.format.TableData;
+import diesel.format.TableFormat;
+import diesel.format.WriteOptions;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -151,6 +153,13 @@ class Table implements TableStorage, Serializable {
     private transient BTreeClusteredIndex clusteredIndex;
     private transient Database database;
     private int formatVersion = CURRENT_FORMAT_VERSION;
+
+    /**
+     * Storage format handler this table persists through (see
+     * {@link diesel.format.FormatRegistry}). Resolved lazily from the
+     * {@code storage.format.*} configuration by {@link #resolveFormat()}.
+     */
+    private transient TableFormat formatHandler;
 
     // ─── Columnar storage support (Prompt 88) ────────────────────────
 
@@ -381,11 +390,14 @@ class Table implements TableStorage, Serializable {
      * Returns the Parquet file path for this table, resolved against the
      * database data directory. The file extension is {@code .parquet}.
      *
+     * <p>Uses the same resolution as the CSV serialization path
+     * ({@link #resolveFilePath(String, String)}), so Parquet files are always
+     * co-located with the CSV files in the database data directory.
+     *
      * @return the resolved Parquet file path
      */
     public java.nio.file.Path getParquetFilePath() {
-        String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
-        return java.nio.file.Path.of(dir, name + ".parquet");
+        return java.nio.file.Path.of(resolveFilePath(name, ".parquet"));
     }
 
     /**
@@ -2465,70 +2477,118 @@ class Table implements TableStorage, Serializable {
     }
 
     /**
-     * Writes the table contents (header plus rows) to a CSV file in the data
-     * directory. Each row is read under its lock while writing.
+     * Writes the table contents to a file in the data directory, using the
+     * table's resolved storage format. Parquet tables are persisted to a
+     * single {@code .parquet} file; all other formats are written through the
+     * table's {@link TableFormat} handler (the legacy CSV export by default).
      *
      * @param tableName the table name, used as the file base name
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
         long live = getLiveRowCount();
-        if (StorageFormat.usesParquet(live)) {
+        if (StorageFormat.usesParquet(this.name, live)) {
             saveToParquetFile(tableName);
             return;
         }
+        saveViaFormatHandler(tableName);
+    }
+
+    /**
+     * Persists the table through its {@link TableFormat} handler. This covers
+     * the non-Parquet paths (legacy CSV export and any future row-based
+     * format registered in {@link FormatRegistry}).
+     *
+     * @param tableName the table name, used as the file base name
+     */
+    private void saveViaFormatHandler(String tableName) {
+        TableFormat format = resolveFormat();
         tableLock.readLock().lock();
         try {
-            String fileName = resolveFilePath(tableName, ".csv");
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
-                writer.write(String.join(",", columns));
-                writer.newLine();
-
-                for (int i = 0; i < rows.size(); i++) {
-                    if (isDeleted(i)) {
-                        continue;
-                    }
-                    ReentrantReadWriteLock lock = getRowLock(i);
-                    lock.readLock().lock();
-                    try {
-                        Map<String, Object> row = rows.get(i);
-                        List<String> values = new ArrayList<>();
-                        for (String column : columns) {
-                            values.add(formatValue(row.get(column)));
-                        }
-                        writer.write(String.join(",", values));
-                        writer.newLine();
-                    } finally {
-                        lock.readLock().unlock();
-                    }
-                }
-
-                isFileInitialized = true;
-                LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
-                        new Object[]{tableName, fileName, rows.size()});
+            String fileName = resolveFilePath(tableName, format.getFileExtension());
+            try {
+                format.write(buildTableData(), java.nio.file.Path.of(fileName), WriteOptions.DEFAULT);
             } catch (IOException e) {
                 LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
                 throw new DieselIOException("Failed to save table to file: " + fileName, e);
             }
+            isFileInitialized = true;
+            LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
+                    new Object[]{tableName, fileName, rows.size()});
         } finally {
             tableLock.readLock().unlock();
         }
     }
 
-    private String formatValue(Object value) {
-        if (value == null) {
-            return "";
+    /**
+     * Resolves (and caches) the {@link TableFormat} handler for this table
+     * from the {@code storage.format.*} configuration via {@link FormatRegistry}.
+     *
+     * @return the format handler
+     */
+    private TableFormat resolveFormat() {
+        TableFormat format = formatHandler;
+        if (format == null) {
+            String formatName = StorageFormat.formatForTable(name, getLiveRowCount());
+            format = FormatRegistry.get(formatName);
+            if (format == null) {
+                throw new IllegalArgumentException(
+                        "No storage format registered for '" + formatName + "'");
+            }
+            formatHandler = format;
         }
-        if (value instanceof String) {
-            return "\"" + value.toString().replace("\"", "\"\"") + "\"";
+        return format;
+    }
+
+    /**
+     * Adapts this table's live rows and schema into a {@link TableData}
+     * carrier for a format handler. Acquires the table read lock.
+     *
+     * @return the carrier
+     */
+    public TableData toTableData() {
+        tableLock.readLock().lock();
+        try {
+            return buildTableData();
+        } finally {
+            tableLock.readLock().unlock();
         }
-        if (value instanceof LocalDate || value instanceof LocalDateTime || value instanceof UUID) {
-            return value.toString();
+    }
+
+    /**
+     * Builds the {@link TableData} carrier. The caller must hold the table
+     * read lock.
+     *
+     * @return the carrier
+     */
+    private TableData buildTableData() {
+        List<Map<String, Object>> live = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            if (!isDeleted(i)) {
+                live.add(rows.get(i));
+            }
         }
-        if (value instanceof BigDecimal bd) {
-            return bd.toPlainString();
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put(TableData.META_FORMAT_VERSION, formatVersion);
+        metadata.put(TableData.META_PRIMARY_KEY, primaryKeyColumn == null ? "" : primaryKeyColumn);
+        metadata.put(TableData.META_HAS_CLUSTERED_INDEX, hasClusteredIndex);
+        metadata.put(TableData.META_CLUSTERED_INDEX_COLUMN,
+                clusteredIndexColumn == null ? "" : clusteredIndexColumn);
+        if (sequences != null) {
+            metadata.put(TableData.META_SEQUENCES, sequences);
         }
-        return value.toString();
+        if (indexDefinitions != null) {
+            metadata.put(TableData.META_INDEX_DEFINITIONS, indexDefinitions);
+        }
+        if (coverColumnDefinitions != null) {
+            metadata.put(TableData.META_COVER_COLUMN_DEFINITIONS, coverColumnDefinitions);
+        }
+        return TableData.builder()
+                .columns(columns)
+                .columnTypes(columnTypes)
+                .rows(live)
+                .metadata(metadata)
+                .build();
     }
 
     /**

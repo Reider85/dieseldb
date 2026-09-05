@@ -1,5 +1,6 @@
 package diesel;
 
+import diesel.format.TableData;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.bytes.ByteBufferAllocator;
 import org.apache.parquet.bytes.HeapByteBufferAllocator;
@@ -31,7 +32,6 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -143,18 +143,41 @@ class ParquetWriter {
         if (tableName == null || tableName.isBlank()) {
             throw new IllegalArgumentException("Table name must not be null or blank");
         }
-
         String dataDir = table.getDatabase() != null ? table.getDatabase().getDataDir() : ".";
-        java.io.File dir = new java.io.File(dataDir);
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-        java.nio.file.Path filePath = java.nio.file.Path.of(dataDir, tableName + PARQUET_EXTENSION);
+        writeTableData(table.toTableData(), dataDir, tableName);
+        table.setFileInitialized(true);
+    }
 
-        List<String> columns = table.getColumns();
-        Map<String, Class<?>> columnTypes = table.getColumnTypes();
+    /**
+     * Writes {@link TableData} to a {@code .parquet} file in {@code dataDir}.
+     * This is the format-handler entry point: the engine adapts a {@link Table}
+     * into a neutral carrier (see {@link Table#toTableData()}) and the Parquet
+     * layer only ever sees the carrier, so {@code diesel.format} handlers never
+     * depend on engine-internal classes.
+     *
+     * @param data      the data to persist (schema, metadata, rows)
+     * @param dataDir   the destination directory (created if missing)
+     * @param tableName the table name used for the file base name
+     * @throws DieselIOException if the Parquet file cannot be written
+     */
+    public static void writeTableData(TableData data, String dataDir, String tableName) {
+        if (data == null) {
+            throw new IllegalArgumentException("Table data must not be null");
+        }
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("Table name must not be null or blank");
+        }
+        String dir = dataDir != null ? dataDir : ".";
+        java.io.File directory = new java.io.File(dir);
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+        java.nio.file.Path filePath = java.nio.file.Path.of(dir, tableName + PARQUET_EXTENSION);
+
+        List<String> columns = data.getColumns();
+        Map<String, Class<?>> columnTypes = data.getColumnTypes();
         MessageType schema = buildSchema(columns, columnTypes);
-        List<Map<String, Object>> rows = table.getLiveRows();
+        List<Map<String, Object>> rows = data.getRows();
 
         LOGGER.log(Level.INFO, "Writing table {0} ({1} rows) to Parquet file {2}",
                 new Object[]{tableName, rows.size(), filePath});
@@ -208,9 +231,8 @@ class ParquetWriter {
                 pageStore.flushToFileWriter(fileWriter);
                 fileWriter.endBlock();
             }
-            fileWriter.end(buildMetadata(table));
+            fileWriter.end(buildMetadata(data));
 
-            table.setFileInitialized(true);
             LOGGER.log(Level.INFO, "Table {0} written to Parquet file {1}", new Object[]{tableName, filePath});
         } catch (IOException | RuntimeException e) {
             LOGGER.log(Level.SEVERE, "Failed to write table to Parquet file: {0}", filePath);
@@ -223,48 +245,66 @@ class ParquetWriter {
     }
 
     /**
-     * Builds the key-value metadata map stored in the Parquet footer. This
-     * captures the full table schema and dictionary information needed to
-     * reconstruct a {@link Table} from the {@code .parquet} file, so the file
-     * can serve as the sole persistent representation of the table.
+     * Builds the key-value metadata map stored in the Parquet footer from the
+     * {@link TableData} carrier's engine metadata (see the {@link TableData#META_*}
+     * keys). This captures the full table schema and dictionary information
+     * needed to reconstruct a {@link Table} from the {@code .parquet} file, so
+     * the file can serve as the sole persistent representation of the table.
      *
      * <p>Encoded as plain UTF-8 strings, delimited with {@code ';'} between
      * entries and {@code '::'} between a key and its value.
      *
-     * @param table the table to describe
+     * @param data the carrier describing the table
      * @return the footer metadata map
      */
-    static Map<String, String> buildMetadata(Table table) {
+    static Map<String, String> buildMetadata(TableData data) {
+        Map<String, Object> engineMeta = data.getMetadata();
         Map<String, String> meta = new LinkedHashMap<>();
-        meta.put(ErrorMessages.PARQUET_META_FORMAT_VERSION, String.valueOf(table.getFormatVersion()));
-        meta.put(ErrorMessages.PARQUET_META_PRIMARY_KEY,
-                table.getPrimaryKeyColumn() != null ? table.getPrimaryKeyColumn() : "");
-        meta.put(ErrorMessages.PARQUET_META_HAS_CLUSTERED, String.valueOf(table.hasClusteredIndex()));
+        Object formatVersion = engineMeta.get(TableData.META_FORMAT_VERSION);
+        meta.put(ErrorMessages.PARQUET_META_FORMAT_VERSION,
+                formatVersion != null ? String.valueOf(formatVersion) : "0");
+        Object primaryKey = engineMeta.get(TableData.META_PRIMARY_KEY);
+        meta.put(ErrorMessages.PARQUET_META_PRIMARY_KEY, primaryKey != null ? String.valueOf(primaryKey) : "");
+        Object hasClustered = engineMeta.get(TableData.META_HAS_CLUSTERED_INDEX);
+        meta.put(ErrorMessages.PARQUET_META_HAS_CLUSTERED,
+                hasClustered != null ? String.valueOf(hasClustered) : "false");
+        Object clusteredColumn = engineMeta.get(TableData.META_CLUSTERED_INDEX_COLUMN);
         meta.put(ErrorMessages.PARQUET_META_CLUSTERED_COL,
-                table.getClusteredIndexColumn() != null ? table.getClusteredIndexColumn() : "");
+                clusteredColumn != null ? String.valueOf(clusteredColumn) : "");
 
         StringJoiner typeJoiner = new StringJoiner(";");
-        for (Map.Entry<String, Class<?>> e : table.getColumnTypes().entrySet()) {
+        for (Map.Entry<String, Class<?>> e : data.getColumnTypes().entrySet()) {
             typeJoiner.add(e.getKey() + "::" + e.getValue().getName());
         }
         meta.put(ErrorMessages.PARQUET_META_COLUMN_TYPES, typeJoiner.toString());
 
-        StringJoiner seqJoiner = new StringJoiner(";");
-        for (Map.Entry<String, Sequence> e : table.getSequences().entrySet()) {
-            Sequence seq = e.getValue();
-            seqJoiner.add(e.getKey() + "::" + seq.getName() + "::" + seq.getType().getName()
-                    + "::" + seq.getCurrentValue() + "::" + seq.getIncrement());
+        Object sequencesValue = engineMeta.get(TableData.META_SEQUENCES);
+        if (sequencesValue instanceof Map<?, ?>) {
+            StringJoiner seqJoiner = new StringJoiner(";");
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) sequencesValue).entrySet()) {
+                if (e.getValue() instanceof Sequence seq) {
+                    seqJoiner.add(e.getKey() + "::" + seq.getName() + "::" + seq.getType().getName()
+                            + "::" + seq.getCurrentValue() + "::" + seq.getIncrement());
+                }
+            }
+            meta.put(ErrorMessages.PARQUET_META_SEQUENCES, seqJoiner.toString());
         }
-        meta.put(ErrorMessages.PARQUET_META_SEQUENCES, seqJoiner.toString());
 
+        Object indexesValue = engineMeta.get(TableData.META_INDEX_DEFINITIONS);
+        Object coverValue = engineMeta.get(TableData.META_COVER_COLUMN_DEFINITIONS);
         StringJoiner idxJoiner = new StringJoiner(";");
-        for (Map.Entry<String, String> e : table.getIndexDefinitions().entrySet()) {
-            String column = e.getKey();
-            String def = e.getValue();
-            idxJoiner.add(column + "::" + (def != null ? def : ""));
-            List<String> cover = table.getCoverColumnDefinitions().getOrDefault(column, Collections.emptyList());
-            if (!cover.isEmpty()) {
-                idxJoiner.add(column + "::@" + String.join(",", cover));
+        if (indexesValue instanceof Map<?, ?>) {
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) indexesValue).entrySet()) {
+                String column = String.valueOf(e.getKey());
+                idxJoiner.add(column + "::" + (e.getValue() != null ? String.valueOf(e.getValue()) : ""));
+                if (coverValue instanceof Map<?, ?>) {
+                    Object cover = ((Map<?, ?>) coverValue).get(e.getKey());
+                    if (cover instanceof List<?> && !((List<?>) cover).isEmpty()) {
+                        java.util.List<String> coverList = ((List<?>) cover).stream()
+                                .map(String::valueOf).toList();
+                        idxJoiner.add(column + "::@" + String.join(",", coverList));
+                    }
+                }
             }
         }
         meta.put(ErrorMessages.PARQUET_META_INDEXES, idxJoiner.toString());

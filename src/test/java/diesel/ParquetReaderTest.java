@@ -4,6 +4,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import diesel.format.FormatRegistry;
+import diesel.format.ReadOptions;
+import diesel.format.TableData;
+import diesel.format.TableFormat;
+import diesel.format.WriteOptions;
+
 import java.io.File;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -23,7 +29,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class ParquetReaderTest {
     private static final String TABLE = "PARQUET_READER_TEST";
-    private static final Path PARQUET_PATH = Path.of(TABLE + ".parquet");
+    /** Test data directory: Parquet files must be co-located with CSV files in {@code data/}. */
+    private static final String DATA_DIR = "data";
+    private static final Path PARQUET_PATH = Path.of(DATA_DIR, TABLE + ".parquet");
 
     @BeforeEach
     void setUp() {
@@ -36,16 +44,60 @@ public class ParquetReaderTest {
     }
 
     private void cleanup() {
-        new File(TABLE + ".parquet").delete();
-        new File(TABLE + ".table").delete();
-        new File(TABLE + ".csv").delete();
+        new File(DATA_DIR, TABLE + ".parquet").delete();
+        new File(DATA_DIR, TABLE + ".table").delete();
+        new File(DATA_DIR, TABLE + ".csv").delete();
+    }
+
+    // ─── Format framework round-trip (ParquetFormat via FormatRegistry) ───
+
+    @Test
+    void testParquetFormatRoundTripThroughRegistry() throws Exception {
+        Database db = new Database(DATA_DIR);
+        db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Alice', 25)", null);
+        db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Bob', 30)", null);
+
+        Table table = db.getTable(TABLE);
+        TableFormat format = FormatRegistry.get("PARQUET");
+        assertNotNull(format, "PARQUET format registered in FormatRegistry");
+
+        format.write(table.toTableData(), PARQUET_PATH, WriteOptions.DEFAULT);
+
+        TableData read = format.read(PARQUET_PATH, ReadOptions.DEFAULT);
+        assertEquals(3, read.getColumns().size());
+        assertTrue(read.getColumns().containsAll(List.of("ID", "NAME", "AGE")),
+                "all columns restored, was " + read.getColumns());
+        assertEquals(2, read.getRows().size());
+        Map<String, Object> alice = read.getRows().stream()
+                .filter(r -> "Alice".equals(r.get("NAME"))).findFirst().orElseThrow();
+        assertEquals(25, alice.get("AGE"));
+        assertEquals("ID", read.getMetadataValue(TableData.META_PRIMARY_KEY));
+        assertNotNull(read.getMetadataValue(TableData.META_SEQUENCES),
+                "sequences restored from the Parquet footer");
+
+        TableData limited = format.read(PARQUET_PATH, ReadOptions.DEFAULT.withLimit(1));
+        assertEquals(1, limited.getRows().size(), "limit applied by read");
+
+        TableData schema = format.inferSchema(PARQUET_PATH);
+        assertTrue(schema.getRows().isEmpty(), "inferSchema returns no rows");
+        assertEquals(3, schema.getColumns().size());
+        assertTrue(schema.getColumns().containsAll(List.of("ID", "NAME", "AGE")));
+    }
+
+    @Test
+    void testFormatRegistryResolvesParquetConfig() {
+        TableFormat resolved = FormatRegistry.resolve(null, java.util.Map.of("storage.format", "PARQUET"));
+        assertNotNull(resolved);
+        assertEquals("PARQUET", resolved.getName());
+        assertTrue(resolved.canRead(PARQUET_PATH));
     }
 
     // ─── Basic round-trip ────────────────────────────────────────────
 
     @Test
     void testReadAllRows() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Alice', 25)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Bob', 30)", null);
@@ -66,7 +118,7 @@ public class ParquetReaderTest {
 
     @Test
     void testReadEmptyTable() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Alice')", null);
 
@@ -81,7 +133,7 @@ public class ParquetReaderTest {
 
     @Test
     void testProjectionPushdown() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, ACTIVE BOOLEAN)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE) VALUES ('Alice', 25, TRUE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE) VALUES ('Bob', 30, FALSE)", null);
@@ -101,7 +153,7 @@ public class ParquetReaderTest {
 
     @Test
     void testProjectionPushdownSingleColumn() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Alice', 25)", null);
 
@@ -116,7 +168,7 @@ public class ParquetReaderTest {
 
     @Test
     void testProjectionPushdownAllColumns() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Alice', 25)", null);
 
@@ -132,7 +184,7 @@ public class ParquetReaderTest {
 
     @Test
     void testAllDataTypes() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " ("
                 + "ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), "
                 + "NAME STRING, "
@@ -164,7 +216,7 @@ public class ParquetReaderTest {
 
     @Test
     void testDateTypeRoundTrip() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), EVENT_DATE DATE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (EVENT_DATE) VALUES ('2024-01-15')", null);
 
@@ -179,7 +231,7 @@ public class ParquetReaderTest {
 
     @Test
     void testBooleanTypeRoundTrip() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), FLAG BOOLEAN)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (FLAG) VALUES (TRUE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (FLAG) VALUES (FALSE)", null);
@@ -194,7 +246,7 @@ public class ParquetReaderTest {
 
     @Test
     void testLongTypeRoundTrip() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), BIG_NUM LONG)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (BIG_NUM) VALUES (999999999999)", null);
 
@@ -209,7 +261,7 @@ public class ParquetReaderTest {
 
     @Test
     void testDoubleTypeRoundTrip() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), RATIO DOUBLE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (RATIO) VALUES (3.14159)", null);
 
@@ -226,7 +278,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownEquals() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Alice', 25)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Bob', 30)", null);
@@ -246,7 +298,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownGreaterThan() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (AGE) VALUES (10)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (AGE) VALUES (20)", null);
@@ -264,7 +316,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownLessThanOrEquals() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (AGE) VALUES (10)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (AGE) VALUES (20)", null);
@@ -280,7 +332,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownIsNull() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Alice')", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES (NULL)", null);
@@ -296,7 +348,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownIsNotNull() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Alice')", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES (NULL)", null);
@@ -312,7 +364,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownNotEquals() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (AGE) VALUES (25)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (AGE) VALUES (30)", null);
@@ -328,7 +380,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownInList() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Alice')", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Bob')", null);
@@ -347,7 +399,7 @@ public class ParquetReaderTest {
 
     @Test
     void testPredicatePushdownCombinedConditions() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Alice', 25)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Bob', 30)", null);
@@ -367,7 +419,7 @@ public class ParquetReaderTest {
 
     @Test
     void testGetFileSchema() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE) VALUES ('Alice', 25)", null);
 
@@ -386,7 +438,7 @@ public class ParquetReaderTest {
 
     @Test
     void testProjectionAndPredicateCombined() {
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, ACTIVE BOOLEAN)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE) VALUES ('Alice', 25, TRUE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE) VALUES ('Bob', 30, FALSE)", null);

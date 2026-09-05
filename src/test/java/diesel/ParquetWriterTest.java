@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class ParquetWriterTest {
     private static final Logger LOGGER = Logger.getLogger(ParquetWriterTest.class.getName());
     private static final String TABLE = "PARQUET_WRITER_TEST";
+    /** Test data directory: Parquet files must be co-located with CSV files in {@code data/}. */
+    private static final String DATA_DIR = "data";
     private static final byte[] PARQUET_MAGIC = "PAR1".getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
     @BeforeEach
@@ -32,15 +34,15 @@ public class ParquetWriterTest {
     }
 
     private void cleanup() {
-        new File(TABLE + ".parquet").delete();
-        new File(TABLE + ".table").delete();
-        new File(TABLE + ".csv").delete();
+        new File(DATA_DIR, TABLE + ".parquet").delete();
+        new File(DATA_DIR, TABLE + ".table").delete();
+        new File(DATA_DIR, TABLE + ".csv").delete();
     }
 
     @Test
     void testWriteParquetFile() throws IOException {
         LOGGER.log(Level.INFO, "Starting test: testWriteParquetFile");
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, BALANCE BIGDECIMAL)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE, BIRTHDATE, BALANCE) VALUES ('Alice', 25, TRUE, '1998-05-20', 123.45)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE, BIRTHDATE, BALANCE) VALUES ('Bob', 30, FALSE, '1993-08-15', 678.90)", null);
@@ -48,7 +50,7 @@ public class ParquetWriterTest {
         Table table = db.getTable(TABLE);
         ParquetWriter.writeTableToParquet(table, TABLE);
 
-        File file = new File(TABLE + ".parquet");
+        File file = new File(DATA_DIR, TABLE + ".parquet");
         assertTrue(file.exists(), "Parquet file created on disk");
         assertTrue(file.length() > 0, "Parquet file is not empty");
 
@@ -73,7 +75,7 @@ public class ParquetWriterTest {
     @Test
     void testWriteSkipsTombstonedRows() {
         LOGGER.log(Level.INFO, "Starting test: testWriteSkipsTombstonedRows");
-        Database db = new Database(".");
+        Database db = new Database(DATA_DIR);
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Alice')", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Bob')", null);
@@ -82,7 +84,7 @@ public class ParquetWriterTest {
         table.compact();
         ParquetWriter.writeTableToParquet(table, TABLE);
 
-        assertTrue(new File(TABLE + ".parquet").exists(), "Parquet file created");
+        assertTrue(new File(DATA_DIR, TABLE + ".parquet").exists(), "Parquet file created");
         LOGGER.log(Level.INFO, "Test testWriteSkipsTombstonedRows: DONE");
     }
 }

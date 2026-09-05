@@ -41,8 +41,10 @@ public class PersistenceTest {
     private void cleanup() {
         new File(TABLE + ".csv").delete();
         new File(TABLE + ".table").delete();
+        new File(TABLE + ".parquet").delete();
         new File(TABLE + "2.csv").delete();
         new File(TABLE + "2.table").delete();
+        new File(TABLE + "2.parquet").delete();
     }
 
     @Test

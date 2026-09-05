@@ -7,9 +7,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Resolves the whole-database persistent storage format from the
- * {@code storage.format} key in {@code config.properties}. This selects the
- * file read/write mechanism used by every table:
+ * Resolves the persistent storage format for tables from {@code config.properties}.
+ * This selects the file read/write mechanism used by each table:
  *
  * <ul>
  *   <li>{@code PARQUET} — a single {@code .parquet} file per table serves both
@@ -22,16 +21,20 @@ import java.util.logging.Logger;
  *       {@link Table#COLUMNAR_THRESHOLD_ROWS} live rows, {@code CSV} otherwise.</li>
  * </ul>
  *
- * <p>The default is {@code CSV}. Unknown values fall back to {@code CSV}.
- * Users who want columnar storage can opt in explicitly with
- * {@code storage.format=PARQUET} in {@code config.properties} or via
- * {@code SET storage.format = PARQUET;}.</p>
+ * <p>Resolution order is: a per-table override {@code storage.format.<TABLE>},
+ * then {@code storage.format.default}, then the legacy global
+ * {@code storage.format}. The default is {@code CSV}. Unknown values fall back
+ * to {@code CSV}.</p>
  */
 final class StorageFormat {
 
     private static final Logger LOGGER = Logger.getLogger(StorageFormat.class.getName());
 
     private static final String CONFIG_KEY = "storage.format";
+    private static final String CONFIG_KEY_DEFAULT = "storage.format.default";
+    private static final String CONFIG_KEY_TABLE_PREFIX = "storage.format.";
+
+    /** Test override / cached configured format; null means read from config file. */
     private static volatile String configuredFormat;
 
     private StorageFormat() {
@@ -46,33 +49,53 @@ final class StorageFormat {
     static String configuredFormat() {
         String raw = configuredFormat;
         if (raw == null) {
-            raw = loadFromConfig();
-            configuredFormat = raw;
+            raw = readRawFormat(null);
+            if (raw == null) {
+                raw = ErrorMessages.STORAGE_FORMAT_CSV;
+            }
         }
         return raw;
     }
 
-    private static String loadFromConfig() {
+    private static Properties loadProperties() {
+        Properties props = new Properties();
         try {
             File configFile = new File(ErrorMessages.CONFIG_FILE);
             if (configFile.exists()) {
-                Properties props = new Properties();
                 try (FileInputStream fis = new FileInputStream(configFile)) {
                     props.load(fis);
                 }
-                String val = props.getProperty(CONFIG_KEY);
-                if (val != null && !val.isBlank()) {
-                    String v = val.trim().toUpperCase();
-                    if (isValid(v)) {
-                        return v;
-                    }
-                    LOGGER.log(Level.WARNING, "Unknown storage.format '{0}', falling back to CSV", val);
-                }
             }
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Failed to read storage.format: {0}", e.getMessage());
+            LOGGER.log(Level.FINE, "Failed to read config.properties: {0}", e.getMessage());
         }
-        return ErrorMessages.STORAGE_FORMAT_CSV;
+        return props;
+    }
+
+    /**
+     * Reads the raw selected format name for a table from the config file,
+     * consulting per-table, then default, then global keys.
+     *
+     * @param tableName the table name, or {@code null} to skip the per-table key
+     * @return the raw format name (uppercased) or {@code null} when unset
+     */
+    private static String readRawFormat(String tableName) {
+        Properties props = loadProperties();
+        if (tableName != null) {
+            String perTable = props.getProperty(CONFIG_KEY_TABLE_PREFIX + tableName);
+            if (perTable != null && !perTable.isBlank()) {
+                return perTable.trim().toUpperCase();
+            }
+        }
+        String defaultValue = props.getProperty(CONFIG_KEY_DEFAULT);
+        if (defaultValue != null && !defaultValue.isBlank()) {
+            return defaultValue.trim().toUpperCase();
+        }
+        String global = props.getProperty(CONFIG_KEY);
+        if (global != null && !global.isBlank()) {
+            return global.trim().toUpperCase();
+        }
+        return null;
     }
 
     private static boolean isValid(String v) {
@@ -83,29 +106,62 @@ final class StorageFormat {
     }
 
     /**
+     * Returns the concrete storage format for a table, resolving the
+     * {@code AUTO} pseudo-format against the table's live row count. Honors a
+     * test override installed via {@link #setFormatForTest(String)}.
+     *
+     * @param tableName    the table name (used for the per-table config key)
+     * @param liveRowCount the table's live row count (for {@code AUTO})
+     * @return the concrete format name (PARQUET, CSV or SERIALIZED)
+     */
+    static String formatForTable(String tableName, long liveRowCount) {
+        String raw;
+        if (configuredFormat != null) {
+            raw = configuredFormat;
+        } else {
+            raw = readRawFormat(tableName);
+            if (raw == null) {
+                raw = ErrorMessages.STORAGE_FORMAT_CSV;
+            }
+        }
+        if (!isValid(raw)) {
+            LOGGER.log(Level.WARNING, "Unknown storage format '{0}', falling back to CSV", raw);
+            raw = ErrorMessages.STORAGE_FORMAT_CSV;
+        }
+        if (raw.equals(ErrorMessages.STORAGE_FORMAT_AUTO)) {
+            return liveRowCount >= Table.COLUMNAR_THRESHOLD_ROWS
+                    ? ErrorMessages.STORAGE_FORMAT_PARQUET
+                    : ErrorMessages.STORAGE_FORMAT_CSV;
+        }
+        return raw;
+    }
+
+    /**
      * Returns true when the given table should be persisted to Parquet given
      * the configured format and the table's current live row count.
+     *
+     * @param tableName    the table name (for per-table config keys)
+     * @param liveRowCount the table's live row count
+     * @return whether Parquet persistence applies
+     */
+    static boolean usesParquet(String tableName, long liveRowCount) {
+        return ErrorMessages.STORAGE_FORMAT_PARQUET.equals(formatForTable(tableName, liveRowCount));
+    }
+
+    /**
+     * Returns true when a table with the given live row count should be
+     * persisted to Parquet, ignoring per-table config keys.
      *
      * @param liveRowCount the table's live row count
      * @return whether Parquet persistence applies
      */
     static boolean usesParquet(long liveRowCount) {
-        String fmt = configuredFormat();
-        if (fmt.equals(ErrorMessages.STORAGE_FORMAT_PARQUET)) {
-            return true;
-        }
-        if (fmt.equals(ErrorMessages.STORAGE_FORMAT_SERIALIZED)) {
-            return false;
-        }
-        if (fmt.equals(ErrorMessages.STORAGE_FORMAT_CSV)) {
-            return false;
-        }
-        // AUTO
-        return liveRowCount >= Table.COLUMNAR_THRESHOLD_ROWS;
+        return usesParquet(null, liveRowCount);
     }
 
     /**
-     * Clears the cached configured format (used by tests to force re-read).
+     * Clears the cached/override configured format (used by tests to force
+     * re-read).
      */
     static void resetCacheForTest() {
         configuredFormat = null;
