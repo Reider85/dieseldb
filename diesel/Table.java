@@ -1,6 +1,7 @@
 package diesel;
 
 import diesel.format.FormatRegistry;
+import diesel.format.ReadOptions;
 import diesel.format.TableData;
 import diesel.format.TableFormat;
 import diesel.format.WriteOptions;
@@ -2478,30 +2479,15 @@ class Table implements TableStorage, Serializable {
 
     /**
      * Writes the table contents to a file in the data directory, using the
-     * table's resolved storage format. Parquet tables are persisted to a
-     * single {@code .parquet} file; all other formats are written through the
-     * table's {@link TableFormat} handler (the legacy CSV export by default).
+     * table's resolved storage format. The format handler (CSV, Parquet, or
+     * any future format registered in {@link FormatRegistry}) owns the file
+     * layout. After a successful write, columnar-capable formats automatically
+     * activate the columnar storage handle.
      *
      * @param tableName the table name, used as the file base name
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
-        long live = getLiveRowCount();
-        if (StorageFormat.usesParquet(this.name, live)) {
-            saveToParquetFile(tableName);
-            return;
-        }
-        saveViaFormatHandler(tableName);
-    }
-
-    /**
-     * Persists the table through its {@link TableFormat} handler. This covers
-     * the non-Parquet paths (legacy CSV export and any future row-based
-     * format registered in {@link FormatRegistry}).
-     *
-     * @param tableName the table name, used as the file base name
-     */
-    private void saveViaFormatHandler(String tableName) {
         TableFormat format = resolveFormat();
         tableLock.readLock().lock();
         try {
@@ -2513,6 +2499,9 @@ class Table implements TableStorage, Serializable {
                 throw new DieselIOException("Failed to save table to file: " + fileName, e);
             }
             isFileInitialized = true;
+            if (format.getCapabilities().isColumnar()) {
+                activateColumnarStorageFromPrimaryFile(tableName);
+            }
             LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
         } finally {
@@ -2655,43 +2644,69 @@ class Table implements TableStorage, Serializable {
 
     /**
      * Persists the live rows and full table metadata to a single {@code .parquet}
-     * file in the data directory. This is the unified persistence path: the same
-     * file serves as both the primary on-disk representation of the table and the
-     * columnar (OLAP) storage used for analytical queries.
+     * file in the data directory. Delegates to the format handler framework
+     * for the actual write; the Parquet format handler writes both data and
+     * dictionary metadata into the file footer.
      *
      * @param tableName the table name, used as the file base name
      * @throws DieselIOException if the Parquet file cannot be written
      */
     public void saveToParquetFile(String tableName) {
-        // The Parquet writer skips tombstoned rows (see Table#toTableData), so
-        // physically compacting here would defeat lazy delete: every auto-commit
-        // DELETE persists through saveToFile and would wipe the tombstones,
-        // making getDeletedCount() report 0 right after a delete. Compaction is
-        // handled when the tombstone ratio threshold is reached or explicitly.
-        tableLock.readLock().lock();
-        try {
-            ParquetWriter.writeTableToParquet(this, tableName);
-            activateColumnarStorageFromPrimaryFile(tableName);
-        } finally {
-            tableLock.readLock().unlock();
-        }
+        saveToFile(tableName);
     }
 
     /**
-     * Loads a table entirely from its {@code .parquet} file, reconstructing the
-     * schema, dictionary metadata and rows. This is the mirror of
-     * {@link #saveToParquetFile(String)} and makes the Parquet file the sole
-     * persistent representation (no separate {@code .table}/{@code .csv}).
+     * Loads a table entirely from its {@code .parquet} file using the
+     * {@link ParquetFormat} handler. The format handler reads data and
+     * metadata from the file; the engine reconstructs the table state
+     * (indexes, sequences, columnar storage) from the returned
+     * {@link TableData}.
      *
      * @param database  the database to attach to the loaded table
      * @param tableName the table name, used as the file base name
      * @return the loaded table, or null when the file is missing/corrupt
      */
     public static Table loadFromParquetFile(Database database, String tableName) {
+        TableFormat format = FormatRegistry.get(ErrorMessages.STORAGE_FORMAT_PARQUET);
+        if (format == null) {
+            return loadFromFormatHandler(database, tableName);
+        }
+        return loadFromFormatHandler(database, tableName, format);
+    }
+
+    /**
+     * Loads a table from a file using the appropriate {@link TableFormat}
+     * handler. The format handler reads {@link TableData} from the file; the
+     * engine then reconstructs the table state (schema, rows, indexes,
+     * sequences, columnar storage) from the carrier. When the file is
+     * missing, a new empty table is created.
+     *
+     * @param database  the database to attach to the loaded table
+     * @param tableName the table name, used as the file base name
+     * @return the loaded table, or null on failure
+     */
+    public static Table loadFromFormatHandler(Database database, String tableName) {
+        String formatName = StorageFormat.formatForTable(tableName, 0);
+        TableFormat format = FormatRegistry.get(formatName);
+        if (format == null) {
+            format = FormatRegistry.get(ErrorMessages.STORAGE_FORMAT_CSV);
+        }
+        return loadFromFormatHandler(database, tableName, format);
+    }
+
+    /**
+     * Loads a table from a file using the given {@link TableFormat} handler.
+     *
+     * @param database  the database to attach to the loaded table
+     * @param tableName the table name, used as the file base name
+     * @param format    the format handler to use
+     * @return the loaded table, or null on failure
+     */
+    public static Table loadFromFormatHandler(Database database, String tableName, TableFormat format) {
         String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
-        java.nio.file.Path path = java.nio.file.Path.of(dir, tableName + ErrorMessages.PARQUET_EXTENSION);
+        java.nio.file.Path path = java.nio.file.Path.of(dir, tableName + format.getFileExtension());
         if (!java.nio.file.Files.exists(path)) {
-            LOGGER.log(Level.INFO, "Parquet file {0} not found, creating new table {1} with base structure",
+            LOGGER.log(Level.INFO, "File {0} not found, creating new table {1} with base structure",
                     new Object[]{path, tableName});
             Table table = new Table(database, tableName, new ArrayList<>(), new HashMap<>(), null, new HashMap<String, Sequence>());
             table.formatVersion = CURRENT_FORMAT_VERSION;
@@ -2699,41 +2714,71 @@ class Table implements TableStorage, Serializable {
             return table;
         }
         try {
-            Map<String, String> meta = ParquetReader.getFileMetadata(path);
-            List<String> columns = ParquetReader.readSchemaColumns(path, meta);
-            Map<String, Class<?>> columnTypes = ParquetReader.readColumnTypes(path, meta, columns);
-            String primaryKey = meta.getOrDefault(ErrorMessages.PARQUET_META_PRIMARY_KEY, "");
-            Map<String, Sequence> sequences = ParquetReader.readSequences(meta);
+            TableData data = format.read(path, ReadOptions.DEFAULT);
+            List<String> columns = data.getColumns();
+            Map<String, Class<?>> columnTypes = data.getColumnTypes();
+            String primaryKey = (String) data.getMetadataValue(TableData.META_PRIMARY_KEY);
+            Map<String, Sequence> sequences = (Map<String, Sequence>) data.getMetadataValue(TableData.META_SEQUENCES);
 
             Table table = new Table(database, tableName, columns, columnTypes,
-                    primaryKey.isEmpty() ? null : primaryKey, sequences);
+                    (primaryKey == null || primaryKey.isEmpty()) ? null : primaryKey,
+                    sequences != null ? sequences : new HashMap<>());
 
-            List<Map<String, Object>> rows = ParquetReader.readAll(path);
-            table.loadRowsFromParquet(rows);
+            table.loadRowsFromParquet(data.getRows());
 
-            ParquetReader.restoreIndexes(table, meta);
-            if (Boolean.parseBoolean(meta.getOrDefault(ErrorMessages.PARQUET_META_HAS_CLUSTERED, "false"))
-                    && !primaryKey.isEmpty()) {
+            restoreIndexesFromTableData(table, data);
+
+            Boolean hasClustered = (Boolean) data.getMetadataValue(TableData.META_HAS_CLUSTERED_INDEX);
+            if (Boolean.TRUE.equals(hasClustered) && primaryKey != null && !primaryKey.isEmpty()) {
                 table.setClusteredIndexColumn(primaryKey);
                 table.setHasClusteredIndex(true);
             }
-            if (meta.containsKey(ErrorMessages.PARQUET_META_FORMAT_VERSION)) {
-                try {
-                    table.formatVersion = Integer.parseInt(meta.get(ErrorMessages.PARQUET_META_FORMAT_VERSION));
-                } catch (NumberFormatException ignored) {
-                    table.formatVersion = CURRENT_FORMAT_VERSION;
-                }
+            Object fmtVersion = data.getMetadataValue(TableData.META_FORMAT_VERSION);
+            if (fmtVersion instanceof Number n) {
+                table.formatVersion = n.intValue();
+            } else {
+                table.formatVersion = CURRENT_FORMAT_VERSION;
             }
             table.database = database;
             table.setFileInitialized(true);
-            table.activateColumnarStorageFromPrimaryFile(tableName);
-            LOGGER.log(Level.INFO, "Table {0} loaded from Parquet file {1} with {2} rows",
-                    new Object[]{tableName, path, rows.size()});
+            if (format.getCapabilities().isColumnar()) {
+                table.activateColumnarStorageFromPrimaryFile(tableName);
+            }
+            LOGGER.log(Level.INFO, "Table {0} loaded from {1} file {2} with {3} rows",
+                    new Object[]{tableName, format.getName(), path, data.getRows().size()});
             return table;
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to load table {0} from Parquet: {1}",
-                    new Object[]{tableName, e.getMessage()});
+            LOGGER.log(Level.SEVERE, "Failed to load table {0} from {1}: {2}",
+                    new Object[]{tableName, format.getName(), e.getMessage()});
             return null;
+        }
+    }
+
+    /**
+     * Restores secondary indexes and cover definitions from the
+     * {@link TableData} metadata. The metadata keys are the same ones
+     * written by {@link ParquetWriter#buildMetadata(TableData)}.
+     *
+     * @param table the table to restore indexes on
+     * @param data  the loaded data carrier
+     */
+    private static void restoreIndexesFromTableData(Table table, TableData data) {
+        String indexMeta = (String) data.getMetadataValue(ErrorMessages.PARQUET_META_INDEXES);
+        if (indexMeta == null || indexMeta.isBlank()) {
+            return;
+        }
+        Map<String, String> indexDefs = new HashMap<>();
+        Map<String, List<String>> covers = new HashMap<>();
+        ParquetReader.parseIndexMetadata(
+                Map.of(ErrorMessages.PARQUET_META_INDEXES, indexMeta), indexDefs, covers);
+        table.getCoverColumnDefinitions().putAll(covers);
+        for (Map.Entry<String, String> entry : indexDefs.entrySet()) {
+            table.getIndexDefinitions().putIfAbsent(entry.getKey(), entry.getValue());
+        }
+        try {
+            table.rebuildSecondaryIndexesForLoad();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to rebuild secondary indexes during load: {0}", e.getMessage());
         }
     }
 

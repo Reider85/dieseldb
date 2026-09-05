@@ -1,5 +1,8 @@
 package diesel;
 
+import diesel.format.FormatRegistry;
+import diesel.format.TableFormat;
+
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -138,9 +141,9 @@ final class ColumnarConversionJob {
     }
 
     /**
-     * Core conversion logic: writes the table to Parquet and activates
-     * columnar storage on success. Shared by both background and
-     * synchronous paths.
+     * Core conversion logic: writes the table to Parquet via the
+     * {@link FormatRegistry} and activates columnar storage on success.
+     * Shared by both background and synchronous paths.
      *
      * @param table the table to convert
      */
@@ -149,10 +152,16 @@ final class ColumnarConversionJob {
         LOGGER.log(Level.INFO, "Converting table {0} to columnar storage ({1} rows)",
                 new Object[]{table.getName(), table.getLiveRowCount()});
 
-        // Write the Parquet file.
-        ParquetWriter.writeTableToParquet(table, table.getName());
+        TableFormat parquetFormat = FormatRegistry.get(ErrorMessages.STORAGE_FORMAT_PARQUET);
+        if (parquetFormat == null) {
+            throw new IllegalStateException("Parquet format not registered in FormatRegistry");
+        }
+        try {
+            parquetFormat.write(table.toTableData(), parquetPath, diesel.format.WriteOptions.DEFAULT);
+        } catch (Exception e) {
+            throw new DieselIOException("Failed to write Parquet file for table " + table.getName(), e);
+        }
 
-        // Build the columnar storage handle and activate it.
         Map<String, Class<?>> types = table.getColumnTypes();
         ColumnarTableStorage storage = new ColumnarTableStorage(parquetPath, table.getName());
         storage.setColumnTypes(types);

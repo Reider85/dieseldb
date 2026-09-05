@@ -1,5 +1,8 @@
 package diesel;
 
+import diesel.format.FormatRegistry;
+import diesel.format.TableFormat;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -1134,10 +1137,10 @@ class Database {
 
     /**
      * Writes every registered table to disk. The format used per table is
-     * selected by the {@code storage.format} configuration: Parquet (single
-     * {@code .parquet} file) or the legacy serialized {@code .table} file.
+     * resolved via {@link StorageFormat#formatForTable} and the
+     * corresponding {@link TableFormat} handler from {@link FormatRegistry}.
      *
-     * @see Table#saveToParquetFile
+     * @see Table#saveToFile
      * @see Table#saveToSerializedFile
      */
     public void saveTablesToDisk() {
@@ -1146,11 +1149,14 @@ class Database {
             dir.mkdirs();
         }
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
+            String tableName = entry.getKey();
             Table table = entry.getValue();
-            if (StorageFormat.usesParquet(entry.getKey(), table.getLiveRowCount())) {
-                table.saveToParquetFile(entry.getKey());
+            String formatName = StorageFormat.formatForTable(tableName, table.getLiveRowCount());
+            TableFormat format = FormatRegistry.get(formatName);
+            if (format != null) {
+                table.saveToFile(tableName);
             } else {
-                table.saveToSerializedFile(entry.getKey());
+                table.saveToSerializedFile(tableName);
             }
         }
         LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
@@ -1158,13 +1164,12 @@ class Database {
 
     /**
      * Loads tables back into the shared table map from disk, skipping corrupt
-     * files with a warning. When {@code storage.format} selects Parquet, tables
-     * are loaded from {@code .parquet} files; legacy {@code .table} files are
-     * auto-migrated to Parquet on first load (the old file is deleted after a
-     * successful conversion). When the format is not Parquet, the legacy
-     * {@code .table} loader is used.
+     * files with a warning. The format for each file is detected using
+     * {@link FormatRegistry} and the appropriate {@link TableFormat} handler
+     * is used for loading. Legacy {@code .table} files are auto-migrated to
+     * the configured format on first load.
      *
-     * @see Table#loadFromParquetFile
+     * @see Table#loadFromFormatHandler
      * @see Table#loadFromFile
      */
     public void loadTablesFromDisk() {
@@ -1172,6 +1177,7 @@ class Database {
         if (dir.exists()) {
             loadLegacyTableFiles(dir);
             loadParquetTableFiles(dir);
+            loadCsvTableFiles(dir);
         }
         queryCache.invalidateAll();
     }
@@ -1187,7 +1193,7 @@ class Database {
                 continue;
             }
             if (StorageFormat.usesParquet(tableName, 0)) {
-                migrateTableToParquet(tableName, file);
+                migrateTableToFormat(tableName, file);
                 continue;
             }
             Table table = Table.loadFromFile(this, tableName);
@@ -1209,9 +1215,6 @@ class Database {
             if (tables.containsKey(tableName)) {
                 continue;
             }
-            if (!StorageFormat.usesParquet(tableName, 0)) {
-                continue;
-            }
             Table table = Table.loadFromParquetFile(this, tableName);
             if (table != null) {
                 tables.put(tableName, table);
@@ -1221,47 +1224,69 @@ class Database {
         }
     }
 
+    private void loadCsvTableFiles(File dir) {
+        File[] files = dir.listFiles((d, name) -> name.endsWith(".csv"));
+        if (files == null) {
+            return;
+        }
+        diesel.format.TableFormat csvFormat = FormatRegistry.get(ErrorMessages.STORAGE_FORMAT_CSV);
+        if (csvFormat == null) {
+            return;
+        }
+        for (File file : files) {
+            String tableName = file.getName().substring(0, file.getName().length() - ".csv".length());
+            if (tables.containsKey(tableName)) {
+                continue;
+            }
+            Table table = Table.loadFromFormatHandler(this, tableName, csvFormat);
+            if (table != null) {
+                tables.put(tableName, table);
+                LOGGER.log(Level.INFO, "Loaded table {0} from CSV with {1} rows",
+                        new Object[]{tableName, table.getLiveRowCount()});
+            }
+        }
+    }
+
     /**
-     * Auto-migrates a legacy {@code .table} file to Parquet: loads the table
-     * from the serialized file, writes it to Parquet, then removes the old
-     * file so a single {@code .parquet} file becomes the sole representation.
+     * Auto-migrates a legacy {@code .table} file to the configured format:
+     * loads the table from the serialized file, writes it using the resolved
+     * {@link TableFormat} handler, then removes the old file.
      *
-     * @param tableName the table name
+     * @param tableName  the table name
      * @param legacyFile the legacy {@code .table} file
      */
-    private void migrateTableToParquet(String tableName, File legacyFile) {
+    private void migrateTableToFormat(String tableName, File legacyFile) {
         Table table = Table.loadFromFile(this, tableName);
         if (table == null) {
             return;
         }
         tables.put(tableName, table);
         try {
-            table.saveToParquetFile(tableName);
+            table.saveToFile(tableName);
             legacyFile.delete();
-            LOGGER.log(Level.INFO, "Migrated table {0} from .table to .parquet", tableName);
+            LOGGER.log(Level.INFO, "Migrated table {0} from .table to configured format", tableName);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to migrate table {0} to Parquet: {1}",
+            LOGGER.log(Level.WARNING, "Failed to migrate table {0}: {1}",
                     new Object[]{tableName, e.getMessage()});
         }
     }
 
     private void deleteTableFiles(String tableName) {
-        try {
-            Files.deleteIfExists(Path.of(dataDir, tableName + ".csv"));
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to delete CSV file for table {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
+        for (TableFormat format : FormatRegistry.getRegisteredFormats().stream()
+                .map(FormatRegistry::get)
+                .filter(Objects::nonNull)
+                .toList()) {
+            try {
+                Files.deleteIfExists(Path.of(dataDir, tableName + format.getFileExtension()));
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to delete {0} file for table {1}: {2}",
+                        new Object[]{format.getName(), tableName, e.getMessage()});
+            }
         }
         try {
             Files.deleteIfExists(Path.of(dataDir, tableName + ErrorMessages.TABLE_EXTENSION));
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to delete serialized file for table {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
-        }
-        try {
-            Files.deleteIfExists(Path.of(dataDir, tableName + ErrorMessages.PARQUET_EXTENSION));
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to delete Parquet file for table {0}: {1}",
                     new Object[]{tableName, e.getMessage()});
         }
     }

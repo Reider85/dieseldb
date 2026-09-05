@@ -1,7 +1,12 @@
 package diesel;
 
+import diesel.format.FormatRegistry;
+import diesel.format.TableFormat;
+
 import java.io.File;
 import java.io.FileInputStream;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -24,7 +29,7 @@ import java.util.logging.Logger;
  * <p>Resolution order is: a per-table override {@code storage.format.<TABLE>},
  * then {@code storage.format.default}, then the legacy global
  * {@code storage.format}. The default is {@code CSV}. Unknown values fall back
- * to {@code CSV}.</p>
+ * to {@code CSV}. Format names are validated against {@link FormatRegistry}.</p>
  */
 final class StorageFormat {
 
@@ -57,6 +62,9 @@ final class StorageFormat {
         return raw;
     }
 
+    /**
+     * Loads properties from {@code config.properties}.
+     */
     private static Properties loadProperties() {
         Properties props = new Properties();
         try {
@@ -106,9 +114,11 @@ final class StorageFormat {
     }
 
     /**
-     * Returns the concrete storage format for a table, resolving the
+     * Returns the concrete storage format name for a table, resolving the
      * {@code AUTO} pseudo-format against the table's live row count. Honors a
-     * test override installed via {@link #setFormatForTest(String)}.
+     * test override installed via {@link #setFormatForTest(String)}. The
+     * returned name is validated against {@link FormatRegistry}; unregistered
+     * names fall back to {@link ErrorMessages#STORAGE_FORMAT_CSV}.
      *
      * @param tableName    the table name (used for the per-table config key)
      * @param liveRowCount the table's live row count (for {@code AUTO})
@@ -129,11 +139,34 @@ final class StorageFormat {
             raw = ErrorMessages.STORAGE_FORMAT_CSV;
         }
         if (raw.equals(ErrorMessages.STORAGE_FORMAT_AUTO)) {
-            return liveRowCount >= Table.COLUMNAR_THRESHOLD_ROWS
+            raw = liveRowCount >= Table.COLUMNAR_THRESHOLD_ROWS
                     ? ErrorMessages.STORAGE_FORMAT_PARQUET
                     : ErrorMessages.STORAGE_FORMAT_CSV;
         }
+        if (FormatRegistry.get(raw) == null) {
+            LOGGER.log(Level.WARNING, "Format '{0}' not registered in FormatRegistry, falling back to CSV", raw);
+            raw = ErrorMessages.STORAGE_FORMAT_CSV;
+        }
         return raw;
+    }
+
+    /**
+     * Resolves the {@link TableFormat} handler for a table. This combines
+     * config-based format name resolution with {@link FormatRegistry} lookup,
+     * providing a single entry point for the engine to obtain the correct
+     * format handler.
+     *
+     * @param tableName    the table name (used for per-table config keys)
+     * @param liveRowCount the table's live row count (for {@code AUTO})
+     * @return the resolved format handler, never null
+     */
+    static TableFormat resolveFormatHandler(String tableName, long liveRowCount) {
+        String formatName = formatForTable(tableName, liveRowCount);
+        TableFormat format = FormatRegistry.get(formatName);
+        if (format == null) {
+            format = FormatRegistry.get(ErrorMessages.STORAGE_FORMAT_CSV);
+        }
+        return format;
     }
 
     /**
@@ -157,6 +190,19 @@ final class StorageFormat {
      */
     static boolean usesParquet(long liveRowCount) {
         return usesParquet(null, liveRowCount);
+    }
+
+    /**
+     * Converts the config.properties to a Map suitable for
+     * {@link FormatRegistry#resolve(String, Map)}.
+     */
+    static Map<String, String> toConfigMap() {
+        Properties props = loadProperties();
+        Map<String, String> map = new LinkedHashMap<>();
+        for (String key : props.stringPropertyNames()) {
+            map.put(key, props.getProperty(key));
+        }
+        return map;
     }
 
     /**
