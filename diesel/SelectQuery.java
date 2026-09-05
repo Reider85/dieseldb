@@ -963,7 +963,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 TableStorage storage = table.getStorageForQuery(queryType);
                 if (storage != table && storage instanceof ColumnarTableStorage colStorage
                         && colStorage.isAvailable()) {
-                    List<String> neededColumns = collectProjectedColumnNames(mainTableName);
+                    List<String> neededColumns = collectProjectedColumnNames(mainTableName, table);
                     if (conditions != null && !conditions.isEmpty()) {
                         mainRows = colStorage.getRows(neededColumns, conditions);
                     } else {
@@ -3059,31 +3059,85 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * the SELECT projection. Used for Parquet projection pushdown so that
      * only the required columns are read from the columnar file.
      *
+     * <p>Beyond the plain SELECT columns, the ORDER BY, GROUP BY, aggregate
+     * argument and WHERE condition columns must be projected too: ORDER BY /
+     * GROUP BY / aggregates run in memory over the read rows, and the
+     * row-level WHERE re-evaluation in {@code ParquetReader.readWhere}
+     * needs every referenced column. Omitting them (e.g. {@code SELECT NAME
+     * FROM t ORDER BY AGE}) silently dropped those columns from the read rows,
+     * so sorting/aggregation found {@code null} values and produced no result
+     * or kept insertion order.</p>
+     *
      * @param tableName the main table name
-     * @return the ordered list of column names to project
+     * @param table     the main table (used to filter against real columns)
+     * @return the ordered list of column names to project, or {@code null}
+     *         when all columns must be read (SELECT * / '*' projection)
      */
-    private List<String> collectProjectedColumnNames(String tableName) {
+    private List<String> collectProjectedColumnNames(String tableName, Table table) {
         List<ColumnProjection> plan = projectionPlan;
         if (plan == null) {
             plan = buildProjectionPlan();
         }
-        List<String> needed = new ArrayList<>();
+        Set<String> tableColumns = table == null
+                ? Collections.emptySet()
+                : new HashSet<>(table.getColumns());
+        LinkedHashSet<String> needed = new LinkedHashSet<>();
         for (ColumnProjection proj : plan) {
             if (proj.normalized == null) {
                 // SELECT * — read all columns
                 return null;
             }
-            // Extract the unqualified column name from the normalized form
-            // "TABLE.COLUMN" → "COLUMN", or use the alias if it's a plain name.
             String name = proj.normalized;
             if (name.contains(".")) {
                 name = name.split("\\.", 2)[1];
             }
-            if (name != null && !name.isBlank()) {
+            if (name != null && !name.isBlank() && tableColumns.contains(name)) {
                 needed.add(name);
             }
         }
-        return needed;
+        for (QueryParser.OrderByInfo order : orderBy) {
+            addProjectedColumn(needed, order.column, tableName, tableColumns);
+        }
+        for (String groupColumn : groupBy) {
+            addProjectedColumn(needed, groupColumn, tableName, tableColumns);
+        }
+        for (QueryParser.AggregateFunction agg : aggregates) {
+            if (agg.column != null) {
+                addProjectedColumn(needed, agg.column, tableName, tableColumns);
+            }
+        }
+        for (QueryParser.Condition cond : conditions) {
+            addProjectedConditionColumns(needed, cond, tableName, tableColumns);
+        }
+        return new ArrayList<>(needed);
+    }
+
+    private void addProjectedColumn(Set<String> needed, String column, String defaultTable, Set<String> tableColumns) {
+        if (column == null || column.isBlank()) {
+            return;
+        }
+        String name = normalizeColumnKey(column, defaultTable);
+        if (tableColumns.contains(name)) {
+            needed.add(name);
+        }
+    }
+
+    private void addProjectedConditionColumns(Set<String> needed, QueryParser.Condition cond,
+                                              String defaultTable, Set<String> tableColumns) {
+        if (cond == null) {
+            return;
+        }
+        if (cond.column != null) {
+            addProjectedColumn(needed, cond.column, defaultTable, tableColumns);
+        }
+        if (cond.rightColumn != null) {
+            addProjectedColumn(needed, cond.rightColumn, defaultTable, tableColumns);
+        }
+        if (cond.subConditions != null) {
+            for (QueryParser.Condition sub : cond.subConditions) {
+                addProjectedConditionColumns(needed, sub, defaultTable, tableColumns);
+            }
+        }
     }
 
     private Map<String, Object> filterColumns(Map<String, Object> row, List<String> columns) {

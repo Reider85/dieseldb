@@ -57,7 +57,9 @@ public class PersistenceTest {
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
         assertTrue(new File(TABLE + ".table").exists(), "Serialized .table file created on disk");
-        assertTrue(new File(TABLE + ".csv").exists(), "CSV file created on disk");
+        boolean parquet = ErrorMessages.STORAGE_FORMAT_PARQUET.equals(StorageFormat.formatForTable(TABLE, 1));
+        assertTrue(new File(parquet ? TABLE + ".parquet" : TABLE + ".csv").exists(),
+                parquet ? "Parquet file created on disk" : "CSV file created on disk");
         assertTrue(db.getTable(TABLE).isFileInitialized(), "Table marked as initialized after save");
 
         Database reloaded = new Database(".");
@@ -288,10 +290,14 @@ public class PersistenceTest {
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME) VALUES ('X1', 'Xray')", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
         assertTrue(new File(TABLE + ".table").exists(), "Serialized file exists before drop");
-        assertTrue(new File(TABLE + ".csv").exists(), "CSV file exists before drop");
+        boolean parquet = ErrorMessages.STORAGE_FORMAT_PARQUET.equals(StorageFormat.formatForTable(TABLE, 1));
+        String persistenceFile = parquet ? TABLE + ".parquet" : TABLE + ".csv";
+        assertTrue(new File(persistenceFile).exists(),
+                (parquet ? "Parquet" : "CSV") + " file exists before drop");
         db.dropTable(TABLE);
         assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
-        assertTrue(!new File(TABLE + ".csv").exists(), "CSV file deleted after drop");
+        assertTrue(!new File(persistenceFile).exists(),
+                (parquet ? "Parquet" : "CSV") + " file deleted after drop");
         LOGGER.log(Level.INFO, "Test testDropTableDeletesFiles: DONE");
     }
 

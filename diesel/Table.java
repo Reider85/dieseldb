@@ -2663,9 +2663,11 @@ class Table implements TableStorage, Serializable {
      * @throws DieselIOException if the Parquet file cannot be written
      */
     public void saveToParquetFile(String tableName) {
-        if (getDeletedCount() > 0) {
-            compact();
-        }
+        // The Parquet writer skips tombstoned rows (see Table#toTableData), so
+        // physically compacting here would defeat lazy delete: every auto-commit
+        // DELETE persists through saveToFile and would wipe the tombstones,
+        // making getDeletedCount() report 0 right after a delete. Compaction is
+        // handled when the tombstone ratio threshold is reached or explicitly.
         tableLock.readLock().lock();
         try {
             ParquetWriter.writeTableToParquet(this, tableName);
