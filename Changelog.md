@@ -2150,6 +2150,5 @@ delegate to the new vectorized functions when the first non-null value is Intege
 original scalar path for other types. Updated pom.xml: added maven-compiler-plugin 3.13.0 with
 --add-modules=jdk.incubator.vector, updated surefire argLine. Files changed: diesel/AggregateFunctions.java (new),
 diesel/SelectQuery.java, pom.xml. Verification: quick gate 42/0 BUILD SUCCESS.
-2.9.86 analytics
-2.9.87 analytics
 2.9.88 analytics
+2.9.89 prompt 1 (sonar-prompt.md) - Verify and fix S5869: no duplicate characters found in character classes in SubqueryParser.java and other files
