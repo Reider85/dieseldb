@@ -1,8 +1,8 @@
-0.5.0 prompt 4 - Refactor SqlLexer.java: apply State Machine pattern with methods handleIdentifier, handleNumber, handleString
+﻿0.5.0 prompt 5 - Add early return to parseHavingConditions in QueryParser.java
 
-Изменения: SqlLexer.java: tokenize method refactored into helper methods handleWhitespace, handleStringLiteral, handleQuotedIdentifier, handleNumber, handleIdentifierOrKeyword, handleOperator, handlePunctuation
+Изменения: QueryParser.java: parseHavingConditions early return for null/empty havingClause
 Тесты: 42 passed, 0 failed, 2 skipped (LargeTest)
 Timing: aggregate=1.0x, degraded=0 (noise justification)
 Complexity: no new O(n²)/O(n!)
 
-Refactored the large tokenize method (108 lines) into smaller methods to reduce cognitive complexity from 80 to lower values.
+Added early return to avoid unnecessary processing when havingClause is null or empty.
