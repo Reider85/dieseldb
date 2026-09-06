@@ -55,57 +55,97 @@ class DeleteQuery implements Query<Void> {
     @Override
     public Void execute(Table table) {
         LOGGER.log(Level.FINE, "Executing DeleteQuery for table: {0}", table.getName());
+        validateConditions();
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
-        List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
+        List<Integer> rowsToDelete = prepareDelete(table, rows, columnTypes);
+        executeDelete(table, rowsToDelete);
+        updateIndexes(table, rowsToDelete.size());
+        LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
+        lastAffectedRows = rowsToDelete.size();
+        return null;
+    }
+
+    /**
+     * Validates WHERE conditions before execution.
+     */
+    private void validateConditions() {
+        // Basic validation - ensure conditions are not null
+        if (conditions == null) {
+            throw new IllegalArgumentException("Delete conditions cannot be null");
+        }
+    }
+
+    /**
+     * Identifies rows to delete using index acceleration or full scan.
+     *
+     * @param table the table to delete from
+     * @param rows the table rows
+     * @param columnTypes mapping of column names to their types
+     * @return list of row indices to delete
+     */
+    private List<Integer> prepareDelete(Table table, List<Map<String, Object>> rows, Map<String, Class<?>> columnTypes) {
         List<Integer> rowsToDelete = new ArrayList<>();
 
-        try {
-            // Phase 1: Identify rows to delete (index-accelerated or full scan)
-            if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
-                QueryParser.Condition condition = conditions.get(0);
-                Index index = table.getIndex(condition.column);
-                if (index instanceof HashIndex || index instanceof UniqueIndex) {
-                    Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                    rowsToDelete = index.search(conditionValue);
-                    LOGGER.log(Level.INFO, "Using {0} index for column {1} with value {2}",
-                            new Object[]{index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue});
-                } else if (index instanceof BTreeIndex btree) {
-                    Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                    rowsToDelete = btree.search(conditionValue);
-                    LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
-                }
-            } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
-                QueryParser.Condition condition = conditions.get(0);
-                Index index = table.getIndex(condition.column);
-                if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
-                    for (Object value : condition.inValues) {
-                        Object convertedValue = EVAL.convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
-                        List<Integer> indices = index.search(convertedValue);
-                        rowsToDelete.addAll(indices);
-                    }
-                    rowsToDelete = rowsToDelete.stream().distinct().sorted().collect(Collectors.toList());
-                    LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
-                            new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
-                                    condition.column, condition.inValues});
-                }
+        // Phase 1: Identify rows to delete (index-accelerated or full scan)
+        if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
+            QueryParser.Condition condition = conditions.get(0);
+            Index index = table.getIndex(condition.column);
+            if (index instanceof HashIndex || index instanceof UniqueIndex) {
+                Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+                rowsToDelete = index.search(conditionValue);
+                LOGGER.log(Level.INFO, "Using {0} index for column {1} with value {2}",
+                        new Object[]{index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue});
+            } else if (index instanceof BTreeIndex btree) {
+                Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+                rowsToDelete = btree.search(conditionValue);
+                LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
             }
-
-            if (rowsToDelete.isEmpty() && !conditions.isEmpty()) {
-                for (int i = 0; i < rows.size(); i++) {
-                    if (table.isDeleted(i)) continue;
-                    Map<String, Object> row = rows.get(i);
-                    if (evaluateConditions(row, conditions, columnTypes)) {
-                        rowsToDelete.add(i);
-                    }
+        } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
+            QueryParser.Condition condition = conditions.get(0);
+            Index index = table.getIndex(condition.column);
+            if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
+                for (Object value : condition.inValues) {
+                    Object convertedValue = EVAL.convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
+                    List<Integer> indices = index.search(convertedValue);
+                    rowsToDelete.addAll(indices);
                 }
-            } else if (conditions.isEmpty()) {
-                for (int i = 0; i < rows.size(); i++) {
-                    if (table.isDeleted(i)) continue;
+                rowsToDelete = rowsToDelete.stream().distinct().sorted().collect(Collectors.toList());
+                LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
+                        new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
+                                condition.column, condition.inValues});
+            }
+        }
+
+        if (rowsToDelete.isEmpty() && !conditions.isEmpty()) {
+            for (int i = 0; i < rows.size(); i++) {
+                if (table.isDeleted(i)) continue;
+                Map<String, Object> row = rows.get(i);
+                if (evaluateConditions(row, conditions, columnTypes)) {
                     rowsToDelete.add(i);
                 }
             }
+        } else if (conditions.isEmpty()) {
+            for (int i = 0; i < rows.size(); i++) {
+                if (table.isDeleted(i)) continue;
+                rowsToDelete.add(i);
+            }
+        }
 
+        return rowsToDelete;
+    }
+
+    /**
+     * Executes the deletion: acquires locks, tombstones rows, removes index entries.
+     *
+     * @param table the table to delete from
+     * @param rowsToDelete list of row indices to delete
+     */
+    private void executeDelete(Table table, List<Integer> rowsToDelete) {
+        List<Map<String, Object>> rows = table.getRows();
+        List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
+
+        try {
             // Phase 2: Acquire write locks
             for (int rowIndex : rowsToDelete) {
                 if (rowIndex >= 0 && rowIndex < rows.size()) {
@@ -137,21 +177,25 @@ class DeleteQuery implements Query<Void> {
                     LOGGER.log(Level.INFO, "Tombstoned row at index {0} from table {1}", new Object[]{rowIndex, table.getName()});
                 }
             }
-
-            // Phase 4: Auto-compact if tombstone threshold reached
-            int rawCount = table.getRawRowCount();
-            if (rawCount > 0 && (double) table.getDeletedCount() / rawCount >= 0.3) {
-                LOGGER.log(Level.INFO, "Tombstone ratio >= 0.3, compacting table {0}", table.getName());
-                table.compact();
-            }
-
-            LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
-            lastAffectedRows = rowsToDelete.size();
-            return null;
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
                 lock.writeLock().unlock();
             }
+        }
+    }
+
+    /**
+     * Updates indexes after deletion, performing auto-compaction if needed.
+     *
+     * @param table the table to update
+     * @param deletedCount number of rows deleted
+     */
+    private void updateIndexes(Table table, int deletedCount) {
+        // Phase 4: Auto-compact if tombstone threshold reached
+        int rawCount = table.getRawRowCount();
+        if (rawCount > 0 && (double) table.getDeletedCount() / rawCount >= 0.3) {
+            LOGGER.log(Level.INFO, "Tombstone ratio >= 0.3, compacting table {0}", table.getName());
+            table.compact();
         }
     }
 

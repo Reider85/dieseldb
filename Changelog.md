@@ -2156,3 +2156,14 @@ diesel/SelectQuery.java, pom.xml. Verification: quick gate 42/0 BUILD SUCCESS.
 2.9.90 prompt 2 (sonar-prompt.md) - Fix S5869 by removing duplicate in character class [a-zA-Z_] -> [a-z_] in SubqueryParser.java
 Changed files: diesel/SubqueryParser.java
 Verification: quick gate mvn test -DskipLargeTests passed.
+
+
+
+0.5.0 prompt 3 - Refactor DeleteQuery.java: extract methods
+
+Изменения: DeleteQuery.java: validateConditions, prepareDelete, executeDelete, updateIndexes
+Тесты: 42 passed, 0 failed
+Timing: aggregate=1.0x, degraded=0 (noise justification)
+Complexity: no new O(n²)/O(n!)
+
+Refactored the large deleteQuery method (56 lines) into four smaller methods to reduce cognitive complexity.
