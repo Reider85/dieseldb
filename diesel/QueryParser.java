@@ -3055,6 +3055,9 @@ class QueryParser {
     private List<HavingCondition> parseHavingConditions(String havingClause, ParseContext ctx,
                                                     List<AggregateFunction> aggregates) {
         List<HavingCondition> conditions = new ArrayList<>();
+        if (havingClause == null || havingClause.isEmpty()) {
+            return new ArrayList<>();
+        }
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
         int parenDepth = 0;
