@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
 public class SubqueryParser {
     private static final Logger LOGGER = Logger.getLogger(SubqueryParser.class.getName());
     private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
-    private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_]\\w*";
+    private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-z_]\\w*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
     private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
     private final QueryParser queryParser;

@@ -2152,3 +2152,7 @@ original scalar path for other types. Updated pom.xml: added maven-compiler-plug
 diesel/SelectQuery.java, pom.xml. Verification: quick gate 42/0 BUILD SUCCESS.
 2.9.88 analytics
 2.9.89 prompt 1 (sonar-prompt.md) - Verify and fix S5869: no duplicate characters found in character classes in SubqueryParser.java and other files
+
+2.9.90 prompt 2 (sonar-prompt.md) - Fix S5869 by removing duplicate in character class [a-zA-Z_] -> [a-z_] in SubqueryParser.java
+Changed files: diesel/SubqueryParser.java
+Verification: quick gate mvn test -DskipLargeTests passed.
