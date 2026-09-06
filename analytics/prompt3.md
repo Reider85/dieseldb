@@ -267,7 +267,150 @@
 
 **Файлы:** KNOWN_LIMITATIONS.md (новый), README.md
 
----
+
+#### 1.1 ALTER TABLE семейство запросов
+```sql
+-- PostgreSQL/MySQL поддерживают, DieselDB НЕТ:
+ALTER TABLE table_name ADD COLUMN column_name data_type;
+ALTER TABLE table_name DROP COLUMN column_name;
+ALTER TABLE table_name ALTER COLUMN column_name TYPE new_type;
+ALTER TABLE table_name ALTER COLUMN column_name SET DEFAULT value;
+ALTER TABLE table_name ALTER COLUMN column_name DROP DEFAULT;
+ALTER TABLE table_name ADD CONSTRAINT constraint_name PRIMARY KEY (column);
+ALTER TABLE table_name DROP CONSTRAINT constraint_name;
+ALTER TABLE table_name RENAME TO new_name;
+ALTER TABLE table_name RENAME COLUMN old_name TO new_name;
+```
+
+#### 1.2 DROP семейство запросов
+```sql
+-- Частично реализовано только DROP TABLE
+DROP INDEX index_name ON table_name;        -- НЕТ
+DROP VIEW view_name;                         -- НЕТ
+DROP SEQUENCE sequence_name;                 -- НЕТ
+TRUNCATE TABLE table_name;                   -- НЕТ
+
+#### 1.5 Последовательности (Sequences)
+```sql
+-- Базовая поддержка есть в CreateTableQuery, но нет отдельных DDL:
+CREATE SEQUENCE seq_name START WITH 1 INCREMENT BY 1;
+ALTER SEQUENCE seq_name RESTART WITH 100;
+DROP SEQUENCE seq_name;
+SELECT NEXTVAL('seq_name');
+SELECT CURRVAL('seq_name');
+
+### 3. **Query Result Cache (из Oracle)**
+**Что это:** Кэширование результатов идентичных запросов.
+
+**Превосходство над PostgreSQL:**
+- Oracle кэширует результаты на уровне SQL текста + bind variables
+- Автоматическая инвалидация при изменении таблиц
+- Работает для deterministic функций
+
+**Почему 80/20:**
+- Минимальные изменения в Query Executor
+- HashMap<String, CachedResult> на уровне Database
+- TTL-based или invalidation-based
+
+**Реализация:**
+```java
+class QueryCache {
+    Map<String, CachedResult> cache; // key = normalized SQL + params
+    // Invalidating на INSERT/UPDATE/DELETE
+}
+```
+
+**Ожидаемый результат:** +500-1000% для read-heavy workloads с повторяющимися запросами
+
+### 4. **Bulk Insert/Copy API (из SQL Server BULK INSERT, Oracle SQL*Loader, DB2 LOAD)**
+**Что что:** Массовая загрузка данных из файлов.
+
+**Превосходство над PostgreSQL:**
+- SQL Server: BULK INSERT с минимальным logging
+- Oracle: Direct Path Load обходит buffer cache
+- Teradata: MultiLoad для параллельной загрузки
+
+**Почему 80/20:**
+- Простой парсинг CSV/TXT
+- Batch insert уже существует - добавить оптимизацию
+- Отключить индексы на время загрузки, перестроить после
+
+**Реализация:**
+```sql
+BULK INSERT table_name FROM 'file.csv' 
+WITH (FORMAT='CSV', BATCHSIZE=10000, SORTED_DATA=false)
+```
+
+**Ожидаемый результат:** +1000% скорость массовой загрузки данных
+
+### 5. **Bitmap Indexes (из Oracle, Teradata)**
+**Что это:** Индексы для колонок с низкой кардинальностью.
+
+**Превосходство над PostgreSQL:**
+- Идеально для gender, status, category (мало уникальных значений)
+- Bitmap AND/OR операции очень быстрые
+- Сжатие лучше B-Tree в 10 раз для таких данных
+
+**Почему 80/20:**
+- Альтернатива B-Tree, не заменяет его
+- Простая структура: bitset per distinct value
+- Быстрые bitwise операции для WHERE clause
+
+**Реализация:**
+```java
+class BitmapIndex {
+    Map<Object, BitSet> bitmaps; // value -> bitmap rows
+    // WHERE status='ACTIVE' -> bitmap lookup
+}
+```
+
+**Ожидаемый результат:** +200-500% для WHERE с low-cardinality columns
+
+### 9. **Parallel Query Execution (из Oracle, DB2, Teradata, SAP HANA)**
+**Что это:** Один запрос выполняется несколькими потоками.
+
+**Превосходство над PostgreSQL:**
+- Oracle: Parallel Query для scan, join, aggregation
+- Teradata: MPP архитектура - все запросы параллельны
+- SAP HANA: Параллелизм на уровне column operations
+
+**Почему средний приоритет:**
+- Требует thread-safe итераторов
+- Но существующая Java concurrency помогает
+
+**Реализация:**
+- Parallel Table Scan (разделить диапазоны строк)
+- Parallel Aggregation (map-reduce стиль)
+
+**Ожидаемый результат:** +200-800% для тяжелых аналитических запросов
+
+#### 1. Virtual Threads (Project Loom)
+- **Описание**: Легковесные потоки для высоконагруженных приложений
+- **Преимущества**:
+    - Увеличение пропускной способности в 10-100 раз для I/O операций
+    - Упрощение кода (нет необходимости в реактивных фреймворках)
+    - Снижение потребления памяти на поток
+- **Прирост производительности**: до 100x для concurrent workloads
+- **Критичность**: 🔴 Высокая — конкурентное преимущество
+
+#### 3. Record Patterns & Pattern Matching for Switch
+- **Описание**: Улучшенная работа с данными
+- **Преимущества**:
+    - Снижение boilerplate кода на 30-40%
+    - Улучшенная читаемость и maintainability
+    - Type-safe обработка данных
+- **Критичность**: 🟡 Средняя — developer productivity
+
+#### 7. **UNION/INTERSECT/EXCEPT**
+```sql
+SELECT name FROM users WHERE age > 30
+UNION
+SELECT name FROM customers WHERE active = true
+INTERSECT
+SELECT name FROM vip_members;
+```
+
+**Ожидаемый эффект:** +10% к полноте SQL
 
 ## Сводная таблица статуса Section 0
 

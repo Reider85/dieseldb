@@ -2152,3 +2152,4 @@ original scalar path for other types. Updated pom.xml: added maven-compiler-plug
 diesel/SelectQuery.java, pom.xml. Verification: quick gate 42/0 BUILD SUCCESS.
 2.9.86 analytics
 2.9.87 analytics
+2.9.88 analytics
