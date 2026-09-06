@@ -2151,3 +2151,4 @@ original scalar path for other types. Updated pom.xml: added maven-compiler-plug
 --add-modules=jdk.incubator.vector, updated surefire argLine. Files changed: diesel/AggregateFunctions.java (new),
 diesel/SelectQuery.java, pom.xml. Verification: quick gate 42/0 BUILD SUCCESS.
 2.9.86 analytics
+2.9.87 analytics
