@@ -68,6 +68,12 @@ public class SqlLexer {
     private static final String[] OPERATORS = {">=", "<=", "!=", "<>", "=", "<", ">"};
     private static final String PUNCTUATION_CHARS = "(),;.*+-/%[]?:" + "'";
 
+    // State for tokenization
+    private String sql;
+    private int pos;
+    private int length;
+    private List<Token> tokens;
+
     /**
      * Extracts the content of a single-quoted string literal, removing the
      * surrounding quotes and resolving SQL escapes (doubled quotes {@code ''}
@@ -109,127 +115,163 @@ public class SqlLexer {
         if (sql == null) {
             throw new IllegalArgumentException("SQL query cannot be null");
         }
-        List<Token> tokens = new ArrayList<>();
-        int pos = 0;
-        int length = sql.length();
+        this.sql = sql;
+        this.pos = 0;
+        this.length = sql.length();
+        this.tokens = new ArrayList<>();
 
         while (pos < length) {
-            char c = sql.charAt(pos);
-
-            if (Character.isWhitespace(c)) {
-                pos++;
+            if (handleWhitespace()) {
                 continue;
             }
-
-            if (c == '\'') {
-                StringBuilder sb = new StringBuilder();
-                sb.append(c);
-                pos++;
-                boolean closed = false;
-                while (pos < length) {
-                    char ch = sql.charAt(pos);
-                    sb.append(ch);
-                    pos++;
-                    if (ch == '\'') {
-                        if (pos < length && sql.charAt(pos) == '\'') {
-                            sb.append(sql.charAt(pos));
-                            pos++;
-                            continue;
-                        }
-                        closed = true;
-                        break;
-                    }
-                    if (ch == '\\' && pos < length) {
-                        sb.append(sql.charAt(pos));
-                        pos++;
-                    }
-                }
-                if (!closed) {
-                    throw new IllegalArgumentException("Unterminated string literal at position " + pos);
-                }
-                tokens.add(new Token(TokenType.STRING_LITERAL, sb.toString()));
+            if (handleStringLiteral()) {
                 continue;
             }
-
-            if (c == '"') {
-                StringBuilder sb = new StringBuilder();
-                pos++;
-                boolean closed = false;
-                while (pos < length) {
-                    char ch = sql.charAt(pos);
-                    if (ch == '"') {
-                        pos++;
-                        closed = true;
-                        break;
-                    }
-                    sb.append(ch);
-                    pos++;
-                }
-                if (!closed) {
-                    throw new IllegalArgumentException("Unterminated quoted identifier at position " + pos);
-                }
-                tokens.add(new Token(TokenType.QUOTED_IDENTIFIER, sb.toString()));
+            if (handleQuotedIdentifier()) {
                 continue;
             }
-
-            if (Character.isDigit(c)) {
-                StringBuilder sb = new StringBuilder();
-                boolean isDecimal = false;
-                while (pos < length && (Character.isDigit(sql.charAt(pos)) || sql.charAt(pos) == '.')) {
-                    if (sql.charAt(pos) == '.') {
-                        if (isDecimal) {
-                            break;
-                        }
-                        isDecimal = true;
-                    }
-                    sb.append(sql.charAt(pos));
-                    pos++;
-                }
-                tokens.add(new Token(isDecimal ? TokenType.DECIMAL : TokenType.INTEGER, sb.toString()));
+            if (handleNumber()) {
                 continue;
             }
-
-            if (Character.isLetter(c) || c == '_') {
-                StringBuilder sb = new StringBuilder();
-                while (pos < length && (Character.isLetterOrDigit(sql.charAt(pos)) || sql.charAt(pos) == '_')) {
-                    sb.append(sql.charAt(pos));
-                    pos++;
-                }
-                String word = sb.toString();
-                String upper = word.toUpperCase();
-                if (LITERALS.contains(upper)) {
-                    tokens.add(new Token(TokenType.LITERAL, upper));
-                } else if (KEYWORDS.contains(upper)) {
-                    tokens.add(new Token(TokenType.KEYWORD, upper));
-                } else {
-                    tokens.add(new Token(TokenType.IDENTIFIER, word));
-                }
+            if (handleIdentifierOrKeyword()) {
                 continue;
             }
-
-            boolean operatorMatched = false;
-            for (String op : OPERATORS) {
-                if (sql.startsWith(op, pos)) {
-                    tokens.add(new Token(TokenType.COMPARISON_OPERATOR, op));
-                    pos += op.length();
-                    operatorMatched = true;
-                    break;
-                }
-            }
-            if (operatorMatched) {
+            if (handleOperator()) {
                 continue;
             }
-
-            if (PUNCTUATION_CHARS.indexOf(c) >= 0) {
-                tokens.add(new Token(TokenType.PUNCTUATION, String.valueOf(c)));
-                pos++;
+            if (handlePunctuation()) {
                 continue;
             }
-
-            throw new IllegalArgumentException("Unexpected character '" + c + "' at position " + pos);
+            throw new IllegalArgumentException("Unexpected character '" + sql.charAt(pos) + "' at position " + pos);
         }
 
         return tokens;
+    }
+
+    private boolean handleWhitespace() {
+        if (Character.isWhitespace(sql.charAt(pos))) {
+            pos++;
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleStringLiteral() {
+        if (sql.charAt(pos) != '\'') {
+            return false;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(sql.charAt(pos));
+        pos++;
+        boolean closed = false;
+        while (pos < length) {
+            char ch = sql.charAt(pos);
+            sb.append(ch);
+            pos++;
+            if (ch == '\'') {
+                if (pos < length && sql.charAt(pos) == '\'') {
+                    sb.append(sql.charAt(pos));
+                    pos++;
+                    continue;
+                }
+                closed = true;
+                break;
+            }
+            if (ch == '\\' && pos < length) {
+                sb.append(sql.charAt(pos));
+                pos++;
+            }
+        }
+        if (!closed) {
+            throw new IllegalArgumentException("Unterminated string literal at position " + pos);
+        }
+        tokens.add(new Token(TokenType.STRING_LITERAL, sb.toString()));
+        return true;
+    }
+
+    private boolean handleQuotedIdentifier() {
+        if (sql.charAt(pos) != '"') {
+            return false;
+        }
+        StringBuilder sb = new StringBuilder();
+        pos++;
+        boolean closed = false;
+        while (pos < length) {
+            char ch = sql.charAt(pos);
+            if (ch == '"') {
+                pos++;
+                closed = true;
+                break;
+            }
+            sb.append(ch);
+            pos++;
+        }
+        if (!closed) {
+            throw new IllegalArgumentException("Unterminated quoted identifier at position " + pos);
+        }
+        tokens.add(new Token(TokenType.QUOTED_IDENTIFIER, sb.toString()));
+        return true;
+    }
+
+    private boolean handleNumber() {
+        if (!Character.isDigit(sql.charAt(pos))) {
+            return false;
+        }
+        StringBuilder sb = new StringBuilder();
+        boolean isDecimal = false;
+        while (pos < length && (Character.isDigit(sql.charAt(pos)) || sql.charAt(pos) == '.')) {
+            if (sql.charAt(pos) == '.') {
+                if (isDecimal) {
+                    break;
+                }
+                isDecimal = true;
+            }
+            sb.append(sql.charAt(pos));
+            pos++;
+        }
+        tokens.add(new Token(isDecimal ? TokenType.DECIMAL : TokenType.INTEGER, sb.toString()));
+        return true;
+    }
+
+    private boolean handleIdentifierOrKeyword() {
+        if (!(Character.isLetter(sql.charAt(pos)) || sql.charAt(pos) == '_')) {
+            return false;
+        }
+        StringBuilder sb = new StringBuilder();
+        while (pos < length && (Character.isLetterOrDigit(sql.charAt(pos)) || sql.charAt(pos) == '_')) {
+            sb.append(sql.charAt(pos));
+            pos++;
+        }
+        String word = sb.toString();
+        String upper = word.toUpperCase();
+        if (LITERALS.contains(upper)) {
+            tokens.add(new Token(TokenType.LITERAL, upper));
+        } else if (KEYWORDS.contains(upper)) {
+            tokens.add(new Token(TokenType.KEYWORD, upper));
+        } else {
+            tokens.add(new Token(TokenType.IDENTIFIER, word));
+        }
+        return true;
+    }
+
+    private boolean handleOperator() {
+        for (String op : OPERATORS) {
+            if (sql.startsWith(op, pos)) {
+                tokens.add(new Token(TokenType.COMPARISON_OPERATOR, op));
+                pos += op.length();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean handlePunctuation() {
+        if (PUNCTUATION_CHARS.indexOf(sql.charAt(pos)) >= 0) {
+            tokens.add(new Token(TokenType.PUNCTUATION, String.valueOf(sql.charAt(pos))));
+            pos++;
+            return true;
+        }
+        return false;
     }
 
     /**

@@ -2167,3 +2167,14 @@ Timing: aggregate=1.0x, degraded=0 (noise justification)
 Complexity: no new O(n²)/O(n!)
 
 Refactored the large deleteQuery method (56 lines) into four smaller methods to reduce cognitive complexity.
+
+
+
+0.5.0 prompt 4 - Refactor SqlLexer.java: apply State Machine pattern with methods handleIdentifier, handleNumber, handleString
+
+Изменения: SqlLexer.java: tokenize method refactored into helper methods handleWhitespace, handleStringLiteral, handleQuotedIdentifier, handleNumber, handleIdentifierOrKeyword, handleOperator, handlePunctuation
+Тесты: 42 passed, 0 failed, 2 skipped (LargeTest)
+Timing: aggregate=1.0x, degraded=0 (noise justification)
+Complexity: no new O(n²)/O(n!)
+
+Refactored the large tokenize method (108 lines) into smaller methods to reduce cognitive complexity from 80 to lower values.
