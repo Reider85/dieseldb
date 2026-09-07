@@ -336,8 +336,11 @@ class BTreeClusteredIndex implements Index, Serializable {
         }
 
         int leafCapacity = 2 * t - 1;
+        List<Node> leaves = buildLeafNodes(sortedKeys, rowIndices, n, leafCapacity);
+        this.root = buildInternalLevels(leaves, leafCapacity);
+    }
 
-        // Phase 1: Build all leaf nodes from sorted data (left to right)
+    private List<Node> buildLeafNodes(List<Object> sortedKeys, List<Integer> rowIndices, int n, int leafCapacity) {
         List<Node> leaves = new ArrayList<>();
         Node currentLeaf = new Node(true);
         for (int i = 0; i < n; i++) {
@@ -350,9 +353,10 @@ class BTreeClusteredIndex implements Index, Serializable {
                 }
             }
         }
+        return leaves;
+    }
 
-        // Phase 2: Build internal levels bottom-up
-        List<Node> currentLevel = leaves;
+    private Node buildInternalLevels(List<Node> currentLevel, int leafCapacity) {
         while (currentLevel.size() > 1) {
             List<Node> nextLevel = new ArrayList<>();
             int i = 0;
@@ -369,8 +373,7 @@ class BTreeClusteredIndex implements Index, Serializable {
             }
             currentLevel = nextLevel;
         }
-
-        this.root = currentLevel.get(0);
+        return currentLevel.get(0);
     }
 
     /**

@@ -445,77 +445,13 @@ public class DatabaseServer {
                 Object pendingInput = performHandshake();
 
                 while (true) {
-                    Object input;
-                    if (pendingInput != null) {
-                        input = pendingInput;
-                        pendingInput = null;
-                    } else {
-                        try {
-                            input = in.readObject();
-                        } catch (SocketTimeoutException e) {
-                        LOGGER.log(Level.WARNING, "Socket timeout while waiting for query from client {0}: {1}",
-                                new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                    Object input = readNextInput(pendingInput);
+                    pendingInput = null;
+                    if (input == null) {
                         break;
                     }
-                    }
-                    if (input == null || input.equals(ErrorMessages.EXIT_COMMAND)) {
+                    if (!dispatchMessage(input)) {
                         break;
-                    }
-
-                    if (input instanceof CompressionHandshakeMessage) {
-                        performHandshake();
-                        continue;
-                    }
-
-                    if (input instanceof PrepareMessage pm) {
-                        handlePrepare(pm);
-                        continue;
-                    }
-
-                    if (input instanceof ExecutePreparedMessage epm) {
-                        handleExecutePrepared(epm);
-                        continue;
-                    }
-
-                    if (input instanceof ClosePreparedMessage cpm) {
-                        handleClosePrepared(cpm);
-                        continue;
-                    }
-
-                    if (input instanceof OpenCursorMessage ocm) {
-                        handleOpenCursor(ocm);
-                        continue;
-                    }
-
-                    if (input instanceof FetchCursorMessage fcm) {
-                        handleFetchCursor(fcm);
-                        continue;
-                    }
-
-                    if (input instanceof CloseCursorMessage ccm) {
-                        handleCloseCursor(ccm);
-                        continue;
-                    }
-
-                    if (!(input instanceof QueryMessage qm)) {
-                        out.writeObject("Error: Invalid query message");
-                        out.flush();
-                        continue;
-                    }
-
-                    String query = qm.getQuery();
-                    transactionId = qm.getTransactionId();
-
-                    try {
-                        Object result = database.executeQuery(query, transactionId);
-                        sendSerializedResult(result);
-                    } catch (OutOfMemoryError e) {
-                        handleOutOfMemory(query, e);
-                    } catch (Exception e) {
-                        out.writeObject(ErrorMessages.ERROR_PREFIX + e.getMessage());
-                        out.flush();
-                        LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
-                                new Object[]{query, e.getMessage()});
                     }
                 }
             } catch (IOException | ClassNotFoundException e) {
@@ -539,6 +475,99 @@ public class DatabaseServer {
                 } catch (IOException e) {
                     LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
                 }
+            }
+        }
+
+        /**
+         * Reads the next input, using the pending input from the handshake if
+         * present, otherwise reading from the stream with socket timeout
+         * handling. Returns null to signal the loop should terminate.
+         */
+        private Object readNextInput(Object pendingInput) throws IOException, ClassNotFoundException {
+            if (pendingInput != null) {
+                return pendingInput;
+            }
+            try {
+                return in.readObject();
+            } catch (SocketTimeoutException e) {
+                LOGGER.log(Level.WARNING, "Socket timeout while waiting for query from client {0}: {1}",
+                        new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                return null;
+            }
+        }
+
+        /**
+         * Dispatches an incoming message to its handler. Returns false when the
+         * loop should terminate.
+         */
+        private boolean dispatchMessage(Object input) throws IOException, ClassNotFoundException {
+            if (input == null || input.equals(ErrorMessages.EXIT_COMMAND)) {
+                return false;
+            }
+
+            if (input instanceof CompressionHandshakeMessage) {
+                performHandshake();
+                return true;
+            }
+
+            if (input instanceof PrepareMessage pm) {
+                handlePrepare(pm);
+                return true;
+            }
+
+            if (input instanceof ExecutePreparedMessage epm) {
+                handleExecutePrepared(epm);
+                return true;
+            }
+
+            if (input instanceof ClosePreparedMessage cpm) {
+                handleClosePrepared(cpm);
+                return true;
+            }
+
+            if (input instanceof OpenCursorMessage ocm) {
+                handleOpenCursor(ocm);
+                return true;
+            }
+
+            if (input instanceof FetchCursorMessage fcm) {
+                handleFetchCursor(fcm);
+                return true;
+            }
+
+            if (input instanceof CloseCursorMessage ccm) {
+                handleCloseCursor(ccm);
+                return true;
+            }
+
+            if (!(input instanceof QueryMessage qm)) {
+                out.writeObject("Error: Invalid query message");
+                out.flush();
+                return true;
+            }
+
+            executeQueryMessage(qm);
+            return true;
+        }
+
+        /**
+         * Executes a {@link QueryMessage} against the database and replies
+         * with the serialized result or an error.
+         */
+        private void executeQueryMessage(QueryMessage qm) throws IOException {
+            String query = qm.getQuery();
+            transactionId = qm.getTransactionId();
+
+            try {
+                Object result = database.executeQuery(query, transactionId);
+                sendSerializedResult(result);
+            } catch (OutOfMemoryError e) {
+                handleOutOfMemory(query, e);
+            } catch (Exception e) {
+                out.writeObject(ErrorMessages.ERROR_PREFIX + e.getMessage());
+                out.flush();
+                LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
+                        new Object[]{query, e.getMessage()});
             }
         }
 

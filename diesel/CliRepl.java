@@ -170,9 +170,30 @@ public class CliRepl {
         }
         List<Map<String, Object>> maps = new ArrayList<>();
         List<String> columns = new ArrayList<>();
+        extractMapsAndColumns(rows, maps, columns);
+        if (maps.isEmpty()) {
+            out.println(rows);
+            return;
+        }
+        int[] widths = new int[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            widths[i] = columns.get(i).length();
+        }
+        List<List<String>> formattedRows = buildFormattedRows(maps, columns, widths);
+        printBorder(columns.size(), widths);
+        printRow(columns, widths);
+        printBorder(columns.size(), widths);
+        for (List<String> formattedRow : formattedRows) {
+            printRow(formattedRow, widths);
+        }
+        printBorder(columns.size(), widths);
+        out.println("(" + rows.size() + " rows)");
+    }
+
+    @SuppressWarnings("unchecked")
+    private void extractMapsAndColumns(List<?> rows, List<Map<String, Object>> maps, List<String> columns) {
         for (Object row : rows) {
             if (row instanceof Map<?, ?> map) {
-                @SuppressWarnings("unchecked")
                 Map<String, Object> stringMap = (Map<String, Object>) map;
                 maps.add(stringMap);
                 for (String key : stringMap.keySet()) {
@@ -182,14 +203,9 @@ public class CliRepl {
                 }
             }
         }
-        if (maps.isEmpty()) {
-            out.println(rows);
-            return;
-        }
-        int[] widths = new int[columns.size()];
-        for (int i = 0; i < columns.size(); i++) {
-            widths[i] = columns.get(i).length();
-        }
+    }
+
+    private List<List<String>> buildFormattedRows(List<Map<String, Object>> maps, List<String> columns, int[] widths) {
         List<List<String>> formattedRows = new ArrayList<>();
         for (Map<String, Object> map : maps) {
             List<String> formattedRow = new ArrayList<>();
@@ -203,14 +219,7 @@ public class CliRepl {
             }
             formattedRows.add(formattedRow);
         }
-        printBorder(columns.size(), widths);
-        printRow(columns, widths);
-        printBorder(columns.size(), widths);
-        for (List<String> formattedRow : formattedRows) {
-            printRow(formattedRow, widths);
-        }
-        printBorder(columns.size(), widths);
-        out.println("(" + rows.size() + " rows)");
+        return formattedRows;
     }
 
     private void printRow(List<String> cells, int[] widths) {

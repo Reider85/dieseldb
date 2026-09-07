@@ -54,54 +54,54 @@ public class QueryExecutor {
             return new ArrayList<>();
         }
         
-        // If only one query, execute it directly
         if (queries.size() == 1) {
             return List.of(database.executeQuery(queries.get(0), transactionId));
         }
         
-        // Analyze which tables each query accesses
         List<Set<String>> queryTables = new ArrayList<>();
         for (String query : queries) {
             queryTables.add(extractTablesFromQuery(query));
         }
         
-        // Group queries into independent sets that can be executed in parallel
         List<List<Integer>> independentGroups = groupIndependentQueries(queryTables);
         
-        // Execute each group in parallel, queries within a group sequentially
         List<Object> results = new ArrayList<>(queries.size());
         List<Future<List<Object>>> futures = new ArrayList<>();
         
-        // Submit groups for parallel execution
         for (List<Integer> group : independentGroups) {
-            if (group.size() == 1) {
-                // Single query in group - execute directly
-                int queryIndex = group.get(0);
-                results.add(queryIndex, database.executeQuery(queries.get(queryIndex), transactionId));
-            } else {
-                // Multiple queries in group - execute sequentially (they share tables)
-                Callable<List<Object>> groupTask = () -> {
-                    List<Object> groupResults = new ArrayList<>(group.size());
-                    for (int i = 0; i < group.size(); i++) {
-                        int queryIndex = group.get(i);
-                        groupResults.add(i, database.executeQuery(queries.get(queryIndex), transactionId));
-                    }
-                    return groupResults;
-                };
-                
-                Future<List<Object>> future = executorService.submit(groupTask);
-                futures.add(future);
-                
-                // Store the future with its query indices for later result extraction
-                // We'll handle this after submitting all tasks
-            }
+            submitQueryGroup(group, queries, transactionId, results, futures);
         }
         
-        // Collect results from parallel groups
-        int resultIndex = 0;
+        collectGroupResults(independentGroups, futures, results);
+        
+        return results;
+    }
+    
+    private void submitQueryGroup(List<Integer> group, List<String> queries, UUID transactionId,
+                                  List<Object> results, List<Future<List<Object>>> futures) {
+        if (group.size() == 1) {
+            int queryIndex = group.get(0);
+            results.add(queryIndex, database.executeQuery(queries.get(queryIndex), transactionId));
+        } else {
+            Callable<List<Object>> groupTask = () -> {
+                List<Object> groupResults = new ArrayList<>(group.size());
+                for (int i = 0; i < group.size(); i++) {
+                    int queryIndex = group.get(i);
+                    groupResults.add(i, database.executeQuery(queries.get(queryIndex), transactionId));
+                }
+                return groupResults;
+            };
+            
+            Future<List<Object>> future = executorService.submit(groupTask);
+            futures.add(future);
+        }
+    }
+    
+    private void collectGroupResults(List<List<Integer>> independentGroups,
+                                     List<Future<List<Object>>> futures,
+                                     List<Object> results) throws InterruptedException, ExecutionException {
         for (List<Integer> group : independentGroups) {
             if (group.size() > 1) {
-                // This group was submitted for parallel execution
                 Future<List<Object>> future = futures.remove(0);
                 List<Object> groupResults = future.get();
                 for (int i = 0; i < group.size(); i++) {
@@ -109,10 +109,7 @@ public class QueryExecutor {
                     results.add(queryIndex, groupResults.get(i));
                 }
             }
-            // Single query groups were handled above
         }
-        
-        return results;
     }
     
     /**

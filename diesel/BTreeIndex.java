@@ -653,23 +653,24 @@ class BTreeIndex implements Index, Serializable {
             }
         } else {
             for (int i = 0; i < node.children.size(); i++) {
-                // Check if this subtree might contain keys in range
-                Object subtreeMin = extractFirstKey(node.children.get(i));
-                Object subtreeMax = extractLastKey(node.children.get(i));
-                
-                boolean minInRange = (low == null || compareKeys(subtreeMin, low) >= 0) &&
-                                    (high == null || compareKeys(subtreeMin, high) <= 0);
-                boolean maxInRange = (low == null || compareKeys(subtreeMax, low) >= 0) &&
-                                    (high == null || compareKeys(subtreeMax, high) <= 0);
-                boolean rangeOverlap = compareKeys(subtreeMin, high) <= 0 && 
-                                      compareKeys(subtreeMax, low) >= 0;
-                
-                if (minInRange || maxInRange || rangeOverlap) {
+                if (subtreeMayOverlapRange(node.children.get(i), low, high)) {
                     count += estimateBoundedRangeSize(node.children.get(i), low, high);
                 }
             }
         }
         return count;
+    }
+
+    private boolean subtreeMayOverlapRange(Node subtree, Object low, Object high) {
+        Object subtreeMin = extractFirstKey(subtree);
+        Object subtreeMax = extractLastKey(subtree);
+        boolean minInRange = (low == null || compareKeys(subtreeMin, low) >= 0) &&
+                            (high == null || compareKeys(subtreeMin, high) <= 0);
+        boolean maxInRange = (low == null || compareKeys(subtreeMax, low) >= 0) &&
+                            (high == null || compareKeys(subtreeMax, high) <= 0);
+        boolean rangeOverlap = compareKeys(subtreeMin, high) <= 0 && 
+                              compareKeys(subtreeMax, low) >= 0;
+        return minInRange || maxInRange || rangeOverlap;
     }
     
     /**
