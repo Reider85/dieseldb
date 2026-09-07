@@ -2180,3 +2180,8 @@ Refactored Table.buildIndex() to use Java 21 switch expression for cleaner contr
 Изменения: decomposed 30+ methods with cognitive complexity >15 into sub-methods following Single Responsibility across 8 engine files - Database, SubqueryParser, BTreeIndex, BTreeClusteredIndex, QueryParser, SelectQuery, InsertQuery, ConditionEvaluator (plus CliRepl and DatabaseServer). Extract Method pattern: each complex block moved to a dedicated private helper. State classes introduced for parsing loops. Early returns replace nested if-else.
 Тесты: 42 passed, 0 failed
 Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
+
+3.0.7 Prompt 7 - S1192: replace 2 remaining raw "(?i)^(" literals with ErrorMessages.CASE_INSENSITIVE_START_PATTERN in QueryParser.java
+
+Заменены 2 оставшихся сырых литерала "(?i)^(" на константу ErrorMessages.CASE_INSENSITIVE_START_PATTERN в методах parseSelectColumns (строка 1426) и parseHavingAggregateFromText (строка 3347) QueryParser.java. Все вхождения в QueryParser.java теперь используют константу.
+Тесты: 42 passed, 0 failed, 0 errors

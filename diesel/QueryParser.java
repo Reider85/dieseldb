@@ -1423,7 +1423,7 @@ class QueryParser {
         Map<String, String> columnAliases = new HashMap<>();
 
         Pattern aggPattern = Pattern.compile(
-                "(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\([^()]*+\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\([^()]*+\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+[^()]*+\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
 
@@ -3344,7 +3344,7 @@ class QueryParser {
     }
 
     private AggregateFunction parseHavingAggregateFromText(String leftPart, ParseContext ctx) {
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\([^()]*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern aggPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\([^()]*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$");
         Matcher aggMatcher = aggPattern.matcher(leftPart);
         if (!aggMatcher.matches()) {
             throw new IllegalArgumentException("Invalid HAVING condition: left side must be an aggregate function: " + leftPart);
