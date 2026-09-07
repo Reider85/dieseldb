@@ -78,86 +78,91 @@ class InsertQuery implements Query<Void> {
                 row.put(column, null);
                 continue;
             }
-            if (expectedType == Integer.class && !(value instanceof Integer)) {
-                try {
-                    value = Integer.parseInt(value.toString());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected INTEGER", value, column));
-                }
-            } else if (expectedType == Long.class && !(value instanceof Long)) {
-                try {
-                    value = Long.parseLong(value.toString());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected LONG", value, column));
-                }
-            } else if (expectedType == Short.class && !(value instanceof Short)) {
-                try {
-                    value = Short.parseShort(value.toString());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected SHORT", value, column));
-                }
-            } else if (expectedType == Byte.class && !(value instanceof Byte)) {
-                try {
-                    value = Byte.parseByte(value.toString());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected BYTE", value, column));
-                }
-            } else if (expectedType == BigDecimal.class && !(value instanceof BigDecimal)) {
-                try {
-                    value = new BigDecimal(value.toString());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected BIGDECIMAL", value, column));
-                }
-            } else if (expectedType == Float.class && !(value instanceof Float)) {
-                try {
-                    value = Float.parseFloat(value.toString());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected FLOAT", value, column));
-                }
-            } else if (expectedType == Double.class && !(value instanceof Double)) {
-                try {
-                    value = Double.parseDouble(value.toString());
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected DOUBLE", value, column));
-                }
-            } else if (expectedType == Character.class && !(value instanceof Character)) {
-                try {
-                    if (value.toString().length() == 1) {
-                        value = value.toString().charAt(0);
-                    } else {
-                        throw new IllegalArgumentException("Expected single character");
-                    }
-                } catch (IllegalArgumentException e) {
-                    throw e;
-                }
-            } else if (expectedType == UUID.class && !(value instanceof UUID)) {
-                try {
-                    value = UUID.fromString(value.toString());
-                } catch (IllegalArgumentException e) {
-                    throw new IllegalArgumentException(
-                            String.format("Invalid value '%s' for column %s: expected UUID", value, column));
-                }
-            } else if (expectedType == String.class && !(value instanceof String)) {
-                value = value.toString();
-            } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid value '%s' for column %s: expected BOOLEAN", value, column));
-            } else if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid value '%s' for column %s: expected DATE", value, column));
-            } else if (expectedType == LocalDateTime.class && !(value instanceof LocalDateTime)) {
-                throw new IllegalArgumentException(
-                        String.format("Invalid value '%s' for column %s: expected DATETIME or DATETIME_MS", value, column));
-            }
+            value = convertValue(value, column, expectedType);
             row.put(column, value);
         }
+        insertRow(table, row);
+        return null;
+    }
+
+    private Object convertValue(Object value, String column, Class<?> expectedType) {
+        if (expectedType == Integer.class && !(value instanceof Integer)) {
+            try {
+                return Integer.parseInt(value.toString());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected INTEGER", value, column));
+            }
+        } else if (expectedType == Long.class && !(value instanceof Long)) {
+            try {
+                return Long.parseLong(value.toString());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected LONG", value, column));
+            }
+        } else if (expectedType == Short.class && !(value instanceof Short)) {
+            try {
+                return Short.parseShort(value.toString());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected SHORT", value, column));
+            }
+        } else if (expectedType == Byte.class && !(value instanceof Byte)) {
+            try {
+                return Byte.parseByte(value.toString());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected BYTE", value, column));
+            }
+        } else if (expectedType == BigDecimal.class && !(value instanceof BigDecimal)) {
+            try {
+                return new BigDecimal(value.toString());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected BIGDECIMAL", value, column));
+            }
+        } else if (expectedType == Float.class && !(value instanceof Float)) {
+            try {
+                return Float.parseFloat(value.toString());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected FLOAT", value, column));
+            }
+        } else if (expectedType == Double.class && !(value instanceof Double)) {
+            try {
+                return Double.parseDouble(value.toString());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected DOUBLE", value, column));
+            }
+        } else if (expectedType == Character.class && !(value instanceof Character)) {
+            if (value.toString().length() != 1) {
+                throw new IllegalArgumentException("Expected single character");
+            }
+            return value.toString().charAt(0);
+        } else if (expectedType == UUID.class && !(value instanceof UUID)) {
+            try {
+                return UUID.fromString(value.toString());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        String.format("Invalid value '%s' for column %s: expected UUID", value, column));
+            }
+        } else if (expectedType == String.class && !(value instanceof String)) {
+            return value.toString();
+        } else if (expectedType == Boolean.class && !(value instanceof Boolean)) {
+            throw new IllegalArgumentException(
+                    String.format("Invalid value '%s' for column %s: expected BOOLEAN", value, column));
+        } else if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
+            throw new IllegalArgumentException(
+                    String.format("Invalid value '%s' for column %s: expected DATE", value, column));
+        } else if (expectedType == LocalDateTime.class && !(value instanceof LocalDateTime)) {
+            throw new IllegalArgumentException(
+                    String.format("Invalid value '%s' for column %s: expected DATETIME or DATETIME_MS", value, column));
+        }
+        return value;
+    }
+
+    private void insertRow(Table table, Map<String, Object> row) {
         try {
             table.addRow(row);
             lastAffectedRows = 1;
@@ -166,6 +171,5 @@ class InsertQuery implements Query<Void> {
             LOGGER.log(Level.SEVERE, "Insert failed due to unique constraint violation: {0}", e.getMessage());
             throw new IllegalStateException("Insert failed: " + e.getMessage(), e);
         }
-        return null;
     }
 }

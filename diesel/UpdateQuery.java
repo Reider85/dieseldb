@@ -102,52 +102,9 @@ class UpdateQuery implements Query<Void> {
             int affectedCount = rowsToUpdate.size();
 
             if (affectedCount >= BULK_UPDATE_THRESHOLD) {
-                // Bulk update path: disable indices, update all, rebuild once
-                LOGGER.log(Level.INFO, "Bulk update mode: {0} rows >= threshold {1}",
-                        new Object[]{affectedCount, BULK_UPDATE_THRESHOLD});
-                table.disableIndices();
-                try {
-                    for (int rowIndex : rowsToUpdate) {
-                        Map<String, Object> row = rows.get(rowIndex);
-                        for (Map.Entry<String, Object> update : updates.entrySet()) {
-                            String column = update.getKey();
-                            Object newValue = update.getValue();
-                            Class<?> columnType = columnTypes.get(column);
-                            Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType, columnTypes);
-                            Object oldValue = row.get(column);
-                            if (!Objects.equals(oldValue, convertedValue)) {
-                                row.put(column, convertedValue);
-                            }
-                        }
-                    }
-                } finally {
-                    table.enableAndRebuildIndices();
-                }
+                applyBulkUpdate(rows, rowsToUpdate, columnTypes, table);
             } else {
-                // Per-row update path with index maintenance
-                for (int rowIndex : rowsToUpdate) {
-                    Map<String, Object> row = rows.get(rowIndex);
-                    for (Map.Entry<String, Object> update : updates.entrySet()) {
-                        String column = update.getKey();
-                        Object newValue = update.getValue();
-                        Class<?> columnType = columnTypes.get(column);
-                        Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType, columnTypes);
-                        Object oldValue = row.get(column);
-
-                        if (!Objects.equals(oldValue, convertedValue)) {
-                            Index index = table.getIndex(column);
-                            if (index != null) {
-                                if (oldValue != null) {
-                                    index.remove(oldValue, rowIndex);
-                                }
-                                if (convertedValue != null) {
-                                    index.insert(convertedValue, rowIndex);
-                                }
-                            }
-                            row.put(column, convertedValue);
-                        }
-                    }
-                }
+                applyPerRowUpdate(rows, rowsToUpdate, columnTypes, table);
             }
 
             // Phase 4: Statistics + version bump + logging
@@ -166,6 +123,57 @@ class UpdateQuery implements Query<Void> {
         }
     }
 
+    private void applyBulkUpdate(List<Map<String, Object>> rows, List<Integer> rowsToUpdate,
+                                 Map<String, Class<?>> columnTypes, Table table) {
+        LOGGER.log(Level.INFO, "Bulk update mode: {0} rows >= threshold {1}",
+                new Object[]{rowsToUpdate.size(), BULK_UPDATE_THRESHOLD});
+        table.disableIndices();
+        try {
+            for (int rowIndex : rowsToUpdate) {
+                Map<String, Object> row = rows.get(rowIndex);
+                for (Map.Entry<String, Object> update : updates.entrySet()) {
+                    String column = update.getKey();
+                    Object newValue = update.getValue();
+                    Class<?> columnType = columnTypes.get(column);
+                    Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType, columnTypes);
+                    Object oldValue = row.get(column);
+                    if (!Objects.equals(oldValue, convertedValue)) {
+                        row.put(column, convertedValue);
+                    }
+                }
+            }
+        } finally {
+            table.enableAndRebuildIndices();
+        }
+    }
+
+    private void applyPerRowUpdate(List<Map<String, Object>> rows, List<Integer> rowsToUpdate,
+                                   Map<String, Class<?>> columnTypes, Table table) {
+        for (int rowIndex : rowsToUpdate) {
+            Map<String, Object> row = rows.get(rowIndex);
+            for (Map.Entry<String, Object> update : updates.entrySet()) {
+                String column = update.getKey();
+                Object newValue = update.getValue();
+                Class<?> columnType = columnTypes.get(column);
+                Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType, columnTypes);
+                Object oldValue = row.get(column);
+
+                if (!Objects.equals(oldValue, convertedValue)) {
+                    Index index = table.getIndex(column);
+                    if (index != null) {
+                        if (oldValue != null) {
+                            index.remove(oldValue, rowIndex);
+                        }
+                        if (convertedValue != null) {
+                            index.insert(convertedValue, rowIndex);
+                        }
+                    }
+                    row.put(column, convertedValue);
+                }
+            }
+        }
+    }
+
     /**
      * Identifies rows matching the WHERE conditions using index lookups
      * when possible, falling back to a full table scan.
@@ -176,81 +184,104 @@ class UpdateQuery implements Query<Void> {
         if (conditions.size() == 1 && !conditions.get(0).isGrouped()
                 && conditions.get(0).operator == QueryParser.Operator.EQUALS
                 && !conditions.get(0).not) {
-            // Single EQUALS condition — use index
-            QueryParser.Condition condition = conditions.get(0);
-            Index index = table.getIndex(condition.column);
-            if (index instanceof HashIndex || index instanceof UniqueIndex) {
-                Object conditionValue = EVAL.convertConditionValue(
-                        condition.value, condition.column,
-                        columnTypes.get(condition.column), columnTypes);
-                rowsToUpdate.addAll(index.search(conditionValue));
-                LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} = {2}",
-                        new Object[]{index instanceof HashIndex ? "hash" : "unique",
-                                condition.column, conditionValue});
-            } else if (index instanceof BTreeIndex btree) {
-                Object conditionValue = EVAL.convertConditionValue(
-                        condition.value, condition.column,
-                        columnTypes.get(condition.column), columnTypes);
-                rowsToUpdate.addAll(btree.search(conditionValue));
-                LOGGER.log(Level.INFO, "Using B-tree index for UPDATE WHERE {0} = {1}",
-                        new Object[]{condition.column, conditionValue});
-            }
+            identifyEqualsRows(table, columnTypes, rowsToUpdate);
         } else if (conditions.size() == 1 && !conditions.get(0).isGrouped()
                 && conditions.get(0).isInOperator() && !conditions.get(0).not) {
-            // Single IN condition — use index
-            QueryParser.Condition condition = conditions.get(0);
-            Index index = table.getIndex(condition.column);
-            if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
-                for (Object value : condition.inValues) {
-                    Object convertedValue = EVAL.convertConditionValue(
-                            value, condition.column,
-                            columnTypes.get(condition.column), columnTypes);
-                    rowsToUpdate.addAll(index.search(convertedValue));
-                }
-                rowsToUpdate = rowsToUpdate.stream().distinct().sorted()
-                        .collect(Collectors.toList());
-                LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} IN (...)",
-                        new Object[]{index instanceof HashIndex ? "hash"
-                                : index instanceof BTreeIndex ? "B-tree" : "unique",
-                                condition.column});
-            }
+            identifyInRows(table, columnTypes, rowsToUpdate);
         } else if (conditions.size() == 1 && !conditions.get(0).isGrouped()
                 && !conditions.get(0).not && !conditions.get(0).isInOperator()
                 && conditions.get(0).rightColumn == null
                 && conditions.get(0).subQuery == null) {
-            // Single comparison condition on BTree index — use range search
-            QueryParser.Condition condition = conditions.get(0);
-            Index index = table.getIndex(condition.column);
-            if (index instanceof BTreeIndex btree) {
-                Object conditionValue = EVAL.convertConditionValue(
-                        condition.value, condition.column,
-                        columnTypes.get(condition.column), columnTypes);
-                switch (condition.operator) {
-                    case GREATER_THAN_OR_EQUALS -> rowsToUpdate.addAll(btree.rangeSearchLow(conditionValue));
-                    case LESS_THAN_OR_EQUALS -> rowsToUpdate.addAll(btree.rangeSearchHigh(conditionValue));
-                    default -> { /* GREATER_THAN/LESS_THAN need exclusive bounds — fall through to full scan */ }
-                }
-                if (!rowsToUpdate.isEmpty()) {
-                    LOGGER.log(Level.INFO, "Using B-tree range index for UPDATE WHERE {0} {1} {2}",
-                            new Object[]{condition.column, condition.operator, conditionValue});
-                }
-            }
+            identifyRangeRows(table, columnTypes, rowsToUpdate);
         }
 
         // Fallback: full table scan when no index was used
         if (rowsToUpdate.isEmpty() && !conditions.isEmpty()) {
-            for (int i = 0; i < rows.size(); i++) {
-                if (table.isDeleted(i)) continue;
-                Map<String, Object> row = rows.get(i);
-                if (evaluateConditions(row, conditions, columnTypes)) {
-                    rowsToUpdate.add(i);
-                }
-            }
+            fullTableScanWithCondition(rows, columnTypes, table, rowsToUpdate);
         } else if (conditions.isEmpty()) {
-            for (int i = 0; i < rows.size(); i++) {
-                if (table.isDeleted(i)) continue;
+            fullTableScanAll(rows, table, rowsToUpdate);
+        }
+    }
+
+    private void identifyEqualsRows(Table table, Map<String, Class<?>> columnTypes,
+                                    List<Integer> rowsToUpdate) {
+        QueryParser.Condition condition = conditions.get(0);
+        Index index = table.getIndex(condition.column);
+        if (index instanceof HashIndex || index instanceof UniqueIndex) {
+            Object conditionValue = EVAL.convertConditionValue(
+                    condition.value, condition.column,
+                    columnTypes.get(condition.column), columnTypes);
+            rowsToUpdate.addAll(index.search(conditionValue));
+            LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} = {2}",
+                    new Object[]{index instanceof HashIndex ? "hash" : "unique",
+                            condition.column, conditionValue});
+        } else if (index instanceof BTreeIndex btree) {
+            Object conditionValue = EVAL.convertConditionValue(
+                    condition.value, condition.column,
+                    columnTypes.get(condition.column), columnTypes);
+            rowsToUpdate.addAll(btree.search(conditionValue));
+            LOGGER.log(Level.INFO, "Using B-tree index for UPDATE WHERE {0} = {1}",
+                    new Object[]{condition.column, conditionValue});
+        }
+    }
+
+    private void identifyInRows(Table table, Map<String, Class<?>> columnTypes,
+                                List<Integer> rowsToUpdate) {
+        QueryParser.Condition condition = conditions.get(0);
+        Index index = table.getIndex(condition.column);
+        if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
+            for (Object value : condition.inValues) {
+                Object convertedValue = EVAL.convertConditionValue(
+                        value, condition.column,
+                        columnTypes.get(condition.column), columnTypes);
+                rowsToUpdate.addAll(index.search(convertedValue));
+            }
+            rowsToUpdate = rowsToUpdate.stream().distinct().sorted()
+                    .collect(Collectors.toList());
+            LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} IN (...)",
+                    new Object[]{index instanceof HashIndex ? "hash"
+                            : index instanceof BTreeIndex ? "B-tree" : "unique",
+                            condition.column});
+        }
+    }
+
+    private void identifyRangeRows(Table table, Map<String, Class<?>> columnTypes,
+                                   List<Integer> rowsToUpdate) {
+        QueryParser.Condition condition = conditions.get(0);
+        Index index = table.getIndex(condition.column);
+        if (index instanceof BTreeIndex btree) {
+            Object conditionValue = EVAL.convertConditionValue(
+                    condition.value, condition.column,
+                    columnTypes.get(condition.column), columnTypes);
+            switch (condition.operator) {
+                case GREATER_THAN_OR_EQUALS -> rowsToUpdate.addAll(btree.rangeSearchLow(conditionValue));
+                case LESS_THAN_OR_EQUALS -> rowsToUpdate.addAll(btree.rangeSearchHigh(conditionValue));
+                default -> { /* GREATER_THAN/LESS_THAN need exclusive bounds — fall through to full scan */ }
+            }
+            if (!rowsToUpdate.isEmpty()) {
+                LOGGER.log(Level.INFO, "Using B-tree range index for UPDATE WHERE {0} {1} {2}",
+                        new Object[]{condition.column, condition.operator, conditionValue});
+            }
+        }
+    }
+
+    private void fullTableScanWithCondition(List<Map<String, Object>> rows,
+                                            Map<String, Class<?>> columnTypes,
+                                            Table table, List<Integer> rowsToUpdate) {
+        for (int i = 0; i < rows.size(); i++) {
+            if (table.isDeleted(i)) continue;
+            Map<String, Object> row = rows.get(i);
+            if (evaluateConditions(row, conditions, columnTypes)) {
                 rowsToUpdate.add(i);
             }
+        }
+    }
+
+    private void fullTableScanAll(List<Map<String, Object>> rows,
+                                  Table table, List<Integer> rowsToUpdate) {
+        for (int i = 0; i < rows.size(); i++) {
+            if (table.isDeleted(i)) continue;
+            rowsToUpdate.add(i);
         }
     }
 
