@@ -177,24 +177,40 @@ public class SubqueryParser {
         return selectQuery;
     }
 
+    private int trySkipStringOrIdentifierLiteral(String query, int currentPos) {
+        Matcher quotedStringMatcher = Pattern.compile("'(?:\\\\.|[^'\\\\])*+'").matcher(query).region(currentPos, query.length());
+        if (quotedStringMatcher.lookingAt()) {
+            return quotedStringMatcher.end();
+        }
+        Matcher quotedIdentifierMatcher = Pattern.compile("\"[^\"]*\"").matcher(query).region(currentPos, query.length());
+        if (quotedIdentifierMatcher.lookingAt()) {
+            return quotedIdentifierMatcher.end();
+        }
+        return -1;
+    }
+
+    private int trySkipSubqueryClause(String query, int currentPos) {
+        Matcher subqueryMatcher = Pattern.compile("\\(\\s*SELECT\\b", Pattern.DOTALL).matcher(query).region(currentPos, query.length());
+        if (subqueryMatcher.lookingAt()) {
+            int endPos = findMatchingClosingParen(query, currentPos + 1);
+            if (endPos == -1) {
+                return -2;
+            }
+            return endPos + 1;
+        }
+        return -1;
+    }
+
     private int findMainFromClause(String query) {
-        Pattern quotedStringPattern = Pattern.compile("'(?:\\\\.|[^'\\\\])*+'");
-        Pattern quotedIdentifierPattern = Pattern.compile("\"[^\"]*\"");
-        Pattern subqueryPattern = Pattern.compile("\\(\\s*SELECT\\b", Pattern.DOTALL);
-        Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
         int bracketDepth = 0;
         int currentPos = 0;
         boolean inQuotes = false;
+        Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
 
         while (currentPos < query.length()) {
-            Matcher quotedStringMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
-            if (quotedStringMatcher.lookingAt()) {
-                currentPos = quotedStringMatcher.end();
-                continue;
-            }
-            Matcher quotedIdentifierMatcher = quotedIdentifierPattern.matcher(query).region(currentPos, query.length());
-            if (quotedIdentifierMatcher.lookingAt()) {
-                currentPos = quotedIdentifierMatcher.end();
+            int literalEnd = trySkipStringOrIdentifierLiteral(query, currentPos);
+            if (literalEnd != -1) {
+                currentPos = literalEnd;
                 continue;
             }
 
@@ -204,30 +220,30 @@ public class SubqueryParser {
                 currentPos++;
                 continue;
             }
+            if (inQuotes) {
+                currentPos++;
+                continue;
+            }
 
-            if (!inQuotes) {
-                Matcher subqueryMatcher = subqueryPattern.matcher(query).region(currentPos, query.length());
-                if (subqueryMatcher.lookingAt()) {
-                    currentPos = findMatchingClosingParen(query, currentPos + 1);
-                    if (currentPos == -1) {
-                        return -1;
-                    }
-                    currentPos++;
-                    continue;
+            int subqueryEnd = trySkipSubqueryClause(query, currentPos);
+            if (subqueryEnd == -2) {
+                return -1;
+            }
+            if (subqueryEnd != -1) {
+                currentPos = subqueryEnd;
+                continue;
+            }
+
+            if (c == '(') {
+                bracketDepth++;
+            } else if (c == ')') {
+                bracketDepth--;
+                if (bracketDepth < 0) {
+                    return -1;
                 }
-
-                if (c == '(') {
-                    bracketDepth++;
-                } else if (c == ')') {
-                    bracketDepth--;
-                    if (bracketDepth < 0) {
-                        return -1;
-                    }
-                } else if (bracketDepth == 0) {
-                    Matcher fromMatcher = fromPattern.matcher(query).region(currentPos, query.length());
-                    if (fromMatcher.lookingAt()) {
-                        return currentPos;
-                    }
+            } else if (bracketDepth == 0) {
+                if (fromPattern.matcher(query).region(currentPos, query.length()).lookingAt()) {
+                    return currentPos;
                 }
             }
             currentPos++;
@@ -611,6 +627,93 @@ public class SubqueryParser {
         }
     }
 
+    private List<QueryParser.Condition> processWhereClause(String tableAndJoins, int whereIndex,
+                                                              int groupByIndex, int orderByIndex, int limitIndex,
+                                                              ParseContext ctx) {
+        int[] clauseIndices = {groupByIndex, orderByIndex, limitIndex};
+        int whereEndIndex = tableAndJoins.length();
+        for (int idx : clauseIndices) {
+            if (idx != -1 && idx > whereIndex && idx < whereEndIndex) {
+                whereEndIndex = idx;
+            }
+        }
+        String whereClause = tableAndJoins.substring(whereIndex, whereEndIndex).trim();
+        Pattern wherePattern = Pattern.compile("(?i)^WHERE\\s+");
+        Matcher whereMatcher = wherePattern.matcher(whereClause);
+        if (!whereMatcher.find()) {
+            LOGGER.log(Level.WARNING, "WHERE clause not found in substring: {0}", whereClause);
+            return new ArrayList<>();
+        }
+        String conditionStr = whereClause.substring(whereMatcher.end()).trim();
+        LOGGER.log(Level.FINEST, "Raw extracted conditionStr: {0}", conditionStr);
+        Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+        conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
+        LOGGER.log(Level.FINEST, "After removing LIMIT: {0}", conditionStr);
+        conditionStr = conditionStr.replaceFirst("(?i)^\\s*WHERE\\s+", "").trim();
+        LOGGER.log(Level.FINEST, "After removing WHERE: {0}", conditionStr);
+        if (conditionStr.isEmpty()) {
+            return new ArrayList<>();
+        }
+        LOGGER.log(Level.FINEST, "Extracted WHERE condition: {0}", conditionStr);
+        return parseConditions(conditionStr, ctx);
+    }
+
+    private void processGroupByAndHaving(String tableAndJoins, int groupByIndex, int orderByIndex,
+                                              int limitIndex, ParseContext ctx,
+                                              List<QueryParser.AggregateFunction> aggregates,
+                                              Map<String, String> groupBySubQueries,
+                                              List<String> groupBy,
+                                              List<QueryParser.HavingCondition> havingConditions) {
+        int groupByEndIndex = tableAndJoins.length();
+        int[] clauseIndices = {orderByIndex, limitIndex};
+        for (int idx : clauseIndices) {
+            if (idx != -1 && idx > groupByIndex && idx < groupByEndIndex) {
+                groupByEndIndex = idx;
+            }
+        }
+        String groupByClause = tableAndJoins.substring(groupByIndex + 8, groupByEndIndex).trim();
+        int havingIndex = findClauseOutsideSubquery(groupByClause, SqlKeywords.HAVING);
+        String havingClause = null;
+        if (havingIndex != -1) {
+            havingClause = groupByClause.substring(havingIndex + 6).trim();
+            groupByClause = groupByClause.substring(0, havingIndex).trim();
+        }
+        groupBy.addAll(parseGroupByClause(groupByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
+                ctx.tableAliases, groupBySubQueries));
+        if (havingClause != null) {
+            havingConditions.addAll(parseHavingConditions(havingClause, ctx, aggregates));
+        }
+    }
+
+    private List<QueryParser.OrderByInfo> processOrderByClause(String tableAndJoins, int orderByIndex,
+                                                                    int limitIndex, ParseContext ctx,
+                                                                    List<QueryParser.SubQuery> subQueries) {
+        int orderByEndIndex = limitIndex != -1 ? limitIndex : tableAndJoins.length();
+        String orderByClause = tableAndJoins.substring(orderByIndex + 8, orderByEndIndex).trim();
+        Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
+        orderByClause = limitPattern.matcher(orderByClause).replaceAll("");
+        return parseOrderByClause(orderByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
+                ctx.tableAliases, subQueries);
+    }
+
+    private Integer[] parseLimitOffset(String tableAndJoins, int limitIndex) {
+        String afterLimit = tableAndJoins.substring(limitIndex + 5).trim();
+        Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+)|(?:\\s*;\\s*)?\\s*$)");
+        Matcher limitMatcher = limitPattern.matcher(afterLimit);
+        if (!limitMatcher.find()) {
+            return new Integer[]{null, null};
+        }
+        Integer limit = Integer.parseInt(limitMatcher.group(1));
+        Integer offset = null;
+        String remaining = afterLimit.substring(limitMatcher.end()).trim();
+        Pattern offsetPattern = Pattern.compile("(?i)^OFFSET\\s+(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
+        Matcher offsetMatcher = offsetPattern.matcher(remaining);
+        if (offsetMatcher.find()) {
+            offset = Integer.parseInt(offsetMatcher.group(1));
+        }
+        return new Integer[]{limit, offset};
+    }
+
     private QueryParser.AdditionalClauses parseAdditionalClauses(String tableAndJoins, ParseContext ctx,
                                                              List<QueryParser.AggregateFunction> aggregates,
                                                              List<QueryParser.SubQuery> subQueries) {
@@ -622,93 +725,28 @@ public class SubqueryParser {
         Integer offset = null;
         Map<String, String> groupBySubQueries = new HashMap<>();
 
-        // Найти индексы всех клауз
         int whereIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.WHERE);
         int groupByIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.GROUP_BY);
         int orderByIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.ORDER_BY);
         int limitIndex = findClauseOutsideSubquery(tableAndJoins, SqlKeywords.LIMIT);
 
-        // Обработка WHERE
         if (whereIndex != -1) {
-            int[] clauseIndices = {groupByIndex, orderByIndex, limitIndex};
-            int whereEndIndex = tableAndJoins.length();
-            for (int idx : clauseIndices) {
-                if (idx != -1 && idx > whereIndex && idx < whereEndIndex) {
-                    whereEndIndex = idx;
-                }
-            }
-            // Находим позицию после WHERE и пробелов
-            String whereClause = tableAndJoins.substring(whereIndex, whereEndIndex).trim();
-            Pattern wherePattern = Pattern.compile("(?i)^WHERE\\s+");
-            Matcher whereMatcher = wherePattern.matcher(whereClause);
-            if (whereMatcher.find()) {
-                String conditionStr = whereClause.substring(whereMatcher.end()).trim();
-                LOGGER.log(Level.FINEST, "Raw extracted conditionStr: {0}", conditionStr);
-                // Удаляем LIMIT из conditionStr
-                Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
-                conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
-                LOGGER.log(Level.FINEST, "After removing LIMIT: {0}", conditionStr);
-                // Дополнительная очистка WHERE, если оно осталось
-                conditionStr = conditionStr.replaceFirst("(?i)^\\s*WHERE\\s+", "").trim();
-                LOGGER.log(Level.FINEST, "After removing WHERE: {0}", conditionStr);
-                if (!conditionStr.isEmpty()) {
-                    LOGGER.log(Level.FINEST, "Extracted WHERE condition: {0}", conditionStr);
-                    conditions = parseConditions(conditionStr, ctx);
-                }
-            } else {
-                LOGGER.log(Level.WARNING, "WHERE clause not found in substring: {0}", whereClause);
-            }
+            conditions.addAll(processWhereClause(tableAndJoins, whereIndex, groupByIndex, orderByIndex, limitIndex, ctx));
         }
 
-        // Обработка GROUP BY
         if (groupByIndex != -1 && groupByIndex > whereIndex) {
-            int groupByEndIndex = tableAndJoins.length();
-            int[] clauseIndices = {orderByIndex, limitIndex};
-            for (int idx : clauseIndices) {
-                if (idx != -1 && idx > groupByIndex && idx < groupByEndIndex) {
-                    groupByEndIndex = idx;
-                }
-            }
-            String groupByClause = tableAndJoins.substring(groupByIndex + 8, groupByEndIndex).trim();
-            int havingIndex = findClauseOutsideSubquery(groupByClause, SqlKeywords.HAVING);
-            String havingClause = null;
-            if (havingIndex != -1) {
-                havingClause = groupByClause.substring(havingIndex + 6).trim();
-                groupByClause = groupByClause.substring(0, havingIndex).trim();
-            }
-            groupBy = parseGroupByClause(groupByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
-                    ctx.tableAliases, groupBySubQueries);
-            if (havingClause != null) {
-                havingConditions = parseHavingConditions(havingClause, ctx, aggregates);
-            }
+            processGroupByAndHaving(tableAndJoins, groupByIndex, orderByIndex, limitIndex, ctx, aggregates,
+                    groupBySubQueries, groupBy, havingConditions);
         }
 
-        // Обработка ORDER BY
         if (orderByIndex != -1 && orderByIndex > whereIndex && orderByIndex > groupByIndex) {
-            int orderByEndIndex = limitIndex != -1 ? limitIndex : tableAndJoins.length();
-            // Дополнительная проверка, чтобы исключить LIMIT из ORDER BY
-            String orderByClause = tableAndJoins.substring(orderByIndex + 8, orderByEndIndex).trim();
-            // Удаляем LIMIT, если он остался в orderByClause
-            Pattern limitPattern = Pattern.compile("(?i)\\s*LIMIT\\s+\\d+(\\s+OFFSET\\s+\\d+)?\\s*$", Pattern.DOTALL);
-            orderByClause = limitPattern.matcher(orderByClause).replaceAll("");
-            orderBy = parseOrderByClause(orderByClause, ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes,
-                    ctx.tableAliases, subQueries);
+            orderBy.addAll(processOrderByClause(tableAndJoins, orderByIndex, limitIndex, ctx, subQueries));
         }
 
-        // Обработка LIMIT
         if (limitIndex != -1 && limitIndex > whereIndex && limitIndex > groupByIndex && limitIndex > orderByIndex) {
-            String afterLimit = tableAndJoins.substring(limitIndex + 5).trim();
-            Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+)|(?:\\s*;\\s*)?\\s*$)");
-            Matcher limitMatcher = limitPattern.matcher(afterLimit);
-            if (limitMatcher.find()) {
-                limit = Integer.parseInt(limitMatcher.group(1));
-                String remaining = afterLimit.substring(limitMatcher.end()).trim();
-                Pattern offsetPattern = Pattern.compile("(?i)^OFFSET\\s+(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
-                Matcher offsetMatcher = offsetPattern.matcher(remaining);
-                if (offsetMatcher.find()) {
-                    offset = Integer.parseInt(offsetMatcher.group(1));
-                }
-            }
+            Integer[] limitOffset = parseLimitOffset(tableAndJoins, limitIndex);
+            limit = limitOffset[0];
+            offset = limitOffset[1];
         }
 
         return new QueryParser.AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset, groupBySubQueries);
@@ -1581,12 +1619,8 @@ public class SubqueryParser {
         return conditions;
     }
 
-    private QueryParser.HavingCondition parseSingleHavingCondition(String condStr, ParseContext ctx,
-                                                               List<QueryParser.AggregateFunction> aggregates,
-                                                               String conjunction, boolean not) {
+    private QueryParser.OperatorInfo findHavingOperator(String condStr) {
         String[] operators = {"=", "!=", "<>", ">=", "<=", "<", ">"};
-        String selectedOperator = null;
-        int operatorIndex = -1;
         int parenDepth = 0;
         boolean inQuotes = false;
         for (int i = 0; i < condStr.length(); i++) {
@@ -1614,83 +1648,82 @@ public class SubqueryParser {
                     char prevChar = i > 0 ? condStr.charAt(i - 1) : ' ';
                     char nextChar = i + op.length() < condStr.length() ? condStr.charAt(i + op.length()) : ' ';
                     if (Character.isWhitespace(prevChar) && Character.isWhitespace(nextChar)) {
-                        selectedOperator = op;
-                        operatorIndex = i;
-                        break;
+                        return new QueryParser.OperatorInfo(op, i, i + op.length());
                     }
                 }
             }
-            if (selectedOperator != null) {
-                break;
-            }
         }
+        return null;
+    }
 
-        if (operatorIndex == -1) {
-            throw new IllegalArgumentException("Invalid HAVING condition: no valid operator found in '" + condStr + "'");
-        }
-
-        String leftPart = condStr.substring(0, operatorIndex).trim();
-        String rightPart = condStr.substring(operatorIndex + selectedOperator.length()).trim();
-
-        QueryParser.AggregateFunction aggregate = null;
+    private QueryParser.AggregateFunction resolveAggregate(String leftPart, ParseContext ctx,
+                                                           List<QueryParser.AggregateFunction> aggregates) {
         for (QueryParser.AggregateFunction agg : aggregates) {
             String aggStr = agg.toString();
             String aggBase = agg.alias != null
                     ? aggStr.replaceFirst("(?i)\\s+AS\\s+" + Pattern.quote(agg.alias) + "$", "")
                     : aggStr;
             if (aggBase.equalsIgnoreCase(leftPart) || (agg.alias != null && agg.alias.equalsIgnoreCase(leftPart))) {
-                aggregate = agg;
-                break;
+                return agg;
             }
         }
 
-        if (aggregate == null) {
-            Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
-            Matcher aggMatcher = aggPattern.matcher(leftPart);
-            if (aggMatcher.matches()) {
-                String funcName = aggMatcher.group(1);
-                String columnOrSubQuery = aggMatcher.group(2);
-                String alias = unquoteIdentifier(aggMatcher.group(3));
-                if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains(SqlKeywords.SELECT)) {
-                    String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
-                    validateSubQuery(subQueryStr);
-                    Query<?> subQuery = queryParser.parse(subQueryStr, ctx.database);
-                    aggregate = new QueryParser.AggregateFunction(funcName, new QueryParser.SubQuery(subQuery, null), alias);
-                } else {
-                    columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
-                    String normalizedColumn = normalizeColumnName(columnOrSubQuery, ctx.defaultTableName, ctx.tableAliases);
-                    validateColumn(normalizedColumn, ctx.combinedColumnTypes);
-                    aggregate = new QueryParser.AggregateFunction(funcName, columnOrSubQuery, alias);
-                }
-            } else {
-                throw new IllegalArgumentException("Invalid HAVING condition: left side must be an aggregate function: " + leftPart);
-            }
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
+        Matcher aggMatcher = aggPattern.matcher(leftPart);
+        if (!aggMatcher.matches()) {
+            throw new IllegalArgumentException("Invalid HAVING condition: left side must be an aggregate function: " + leftPart);
         }
-
-        Class<?> valueType = aggregate.functionName.equals(SqlKeywords.COUNT) ? Long.class :
-                (aggregate.column != null ? getColumnType(aggregate.column, ctx.combinedColumnTypes) : Double.class);
-        Object value;
-        if (rightPart.startsWith("(") && rightPart.toUpperCase().contains(SqlKeywords.SELECT)) {
-            String cleanRightPart = rightPart.replaceFirst("(?i)\\s+AS\\s+" + IDENTIFIER_PATTERN + "\\s*$", "").trim();
-            if (!(cleanRightPart.startsWith("(") && cleanRightPart.endsWith(")"))) {
-                throw new IllegalArgumentException("Invalid HAVING subquery on right side: " + rightPart);
-            }
-            String subQueryStr = cleanRightPart.substring(1, cleanRightPart.length() - 1).trim();
+        String funcName = aggMatcher.group(1);
+        String columnOrSubQuery = aggMatcher.group(2);
+        String alias = unquoteIdentifier(aggMatcher.group(3));
+        if (columnOrSubQuery.toUpperCase().startsWith("(") && columnOrSubQuery.toUpperCase().contains(SqlKeywords.SELECT)) {
+            String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
             validateSubQuery(subQueryStr);
-            Object subQueryResult = ctx.database.executeQuery(subQueryStr, null);
-            if (!(subQueryResult instanceof List<?> subRows)) {
-                throw new IllegalArgumentException("HAVING subquery must return a list of rows: " + rightPart);
-            }
-            if (subRows.isEmpty() || !(subRows.get(0) instanceof Map<?, ?> firstMap) || firstMap.isEmpty()) {
-                value = null;
-            } else {
-                value = firstMap.values().iterator().next();
-            }
-        } else {
-            value = parseConditionValue(aggregate.toString(), rightPart, valueType);
+            Query<?> subQuery = queryParser.parse(subQueryStr, ctx.database);
+            return new QueryParser.AggregateFunction(funcName, new QueryParser.SubQuery(subQuery, null), alias);
+        }
+        columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
+        String normalizedColumn = normalizeColumnName(columnOrSubQuery, ctx.defaultTableName, ctx.tableAliases);
+        validateColumn(normalizedColumn, ctx.combinedColumnTypes);
+        return new QueryParser.AggregateFunction(funcName, columnOrSubQuery, alias);
+    }
+
+    private Object resolveHavingValue(String rightPart, QueryParser.AggregateFunction aggregate, ParseContext ctx) {
+        if (!rightPart.startsWith("(") || !rightPart.toUpperCase().contains(SqlKeywords.SELECT)) {
+            Class<?> valueType = aggregate.functionName.equals(SqlKeywords.COUNT) ? Long.class :
+                    (aggregate.column != null ? getColumnType(aggregate.column, ctx.combinedColumnTypes) : Double.class);
+            return parseConditionValue(aggregate.toString(), rightPart, valueType);
+        }
+        String cleanRightPart = rightPart.replaceFirst("(?i)\\s+AS\\s+" + IDENTIFIER_PATTERN + "\\s*$", "").trim();
+        if (!(cleanRightPart.startsWith("(") && cleanRightPart.endsWith(")"))) {
+            throw new IllegalArgumentException("Invalid HAVING subquery on right side: " + rightPart);
+        }
+        String subQueryStr = cleanRightPart.substring(1, cleanRightPart.length() - 1).trim();
+        validateSubQuery(subQueryStr);
+        Object subQueryResult = ctx.database.executeQuery(subQueryStr, null);
+        if (!(subQueryResult instanceof List<?> subRows)) {
+            throw new IllegalArgumentException("HAVING subquery must return a list of rows: " + rightPart);
+        }
+        if (subRows.isEmpty() || !(subRows.get(0) instanceof Map<?, ?> firstMap) || firstMap.isEmpty()) {
+            return null;
+        }
+        return firstMap.values().iterator().next();
+    }
+
+    private QueryParser.HavingCondition parseSingleHavingCondition(String condStr, ParseContext ctx,
+                                                               List<QueryParser.AggregateFunction> aggregates,
+                                                               String conjunction, boolean not) {
+        QueryParser.OperatorInfo operatorInfo = findHavingOperator(condStr);
+        if (operatorInfo == null) {
+            throw new IllegalArgumentException("Invalid HAVING condition: no valid operator found in '" + condStr + "'");
         }
 
-        QueryParser.Operator operator = parseOperator(selectedOperator);
+        String leftPart = condStr.substring(0, operatorInfo.index).trim();
+        String rightPart = condStr.substring(operatorInfo.endIndex).trim();
+
+        QueryParser.AggregateFunction aggregate = resolveAggregate(leftPart, ctx, aggregates);
+        Object value = resolveHavingValue(rightPart, aggregate, ctx);
+        QueryParser.Operator operator = parseOperator(operatorInfo.operator);
 
         return new QueryParser.HavingCondition(aggregate, operator, value, conjunction, not);
     }

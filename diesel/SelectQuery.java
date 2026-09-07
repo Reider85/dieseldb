@@ -1021,6 +1021,96 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
     }
 
+    private record HashJoinSetup(Table buildTable, Table probeTable, String buildTableName,
+            String probeTableName, String buildColumnKey, String probeColumnKey,
+            List<Map<String, Object>> buildRows, boolean onlyEquality) {}
+
+    private HashJoinSetup resolveHashJoinSideTables(QueryParser.JoinInfo join, Table joinTable,
+            List<Map<String, Object>> mainRows, JoinContext ctx) {
+        Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : ctx.tables.get(mainTableName);
+        Table probeTable = buildTable == joinTable ? ctx.tables.get(mainTableName) : joinTable;
+        String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
+        String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
+
+        QueryParser.Condition equalityCondition = join.onConditions.stream()
+                .filter(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison())
+                .findFirst()
+                .orElse(null);
+        if (equalityCondition == null) {
+            throw new IllegalStateException("No equality condition for hash join");
+        }
+        String buildColumn = resolveJoinColumn(equalityCondition, buildTableName);
+        String probeColumn = resolveJoinColumn(equalityCondition, probeTableName);
+        if (buildColumn == null || probeColumn == null) {
+            throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
+        }
+
+        List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, ctx.combinedColumnTypes);
+        if (buildRows == null) {
+            buildRows = buildTable.getLiveRows();
+        }
+        String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
+        boolean onlyEquality = join.onConditions.size() == 1 && equalityCondition != null && !equalityCondition.not;
+
+        return new HashJoinSetup(buildTable, probeTable, buildTableName, probeTableName,
+                buildColumnKey, normalizeColumnKey(probeColumn, probeTableName), buildRows, onlyEquality);
+    }
+
+    private boolean shouldReplanToNestedLoop() {
+        return adaptiveState != QueryOptimizer.QueryExecutionState.DISABLED
+                && adaptiveState.stepIndex() > 0
+                && adaptiveState.hasSignificantDeviation()
+                && !adaptiveState.replanned;
+    }
+
+    private List<Map<String, Map<String, Object>>> executeHashJoin(QueryParser.JoinInfo join,
+            Table joinTable, List<Map<String, Object>> mainRows,
+            List<Map<String, Map<String, Object>>> joinedRows,
+            boolean lastStream, JoinContext ctx) throws IOException {
+        HashJoinSetup setup = resolveHashJoinSideTables(join, joinTable, mainRows, ctx);
+
+        long estimatedRows = setup.buildRows().size();
+        long estimatedBytes = estimateHashTableSizeBytes(setup.buildRows(), setup.buildTable());
+
+        if (preferNestedLoopByStatistics(setup.buildTable(), setup.probeTable())) {
+            LOGGER.log(Level.FINE, "Statistics prefer nested loop over hash join for join on {0} ({1} x {2} rows)",
+                    new Object[]{join.tableName, setup.buildTable().getStatistics().getRowCount(), setup.probeTable().getStatistics().getRowCount()});
+            ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
+            return runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
+        }
+        if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+            try {
+                ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
+                List<Map<String, Map<String, Object>>> result = runPartitionedHashJoin(setup.buildRows(), setup.buildTable(), setup.probeTable(),
+                        setup.buildColumnKey(), setup.probeColumnKey(), ctx);
+                LOGGER.log(Level.INFO, "Partitioned hash join completed: {0} rows produced for join on {1}",
+                        new Object[]{result.size(), join.tableName});
+                return result;
+            } catch (IOException e) {
+                LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
+                ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
+                return runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
+            }
+        }
+        ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
+        List<Map<String, Map<String, Object>>> result = runInMemoryHashJoin(setup.buildRows(), setup.buildTable(), setup.probeTable(),
+                setup.buildColumnKey(), setup.probeColumnKey(), ctx);
+        LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
+                new Object[]{result.size(), join.tableName});
+        return result;
+    }
+
+    private void recordJoinAdaptiveMetrics(QueryParser.JoinInfo join, Table joinTable,
+            boolean useHashJoin, List<Map<String, Map<String, Object>>> newJoinedRows) {
+        if (adaptiveState != QueryOptimizer.QueryExecutionState.DISABLED) {
+            long estimatedRowsForJoin = joinTable.getStatistics().getRowCount();
+            long actualRowsProduced = newJoinedRows.size();
+            adaptiveState.reportStep(estimatedRowsForJoin, actualRowsProduced);
+            adaptiveState.chooseAlgorithm(
+                    useHashJoin ? "hash-" + join.tableName : "nl-" + join.tableName);
+        }
+    }
+
     // Prompt 29: applies every JOIN (hash / partitioned hash / block nested
     // loop / statistics-preferred nested loop) and returns the joined rows.
     private List<Map<String, Map<String, Object>>> applyJoins(
@@ -1038,101 +1128,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
             }
 
-            // Prompt 82: adaptive replan – when the previous join's actual row
-            // count deviated significantly from the statistics estimate, switch
-            // the current join's algorithm (hash ↔ nested loop) so the remaining
-            // pipeline avoids the same miscalculation.
-            if (adaptiveState != QueryOptimizer.QueryExecutionState.DISABLED
-                    && adaptiveState.stepIndex() > 0
-                    && adaptiveState.hasSignificantDeviation()
-                    && !adaptiveState.replanned) {
-                if (useHashJoin) {
-                    useHashJoin = false;
-                    adaptiveState.markReplanned();
-                    LOGGER.log(Level.INFO, "Adaptive replan: switching to nested loop for join on {0} (previous deviation={1})",
-                            new Object[]{join.tableName, String.format("%.2f", adaptiveState.maxDeviation)});
-                }
+            if (shouldReplanToNestedLoop() && useHashJoin) {
+                useHashJoin = false;
+                adaptiveState.markReplanned();
+                LOGGER.log(Level.INFO, "Adaptive replan: switching to nested loop for join on {0} (previous deviation={1})",
+                        new Object[]{join.tableName, String.format("%.2f", adaptiveState.maxDeviation)});
             }
 
             LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
 
-            // Prompt 15: when a JOIN equality column has no index, one is
-            // auto-created (in-memory B-tree) so later joins and lookups on
-            // that column can use it, with an advisory warning. Idempotent
-            // (existing indexes and the clustered PK are skipped) and never
-            // fatal: any failure only degrades to a log record.
             ensureJoinColumnIndexes(ctx.tables, join);
 
             if (useHashJoin) {
-                Table buildTable = joinTable.rowCount() <= mainRows.size() ? joinTable : ctx.tables.get(mainTableName);
-                Table probeTable = buildTable == joinTable ? ctx.tables.get(mainTableName) : joinTable;
-                String buildTableName = buildTable == joinTable ? join.tableName : mainTableName;
-                String probeTableName = probeTable == joinTable ? join.tableName : mainTableName;
-
-                QueryParser.Condition equalityCondition = join.onConditions.stream()
-                        .filter(c -> c.operator == QueryParser.Operator.EQUALS && c.isColumnComparison())
-                        .findFirst()
-                        .orElse(null);
-                if (equalityCondition == null) {
-                    throw new IllegalStateException("No equality condition for hash join");
-                }
-                String buildColumn = resolveJoinColumn(equalityCondition, buildTableName);
-                String probeColumn = resolveJoinColumn(equalityCondition, probeTableName);
-                if (buildColumn == null || probeColumn == null) {
-                    throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
-                }
-
-                List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, ctx.combinedColumnTypes);
-                if (buildRows == null) {
-                    buildRows = buildTable.getLiveRows();
-                }
-                String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
-
-                // When the ON clause is exactly one plain equality, the hash
-                // match already guarantees the condition, so we skip the
-                // flatten+evaluate round trip entirely.
-                boolean onlyEquality = join.onConditions.size() == 1 && equalityCondition != null && !equalityCondition.not;
-
-                // Estimate the hash table size before building it, so a huge
-                // build side never materialises an in-memory hash table that
-                // could cause an OutOfMemoryError (see Prompt 10). When either
-                // the estimated row count or the estimated byte size exceeds
-                // its budget, the partitioned hash join is used: it spills
-                // partition files to disk and keeps peak memory bounded by a
-                // single partition, so it stays O(build + probe + result)
-                // instead of falling back to the O(n x m) nested loop.
-                long estimatedRows = buildRows.size();
-                long estimatedBytes = estimateHashTableSizeBytes(buildRows, buildTable);
-
-                if (preferNestedLoopByStatistics(buildTable, probeTable)) {
-                    // Statistics say the row-count product is too small for
-                    // the hash table build/probe overhead to pay off, so a
-                    // nested loop is cheaper (see Prompt 14).
-                    LOGGER.log(Level.FINE, "Statistics prefer nested loop over hash join for join on {0} ({1} x {2} rows)",
-                            new Object[]{join.tableName, buildTable.getStatistics().getRowCount(), probeTable.getStatistics().getRowCount()});
-                    ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
-                    newJoinedRows = runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
-                } else if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
-                    // Build side estimated above the memory budget: use the
-                    // partitioned hash join, which spills partition files to
-                    // disk and keeps peak memory bounded by a single partition.
-                    try {
-                        ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
-                        newJoinedRows = runPartitionedHashJoin(buildRows, buildTable, probeTable,
-                                buildColumnKey, normalizeColumnKey(probeColumn, probeTableName), ctx);
-                        LOGGER.log(Level.INFO, "Partitioned hash join completed: {0} rows produced for join on {1}",
-                                new Object[]{newJoinedRows.size(), join.tableName});
-                    } catch (IOException e) {
-                        LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
-                        ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
-                        newJoinedRows = runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
-                    }
-                } else {
-                    ctx.forJoin(join, onlyEquality, lastStream, buildTableName, probeTableName);
-                    newJoinedRows = runInMemoryHashJoin(buildRows, buildTable, probeTable,
-                            buildColumnKey, normalizeColumnKey(probeColumn, probeTableName), ctx);
-                    LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
-                            new Object[]{newJoinedRows.size(), join.tableName});
+                try {
+                    newJoinedRows = executeHashJoin(join, joinTable, mainRows, joinedRows, lastStream, ctx);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
             } else {
                 ctx.forJoin(join, false, lastStream, null, null);
@@ -1140,16 +1151,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
             joinedRows = newJoinedRows;
 
-            // Prompt 82: record actual row count vs estimate for adaptive learning.
-            // The estimate comes from the join table's statistics; the actual is the
-            // number of rows produced by this join iteration.
-            if (adaptiveState != QueryOptimizer.QueryExecutionState.DISABLED) {
-                long estimatedRowsForJoin = joinTable.getStatistics().getRowCount();
-                long actualRowsProduced = newJoinedRows.size();
-                adaptiveState.reportStep(estimatedRowsForJoin, actualRowsProduced);
-                adaptiveState.chooseAlgorithm(
-                        useHashJoin ? "hash-" + join.tableName : "nl-" + join.tableName);
-            }
+            recordJoinAdaptiveMetrics(join, joinTable, useHashJoin, newJoinedRows);
         }
         return joinedRows;
     }
@@ -1432,15 +1434,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      *
      * @throws IOException if the temporary partition files cannot be written
      */
-    private List<Map<String, Map<String, Object>>> runPartitionedHashJoin(
-            List<Map<String, Object>> buildRows, Table buildTable, Table probeTable,
-            String buildColumnKey, String probeColumnKey, JoinContext ctx) throws IOException {
-
-        int partitionCount = choosePartitionCount(buildRows.size());
-        File tempDir = Files.createTempDirectory("diesel-hj-" + System.nanoTime() + "-").toFile();
-
-        long buildStart = System.nanoTime();
-        DataOutputStream[] buildWriters = new DataOutputStream[partitionCount];
+    private void spillBuildPartitions(List<Map<String, Object>> buildRows, Table buildTable,
+            String buildColumnKey, int partitionCount, File tempDir, JoinContext ctx) throws IOException {
+        DataOutputStream[] writers = new DataOutputStream[partitionCount];
         for (int i = 0; i < buildRows.size(); i++) {
             Map<String, Object> row = buildRows.get(i);
             Object key = row.get(buildColumnKey);
@@ -1448,49 +1444,47 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 continue;
             }
             int p = (key.hashCode() & 0x7fffffff) % partitionCount;
-            if (buildWriters[p] == null) {
-                buildWriters[p] = new DataOutputStream(new BufferedOutputStream(
+            if (writers[p] == null) {
+                writers[p] = new DataOutputStream(new BufferedOutputStream(
                         new FileOutputStream(new File(tempDir, "build-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
             }
-            writeBinaryRow(buildWriters[p], row);
+            writeBinaryRow(writers[p], row);
             ReentrantReadWriteLock lock = buildTable.getRowLock(i);
             lock.readLock().lock();
             ctx.acquiredLocks.add(lock);
         }
-        for (DataOutputStream writer : buildWriters) {
-            if (writer != null) {
-                writer.flush();
-                writer.close();
-            }
-        }
+        closePartitionWriters(writers);
+    }
 
-        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
-        if (probeRows == null) {
-            probeRows = probeTable.getLiveRows();
-        }
-        DataOutputStream[] probeWriters = new DataOutputStream[partitionCount];
+    private void spillProbePartitions(List<Map<String, Object>> probeRows,
+            String probeColumnKey, int partitionCount, File tempDir) throws IOException {
+        DataOutputStream[] writers = new DataOutputStream[partitionCount];
         for (Map<String, Object> row : probeRows) {
             Object key = row.get(probeColumnKey);
             if (key == null) {
                 continue;
             }
             int p = (key.hashCode() & 0x7fffffff) % partitionCount;
-            if (probeWriters[p] == null) {
-                probeWriters[p] = new DataOutputStream(new BufferedOutputStream(
+            if (writers[p] == null) {
+                writers[p] = new DataOutputStream(new BufferedOutputStream(
                         new FileOutputStream(new File(tempDir, "probe-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
             }
-            writeBinaryRow(probeWriters[p], row);
+            writeBinaryRow(writers[p], row);
         }
-        for (DataOutputStream writer : probeWriters) {
+        closePartitionWriters(writers);
+    }
+
+    private static void closePartitionWriters(DataOutputStream[] writers) throws IOException {
+        for (DataOutputStream writer : writers) {
             if (writer != null) {
                 writer.flush();
                 writer.close();
             }
         }
-        long buildTimeMs = (System.nanoTime() - buildStart) / 1_000_000;
+    }
 
-        long probeStart = System.nanoTime();
-        List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+    private long joinPartitions(int partitionCount, File tempDir, String buildColumnKey,
+            String probeColumnKey, List<Map<String, Map<String, Object>>> newJoinedRows, JoinContext ctx) throws IOException {
         long totalHashEntries = 0;
         for (int p = 0; p < partitionCount; p++) {
             File buildFile = new File(tempDir, "build-" + p + ErrorMessages.BIN_EXTENSION);
@@ -1526,15 +1520,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
         }
-        long probeTimeMs = (System.nanoTime() - probeStart) / 1_000_000;
+        return totalHashEntries;
+    }
 
+    private static void cleanupPartitionFiles(File tempDir) {
         File[] tempFiles = tempDir.listFiles();
         if (tempFiles != null) {
             for (File tempFile : tempFiles) {
                 try {
                     Files.deleteIfExists(tempFile.toPath());
                 } catch (IOException ignored) {
-                    // Temp spill files are best-effort; leftover files are cleaned on the next run
                     LOGGER.fine("Temp spill file cleanup failed: " + ignored.getMessage());
                 }
             }
@@ -1542,9 +1537,33 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         try {
             Files.deleteIfExists(tempDir.toPath());
         } catch (IOException ignored) {
-            // Temp spill dir is best-effort; leftover dirs are cleaned on the next run
             LOGGER.fine("Temp spill dir cleanup failed: " + ignored.getMessage());
         }
+    }
+
+    private List<Map<String, Map<String, Object>>> runPartitionedHashJoin(
+            List<Map<String, Object>> buildRows, Table buildTable, Table probeTable,
+            String buildColumnKey, String probeColumnKey, JoinContext ctx) throws IOException {
+
+        int partitionCount = choosePartitionCount(buildRows.size());
+        File tempDir = Files.createTempDirectory("diesel-hj-" + System.nanoTime() + "-").toFile();
+
+        long buildStart = System.nanoTime();
+        spillBuildPartitions(buildRows, buildTable, buildColumnKey, partitionCount, tempDir, ctx);
+
+        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
+        if (probeRows == null) {
+            probeRows = probeTable.getLiveRows();
+        }
+        spillProbePartitions(probeRows, probeColumnKey, partitionCount, tempDir);
+        long buildTimeMs = (System.nanoTime() - buildStart) / 1_000_000;
+
+        long probeStart = System.nanoTime();
+        List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+        long totalHashEntries = joinPartitions(partitionCount, tempDir, buildColumnKey, probeColumnKey, newJoinedRows, ctx);
+        long probeTimeMs = (System.nanoTime() - probeStart) / 1_000_000;
+
+        cleanupPartitionFiles(tempDir);
 
         lastHashJoinTableSize = totalHashEntries;
         lastHashJoinBuildTimeMs = buildTimeMs;
@@ -1599,15 +1618,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * (outer x inner) pair and applies CROSS / key-equality / ON-condition
      * matching, streaming flattened results when the last join is streaming.
      */
-    private List<Map<String, Map<String, Object>>> runBlockNestedLoopJoin(
-            List<Map<String, Map<String, Object>>> joinedRows, Table joinTable, JoinContext ctx) {
+    private record JoinKeyMapping(boolean equalsJoin, String leftJoinKey, String rightJoinKey,
+            List<String> rightSrcKeys, List<String> rightTargetKeys) {}
 
-        List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
-        List<Map<String, Object>> joinRows = getIndexedRows(joinTable, ctx.join.onConditions, ctx.join.tableName, ctx.combinedColumnTypes);
-        if (joinRows == null) {
-            joinRows = joinTable.getLiveRows();
-        }
-
+    private JoinKeyMapping resolveJoinKeyMapping(List<Map<String, Object>> joinRows, JoinContext ctx) {
         String rightPrefix = ctx.join.tableName + ".";
         List<String> rightSrcKeys;
         List<String> rightTargetKeys;
@@ -1626,9 +1640,82 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         String leftJoinKey = equalsJoin ? normalizeColumnKey(ctx.join.leftColumn, ctx.join.originalTable) : null;
         String rightJoinKey = equalsJoin ? normalizeColumnKey(ctx.join.rightColumn, ctx.join.tableName) : null;
 
-        // Row locks are keyed by row index, not by pair, so acquire
-        // the whole join table's read locks once instead of once per
-        // (outer x inner) pair.
+        return new JoinKeyMapping(equalsJoin, leftJoinKey, rightJoinKey, rightSrcKeys, rightTargetKeys);
+    }
+
+    private void processStreamingNestedLoop(Map<String, Map<String, Object>> currentJoin,
+            Map<String, Object> evalRow, List<Map<String, Object>> joinRows,
+            JoinKeyMapping keyMapping, JoinContext ctx) {
+        Map<String, Object> leftRow = keyMapping.equalsJoin() ? currentJoin.get(ctx.join.originalTable) : null;
+        Object leftValue = keyMapping.equalsJoin() ? leftRow.get(keyMapping.leftJoinKey()) : null;
+        for (int j = 0; j < joinRows.size(); j++) {
+            Map<String, Object> rightRow = joinRows.get(j);
+            Map<String, Object> flatRow = new HashMap<>(evalRow.size() + keyMapping.rightSrcKeys().size() + 1);
+            flatRow.putAll(evalRow);
+            for (int k = 0; k < keyMapping.rightSrcKeys().size(); k++) {
+                flatRow.put(keyMapping.rightTargetKeys().get(k), rightRow.get(keyMapping.rightSrcKeys().get(k)));
+            }
+            boolean matches;
+            if (ctx.join.joinType == QueryParser.JoinType.CROSS) {
+                matches = true;
+            } else if (keyMapping.equalsJoin()) {
+                matches = valuesEqual(leftValue, rightRow.get(keyMapping.rightJoinKey()));
+            } else if (!ctx.join.onConditions.isEmpty()) {
+                matches = evaluateConditions(flatRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables);
+            } else {
+                throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
+            }
+            if (matches) {
+                spillFilteredRow(ctx.spill, ctx.spillActive, ctx.spillFallback, flatRow,
+                        ctx.whereConditions, ctx.combinedColumnTypes, ctx.tables);
+            }
+        }
+    }
+
+    private void processNonStreamingNestedLoop(Map<String, Map<String, Object>> currentJoin,
+            Map<String, Object> evalRow, List<Map<String, Object>> joinRows,
+            JoinKeyMapping keyMapping, List<Map<String, Map<String, Object>>> newJoinedRows, JoinContext ctx) {
+        for (int j = 0; j < joinRows.size(); j++) {
+            Map<String, Object> rightRow = joinRows.get(j);
+            Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
+            newRow.put(ctx.join.tableName, rightRow);
+
+            if (ctx.join.joinType == QueryParser.JoinType.CROSS) {
+                checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
+                newJoinedRows.add(newRow);
+            } else if (keyMapping.equalsJoin()) {
+                Map<String, Object> leftRow = currentJoin.get(ctx.join.originalTable);
+                if (valuesEqual(leftRow.get(keyMapping.leftJoinKey()), rightRow.get(keyMapping.rightJoinKey()))) {
+                    checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
+                    newJoinedRows.add(newRow);
+                }
+            } else if (!ctx.join.onConditions.isEmpty()) {
+                for (int k = 0; k < keyMapping.rightSrcKeys().size(); k++) {
+                    evalRow.put(keyMapping.rightTargetKeys().get(k), rightRow.get(keyMapping.rightSrcKeys().get(k)));
+                }
+                if (evaluateConditions(evalRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
+                    checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
+                    newJoinedRows.add(newRow);
+                    LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
+                            new Object[]{ctx.join.tableName, ctx.join.onConditions});
+                }
+            } else {
+                throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
+            }
+        }
+    }
+
+    private List<Map<String, Map<String, Object>>> runBlockNestedLoopJoin(
+            List<Map<String, Map<String, Object>>> joinedRows, Table joinTable, JoinContext ctx) {
+
+        List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
+        List<Map<String, Object>> joinRows = getIndexedRows(joinTable, ctx.join.onConditions, ctx.join.tableName, ctx.combinedColumnTypes);
+        if (joinRows == null) {
+            joinRows = joinTable.getLiveRows();
+        }
+
+        JoinKeyMapping keyMapping = resolveJoinKeyMapping(joinRows, ctx);
+
         for (int j = 0; j < joinRows.size(); j++) {
             ReentrantReadWriteLock joinLock = joinTable.getRowLock(j);
             joinLock.readLock().lock();
@@ -1638,59 +1725,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         for (Map<String, Map<String, Object>> currentJoin : joinedRows) {
             Map<String, Object> evalRow = flattenJoinedRow(currentJoin);
             if (ctx.lastStream) {
-                Map<String, Object> leftRow = equalsJoin ? currentJoin.get(ctx.join.originalTable) : null;
-                Object leftValue = equalsJoin ? leftRow.get(leftJoinKey) : null;
-                for (int j = 0; j < joinRows.size(); j++) {
-                    Map<String, Object> rightRow = joinRows.get(j);
-                    Map<String, Object> flatRow = new HashMap<>(evalRow.size() + rightSrcKeys.size() + 1);
-                    flatRow.putAll(evalRow);
-                    for (int k = 0; k < rightSrcKeys.size(); k++) {
-                        flatRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
-                    }
-                    boolean matches;
-                    if (ctx.join.joinType == QueryParser.JoinType.CROSS) {
-                        matches = true;
-                    } else if (equalsJoin) {
-                        matches = valuesEqual(leftValue, rightRow.get(rightJoinKey));
-                    } else if (!ctx.join.onConditions.isEmpty()) {
-                        matches = evaluateConditions(flatRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables);
-                    } else {
-                        throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
-                    }
-                    if (matches) {
-                        spillFilteredRow(ctx.spill, ctx.spillActive, ctx.spillFallback, flatRow,
-                                ctx.whereConditions, ctx.combinedColumnTypes, ctx.tables);
-                    }
-                }
+                processStreamingNestedLoop(currentJoin, evalRow, joinRows, keyMapping, ctx);
             } else {
-                for (int j = 0; j < joinRows.size(); j++) {
-                    Map<String, Object> rightRow = joinRows.get(j);
-                    Map<String, Map<String, Object>> newRow = new HashMap<>(currentJoin);
-                    newRow.put(ctx.join.tableName, rightRow);
-
-                    if (ctx.join.joinType == QueryParser.JoinType.CROSS) {
-                        checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
-                        newJoinedRows.add(newRow);
-                    } else if (equalsJoin) {
-                        Map<String, Object> leftRow = currentJoin.get(ctx.join.originalTable);
-                        if (valuesEqual(leftRow.get(leftJoinKey), rightRow.get(rightJoinKey))) {
-                            checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
-                            newJoinedRows.add(newRow);
-                        }
-                    } else if (!ctx.join.onConditions.isEmpty()) {
-                        for (int k = 0; k < rightSrcKeys.size(); k++) {
-                            evalRow.put(rightTargetKeys.get(k), rightRow.get(rightSrcKeys.get(k)));
-                        }
-                        if (evaluateConditions(evalRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
-                            checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
-                            newJoinedRows.add(newRow);
-                            LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
-                                    new Object[]{ctx.join.tableName, ctx.join.onConditions});
-                        }
-                    } else {
-                        throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
-                    }
-                }
+                processNonStreamingNestedLoop(currentJoin, evalRow, joinRows, keyMapping, newJoinedRows, ctx);
             }
         }
         return newJoinedRows;
@@ -2572,42 +2609,51 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * Attempts to use a covering index to avoid table row lookups.
      * Returns covered rows, or null if covering index cannot be used.
      */
+    private Set<String> collectRequiredSelectColumns() {
+        Set<String> requiredColumns = new HashSet<>();
+        if (columns != null) {
+            for (String col : columns) {
+                if (!col.contains("(") && !col.equals("*")) {
+                    requiredColumns.add(col);
+                }
+            }
+        }
+        return requiredColumns;
+    }
+
+    private List<Map<String, Object>> buildCoveredRows(Table table, CoveringBTreeIndex coverIndex, Set<Integer> rowIndices) {
+        List<Map<String, Object>> coveredRows = new ArrayList<>(rowIndices.size());
+        int tableSize = table.getRawRowCount();
+        for (int idx : rowIndices) {
+            if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
+                Map<String, Object> covered = coverIndex.getCoveredValues(idx);
+                if (covered != null) {
+                    coveredRows.add(covered);
+                }
+            }
+        }
+        lastIndexOnlyScanCount++;
+        return coveredRows;
+    }
+
     private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> rowIndices,
                                                         List<QueryParser.Condition> conditions, String tableName) {
-        // Find which index was used for the lookup
+        Set<String> requiredColumns = collectRequiredSelectColumns();
+        if (requiredColumns.isEmpty()) {
+            return null;
+        }
         for (QueryParser.Condition condition : conditions) {
-            if (!condition.isGrouped() && !condition.isColumnComparison() && !condition.not) {
-                String columnName = normalizeColumnName(condition.column, tableName);
-                if (columnName != null) {
-                    String unqualified = normalizeColumnKey(columnName, tableName);
-                    Index index = table.getIndex(unqualified);
-                    if (index instanceof CoveringBTreeIndex coverIndex) {
-                        // Check if the index covers all SELECT columns
-                        Set<String> requiredColumns = new HashSet<>();
-                        if (columns != null) {
-                            for (String col : columns) {
-                                if (!col.contains("(") && !col.equals("*")) {
-                                    requiredColumns.add(col);
-                                }
-                            }
-                        }
-                        if (!requiredColumns.isEmpty() && coverIndex.coversColumns(requiredColumns)) {
-                            // Build rows from cover data
-                            List<Map<String, Object>> coveredRows = new ArrayList<>(rowIndices.size());
-                            int tableSize = table.getRawRowCount();
-                            for (int idx : rowIndices) {
-                                if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
-                                    Map<String, Object> covered = coverIndex.getCoveredValues(idx);
-                                    if (covered != null) {
-                                        coveredRows.add(covered);
-                                    }
-                                }
-                            }
-                            lastIndexOnlyScanCount++;
-                            return coveredRows;
-                        }
-                    }
-                }
+            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) {
+                continue;
+            }
+            String columnName = normalizeColumnName(condition.column, tableName);
+            if (columnName == null) {
+                continue;
+            }
+            String unqualified = normalizeColumnKey(columnName, tableName);
+            Index index = table.getIndex(unqualified);
+            if (index instanceof CoveringBTreeIndex coverIndex && coverIndex.coversColumns(requiredColumns)) {
+                return buildCoveredRows(table, coverIndex, rowIndices);
             }
         }
         return null;
@@ -3271,58 +3317,53 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param mainTable the resolved main table (real or derived)
      * @return the multi-line plan text
      */
-    String describePlan(Table mainTable) {
-        // Prompt 22 (java:S2259): the owning database is documented-nullable
-        // and is dereferenced for every join table below.
-        Objects.requireNonNull(mainTable, "Main table must not be null");
-        Database database = Objects.requireNonNull(mainTable.getDatabase(),
-                ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
-        for (QueryParser.JoinInfo join : joins) {
-            tableAliases.putIfAbsent(join.tableName, join.tableName);
-            if (join.alias != null) {
-                tableAliases.put(join.alias, join.tableName);
+    private List<QueryParser.JoinInfo> orderPlanJoins(Database database) {
+        List<QueryParser.JoinInfo> ordered = new ArrayList<>(joins);
+        if (ordered.size() > 1) {
+            boolean allInner = ordered.stream().allMatch(j -> j.joinType == QueryParser.JoinType.INNER
+                    || j.joinType == QueryParser.JoinType.LEFT_INNER
+                    || j.joinType == QueryParser.JoinType.RIGHT_INNER);
+            if (allInner) {
+                ordered.sort(Comparator.comparingInt(j -> database.getTable(j.tableName).rowCount()));
             }
         }
+        return ordered;
+    }
 
-        String scanName = derivedMainTable != null ? mainTable.getName() : mainTableName;
-        StringBuilder sb = new StringBuilder("Execution Plan\n");
-        sb.append("  Operation: SELECT\n");
-        sb.append("  Scan ").append(scanName).append(" (estimated rows: ").append(mainTable.rowCount()).append(")\n");
-        sb.append("  Index: ").append(describeScanIndex(mainTable, mainTableName, conditions)).append('\n');
-
-        if (!joins.isEmpty()) {
-            List<QueryParser.JoinInfo> ordered = new ArrayList<>(joins);
-            if (ordered.size() > 1) {
-                boolean allInner = ordered.stream().allMatch(j -> j.joinType == QueryParser.JoinType.INNER
-                        || j.joinType == QueryParser.JoinType.LEFT_INNER
-                        || j.joinType == QueryParser.JoinType.RIGHT_INNER);
-                if (allInner) {
-                    ordered.sort(Comparator.comparingInt(j -> database.getTable(j.tableName).rowCount()));
-                }
-            }
-            for (QueryParser.JoinInfo join : ordered) {
-                Table joinTable = database.getTable(join.tableName);
-                sb.append("  Join ").append(join.joinType).append('\n');
-                sb.append("    tables: ").append(scanName);
-                if (join.alias != null) {
-                    sb.append(" AS ").append(join.alias);
-                }
-                sb.append(" <-> ").append(join.tableName).append('\n');
-                sb.append("    estimated rows: ").append(joinTable != null ? joinTable.rowCount() : 0).append('\n');
-                sb.append("    algorithm: ").append(describeJoinAlgorithm(join, joinTable, mainTable)).append('\n');
-                QueryParser.Condition equality = findHashEquality(join);
-                if (equality != null) {
-                    sb.append("    keys: ").append(normalizeColumnName(equality.column, mainTableName))
-                            .append(" = ").append(normalizeColumnName(equality.rightColumn, mainTableName)).append('\n');
-                }
-                if (join.onConditions != null && !join.onConditions.isEmpty()) {
-                    sb.append("    on: ").append(join.onConditions.stream()
-                            .map(QueryParser.Condition::toString)
-                            .collect(Collectors.joining(" "))).append('\n');
-                }
-            }
+    private void appendPlanJoin(StringBuilder sb, QueryParser.JoinInfo join, Table joinTable,
+            String scanName, Table mainTable) {
+        sb.append("  Join ").append(join.joinType).append('\n');
+        sb.append("    tables: ").append(scanName);
+        if (join.alias != null) {
+            sb.append(" AS ").append(join.alias);
         }
+        sb.append(" <-> ").append(join.tableName).append('\n');
+        sb.append("    estimated rows: ").append(joinTable != null ? joinTable.rowCount() : 0).append('\n');
+        sb.append("    algorithm: ").append(describeJoinAlgorithm(join, joinTable, mainTable)).append('\n');
+        QueryParser.Condition equality = findHashEquality(join);
+        if (equality != null) {
+            sb.append("    keys: ").append(normalizeColumnName(equality.column, mainTableName))
+                    .append(" = ").append(normalizeColumnName(equality.rightColumn, mainTableName)).append('\n');
+        }
+        if (join.onConditions != null && !join.onConditions.isEmpty()) {
+            sb.append("    on: ").append(join.onConditions.stream()
+                    .map(QueryParser.Condition::toString)
+                    .collect(Collectors.joining(" "))).append('\n');
+        }
+    }
 
+    private void appendPlanJoins(StringBuilder sb, List<QueryParser.JoinInfo> joinsForDisplay,
+            String scanName, Table mainTable) {
+        if (joinsForDisplay.isEmpty()) {
+            return;
+        }
+        for (QueryParser.JoinInfo join : joinsForDisplay) {
+            Table joinTable = mainTable.getDatabase().getTable(join.tableName);
+            appendPlanJoin(sb, join, joinTable, scanName, mainTable);
+        }
+    }
+
+    private void appendPlanClauses(StringBuilder sb) {
         if (!conditions.isEmpty()) {
             sb.append("  Filter (WHERE): ").append(conditions.stream()
                     .map(QueryParser.Condition::toString)
@@ -3345,6 +3386,29 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             sb.append("  Limit: ").append(limit == null ? "none" : limit)
                     .append(", Offset: ").append(offset == null ? "none" : offset).append('\n');
         }
+    }
+
+    String describePlan(Table mainTable) {
+        // Prompt 22 (java:S2259): the owning database is documented-nullable
+        // and is dereferenced for every join table below.
+        Objects.requireNonNull(mainTable, "Main table must not be null");
+        Database database = Objects.requireNonNull(mainTable.getDatabase(),
+                ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
+        for (QueryParser.JoinInfo join : joins) {
+            tableAliases.putIfAbsent(join.tableName, join.tableName);
+            if (join.alias != null) {
+                tableAliases.put(join.alias, join.tableName);
+            }
+        }
+
+        String scanName = derivedMainTable != null ? mainTable.getName() : mainTableName;
+        StringBuilder sb = new StringBuilder("Execution Plan\n");
+        sb.append("  Operation: SELECT\n");
+        sb.append("  Scan ").append(scanName).append(" (estimated rows: ").append(mainTable.rowCount()).append(")\n");
+        sb.append("  Index: ").append(describeScanIndex(mainTable, mainTableName, conditions)).append('\n');
+
+        appendPlanJoins(sb, orderPlanJoins(database), scanName, mainTable);
+        appendPlanClauses(sb);
         return sb.toString();
     }
 
