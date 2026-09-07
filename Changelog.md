@@ -2175,3 +2175,8 @@ Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
 Complexity: reduced from 87/70 to ~15/20 with early returns and extracted methods
 
 Refactored Table.buildIndex() to use Java 21 switch expression for cleaner control flow, extracted each index type into separate methods (buildBTreeIndex, buildHashIndex, buildUniqueIndex). Applied early return patterns to QueryParser.handleCloseParen and handleSpaceSeparator to reduce nesting and improve readability.
+
+3.0.6 prompt 6 - S3776 bulk cognitive complexity refactoring
+Изменения: decomposed 30+ methods with cognitive complexity >15 into sub-methods following Single Responsibility across 8 engine files - Database, SubqueryParser, BTreeIndex, BTreeClusteredIndex, QueryParser, SelectQuery, InsertQuery, ConditionEvaluator (plus CliRepl and DatabaseServer). Extract Method pattern: each complex block moved to a dedicated private helper. State classes introduced for parsing loops. Early returns replace nested if-else.
+Тесты: 42 passed, 0 failed
+Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
