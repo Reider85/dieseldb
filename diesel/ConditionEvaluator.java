@@ -206,33 +206,45 @@ class ConditionEvaluator {
     private Object parseConvertedValue(String stringValue, Class<?> targetType, String column) {
         if (targetType == String.class) {
             return stringValue;
-        } else if (targetType == Integer.class) {
-            return Integer.parseInt(stringValue);
-        } else if (targetType == Long.class) {
-            return Long.parseLong(stringValue);
-        } else if (targetType == Short.class) {
-            return Short.parseShort(stringValue);
-        } else if (targetType == Byte.class) {
-            return Byte.parseByte(stringValue);
-        } else if (targetType == Float.class) {
-            return Float.parseFloat(stringValue);
-        } else if (targetType == Double.class) {
-            return Double.parseDouble(stringValue);
-        } else if (targetType == BigDecimal.class) {
-            return new BigDecimal(stringValue);
-        } else if (targetType == Boolean.class) {
-            return Boolean.parseBoolean(stringValue);
-        } else if (targetType == UUID.class) {
-            return UUID.fromString(stringValue);
-        } else if (targetType == Character.class) {
-            if (stringValue.length() == 1) {
-                return stringValue.charAt(0);
-            } else {
-                throw new IllegalArgumentException("Invalid character value for column " + column);
-            }
-        } else {
-            throw new IllegalArgumentException("Unsupported type conversion for column " + column + ": " + targetType.getSimpleName());
         }
+        if (targetType == Integer.class) {
+            return Integer.parseInt(stringValue);
+        }
+        if (targetType == Long.class) {
+            return Long.parseLong(stringValue);
+        }
+        if (targetType == Short.class) {
+            return Short.parseShort(stringValue);
+        }
+        if (targetType == Byte.class) {
+            return Byte.parseByte(stringValue);
+        }
+        if (targetType == Float.class) {
+            return Float.parseFloat(stringValue);
+        }
+        if (targetType == Double.class) {
+            return Double.parseDouble(stringValue);
+        }
+        if (targetType == BigDecimal.class) {
+            return new BigDecimal(stringValue);
+        }
+        if (targetType == Boolean.class) {
+            return Boolean.parseBoolean(stringValue);
+        }
+        if (targetType == UUID.class) {
+            return UUID.fromString(stringValue);
+        }
+        if (targetType == Character.class) {
+            return parseCharacterValue(stringValue, column);
+        }
+        throw new IllegalArgumentException("Unsupported type conversion for column " + column + ": " + targetType.getSimpleName());
+    }
+
+    private char parseCharacterValue(String stringValue, String column) {
+        if (stringValue.length() == 1) {
+            return stringValue.charAt(0);
+        }
+        throw new IllegalArgumentException("Invalid character value for column " + column);
     }
 
     /**

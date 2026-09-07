@@ -155,44 +155,55 @@ class BTreeClusteredIndex implements Index, Serializable {
 
     private void remove(Node x, Object key, int rowIndex) {
         validateNode(x);
-        int i = 0;
-        while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
-            i++;
-        }
+        int i = findChildIndex(x, key);
 
         if (x.isLeaf) {
-            for (int j = 0; j < x.keys.size(); j++) {
-                if (compareKeys(key, x.keys.get(j)) == 0 && x.rowIndices.get(j) == rowIndex) {
-                    x.keys.remove(j);
-                    x.rowIndices.remove(j);
-                    LOGGER.log(Level.FINE, "Removed key={0}, rowIndex={1} from leaf node", new Object[]{key, rowIndex});
-                    validateNode(x);
-                    return;
-                }
-            }
+            removeKeyFromLeaf(x, key, rowIndex);
             return;
         }
 
         if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
             remove(x.children.get(i + 1), key, rowIndex);
         } else {
-            if (i < x.children.size()) {
-                Node child = x.children.get(i);
-                validateNode(child);
-                if (child.keys.size() < t) {
-                    fillChild(x, i);
-                    i = 0;
-                    while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
-                        i++;
-                    }
-                    if (i >= x.children.size()) {
-                        throw new IllegalStateException("Invalid child index after filling child");
-                    }
-                    child = x.children.get(i);
-                }
-                remove(child, key, rowIndex);
+            removeFromChild(x, i, key, rowIndex);
+        }
+    }
+
+    private int findChildIndex(Node x, Object key) {
+        int i = 0;
+        while (i < x.keys.size() && compareKeys(key, x.keys.get(i)) > 0) {
+            i++;
+        }
+        return i;
+    }
+
+    private void removeKeyFromLeaf(Node x, Object key, int rowIndex) {
+        for (int j = 0; j < x.keys.size(); j++) {
+            if (compareKeys(key, x.keys.get(j)) == 0 && x.rowIndices.get(j) == rowIndex) {
+                x.keys.remove(j);
+                x.rowIndices.remove(j);
+                LOGGER.log(Level.FINE, "Removed key={0}, rowIndex={1} from leaf node", new Object[]{key, rowIndex});
+                validateNode(x);
+                return;
             }
         }
+    }
+
+    private void removeFromChild(Node x, int i, Object key, int rowIndex) {
+        if (i >= x.children.size()) {
+            return;
+        }
+        Node child = x.children.get(i);
+        validateNode(child);
+        if (child.keys.size() < t) {
+            fillChild(x, i);
+            i = findChildIndex(x, key);
+            if (i >= x.children.size()) {
+                throw new IllegalStateException("Invalid child index after filling child");
+            }
+            child = x.children.get(i);
+        }
+        remove(child, key, rowIndex);
     }
 
     private void validateNode(Node x) {
@@ -217,22 +228,34 @@ class BTreeClusteredIndex implements Index, Serializable {
         }
         LOGGER.log(Level.FINE, "Filling child at index={0}, parent keys={1}, children size={2}",
                 new Object[]{i, x.keys, x.children.size()});
-        if (i > 0 && x.children.get(i - 1).keys.size() >= t) {
+        if (canBorrowFromPrev(x, i)) {
             borrowFromPrev(x, i);
             LOGGER.log(Level.FINE, "Borrowed from previous sibling at index={0}", i - 1);
-        } else if (i < x.children.size() - 1 && x.children.get(i + 1).keys.size() >= t) {
+        } else if (canBorrowFromNext(x, i)) {
             borrowFromNext(x, i);
             LOGGER.log(Level.FINE, "Borrowed from next sibling at index={0}", i + 1);
         } else {
-            if (i < x.children.size() - 1) {
-                LOGGER.log(Level.FINE, "Merging child at index={0} with next sibling", i);
-                merge(x, i);
-            } else {
-                LOGGER.log(Level.FINE, "Merging child at index={0} with previous sibling", i - 1);
-                merge(x, i - 1);
-            }
+            mergeWithSibling(x, i);
         }
         validateNode(x);
+    }
+
+    private boolean canBorrowFromPrev(Node x, int i) {
+        return i > 0 && x.children.get(i - 1).keys.size() >= t;
+    }
+
+    private boolean canBorrowFromNext(Node x, int i) {
+        return i < x.children.size() - 1 && x.children.get(i + 1).keys.size() >= t;
+    }
+
+    private void mergeWithSibling(Node x, int i) {
+        if (i < x.children.size() - 1) {
+            LOGGER.log(Level.FINE, "Merging child at index={0} with next sibling", i);
+            merge(x, i);
+        } else {
+            LOGGER.log(Level.FINE, "Merging child at index={0} with previous sibling", i - 1);
+            merge(x, i - 1);
+        }
     }
 
     private void borrowFromPrev(Node x, int i) {

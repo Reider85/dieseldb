@@ -8,8 +8,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Interactive command-line REPL for manual testing of DieselDB.
@@ -192,17 +194,15 @@ public class CliRepl {
 
     @SuppressWarnings("unchecked")
     private void extractMapsAndColumns(List<?> rows, List<Map<String, Object>> maps, List<String> columns) {
+        Set<String> seenColumns = new LinkedHashSet<>();
         for (Object row : rows) {
             if (row instanceof Map<?, ?> map) {
                 Map<String, Object> stringMap = (Map<String, Object>) map;
                 maps.add(stringMap);
-                for (String key : stringMap.keySet()) {
-                    if (!columns.contains(key)) {
-                        columns.add(key);
-                    }
-                }
+                seenColumns.addAll(stringMap.keySet());
             }
         }
+        columns.addAll(seenColumns);
     }
 
     private List<List<String>> buildFormattedRows(List<Map<String, Object>> maps, List<String> columns, int[] widths) {

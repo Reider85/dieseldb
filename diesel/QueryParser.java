@@ -1060,12 +1060,7 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid CREATE TABLE query format: missing or mismatched parentheses");
         }
 
-        String rawName = original.substring(0, firstParen).replace(SqlKeywords.CREATE_TABLE, "").trim();
-        boolean quoted = rawName.length() >= 2 && rawName.charAt(0) == '"' && rawName.charAt(rawName.length() - 1) == '"';
-        String tableName = unquoteIdentifier(rawName);
-        if (!quoted) {
-            tableName = tableName.toUpperCase();
-        }
+        String tableName = extractCreateTableName(original, firstParen);
         String columnsPart = original.substring(firstParen + 1, lastParen).trim();
 
         List<String> columnDefs = splitColumnDefinitions(columnsPart);
@@ -1075,29 +1070,20 @@ class QueryParser {
         String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
-            String[] colParts = colDef.trim().split("\\s+", 3);
-            if (colParts.length < 2) {
-                throw new IllegalArgumentException("Invalid column definition: " + colDef);
-            }
-            String colName = unquoteIdentifier(colParts[0]);
-            String type = colParts[1].toUpperCase();
-            String constraints = colParts.length > 2 ? colParts[2].toUpperCase() : "";
-            boolean isPrimaryKey = constraints.contains(SqlKeywords.PRIMARY_KEY);
-            boolean hasSequence = constraints.contains(SqlKeywords.SEQUENCE) || type.endsWith("_SEQUENCE");
+            ColumnParseResult result = parseColumnDefinition(colDef);
+            columns.add(result.colName);
 
-            columns.add(colName);
-
-            if (hasSequence) {
-                parseSequenceColumn(colName, type, constraints, colDef, colParts, sequences, columnTypes);
+            if (result.hasSequence) {
+                parseSequenceColumn(result.colName, result.type, result.constraints, colDef, result.colParts, sequences, columnTypes);
             } else {
-                columnTypes.put(colName, resolveColumnJavaType(type, colDef));
+                columnTypes.put(result.colName, resolveColumnJavaType(result.type, colDef));
             }
 
-            if (isPrimaryKey) {
+            if (result.isPrimaryKey) {
                 if (primaryKeyColumn != null) {
                     throw new IllegalArgumentException("Multiple primary keys defined in table " + tableName);
                 }
-                primaryKeyColumn = colName;
+                primaryKeyColumn = result.colName;
             }
         }
 
@@ -1105,6 +1091,47 @@ class QueryParser {
                 new Object[]{tableName, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
 
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
+    }
+
+    private String extractCreateTableName(String original, int firstParen) {
+        String rawName = original.substring(0, firstParen).replace(SqlKeywords.CREATE_TABLE, "").trim();
+        boolean quoted = rawName.length() >= 2 && rawName.charAt(0) == '"' && rawName.charAt(rawName.length() - 1) == '"';
+        String tableName = unquoteIdentifier(rawName);
+        if (!quoted) {
+            tableName = tableName.toUpperCase();
+        }
+        return tableName;
+    }
+
+    private ColumnParseResult parseColumnDefinition(String colDef) {
+        String[] colParts = colDef.trim().split("\\s+", 3);
+        if (colParts.length < 2) {
+            throw new IllegalArgumentException("Invalid column definition: " + colDef);
+        }
+        String colName = unquoteIdentifier(colParts[0]);
+        String type = colParts[1].toUpperCase();
+        String constraints = colParts.length > 2 ? colParts[2].toUpperCase() : "";
+        boolean isPrimaryKey = constraints.contains(SqlKeywords.PRIMARY_KEY);
+        boolean hasSequence = constraints.contains(SqlKeywords.SEQUENCE) || type.endsWith("_SEQUENCE");
+        return new ColumnParseResult(colName, type, constraints, colParts, isPrimaryKey, hasSequence);
+    }
+
+    private static final class ColumnParseResult {
+        final String colName;
+        final String type;
+        final String constraints;
+        final String[] colParts;
+        final boolean isPrimaryKey;
+        final boolean hasSequence;
+
+        ColumnParseResult(String colName, String type, String constraints, String[] colParts, boolean isPrimaryKey, boolean hasSequence) {
+            this.colName = colName;
+            this.type = type;
+            this.constraints = constraints;
+            this.colParts = colParts;
+            this.isPrimaryKey = isPrimaryKey;
+            this.hasSequence = hasSequence;
+        }
     }
 
     private void parseSequenceColumn(String colName, String type, String constraints, String colDef,
@@ -1395,8 +1422,6 @@ class QueryParser {
         List<SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        // Single unified pattern: FUNC_NAME ( ARG ) [AS alias]
-        // Group 1 = function name (case-insensitive), group 2 = argument, group 3 = alias
         Pattern aggPattern = Pattern.compile(
                 "(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\([^()]*+\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
@@ -1404,29 +1429,39 @@ class QueryParser {
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
-            Matcher aggMatcher = aggPattern.matcher(trimmedItem);
-            if (aggMatcher.matches()) {
-                aggregates.add(parseAggregateArg(aggMatcher.group(1), aggMatcher.group(2),
-                        unquoteIdentifier(aggMatcher.group(3)), database));
-            } else {
-                Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
-                if (subQueryMatcher.matches()) {
-                    parseSelectSubQuery(trimmedItem, subQueryMatcher, subQueries, columnAliases, database);
-                } else {
-                    Matcher columnMatcher = columnPattern.matcher(trimmedItem);
-                    if (columnMatcher.matches()) {
-                        parseSelectColumn(columnMatcher, columns, columnAliases);
-                    } else if (trimmedItem.equals("*")) {
-                        columns.add("*");
-                        LOGGER.log(Level.FINE, "Разобран столбец: *");
-                    } else {
-                        throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
-                    }
-                }
-            }
+            parseSingleSelectItem(trimmedItem, aggPattern, columnPattern, subQueryPattern,
+                    columns, aggregates, subQueries, columnAliases, database);
         }
 
         return new SelectItems(columns, aggregates, subQueries, columnAliases);
+    }
+
+    private void parseSingleSelectItem(String trimmedItem, Pattern aggPattern, Pattern columnPattern,
+                                       Pattern subQueryPattern, List<String> columns,
+                                       List<AggregateFunction> aggregates, List<SubQuery> subQueries,
+                                       Map<String, String> columnAliases, Database database) {
+        Matcher aggMatcher = aggPattern.matcher(trimmedItem);
+        if (aggMatcher.matches()) {
+            aggregates.add(parseAggregateArg(aggMatcher.group(1), aggMatcher.group(2),
+                    unquoteIdentifier(aggMatcher.group(3)), database));
+            return;
+        }
+
+        Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
+        if (subQueryMatcher.matches()) {
+            parseSelectSubQuery(trimmedItem, subQueryMatcher, subQueries, columnAliases, database);
+            return;
+        }
+
+        Matcher columnMatcher = columnPattern.matcher(trimmedItem);
+        if (columnMatcher.matches()) {
+            parseSelectColumn(columnMatcher, columns, columnAliases);
+        } else if (trimmedItem.equals("*")) {
+            columns.add("*");
+            LOGGER.log(Level.FINE, "Разобран столбец: *");
+        } else {
+            throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
+        }
     }
 
     private AggregateFunction parseAggregateArg(String funcName, String arg, String alias, Database database) {
@@ -3025,17 +3060,16 @@ class QueryParser {
                 inQuotes = !inQuotes;
             } else if (!inQuotes) {
                 if (c == '(') {
-                    if (parenDepth == 1 && i + 7 < condStr.length() &&
-                            condStr.substring(i, i + 7).toUpperCase().startsWith(ErrorMessages.SELECT_KEYWORD)) {
+                    parenDepth++;
+                    if (isSubQueryStart(condStr, i, parenDepth)) {
                         subQueryStart = i;
                     }
-                    parenDepth++;
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth == 0 && subQueryStart != -1) {
                         subQueryStart = -1;
                     }
-                } else if (parenDepth == 0 && subQueryStart == -1 && i < condStr.length() - 1) {
+                } else if (canMatchOperator(parenDepth, subQueryStart, i, condStr.length())) {
                     OperatorInfo opInfo = tryMatchOperatorAt(condStr, i, operators);
                     if (opInfo != null) {
                         return opInfo;
@@ -3044,6 +3078,15 @@ class QueryParser {
             }
         }
         return null;
+    }
+
+    private boolean isSubQueryStart(String condStr, int i, int parenDepth) {
+        return parenDepth == 1 && i + 7 < condStr.length() &&
+                condStr.substring(i, i + 7).toUpperCase().startsWith(ErrorMessages.SELECT_KEYWORD);
+    }
+
+    private boolean canMatchOperator(int parenDepth, int subQueryStart, int i, int length) {
+        return parenDepth == 0 && subQueryStart == -1 && i < length - 1;
     }
 
     private OperatorInfo tryMatchOperatorAt(String condStr, int i, String[] operators) {
@@ -3346,17 +3389,8 @@ class QueryParser {
     }
 
     private int findMatchingParenthesis(String str, int startIndex) {
-        if (str == null || startIndex < 0 || startIndex >= str.length() || str.charAt(startIndex) != '(') {
-            LOGGER.log(Level.SEVERE, "Недопустимый вход для findMatchingParenthesis: str={0}, startIndex={1}", new Object[]{str, startIndex});
-            throw new IllegalArgumentException("Недопустимый вход для findMatchingParenthesis: startIndex должен указывать на открывающую скобку");
-        }
-
-        // Проверка, что строка, начиная с startIndex, похожа на подзапрос
-        Pattern subQueryPattern = Pattern.compile("\\s*\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
-        String fromStart = startIndex + 7 < str.length() ? str.substring(startIndex, startIndex + 7) : "";
-        if (!subQueryPattern.matcher(fromStart).lookingAt()) {
-            LOGGER.log(Level.FINE, "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
-        }
+        validateParenthesisInput(str, startIndex);
+        logSubqueryCheck(str, startIndex);
 
         int parenDepth = 0;
         boolean inQuotes = false;
@@ -3368,31 +3402,49 @@ class QueryParser {
                 continue;
             }
             if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth == 0) {
-                        String subQueryStr = str.substring(startIndex, i + 1);
-                        // Проверка структуры подзапроса с использованием регулярного выражения
-                        Pattern selectPattern = Pattern.compile(
-                                "\\s*\\(\\s*SELECT\\s+[^()]*+\\s+FROM\\s+[^()]*+\\s*\\)",
-                                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
-                        );
-                        if (!selectPattern.matcher(subQueryStr).matches()) {
-                            LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
-                        }
-                        LOGGER.log(Level.FINE, "Найдена парная закрывающая скобка на индексе {0} для подзапроса: {1}",
-                                new Object[]{i, subQueryStr});
-                        return i;
-                    }
+                parenDepth = updateParenDepth(c, parenDepth);
+                if (parenDepth == 0) {
+                    validateSubqueryStructure(str, startIndex, i);
+                    return i;
                 }
             }
         }
 
-        LOGGER.log(Level.SEVERE, "Парная закрывающая скобка не найдена: str={0}, startIndex={1}",
-                new Object[]{str, startIndex});
         throw new IllegalArgumentException("Парная закрывающая скобка не найдена в строке: " + str.substring(startIndex));
+    }
+
+    private void validateParenthesisInput(String str, int startIndex) {
+        if (str == null || startIndex < 0 || startIndex >= str.length() || str.charAt(startIndex) != '(') {
+            throw new IllegalArgumentException("Недопустимый вход для findMatchingParenthesis: startIndex должен указывать на открывающую скобку");
+        }
+    }
+
+    private void logSubqueryCheck(String str, int startIndex) {
+        Pattern subQueryPattern = Pattern.compile("\\s*\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
+        String fromStart = startIndex + 7 < str.length() ? str.substring(startIndex, startIndex + 7) : "";
+        if (!subQueryPattern.matcher(fromStart).lookingAt()) {
+            LOGGER.log(Level.FINE, "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
+        }
+    }
+
+    private int updateParenDepth(char c, int parenDepth) {
+        if (c == '(') {
+            return parenDepth + 1;
+        } else if (c == ')') {
+            return parenDepth - 1;
+        }
+        return parenDepth;
+    }
+
+    private void validateSubqueryStructure(String str, int startIndex, int endIndex) {
+        String subQueryStr = str.substring(startIndex, endIndex + 1);
+        Pattern selectPattern = Pattern.compile(
+                "\\s*\\(\\s*SELECT\\s+[^()]*+\\s+FROM\\s+[^()]*+\\s*\\)",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+        );
+        if (!selectPattern.matcher(subQueryStr).matches()) {
+            LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
+        }
     }
 
     private String normalizeCondition(String condition) {

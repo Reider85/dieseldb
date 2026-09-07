@@ -690,38 +690,42 @@ class Database {
                 || parsedQuery instanceof UpdateQuery
                 || parsedQuery instanceof DeleteQuery;
 
-        // Auto-commit DML runs in a short-lived implicit transaction and is persisted immediately.
-        if (autoCommit && isDml && (currentTransaction == null || !currentTransaction.isActive())) {
-            Transaction implicitTransaction = new Transaction(defaultIsolationLevel);
-            try {
-                Object implicitResult = parsedQuery.execute(table);
-                implicitTransaction.registerModifiedTable(tableName, table);
-                persistModifiedTables(implicitTransaction.getModifiedTables(), false);
-                return implicitResult;
-            } finally {
-                implicitTransaction.setInactive();
-            }
-        }
-
-        // DML inside an explicit transaction: copy-on-write.
         if (isDml) {
-            if (currentTransaction != null && currentTransaction.isActive()) {
-                // Copy-on-write: copy the shared table into the transaction's
-                // modifiedTables BEFORE executing the DML (first DML only).
-                if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
-                    currentTransaction.updateTable(tableName, table);
-                }
-                // Execute DML on the transaction's private copy, not the shared table.
-                Table txnTable = currentTransaction.getModifiedTables().get(tableName);
-                return parsedQuery.execute(txnTable);
-            }
-            // No active transaction: execute on shared table and persist immediately.
-            Object dmlResult = parsedQuery.execute(table);
-            table.saveToFile(tableName);
-            return dmlResult;
+            return executeDmlQuery(parsedQuery, table, tableName, currentTransaction);
         }
-
         return parsedQuery.execute(table);
+    }
+
+    private Object executeDmlQuery(Query<?> parsedQuery, Table table, String tableName, Transaction currentTransaction) {
+        if (autoCommit && (currentTransaction == null || !currentTransaction.isActive())) {
+            return executeAutoCommitDml(parsedQuery, table, tableName);
+        }
+        if (currentTransaction != null && currentTransaction.isActive()) {
+            return executeTransactionDml(parsedQuery, table, tableName, currentTransaction);
+        }
+        Object dmlResult = parsedQuery.execute(table);
+        table.saveToFile(tableName);
+        return dmlResult;
+    }
+
+    private Object executeAutoCommitDml(Query<?> parsedQuery, Table table, String tableName) {
+        Transaction implicitTransaction = new Transaction(defaultIsolationLevel);
+        try {
+            Object implicitResult = parsedQuery.execute(table);
+            implicitTransaction.registerModifiedTable(tableName, table);
+            persistModifiedTables(implicitTransaction.getModifiedTables(), false);
+            return implicitResult;
+        } finally {
+            implicitTransaction.setInactive();
+        }
+    }
+
+    private Object executeTransactionDml(Query<?> parsedQuery, Table table, String tableName, Transaction currentTransaction) {
+        if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
+            currentTransaction.updateTable(tableName, table);
+        }
+        Table txnTable = currentTransaction.getModifiedTables().get(tableName);
+        return parsedQuery.execute(txnTable);
     }
 
     /**
@@ -777,50 +781,73 @@ class Database {
     private String extractTableName(String query) {
         String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
         if (normalized.startsWith(SqlKeywords.SELECT)) {
-            String[] parts = normalized.split("(?i)FROM\\s+", 2);
-            if (parts.length < 2) {
-                throw new IllegalArgumentException("Cannot extract table name from query: invalid SELECT format");
-            }
-            // The first table appears before any INNER JOIN or WHERE clause and may carry an alias.
-            return firstIdentifier(parts[1].split("(?i)(INNER JOIN|WHERE)\\s")[0].trim().split("\\s+")[0]);
+            return extractTableFromSelect(normalized);
         }
         if (normalized.startsWith(SqlKeywords.INSERT_INTO)) {
-            String[] parts = normalized.split("(?i)INSERT INTO\\s+", 2);
-            if (parts.length < 2) {
-                throw new IllegalArgumentException("Cannot extract table name from query: invalid INSERT format");
-            }
-            return firstIdentifier(parts[1].split("\\s+|\\(")[0]);
+            return extractTableFromInsert(normalized);
         }
         if (normalized.startsWith(SqlKeywords.UPDATE)) {
-            String[] parts = normalized.split("(?i)UPDATE\\s+", 2);
-            if (parts.length < 2) {
-                throw new IllegalArgumentException("Cannot extract table name from query: invalid UPDATE format");
-            }
-            return firstIdentifier(parts[1].split("\\s+")[0]);
+            return extractTableFromUpdate(normalized);
         }
         if (normalized.startsWith(SqlKeywords.DELETE_FROM)) {
-            String[] parts = normalized.split("(?i)FROM\\s+", 2);
-            if (parts.length < 2) {
-                throw new IllegalArgumentException("Cannot extract table name from query: invalid DELETE format");
-            }
-            return firstIdentifier(parts[1].split("(?i)WHERE\\s*", 2)[0]);
+            return extractTableFromDelete(normalized);
         }
         if (normalized.startsWith(SqlKeywords.CREATE_TABLE)) {
-            String[] parts = normalized.split("(?i)CREATE TABLE\\s+", 2);
-            if (parts.length < 2) {
-                throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE TABLE format");
-            }
-            return firstIdentifier(parts[1].split("\\s+")[0]);
+            return extractTableFromCreateTable(normalized);
         }
         if (normalized.startsWith(SqlKeywords.CREATE_INDEX) || normalized.startsWith(SqlKeywords.CREATE_HASH_INDEX)
                 || normalized.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX) || normalized.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX)) {
-            String[] parts = normalized.split("(?i)ON\\s+", 2);
-            if (parts.length < 2) {
-                throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE INDEX format");
-            }
-            return firstIdentifier(parts[1].split("\\s+")[0]);
+            return extractTableFromCreateIndex(normalized);
         }
         throw new IllegalArgumentException("Cannot extract table name from query: unsupported query type");
+    }
+
+    private String extractTableFromSelect(String normalized) {
+        String[] parts = normalized.split("(?i)FROM\\s+", 2);
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Cannot extract table name from query: invalid SELECT format");
+        }
+        return firstIdentifier(parts[1].split("(?i)(INNER JOIN|WHERE)\\s")[0].trim().split("\\s+")[0]);
+    }
+
+    private String extractTableFromInsert(String normalized) {
+        String[] parts = normalized.split("(?i)INSERT INTO\\s+", 2);
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Cannot extract table name from query: invalid INSERT format");
+        }
+        return firstIdentifier(parts[1].split("\\s+|\\(")[0]);
+    }
+
+    private String extractTableFromUpdate(String normalized) {
+        String[] parts = normalized.split("(?i)UPDATE\\s+", 2);
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Cannot extract table name from query: invalid UPDATE format");
+        }
+        return firstIdentifier(parts[1].split("\\s+")[0]);
+    }
+
+    private String extractTableFromDelete(String normalized) {
+        String[] parts = normalized.split("(?i)FROM\\s+", 2);
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Cannot extract table name from query: invalid DELETE format");
+        }
+        return firstIdentifier(parts[1].split("(?i)WHERE\\s*", 2)[0]);
+    }
+
+    private String extractTableFromCreateTable(String normalized) {
+        String[] parts = normalized.split("(?i)CREATE TABLE\\s+", 2);
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE TABLE format");
+        }
+        return firstIdentifier(parts[1].split("\\s+")[0]);
+    }
+
+    private String extractTableFromCreateIndex(String normalized) {
+        String[] parts = normalized.split("(?i)ON\\s+", 2);
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE INDEX format");
+        }
+        return firstIdentifier(parts[1].split("\\s+")[0]);
     }
 
     /**
@@ -834,36 +861,36 @@ class Database {
         Set<String> tables = new HashSet<>();
         String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
         
-        try {
-            if (normalized.startsWith(SqlKeywords.SELECT)) {
-                extractSelectTables(normalized, tables);
-            } else if (normalized.startsWith(SqlKeywords.INSERT_INTO)) {
-                extractInsertTables(normalized, tables);
-            } else if (normalized.startsWith(SqlKeywords.UPDATE)) {
-                extractUpdateTables(normalized, tables);
-            } else if (normalized.startsWith(SqlKeywords.DELETE_FROM)) {
-                extractDeleteTables(normalized, tables);
-            } else if (normalized.startsWith(SqlKeywords.CREATE_TABLE)) {
-                extractCreateTableTables(normalized, tables);
-            } else if (normalized.startsWith(SqlKeywords.CREATE_INDEX) || 
-                     normalized.startsWith(SqlKeywords.CREATE_HASH_INDEX) ||
-                     normalized.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX) ||
-                     normalized.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX)) {
-                extractCreateIndexTables(normalized, tables);
-            }
-        } catch (Exception e) {
-            // If parsing fails, fall back to single table extraction
-            try {
-                String singleTable = extractTableName(query);
-                if (singleTable != null && !singleTable.isEmpty()) {
-                    tables.add(singleTable);
-                }
-            } catch (Exception ex) {
-                // If all else fails, return empty set
-            }
+        if (normalized.startsWith(SqlKeywords.SELECT)) {
+            extractSelectTables(normalized, tables);
+        } else if (normalized.startsWith(SqlKeywords.INSERT_INTO)) {
+            extractInsertTables(normalized, tables);
+        } else if (normalized.startsWith(SqlKeywords.UPDATE)) {
+            extractUpdateTables(normalized, tables);
+        } else if (normalized.startsWith(SqlKeywords.DELETE_FROM)) {
+            extractDeleteTables(normalized, tables);
+        } else if (normalized.startsWith(SqlKeywords.CREATE_TABLE)) {
+            extractCreateTableTables(normalized, tables);
+        } else if (normalized.startsWith(SqlKeywords.CREATE_INDEX) || 
+                 normalized.startsWith(SqlKeywords.CREATE_HASH_INDEX) ||
+                 normalized.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX) ||
+                 normalized.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX)) {
+            extractCreateIndexTables(normalized, tables);
+        } else {
+            fallbackSingleTableExtraction(query, tables);
         }
         
         return tables;
+    }
+
+    private void fallbackSingleTableExtraction(String query, Set<String> tables) {
+        try {
+            String singleTable = extractTableName(query);
+            if (singleTable != null && !singleTable.isEmpty()) {
+                tables.add(singleTable);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private void extractSelectTables(String normalized, Set<String> tables) {
@@ -957,45 +984,43 @@ class Database {
      * @return list of query results in the same order as input queries
      */
     public List<Object> executeBatch(List<String> queries, UUID transactionId) {
-        // If sequential execution is forced or only one query, execute normally
         if (queries == null || queries.isEmpty()) {
             return Collections.emptyList();
         }
         if (queries.size() == 1) {
             return Collections.singletonList(executeQuery(queries.get(0), transactionId));
         }
-        
-        // Check if we're in a transaction - if so, execute sequentially for consistency
-        boolean inTransaction = transactionId != null && isInTransaction(transactionId);
-        if (inTransaction) {
-            List<Object> results = new ArrayList<>(queries.size());
-            for (String query : queries) {
-                results.add(executeQuery(query, transactionId));
-            }
-            return results;
+        if (transactionId != null && isInTransaction(transactionId)) {
+            return executeBatchSequential(queries, transactionId);
         }
-        
-        // Analyze table dependencies for each query
+        return executeBatchParallel(queries, transactionId);
+    }
+
+    private List<Object> executeBatchSequential(List<String> queries, UUID transactionId) {
+        List<Object> results = new ArrayList<>(queries.size());
+        for (String query : queries) {
+            results.add(executeQuery(query, transactionId));
+        }
+        return results;
+    }
+
+    private List<Object> executeBatchParallel(List<String> queries, UUID transactionId) {
         List<Set<String>> queryTables = new ArrayList<>(queries.size());
         for (String query : queries) {
             queryTables.add(extractAllTableNames(query));
         }
         boolean[] dependencies = buildDependencyGraph(queries.size(), queryTables);
-        
-        // Group queries into independent batches using greedy coloring
         List<List<Integer>> batches = groupIntoBatches(queries.size(), dependencies);
-        
-        // Execute each batch in parallel, collect results in order
+
         List<Object> results = new ArrayList<>(Collections.nCopies(queries.size(), null));
         executeBatchesInParallel(queries, transactionId, batches, results);
-        
-        // Check for exceptions in results and throw the first one
+
         for (Object result : results) {
-            if (result instanceof Exception) {
-                throw new RuntimeException((Exception) result);
+            if (result instanceof Exception e) {
+                throw new RuntimeException(e);
             }
         }
-        
+
         @SuppressWarnings("unchecked")
         List<Object> typedResults = (List<Object>) results;
         return typedResults;

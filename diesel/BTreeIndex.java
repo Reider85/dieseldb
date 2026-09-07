@@ -7,6 +7,7 @@ import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
+import java.util.function.Supplier;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
@@ -370,9 +371,16 @@ class BTreeIndex implements Index, Serializable {
             return;
         }
 
-        // Merge duplicate keys into single entries with combined row index lists.
         List<Object> mergedKeys = new ArrayList<>();
         List<List<Integer>> mergedIndices = new ArrayList<>();
+        mergeDuplicateKeys(sortedKeys, sortedRowIdx, n, mergedKeys, mergedIndices);
+
+        List<Node> leaves = buildLeafNodesFromMerged(mergedKeys, mergedIndices);
+        this.root = buildInternalLevels(leaves);
+    }
+
+    private void mergeDuplicateKeys(List<Object> sortedKeys, List<Integer> sortedRowIdx, int n,
+                                    List<Object> mergedKeys, List<List<Integer>> mergedIndices) {
         Object prevKey = sortedKeys.get(0);
         List<Integer> currentIndices = new ArrayList<>();
         currentIndices.add(sortedRowIdx.get(0));
@@ -390,8 +398,9 @@ class BTreeIndex implements Index, Serializable {
         }
         mergedKeys.add(prevKey);
         mergedIndices.add(currentIndices);
+    }
 
-        // Build all leaf nodes from merged data (left to right).
+    private List<Node> buildLeafNodesFromMerged(List<Object> mergedKeys, List<List<Integer>> mergedIndices) {
         int leafCapacity = 2 * t - 1;
         List<Node> leaves = new ArrayList<>();
         Node currentLeaf = new Node(true);
@@ -405,9 +414,11 @@ class BTreeIndex implements Index, Serializable {
                 }
             }
         }
+        return leaves;
+    }
 
-        // Build internal levels bottom-up.
-        List<Node> currentLevel = leaves;
+    private Node buildInternalLevels(List<Node> currentLevel) {
+        int leafCapacity = 2 * t - 1;
         while (currentLevel.size() > 1) {
             List<Node> nextLevel = new ArrayList<>();
             int i = 0;
@@ -424,8 +435,7 @@ class BTreeIndex implements Index, Serializable {
             }
             currentLevel = nextLevel;
         }
-
-        this.root = currentLevel.get(0);
+        return currentLevel.get(0);
     }
 
     /**
@@ -640,22 +650,31 @@ class BTreeIndex implements Index, Serializable {
      */
     private long estimateBoundedRangeSize(Node node, Object low, Object high) {
         if (node == null) return 0;
+        return node.isLeaf ? countKeysInRange(node, low, high) : countKeysInSubtrees(node, low, high);
+    }
+
+    private long countKeysInRange(Node leaf, Object low, Object high) {
         long count = 0;
-        
-        if (node.isLeaf) {
-            for (int i = 0; i < node.keys.size(); i++) {
-                Object key = node.keys.get(i);
-                boolean aboveLow = low == null || compareKeys(key, low) >= 0;
-                boolean belowHigh = high == null || compareKeys(key, high) <= 0;
-                if (aboveLow && belowHigh) {
-                    count++;
-                }
+        for (int i = 0; i < leaf.keys.size(); i++) {
+            Object key = leaf.keys.get(i);
+            if (isKeyInRange(key, low, high)) {
+                count++;
             }
-        } else {
-            for (int i = 0; i < node.children.size(); i++) {
-                if (subtreeMayOverlapRange(node.children.get(i), low, high)) {
-                    count += estimateBoundedRangeSize(node.children.get(i), low, high);
-                }
+        }
+        return count;
+    }
+
+    private boolean isKeyInRange(Object key, Object low, Object high) {
+        boolean aboveLow = low == null || compareKeys(key, low) >= 0;
+        boolean belowHigh = high == null || compareKeys(key, high) <= 0;
+        return aboveLow && belowHigh;
+    }
+
+    private long countKeysInSubtrees(Node internal, Object low, Object high) {
+        long count = 0;
+        for (int i = 0; i < internal.children.size(); i++) {
+            if (subtreeMayOverlapRange(internal.children.get(i), low, high)) {
+                count += estimateBoundedRangeSize(internal.children.get(i), low, high);
             }
         }
         return count;
@@ -677,127 +696,59 @@ class BTreeIndex implements Index, Serializable {
      * Executes parallel range search by dividing work among subtrees.
      */
     private List<Integer> executeParallelRangeSearch(Object low, Object high) {
-        // Get the root node
         Node root = this.root;
-        
-        // If the tree is empty or has only a root leaf node, process sequentially
         if (root == null || root.isLeaf) {
             return rangeSearch(low, high);
         }
-        
-        // Create tasks for each child subtree that might contain keys in range
-        List<RangeSearchTask> tasks = new ArrayList<>();
-        for (int i = 0; i < root.children.size(); i++) {
-            Node child = root.children.get(i);
-            // Check if this subtree might contain keys in range
-            if (subtreeMayContainInRange(child, low, high)) {
-                tasks.add(new RangeSearchTask(child, low, high, this));
-            }
-        }
-        
-        // If we only have one task or no tasks, process sequentially
+        List<RangeSearchTask> tasks = buildRangeSearchTasks(root, low, high);
         if (tasks.size() <= 1) {
             return rangeSearch(low, high);
         }
-        
-        // Execute tasks in parallel and merge results
-        List<List<Integer>> results;
-        try {
-            results = INDEX_SCAN_POOL.invokeAll(tasks).stream()
-                    .map(future -> {
-                        try {
-                            return future.get();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            return null;
-                        } catch (Exception e) {
-                            throw new RuntimeException(e);
-                        }
-                    })
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-        } catch (RuntimeException e) {
-            return rangeSearch(low, high); // Fallback to sequential
-        }
-        
-        // Merge results (they should already be in order due to B-tree properties)
-        List<Integer> mergedResult = new ArrayList<>();
-        for (List<Integer> result : results) {
-            mergedResult.addAll(result);
-        }
-        return mergedResult;
+        return executeParallelTasks(tasks, () -> rangeSearch(low, high));
     }
-    
+
     /**
      * Executes parallel range search for keys >= low.
      */
     private List<Integer> executeParallelRangeSearchLow(Object low) {
         Node root = this.root;
-        
         if (root == null || root.isLeaf) {
             return rangeSearchLow(low);
         }
-        
-        List<RangeSearchTask> tasks = new ArrayList<>();
-        for (int i = 0; i < root.children.size(); i++) {
-            Node child = root.children.get(i);
-            if (subtreeMayContainInRange(child, low, null)) {
-                tasks.add(new RangeSearchTask(child, low, null, this));
-            }
-        }
-        
+        List<RangeSearchTask> tasks = buildRangeSearchTasks(root, low, null);
         if (tasks.size() <= 1) {
             return rangeSearchLow(low);
         }
-        
-        List<List<Integer>> results;
-        try {
-            results = INDEX_SCAN_POOL.invokeAll(tasks).stream()
-                    .map(future -> {
-                        try {
-                            return future.get();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            return null;
-                        } catch (Exception e) {
-                            throw new RuntimeException(e);
-                        }
-                    })
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-        } catch (RuntimeException e) {
-            return rangeSearchLow(low);
-        }
-        
-        List<Integer> mergedResult = new ArrayList<>();
-        for (List<Integer> result : results) {
-            mergedResult.addAll(result);
-        }
-        return mergedResult;
+        return executeParallelTasks(tasks, () -> rangeSearchLow(low));
     }
-    
+
     /**
      * Executes parallel range search for keys <= high.
      */
     private List<Integer> executeParallelRangeSearchHigh(Object high) {
         Node root = this.root;
-        
         if (root == null || root.isLeaf) {
             return rangeSearchHigh(high);
         }
-        
-        List<RangeSearchTask> tasks = new ArrayList<>();
-        for (int i = 0; i < root.children.size(); i++) {
-            Node child = root.children.get(i);
-            if (subtreeMayContainInRange(child, null, high)) {
-                tasks.add(new RangeSearchTask(child, null, high, this));
-            }
-        }
-        
+        List<RangeSearchTask> tasks = buildRangeSearchTasks(root, null, high);
         if (tasks.size() <= 1) {
             return rangeSearchHigh(high);
         }
-        
+        return executeParallelTasks(tasks, () -> rangeSearchHigh(high));
+    }
+
+    private List<RangeSearchTask> buildRangeSearchTasks(Node root, Object low, Object high) {
+        List<RangeSearchTask> tasks = new ArrayList<>();
+        for (int i = 0; i < root.children.size(); i++) {
+            Node child = root.children.get(i);
+            if (subtreeMayContainInRange(child, low, high)) {
+                tasks.add(new RangeSearchTask(child, low, high, this));
+            }
+        }
+        return tasks;
+    }
+
+    private List<Integer> executeParallelTasks(List<RangeSearchTask> tasks, Supplier<List<Integer>> fallback) {
         List<List<Integer>> results;
         try {
             results = INDEX_SCAN_POOL.invokeAll(tasks).stream()
@@ -814,9 +765,8 @@ class BTreeIndex implements Index, Serializable {
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
         } catch (RuntimeException e) {
-            return rangeSearchHigh(high);
+            return fallback.get();
         }
-        
         List<Integer> mergedResult = new ArrayList<>();
         for (List<Integer> result : results) {
             mergedResult.addAll(result);

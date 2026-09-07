@@ -1202,64 +1202,87 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     // HAVING) and returns the final grouped rows.
     private List<Map<String, Object>> applyGroupBy(List<Map<String, Object>> filteredRows,
             Database database, Map<String, Class<?>> combinedColumnTypes) {
-        List<Map<String, Object>> finalRows;
-        if (!groupBy.isEmpty()) {
-            Map<List<Object>, List<Map<String, Object>>> groupedRows = filteredRows.stream()
-                    .collect(Collectors.groupingBy(row -> groupBy.stream()
-                            .map(col -> groupBySubQueries.containsKey(col)
-                                    ? evaluateGroupBySubQuery(groupBySubQueries.get(col), row, database)
-                                    : row.get(normalizeColumnName(col, mainTableName)))
-                            .collect(Collectors.toList())));
-
-            groupAggregateKeys.clear();
-            for (QueryParser.AggregateFunction agg : aggregates) {
-                String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                groupAggregateKeys.add(resultKey);
-            }
-
-            finalRows = new ArrayList<>();
-            for (List<Object> groupKey : groupedRows.keySet()) {
-                List<Map<String, Object>> group = groupedRows.get(groupKey);
-                Map<String, Object> resultRow = new HashMap<>();
-
-                for (int i = 0; i < groupBy.size(); i++) {
-                    String column = groupBy.get(i);
-                    String normalizedColumn = normalizeColumnName(column, mainTableName);
-                    resultRow.put(normalizedColumn, groupKey.get(i));
-                }
-
-                for (QueryParser.AggregateFunction agg : aggregates) {
-                    String resultKey = agg.alias != null ? agg.alias : agg.toString();
-                    resultRow.put(resultKey, computeAggregate(agg, group, combinedColumnTypes));
-                }
-
-                for (QueryParser.HavingCondition havingCondition : havingConditions) {
-                    addMissingHavingAggregates(havingCondition, resultRow, group, combinedColumnTypes);
-                }
-
-                for (String column : columns) {
-                    String normalizedColumn = normalizeColumnName(column, mainTableName);
-                    if (!resultRow.containsKey(normalizedColumn)) {
-                        Object value = group.get(0).get(normalizedColumn);
-                        resultRow.put(normalizedColumn, value);
-                    }
-                }
-
-                if (!havingConditions.isEmpty()) {
-                    if (!evaluateHavingConditions(resultRow, havingConditions)) {
-                        continue;
-                    }
-                }
-
-                checkResultRowLimit(finalRows.size(), "group by");
-                finalRows.add(resultRow);
-            }
-            LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
-                    new Object[]{groupBy.size(), finalRows.size()});
-        } else {
-            finalRows = filteredRows;
+        if (groupBy.isEmpty()) {
+            return filteredRows;
         }
+
+        Map<List<Object>, List<Map<String, Object>>> groupedRows = groupRowsByColumns(filteredRows, database);
+        initializeGroupAggregateKeys();
+
+        List<Map<String, Object>> finalRows = new ArrayList<>();
+        for (List<Object> groupKey : groupedRows.keySet()) {
+            List<Map<String, Object>> group = groupedRows.get(groupKey);
+            Map<String, Object> resultRow = buildGroupResultRow(groupKey, group, combinedColumnTypes);
+
+            if (!havingConditions.isEmpty() && !evaluateHavingConditions(resultRow, havingConditions)) {
+                continue;
+            }
+
+            checkResultRowLimit(finalRows.size(), "group by");
+            finalRows.add(resultRow);
+        }
+
+        LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
+                new Object[]{groupBy.size(), finalRows.size()});
         return finalRows;
+    }
+
+    private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map<String, Object>> filteredRows,
+                                                                            Database database) {
+        return filteredRows.stream()
+                .collect(Collectors.groupingBy(row -> groupBy.stream()
+                        .map(col -> groupBySubQueries.containsKey(col)
+                                ? evaluateGroupBySubQuery(groupBySubQueries.get(col), row, database)
+                                : row.get(normalizeColumnName(col, mainTableName)))
+                        .collect(Collectors.toList())));
+    }
+
+    private void initializeGroupAggregateKeys() {
+        groupAggregateKeys.clear();
+        for (QueryParser.AggregateFunction agg : aggregates) {
+            String resultKey = agg.alias != null ? agg.alias : agg.toString();
+            groupAggregateKeys.add(resultKey);
+        }
+    }
+
+    private Map<String, Object> buildGroupResultRow(List<Object> groupKey, List<Map<String, Object>> group,
+                                                    Map<String, Class<?>> combinedColumnTypes) {
+        Map<String, Object> resultRow = new HashMap<>();
+
+        populateGroupByColumns(groupKey, resultRow);
+        computeGroupAggregates(group, resultRow, combinedColumnTypes);
+        populateNonAggregateColumns(group, resultRow);
+
+        return resultRow;
+    }
+
+    private void populateGroupByColumns(List<Object> groupKey, Map<String, Object> resultRow) {
+        for (int i = 0; i < groupBy.size(); i++) {
+            String column = groupBy.get(i);
+            String normalizedColumn = normalizeColumnName(column, mainTableName);
+            resultRow.put(normalizedColumn, groupKey.get(i));
+        }
+    }
+
+    private void computeGroupAggregates(List<Map<String, Object>> group, Map<String, Object> resultRow,
+                                        Map<String, Class<?>> combinedColumnTypes) {
+        for (QueryParser.AggregateFunction agg : aggregates) {
+            String resultKey = agg.alias != null ? agg.alias : agg.toString();
+            resultRow.put(resultKey, computeAggregate(agg, group, combinedColumnTypes));
+        }
+        for (QueryParser.HavingCondition havingCondition : havingConditions) {
+            addMissingHavingAggregates(havingCondition, resultRow, group, combinedColumnTypes);
+        }
+    }
+
+    private void populateNonAggregateColumns(List<Map<String, Object>> group, Map<String, Object> resultRow) {
+        for (String column : columns) {
+            String normalizedColumn = normalizeColumnName(column, mainTableName);
+            if (!resultRow.containsKey(normalizedColumn)) {
+                Object value = group.get(0).get(normalizedColumn);
+                resultRow.put(normalizedColumn, value);
+            }
+        }
     }
 
     // Prompt 29: sorts the final rows by the ORDER BY clauses.
@@ -2106,110 +2129,107 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     private Object computeAggregate(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows,
                                     Map<String, Class<?>> combinedColumnTypes) {
-        if (agg.functionName.equals(SqlKeywords.COUNT)) {
-            long count;
-            if (agg.column == null) {
-                count = AggregateFunctions.count(rows);
-            } else {
-                String columnKey = normalizeColumnName(agg.column, mainTableName);
-                List<Object> values = rows.stream().map(row -> row.get(columnKey)).collect(Collectors.toList());
-                count = AggregateFunctions.count(values);
-            }
-            return count;
-        } else if (agg.functionName.equals(SqlKeywords.MIN)) {
-            if (agg.column == null) {
-                throw new IllegalArgumentException("MIN requires a column argument");
-            }
-            String columnKey = normalizeColumnName(agg.column, mainTableName);
-            List<Number> values = rows.stream().map(row -> row.get(columnKey))
-                    .filter(Objects::nonNull)
-                    .filter(v -> v instanceof Number)
-                    .map(v -> (Number) v)
-                    .collect(Collectors.toList());
-            if (values.isEmpty()) {
-                return null;
-            }
-            // Use vectorized MIN for integer types
-            if (values.get(0) instanceof Integer) {
-                return AggregateFunctions.minInt(values);
-            }
-            return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
-                    .min(this::compareValues).orElse(null);
-        } else if (agg.functionName.equals(SqlKeywords.MAX)) {
-            if (agg.column == null) {
-                throw new IllegalArgumentException("MAX requires a column argument");
-            }
-            String columnKey = normalizeColumnName(agg.column, mainTableName);
-            List<Number> values = rows.stream().map(row -> row.get(columnKey))
-                    .filter(Objects::nonNull)
-                    .filter(v -> v instanceof Number)
-                    .map(v -> (Number) v)
-                    .collect(Collectors.toList());
-            if (values.isEmpty()) {
-                return null;
-            }
-            // Use vectorized MAX for integer types
-            if (values.get(0) instanceof Integer) {
-                return AggregateFunctions.maxInt(values);
-            }
-            return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
-                    .max(this::compareValues).orElse(null);
-        } else if (agg.functionName.equals(SqlKeywords.AVG)) {
-            if (agg.column == null) {
-                throw new IllegalArgumentException("AVG requires a column argument");
-            }
-            String columnKey = normalizeColumnName(agg.column, mainTableName);
-            List<Number> values = rows.stream().map(row -> row.get(columnKey))
-                    .filter(Objects::nonNull)
-                    .filter(v -> v instanceof Number)
-                    .map(v -> (Number) v)
-                    .collect(Collectors.toList());
-            if (values.isEmpty()) {
-                return null;
-            }
-            // Use vectorized AVG for numeric types
-            Double avg = AggregateFunctions.average(values);
-            if (avg != null) {
-                return coerceNumericResult(BigDecimal.valueOf(avg), combinedColumnTypes.get(columnKey));
-            }
-            return null;
-        } else if (agg.functionName.equals(SqlKeywords.SUM)) {
-            if (agg.column == null) {
-                throw new IllegalArgumentException("SUM requires a column argument");
-            }
-            String columnKey = normalizeColumnName(agg.column, mainTableName);
-            List<Number> values = rows.stream().map(row -> row.get(columnKey))
-                    .filter(Objects::nonNull)
-                    .filter(v -> v instanceof Number)
-                    .map(v -> (Number) v)
-                    .collect(Collectors.toList());
-            if (values.isEmpty()) {
-                return null;
-            }
-            // Use vectorized SUM for numeric types
-            Object firstValue = values.get(0);
-            if (firstValue instanceof Integer) {
-                long sum = AggregateFunctions.sumInt(values);
-                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
-            } else if (firstValue instanceof Long) {
-                long sum = AggregateFunctions.sumLong(values);
-                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
-            } else if (firstValue instanceof Float) {
-                double sum = AggregateFunctions.sumFloat(values);
-                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
-            } else if (firstValue instanceof Double) {
-                double sum = AggregateFunctions.sumDouble(values);
-                return coerceNumericResult(BigDecimal.valueOf(sum), combinedColumnTypes.get(columnKey));
-            }
-            // Fallback to scalar for other types
-            BigDecimal sum = BigDecimal.ZERO;
-            for (Number value : values) {
-                sum = sum.add(new BigDecimal(value.toString()));
-            }
-            return coerceNumericResult(sum, combinedColumnTypes.get(columnKey));
-        } else {
-            throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
+        return switch (agg.functionName) {
+            case SqlKeywords.COUNT -> computeCount(agg, rows);
+            case SqlKeywords.MIN -> computeMin(agg, rows);
+            case SqlKeywords.MAX -> computeMax(agg, rows);
+            case SqlKeywords.AVG -> computeAvg(agg, rows, combinedColumnTypes);
+            case SqlKeywords.SUM -> computeSum(agg, rows, combinedColumnTypes);
+            default -> throw new UnsupportedOperationException("Aggregate function not supported: " + agg.functionName);
+        };
+    }
+
+    private long computeCount(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows) {
+        if (agg.column == null) {
+            return AggregateFunctions.count(rows);
         }
+        String columnKey = normalizeColumnName(agg.column, mainTableName);
+        List<Object> values = rows.stream().map(row -> row.get(columnKey)).collect(Collectors.toList());
+        return AggregateFunctions.count(values);
+    }
+
+    private Object computeMin(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows) {
+        if (agg.column == null) {
+            throw new IllegalArgumentException("MIN requires a column argument");
+        }
+        String columnKey = normalizeColumnName(agg.column, mainTableName);
+        List<Number> values = collectNumericValues(rows, columnKey);
+        if (values.isEmpty()) {
+            return null;
+        }
+        if (values.get(0) instanceof Integer) {
+            return AggregateFunctions.minInt(values);
+        }
+        return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+                .min(this::compareValues).orElse(null);
+    }
+
+    private Object computeMax(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows) {
+        if (agg.column == null) {
+            throw new IllegalArgumentException("MAX requires a column argument");
+        }
+        String columnKey = normalizeColumnName(agg.column, mainTableName);
+        List<Number> values = collectNumericValues(rows, columnKey);
+        if (values.isEmpty()) {
+            return null;
+        }
+        if (values.get(0) instanceof Integer) {
+            return AggregateFunctions.maxInt(values);
+        }
+        return rows.stream().map(row -> row.get(columnKey)).filter(Objects::nonNull)
+                .max(this::compareValues).orElse(null);
+    }
+
+    private Object computeAvg(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows,
+                              Map<String, Class<?>> combinedColumnTypes) {
+        if (agg.column == null) {
+            throw new IllegalArgumentException("AVG requires a column argument");
+        }
+        String columnKey = normalizeColumnName(agg.column, mainTableName);
+        List<Number> values = collectNumericValues(rows, columnKey);
+        if (values.isEmpty()) {
+            return null;
+        }
+        Double avg = AggregateFunctions.average(values);
+        if (avg != null) {
+            return coerceNumericResult(BigDecimal.valueOf(avg), combinedColumnTypes.get(columnKey));
+        }
+        return null;
+    }
+
+    private Object computeSum(QueryParser.AggregateFunction agg, List<Map<String, Object>> rows,
+                              Map<String, Class<?>> combinedColumnTypes) {
+        if (agg.column == null) {
+            throw new IllegalArgumentException("SUM requires a column argument");
+        }
+        String columnKey = normalizeColumnName(agg.column, mainTableName);
+        List<Number> values = collectNumericValues(rows, columnKey);
+        if (values.isEmpty()) {
+            return null;
+        }
+        Object firstValue = values.get(0);
+        if (firstValue instanceof Integer) {
+            return coerceNumericResult(BigDecimal.valueOf(AggregateFunctions.sumInt(values)), combinedColumnTypes.get(columnKey));
+        } else if (firstValue instanceof Long) {
+            return coerceNumericResult(BigDecimal.valueOf(AggregateFunctions.sumLong(values)), combinedColumnTypes.get(columnKey));
+        } else if (firstValue instanceof Float) {
+            return coerceNumericResult(BigDecimal.valueOf(AggregateFunctions.sumFloat(values)), combinedColumnTypes.get(columnKey));
+        } else if (firstValue instanceof Double) {
+            return coerceNumericResult(BigDecimal.valueOf(AggregateFunctions.sumDouble(values)), combinedColumnTypes.get(columnKey));
+        }
+        BigDecimal sum = BigDecimal.ZERO;
+        for (Number value : values) {
+            sum = sum.add(new BigDecimal(value.toString()));
+        }
+        return coerceNumericResult(sum, combinedColumnTypes.get(columnKey));
+    }
+
+    private List<Number> collectNumericValues(List<Map<String, Object>> rows, String columnKey) {
+        return rows.stream().map(row -> row.get(columnKey))
+                .filter(Objects::nonNull)
+                .filter(v -> v instanceof Number)
+                .map(v -> (Number) v)
+                .collect(Collectors.toList());
     }
 
     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
@@ -2474,22 +2494,45 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (conditions == null || conditions.isEmpty()) {
             return null;
         }
-
-        // An index pre-filter must never be applied when conditions are OR-combined:
-        // the pre-filter uses index lookups that would drop rows matching a later
-        // OR branch before the WHERE evaluation runs.
-        for (QueryParser.Condition condition : conditions) {
-            if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
-                return null;
-            }
+        if (hasOrConditions(conditions)) {
+            return null;
         }
 
-        // Collect index row-sets for all AND-connected conditions that have an
-        // applicable index.  We intersect all of them to narrow the result.
+        List<Set<Integer>> indexedSets = collectIndexRowSets(conditions, table, tableName);
+        List<Integer> compositeRows = lookupCompositeIndex(table, conditions, tableName);
+
+        if (indexedSets.isEmpty() && (compositeRows == null || compositeRows.isEmpty())) {
+            return null;
+        }
+
+        Set<Integer> result = intersectIndexedResults(indexedSets, compositeRows);
+        if (result.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Integer> sortedResult = new ArrayList<>(result);
+        Collections.sort(sortedResult);
+
+        List<Map<String, Object>> coveredRows = tryCoveringIndex(table, new LinkedHashSet<>(sortedResult), conditions, tableName);
+        if (coveredRows != null) {
+            return coveredRows;
+        }
+
+        return collectRowsFromIndices(table, sortedResult);
+    }
+
+    private boolean hasOrConditions(List<QueryParser.Condition> conditions) {
+        for (QueryParser.Condition condition : conditions) {
+            if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<Set<Integer>> collectIndexRowSets(List<QueryParser.Condition> conditions, Table table, String tableName) {
         List<Set<Integer>> indexedSets = new ArrayList<>();
         for (QueryParser.Condition condition : conditions) {
-            // Negated conditions (NOT IN / NOT EQUALS / ...) must not use the index
-            // pre-filter: the index lookup returns the rows the condition rejects.
             if (!condition.isGrouped() && !condition.isColumnComparison() && !condition.not) {
                 String columnName = normalizeColumnName(condition.column, tableName);
                 String unqualifiedColumn = normalizeColumnKey(columnName, tableName);
@@ -2497,7 +2540,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 if (index == null && table.hasClusteredIndex() && unqualifiedColumn.equals(table.getClusteredIndexColumn())) {
                     index = table.getClusteredIndex();
                 }
-
                 if (index != null) {
                     List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn, table);
                     if (rowIndices != null && !rowIndices.isEmpty()) {
@@ -2507,47 +2549,30 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
         }
+        return indexedSets;
+    }
 
-        // Try composite index — must run before the empty-check so a composite
-        // index alone (with no single-column indexes) can still pre-filter rows.
-        List<Integer> compositeRows = lookupCompositeIndex(table, conditions, tableName);
-
-        if (indexedSets.isEmpty() && (compositeRows == null || compositeRows.isEmpty())) {
-            return null;
-        }
-
+    private Set<Integer> intersectIndexedResults(List<Set<Integer>> indexedSets, List<Integer> compositeRows) {
         Set<Integer> result;
         if (!indexedSets.isEmpty()) {
-            // Intersect all collected sets — smallest first for efficiency.
             indexedSets.sort(Comparator.comparingInt(Set::size));
             result = new LinkedHashSet<>(indexedSets.get(0));
             for (int i = 1; i < indexedSets.size(); i++) {
                 result.retainAll(indexedSets.get(i));
             }
             if (result.isEmpty()) {
-                return Collections.emptyList();
+                return result;
             }
-            // Intersect with composite index results when both exist.
             if (compositeRows != null && !compositeRows.isEmpty()) {
                 result.retainAll(new LinkedHashSet<>(compositeRows));
-                if (result.isEmpty()) {
-                    return Collections.emptyList();
-                }
             }
         } else {
             result = new LinkedHashSet<>(compositeRows);
         }
+        return result;
+    }
 
-        // Sort row indices to preserve insertion order when no ORDER BY is specified.
-        List<Integer> sortedResult = new ArrayList<>(result);
-        Collections.sort(sortedResult);
-
-        // Check for covering index optimization
-        List<Map<String, Object>> coveredRows = tryCoveringIndex(table, new LinkedHashSet<>(sortedResult), conditions, tableName);
-        if (coveredRows != null) {
-            return coveredRows;
-        }
-
+    private List<Map<String, Object>> collectRowsFromIndices(Table table, List<Integer> sortedResult) {
         List<Map<String, Object>> indexedRows = new ArrayList<>(sortedResult.size());
         int tableSize = table.getRawRowCount();
         List<Map<String, Object>> rawRows = table.getRows();
@@ -2860,79 +2885,92 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
                                          Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
         if (condition.isGrouped()) {
-            ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, combinedColumnTypes, tables);
-            return condition.not ? subResult.not() : subResult;
+            return evaluateGroupedCondition(row, condition, combinedColumnTypes, tables);
         }
-
         if (condition.isNullOperator()) {
-            String column = normalizeColumnName(condition.column, mainTableName);
-            Object value = row.get(column);
-            boolean isNull = value == null;
-            boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
-            return (condition.not ? !result : result) ? TRUE : FALSE;
+            return evaluateIsNullCondition(row, condition);
         }
-
         if (condition.isInOperator()) {
-            String column = normalizeColumnName(condition.column, mainTableName);
-            Object value = row.get(column);
-            if (value == null) {
-                return UNKNOWN;
-            }
-
-            List<Object> inValues;
-            if (condition.subQuery != null) {
-                Database database = Objects.requireNonNull(tables.get(mainTableName).getDatabase(),
-                        ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
-                String subQueryString = condition.subQuery.toString().trim();
-                if (subQueryString.startsWith("(") && subQueryString.endsWith(")")) {
-                    subQueryString = subQueryString.substring(1, subQueryString.length() - 1).trim();
-                }
-                // Ключ кэша строится после подстановки значений внешних колонок:
-                // некоррелированный подзапрос выполняется один раз на весь SELECT,
-                // коррелированный - один раз на каждый уникальный набор значений.
-                String resolvedSubQuery = substituteOuterReferences(subQueryString, row);
-                inValues = inSubQueryCache.computeIfAbsent(resolvedSubQuery, key -> {
-                    LOGGER.log(Level.FINE, "Executing subquery: {0}", key);
-                    Object subQueryResult = database.executeQuery(key, transactionId);
-                    if (!(subQueryResult instanceof List<?> subList)) {
-                        throw new IllegalStateException("Subquery must return a list of rows");
-                    }
-                    List<Object> values = new ArrayList<>();
-                    for (Map<String, Object> subRow : (List<Map<String, Object>>) subList) {
-                        if (!subRow.isEmpty()) {
-                            values.add(subRow.values().iterator().next());
-                        }
-                    }
-                    return values;
-                });
-            } else {
-                inValues = condition.inValues;
-            }
-
-            if (inValues == null) {
-                throw new IllegalStateException("IN condition has no values or subquery results");
-            }
-
-            // Fast path: exact-equals lookup in a pre-built HashSet (built once at
-            // parse time). If the row value equals some list value, valuesEqual is
-            // guaranteed to agree (same class + equals -> valuesEqual true), so a hit
-            // is definitive. Only on a miss do we fall back to the linear
-            // valuesEqual scan, which preserves the epsilon (Float/Double) and
-            // scale-insensitive (BigDecimal) semantics that a HashSet cannot express.
-            boolean inResult = condition.inValueSet != null && condition.inValueSet.contains(value)
-                    || inValues.stream().anyMatch(v -> valuesEqual(v, value));
-            boolean result = condition.not ? !inResult : inResult;
-            return result ? TRUE : FALSE;
+            return evaluateInCondition(row, condition, tables);
         }
-
         if (condition.isColumnComparison()) {
-            String leftColumn = normalizeColumnName(condition.column, mainTableName);
-            String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
-            Object leftValue = row.get(leftColumn);
-            Object rightValue = row.get(rightColumn);
-            return compareConditionOperand(leftValue, rightValue, condition);
+            return evaluateColumnComparison(row, condition);
+        }
+        return evaluateScalarCondition(row, condition, tables);
+    }
+
+    private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, QueryParser.Condition condition,
+                                                      Map<String, Class<?>> combinedColumnTypes, Map<String, Table> tables) {
+        ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, combinedColumnTypes, tables);
+        return condition.not ? subResult.not() : subResult;
+    }
+
+    private ThreeValuedLogic evaluateIsNullCondition(Map<String, Object> row, QueryParser.Condition condition) {
+        String column = normalizeColumnName(condition.column, mainTableName);
+        Object value = row.get(column);
+        boolean isNull = value == null;
+        boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
+        return (condition.not ? !result : result) ? TRUE : FALSE;
+    }
+
+    private ThreeValuedLogic evaluateInCondition(Map<String, Object> row, QueryParser.Condition condition,
+                                                 Map<String, Table> tables) {
+        String column = normalizeColumnName(condition.column, mainTableName);
+        Object value = row.get(column);
+        if (value == null) {
+            return UNKNOWN;
         }
 
+        List<Object> inValues = resolveInValues(condition, row, tables);
+        if (inValues == null) {
+            throw new IllegalStateException("IN condition has no values or subquery results");
+        }
+
+        boolean inResult = condition.inValueSet != null && condition.inValueSet.contains(value)
+                || inValues.stream().anyMatch(v -> valuesEqual(v, value));
+        boolean result = condition.not ? !inResult : inResult;
+        return result ? TRUE : FALSE;
+    }
+
+    private List<Object> resolveInValues(QueryParser.Condition condition, Map<String, Object> row, Map<String, Table> tables) {
+        if (condition.subQuery != null) {
+            Database database = Objects.requireNonNull(tables.get(mainTableName).getDatabase(),
+                    ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
+            String subQueryString = condition.subQuery.toString().trim();
+            if (subQueryString.startsWith("(") && subQueryString.endsWith(")")) {
+                subQueryString = subQueryString.substring(1, subQueryString.length() - 1).trim();
+            }
+            String resolvedSubQuery = substituteOuterReferences(subQueryString, row);
+            return inSubQueryCache.computeIfAbsent(resolvedSubQuery, key -> executeSubQueryForIn(key, database));
+        }
+        return condition.inValues;
+    }
+
+    private List<Object> executeSubQueryForIn(String key, Database database) {
+        LOGGER.log(Level.FINE, "Executing subquery: {0}", key);
+        Object subQueryResult = database.executeQuery(key, transactionId);
+        if (!(subQueryResult instanceof List<?> subList)) {
+            throw new IllegalStateException("Subquery must return a list of rows");
+        }
+        List<Object> values = new ArrayList<>();
+        for (Map<String, Object> subRow : (List<Map<String, Object>>) subList) {
+            if (!subRow.isEmpty()) {
+                values.add(subRow.values().iterator().next());
+            }
+        }
+        return values;
+    }
+
+    private ThreeValuedLogic evaluateColumnComparison(Map<String, Object> row, QueryParser.Condition condition) {
+        String leftColumn = normalizeColumnName(condition.column, mainTableName);
+        String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
+        Object leftValue = row.get(leftColumn);
+        Object rightValue = row.get(rightColumn);
+        return compareConditionOperand(leftValue, rightValue, condition);
+    }
+
+    private ThreeValuedLogic evaluateScalarCondition(Map<String, Object> row, QueryParser.Condition condition,
+                                                     Map<String, Table> tables) {
         String column = normalizeColumnName(condition.column, mainTableName);
         Object rowValue = row.get(column);
         if (condition.subQuery != null) {

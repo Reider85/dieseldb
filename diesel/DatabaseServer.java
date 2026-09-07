@@ -457,23 +457,36 @@ public class DatabaseServer {
             } catch (IOException | ClassNotFoundException e) {
                 LOGGER.log(Level.SEVERE, "Client handler error: {0}", e.getMessage());
             } finally {
+                cleanupClientResources();
+            }
+        }
+
+        private void cleanupClientResources() {
+            try {
+                if (transactionId != null && database.isInTransaction(transactionId)) {
+                    database.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION, transactionId);
+                }
+                preparedStatements.clear();
+                for (Cursor cursor : cursors.values()) {
+                    cursor.close();
+                }
+                cursors.clear();
+                closeQuietly(out);
+                closeQuietly(in);
+                closeQuietly(clientSocket);
+                LOGGER.log(Level.INFO, "Client disconnected: {0}", clientSocket.getInetAddress());
+                logCompressionMetrics();
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
+            }
+        }
+
+        private void closeQuietly(java.io.Closeable closeable) {
+            if (closeable != null) {
                 try {
-                    // Rollback any active transaction for this client
-                    if (transactionId != null && database.isInTransaction(transactionId)) {
-                        database.executeQuery(SqlKeywords.ROLLBACK_TRANSACTION, transactionId);
-                    }
-                    preparedStatements.clear();
-                    for (Cursor cursor : cursors.values()) {
-                        cursor.close();
-                    }
-                    cursors.clear();
-                    if (out != null) out.close();
-                    if (in != null) in.close();
-                    if (clientSocket != null) clientSocket.close();
-                    LOGGER.log(Level.INFO, "Client disconnected: {0}", clientSocket.getInetAddress());
-                    logCompressionMetrics();
+                    closeable.close();
                 } catch (IOException e) {
-                    LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
+                    LOGGER.log(Level.WARNING, "Error closing resource: {0}", e.getMessage());
                 }
             }
         }

@@ -1551,72 +1551,103 @@ public class SubqueryParser {
     private List<QueryParser.HavingCondition> parseHavingConditions(String havingClause, ParseContext ctx,
                                                                 List<QueryParser.AggregateFunction> aggregates) {
         List<QueryParser.HavingCondition> conditions = new ArrayList<>();
-        StringBuilder currentCondition = new StringBuilder();
-        boolean inQuotes = false;
-        int parenDepth = 0;
-        String conjunction = null;
-        boolean not = false;
+        HavingParseState state = new HavingParseState();
 
         for (int i = 0; i < havingClause.length(); i++) {
             char c = havingClause.charAt(i);
             if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentCondition.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentCondition.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentCondition.append(c);
-                    if (parenDepth == 0 && currentCondition.length() > 0) {
-                        String condStr = currentCondition.toString().trim();
-                        if (condStr.startsWith("(") && condStr.endsWith(")")) {
-                            condStr = condStr.substring(1, condStr.length() - 1).trim();
-                            if (!condStr.isEmpty()) {
-                                List<QueryParser.HavingCondition> subConditions = parseHavingConditions(condStr, ctx, aggregates);
-                                conditions.add(new QueryParser.HavingCondition(subConditions, conjunction, not));
-                            }
-                            currentCondition = new StringBuilder();
-                            conjunction = null;
-                            not = false;
-                        }
-                    }
-                    continue;
-                } else if (parenDepth == 0 && c == ' ') {
-                    String nextToken = getNextToken(havingClause, i + 1);
-                    if (nextToken.equalsIgnoreCase(SqlKeywords.AND) || nextToken.equalsIgnoreCase(SqlKeywords.OR)) {
-                        String condStr = currentCondition.toString().trim();
-                        if (!condStr.isEmpty()) {
-                            QueryParser.HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, conjunction, not);
-                            conditions.add(condition);
-                            conjunction = nextToken.toUpperCase();
-                            not = false;
-                            currentCondition = new StringBuilder();
-                            i += nextToken.length();
-                        }
-                        continue;
-                    } else if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
-                        not = true;
-                        currentCondition.append(c);
-                        i += nextToken.length();
-                        continue;
-                    }
+                state.inQuotes = !state.inQuotes;
+                state.currentCondition.append(c);
+            } else if (!state.inQuotes && c == '(') {
+                handleOpenParen(c, i, havingClause, state);
+            } else if (!state.inQuotes && c == ')') {
+                handleCloseParen(state, conditions, ctx, aggregates);
+            } else if (!state.inQuotes && state.parenDepth == 0 && c == ' ') {
+                int newI = handleSpaceSeparator(i, havingClause, state, conditions, ctx, aggregates);
+                if (newI == AND_OR_BREAK_SENTINEL) {
+                    break;
                 }
+                if (newI != i) {
+                    i = newI;
+                } else {
+                    state.currentCondition.append(c);
+                }
+            } else {
+                state.currentCondition.append(c);
             }
-            currentCondition.append(c);
         }
 
-        String finalCondStr = currentCondition.toString().trim();
+        appendFinalCondition(state, conditions, ctx, aggregates);
+        return conditions;
+    }
+
+    private static final int AND_OR_BREAK_SENTINEL = -1;
+
+    private void handleOpenParen(char c, int i, String havingClause, HavingParseState state) {
+        state.parenDepth++;
+        state.currentCondition.append(c);
+    }
+
+    private void handleCloseParen(HavingParseState state, List<QueryParser.HavingCondition> conditions,
+                                  ParseContext ctx, List<QueryParser.AggregateFunction> aggregates) {
+        state.parenDepth--;
+        state.currentCondition.append(')');
+        if (state.parenDepth == 0 && state.currentCondition.length() > 0) {
+            String condStr = state.currentCondition.toString().trim();
+            if (condStr.startsWith("(") && condStr.endsWith(")")) {
+                condStr = condStr.substring(1, condStr.length() - 1).trim();
+                if (!condStr.isEmpty()) {
+                    List<QueryParser.HavingCondition> subConditions = parseHavingConditions(condStr, ctx, aggregates);
+                    conditions.add(new QueryParser.HavingCondition(subConditions, state.conjunction, state.not));
+                }
+                resetState(state);
+            }
+        }
+    }
+
+    private int handleSpaceSeparator(int i, String havingClause, HavingParseState state,
+                                     List<QueryParser.HavingCondition> conditions, ParseContext ctx,
+                                     List<QueryParser.AggregateFunction> aggregates) {
+        String nextToken = getNextToken(havingClause, i + 1);
+        if (nextToken.equalsIgnoreCase(SqlKeywords.AND) || nextToken.equalsIgnoreCase(SqlKeywords.OR)) {
+            String condStr = state.currentCondition.toString().trim();
+            if (!condStr.isEmpty()) {
+                QueryParser.HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, state.conjunction, state.not);
+                conditions.add(condition);
+                state.conjunction = nextToken.toUpperCase();
+                state.not = false;
+                state.currentCondition = new StringBuilder();
+                return i + nextToken.length();
+            }
+        } else if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
+            state.not = true;
+            state.currentCondition.append(' ');
+            return i + nextToken.length();
+        }
+        return i;
+    }
+
+    private void appendFinalCondition(HavingParseState state, List<QueryParser.HavingCondition> conditions,
+                                      ParseContext ctx, List<QueryParser.AggregateFunction> aggregates) {
+        String finalCondStr = state.currentCondition.toString().trim();
         if (!finalCondStr.isEmpty()) {
-            QueryParser.HavingCondition condition = parseSingleHavingCondition(finalCondStr, ctx, aggregates, conjunction, not);
+            QueryParser.HavingCondition condition = parseSingleHavingCondition(finalCondStr, ctx, aggregates, state.conjunction, state.not);
             conditions.add(condition);
         }
+    }
 
-        return conditions;
+    private void resetState(HavingParseState state) {
+        state.currentCondition = new StringBuilder();
+        state.conjunction = null;
+        state.not = false;
+    }
+
+    private static final class HavingParseState {
+        StringBuilder currentCondition = new StringBuilder();
+        boolean inQuotes;
+        int parenDepth;
+        String conjunction;
+        boolean not;
     }
 
     private QueryParser.OperatorInfo findHavingOperator(String condStr) {
