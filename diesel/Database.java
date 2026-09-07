@@ -500,7 +500,7 @@ class Database {
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
-        return "Transaction committed";
+        return ErrorMessages.TRANSACTION_COMMITTED;
     }
 
     private Object executeRollback(Transaction currentTransaction, UUID transactionId) {
@@ -510,7 +510,7 @@ class Database {
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
-        return "Transaction rolled back";
+        return ErrorMessages.TRANSACTION_ROLLED_BACK;
     }
 
     private Object executeBatchQuery(BatchQuery batchQuery, Transaction currentTransaction, UUID transactionId) {

@@ -791,7 +791,7 @@ public class SubqueryParser {
             } else if (clauseMatcher.lookingAt()) {
                 token = clauseMatcher.group();
                 nextPos = clauseMatcher.end();
-                tokenType = "clause";
+                tokenType = MessageConstants.TOKEN_CLAUSE;
             } else if (wordMatcher.lookingAt()) {
                 token = wordMatcher.group();
                 nextPos = wordMatcher.end();
@@ -819,7 +819,7 @@ public class SubqueryParser {
                     LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}", new Object[]{start, query});
                     return -1;
                 }
-            } else if (tokenType.equals("clause") && parenDepth == 0 && !inSubQuery) {
+            } else if (tokenType.equals(MessageConstants.TOKEN_CLAUSE) && parenDepth == 0 && !inSubQuery) {
                 LOGGER.log(Level.FINEST, "Considering clause {0} at position {1}, query: {2}", new Object[]{token, start, query});
                 clauseIndex = start;
             }
@@ -1013,14 +1013,14 @@ public class SubqueryParser {
                 Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Like",
                 Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
-        patterns.add(Map.entry("Like Condition",
+        patterns.add(Map.entry(MessageConstants.TOKEN_LIKE_CONDITION,
                 Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*+'")));
         patterns.add(Map.entry("Null Condition",
                 Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
         patterns.add(Map.entry("Comparison Condition",
                 Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|'[^']*'|[-]?\\d+(?:\\.\\d*)?)")));
         patterns.add(Map.entry("Table Alias", Pattern.compile("(?i)\\b" + SIMPLE_IDENTIFIER_PATTERN + "(?=\\s*\\." + SIMPLE_IDENTIFIER_PATTERN + "\\b)")));
-        patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
+        patterns.add(Map.entry(MessageConstants.TOKEN_LOGICAL_OPERATOR, Pattern.compile("(?i)\\b(AND|OR)\\b")));
         patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
         patterns.add(Map.entry("Alias", Pattern.compile("(?i)\\bAS\\s+" + IDENTIFIER_PATTERN + "\\b")));
 
@@ -1062,7 +1062,7 @@ public class SubqueryParser {
 
             if (matched) {
                 Token.TokenType type = switch (matchedPatternName) {
-                    case "Logical Operator" -> Token.TokenType.LOGICAL_OPERATOR;
+                    case MessageConstants.TOKEN_LOGICAL_OPERATOR -> Token.TokenType.LOGICAL_OPERATOR;
                     case "Table Alias" -> Token.TokenType.TABLE_ALIAS;
                     default -> Token.TokenType.CONDITION;
                 };
@@ -1324,7 +1324,7 @@ public class SubqueryParser {
         if (!subQueryStr.toUpperCase().startsWith(SqlKeywords.SELECT)) {
             throw new IllegalArgumentException("Invalid subquery: must start with SELECT: " + subQueryStr);
         }
-        if (!subQueryStr.toUpperCase().contains(" FROM ")) {
+        if (!subQueryStr.toUpperCase().contains(MessageConstants.SQL_FROM_SPACED)) {
             throw new IllegalArgumentException("Invalid subquery: missing FROM clause: " + subQueryStr);
         }
         int parenDepth = 0;
@@ -1406,7 +1406,7 @@ public class SubqueryParser {
             } else if (literalColumnType == Boolean.class) {
                 value = Boolean.parseBoolean(rightPart);
             } else {
-                throw new IllegalArgumentException("Boolean value '" + rightPart + "' does not match column type: " + literalColumnType.getSimpleName());
+                throw new IllegalArgumentException(MessageConstants.ERROR_BOOLEAN_VALUE_PREFIX + rightPart + "' does not match column type: " + literalColumnType.getSimpleName());
             }
         } else if (columnPattern.matcher(rightPart).matches()) {
             rightColumn = unquoteQualifiedIdentifier(rightPart);
@@ -1526,7 +1526,7 @@ public class SubqueryParser {
                 return entry.getValue();
             }
         }
-        throw new IllegalArgumentException("Unknown column: " + column);
+        throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
     }
 
     private void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
@@ -1540,7 +1540,7 @@ public class SubqueryParser {
             }
         }
         if (!found) {
-            throw new IllegalArgumentException("Unknown column: " + column);
+            throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
         }
     }
 

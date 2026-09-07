@@ -3443,7 +3443,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         StringBuilder sb = new StringBuilder("Execution Plan\n");
         sb.append("  Operation: SELECT\n");
         sb.append("  Scan ").append(scanName).append(" (estimated rows: ").append(mainTable.rowCount()).append(")\n");
-        sb.append("  Index: ").append(describeScanIndex(mainTable, mainTableName, conditions)).append('\n');
+        sb.append(MessageConstants.SQL_INDEX_PREFIX).append(describeScanIndex(mainTable, mainTableName, conditions)).append('\n');
 
         appendPlanJoins(sb, orderPlanJoins(database), scanName, mainTable);
         appendPlanClauses(sb);
@@ -3544,11 +3544,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         String hint;
         if (condition.operator == QueryParser.Operator.EQUALS || condition.isInOperator()) {
-            hint = indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn;
+            hint = indexTypeName(index) + MessageConstants.SQL_INDEX_ON + tableName + "." + unqualifiedColumn;
         } else if (index instanceof BTreeIndex) {
             hint = switch (condition.operator) {
                 case LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS ->
-                    indexTypeName(index) + " index on " + tableName + "." + unqualifiedColumn + " (range)";
+                    indexTypeName(index) + MessageConstants.SQL_INDEX_ON + tableName + "." + unqualifiedColumn + " (range)";
                 default -> null;
             };
         } else {
@@ -3598,7 +3598,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         selectItems.addAll(columns);
         selectItems.addAll(aggregates.stream().map(QueryParser.AggregateFunction::toString).toList());
         sb.append(String.join(", ", selectItems));
-        sb.append(" FROM ").append(mainTableName);
+        sb.append(MessageConstants.SQL_FROM_SPACED).append(mainTableName);
         String mainTableAlias = tableAliases.entrySet().stream()
                 .filter(e -> e.getValue().equals(mainTableName) && !e.getKey().equals(mainTableName))
                 .map(Map.Entry::getKey)
@@ -3623,7 +3623,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
 
         if (!conditions.isEmpty()) {
-            sb.append(" WHERE ");
+            sb.append(MessageConstants.SQL_WHERE_SPACED);
             sb.append(conditions.stream()
                     .map(QueryParser.Condition::toString)
                     .collect(Collectors.joining(" ")));

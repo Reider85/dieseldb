@@ -67,4 +67,8 @@ public final class ErrorMessages {
 
     // S1192 – performance logging (AggregateFunctions.java)
     public static final String MS_SPEEDUP = "ms, Speedup: ";
+
+    // S1192 – transaction status messages (Database, DatabaseClient)
+    public static final String TRANSACTION_COMMITTED = "Transaction committed";
+    public static final String TRANSACTION_ROLLED_BACK = "Transaction rolled back";
 }

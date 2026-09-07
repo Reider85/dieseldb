@@ -90,11 +90,11 @@ class ExplainQuery implements Query<String> {
         } else if (innerQuery instanceof UpdateQuery uq) {
             sb.append("  Columns: ").append(uq.getUpdates().keySet()).append('\n');
             sb.append("  Conditions: ").append(formatConditions(uq.getConditions())).append('\n');
-            sb.append("  Index: ").append(describeIndex(table, uq.getConditions())).append('\n');
+            sb.append(MessageConstants.SQL_INDEX_PREFIX).append(describeIndex(table, uq.getConditions())).append('\n');
         } else {
             DeleteQuery delete = (DeleteQuery) innerQuery;
             sb.append("  Conditions: ").append(formatConditions(delete.getConditions())).append('\n');
-            sb.append("  Index: ").append(describeIndex(table, delete.getConditions())).append('\n');
+            sb.append(MessageConstants.SQL_INDEX_PREFIX).append(describeIndex(table, delete.getConditions())).append('\n');
         }
 
         if (analyze) {
@@ -140,7 +140,7 @@ class ExplainQuery implements Query<String> {
         if (index == null) {
             return ErrorMessages.NONE_FULL_SCAN;
         }
-        return SelectQuery.indexTypeName(index) + " index on " + table.getName() + "." + condition.column;
+        return SelectQuery.indexTypeName(index) + MessageConstants.SQL_INDEX_ON + table.getName() + "." + condition.column;
     }
 
     private long affectedRows() {

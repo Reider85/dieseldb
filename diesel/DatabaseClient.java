@@ -141,7 +141,7 @@ public class DatabaseClient {
             if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
             } else if (result instanceof String s &&
-                    (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
+                    (s.equals(ErrorMessages.TRANSACTION_COMMITTED) || s.equals(ErrorMessages.TRANSACTION_ROLLED_BACK))) {
                 transactionId = null;
             }
             if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
@@ -182,7 +182,7 @@ public class DatabaseClient {
             if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
             } else if (result instanceof String s &&
-                    (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
+                    (s.equals(ErrorMessages.TRANSACTION_COMMITTED) || s.equals(ErrorMessages.TRANSACTION_ROLLED_BACK))) {
                 transactionId = null;
             }
             if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
@@ -245,7 +245,7 @@ public class DatabaseClient {
             if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
             } else if (result instanceof String s &&
-                    (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
+                    (s.equals(ErrorMessages.TRANSACTION_COMMITTED) || s.equals(ErrorMessages.TRANSACTION_ROLLED_BACK))) {
                 transactionId = null;
             }
             if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {

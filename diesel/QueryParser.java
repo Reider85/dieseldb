@@ -1868,7 +1868,7 @@ class QueryParser {
                 currentPos = token.endPos;
                 continue;
             }
-            if (token.tokenType.equals("clause") && !inQuotes && parenDepth == 0) {
+            if (token.tokenType.equals(MessageConstants.TOKEN_CLAUSE) && !inQuotes && parenDepth == 0) {
                 lastClauseIndex = currentPos;
                 currentPos = token.endPos;
                 continue;
@@ -1913,7 +1913,7 @@ class QueryParser {
         } else if (closeParenMatcher.lookingAt()) {
             return new ClauseScanToken(ErrorMessages.TAG_CLOSE_PAREN, closeParenMatcher.end());
         } else if (clauseMatcher.lookingAt()) {
-            return new ClauseScanToken("clause", clauseMatcher.end());
+            return new ClauseScanToken(MessageConstants.TOKEN_CLAUSE, clauseMatcher.end());
         }
         return null;
     }
@@ -2361,7 +2361,7 @@ class QueryParser {
             }
             if (valueStr.equalsIgnoreCase(SqlKeywords.TRUE) || valueStr.equalsIgnoreCase(SqlKeywords.FALSE)) {
                 if (columnType != Boolean.class) {
-                    throw new IllegalArgumentException("Boolean value '" + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
+                    throw new IllegalArgumentException(MessageConstants.ERROR_BOOLEAN_VALUE_PREFIX + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
                 }
                 return Boolean.parseBoolean(valueStr);
             }
@@ -2519,7 +2519,7 @@ class QueryParser {
         patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:''|\\\\.|[^'\\\\])*+'")));
 
         // 2. Условия LIKE и NOT LIKE
-        patterns.add(Map.entry("Like Condition",
+        patterns.add(Map.entry(MessageConstants.TOKEN_LIKE_CONDITION,
                 Pattern.compile("(?i)" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*+'")));
 
         // 3. Подзапросы
@@ -2543,7 +2543,7 @@ class QueryParser {
                 Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + ")")));
 
         // 7. Логические операторы
-        patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
+        patterns.add(Map.entry(MessageConstants.TOKEN_LOGICAL_OPERATOR, Pattern.compile("(?i)\\b(AND|OR)\\b")));
 
         // 8. Ключевое слово NOT (отрицание условия)
         patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
@@ -2606,7 +2606,7 @@ class QueryParser {
     }
 
     private void processMatchedToken(String matchedToken, String matchedPatternName, int currentPos, List<Token> tokens) {
-        if (matchedPatternName.equals("Like Condition")) {
+        if (matchedPatternName.equals(MessageConstants.TOKEN_LIKE_CONDITION)) {
             Matcher likeMatcher = Pattern.compile(
                             ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:''|\\\\.|[^'\\\\])*+')")
                     .matcher(matchedToken);
@@ -2626,7 +2626,7 @@ class QueryParser {
                         new Object[]{currentPos, matchedToken});
                 throw new IllegalArgumentException("Некорректный LIKE токен на позиции " + currentPos + ": " + matchedToken);
             }
-        } else if (matchedPatternName.equals("Logical Operator")) {
+        } else if (matchedPatternName.equals(MessageConstants.TOKEN_LOGICAL_OPERATOR)) {
             tokens.add(new Token(TokenType.LOGICAL_OPERATOR, matchedToken));
             LOGGER.log(Level.FINEST, "Добавлен токен Logical Operator: {0}", matchedToken);
         } else if (matchedPatternName.equals("Invalid Token")) {
@@ -3015,7 +3015,7 @@ class QueryParser {
             } else if (literalColumnType == Boolean.class) {
                 return new RightPart(null, Boolean.parseBoolean(rightPart));
             } else {
-                throw new IllegalArgumentException("Boolean value '" + rightPart + ErrorMessages.TYPE_MISMATCH_SUFFIX + literalColumnType.getSimpleName());
+                throw new IllegalArgumentException(MessageConstants.ERROR_BOOLEAN_VALUE_PREFIX + rightPart + ErrorMessages.TYPE_MISMATCH_SUFFIX + literalColumnType.getSimpleName());
             }
         } else if (columnPattern.matcher(rightPart).matches()) {
             return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
@@ -3538,8 +3538,8 @@ class QueryParser {
                 .replaceAll("(?i)\\bNOT_LIKE\\b", SqlKeywords.NOT_LIKE)
                 .replaceAll("\\s*;", "")
                 .replaceAll("(?i)\\bLIMIT\\s*(\\d+)\\b", " LIMIT $1 ")
-                .replaceAll("(?i)\\bWHERE\\b", " WHERE ")
-                .replaceAll("(?i)\\bFROM\\b", " FROM ")
+                .replaceAll("(?i)\\bWHERE\\b", MessageConstants.SQL_WHERE_SPACED)
+                .replaceAll("(?i)\\bFROM\\b", MessageConstants.SQL_FROM_SPACED)
                 .replaceAll("(?i)\\bSELECT\\b", " SELECT ")
                 .replaceAll("(?i)\\bAS\\b", " AS ")
                 .replaceAll("\\(\\s+", "(")

@@ -1,1 +1,4 @@
-Prompt 6: Bulk S3776 cognitive complexity refactoring — decomposed 30+ methods with complexity >15 into sub-methods following Single Responsibility across 8 files (Database, SubqueryParser, BTreeIndex, BTreeClusteredIndex, QueryParser, SelectQuery, InsertQuery, ConditionEvaluator). Extract Method pattern: each complex block → dedicated private helper. State classes introduced for parsing loops. Early returns replace nested if-else. Tests: 42 run, 0 failures, 0 errors.
+3.0.9 Prompt 9 - S1192: Create MessageConstants class, extract 10 duplicated literals (3+ occurrences) into named constants
+
+Создан класс MessageConstants.java с 8 константами: TOKEN_LOGICAL_OPERATOR, TOKEN_LIKE_CONDITION, TOKEN_CLAUSE, SQL_WHERE_SPACED, SQL_FROM_SPACED, SQL_INDEX_PREFIX, SQL_INDEX_ON, ERROR_BOOLEAN_VALUE_PREFIX. Добавлены TRANSACTION_COMMITTED и TRANSACTION_ROLLED_BACK в ErrorMessages.java. Замены выполнены в 9 файлах: DatabaseClient, Database, QueryParser, SubqueryParser, QueryExecutor, SelectQuery, ExplainQuery — ~40 замен литералов на именованные константы.
+Тесты: 42 passed, 0 failed, 0 errors

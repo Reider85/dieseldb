@@ -2185,3 +2185,8 @@ Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
 
 Заменены 2 оставшихся сырых литерала "(?i)^(" на константу ErrorMessages.CASE_INSENSITIVE_START_PATTERN в методах parseSelectColumns (строка 1426) и parseHavingAggregateFromText (строка 3347) QueryParser.java. Все вхождения в QueryParser.java теперь используют константу.
 Тесты: 42 passed, 0 failed, 0 errors
+
+3.0.9 Prompt 9 - S1192: Create MessageConstants class, extract 10 duplicated literals (3+ occurrences) into named constants
+
+Создан класс MessageConstants.java с 8 константами: TOKEN_LOGICAL_OPERATOR, TOKEN_LIKE_CONDITION, TOKEN_CLAUSE, SQL_WHERE_SPACED, SQL_FROM_SPACED, SQL_INDEX_PREFIX, SQL_INDEX_ON, ERROR_BOOLEAN_VALUE_PREFIX. Добавлены TRANSACTION_COMMITTED и TRANSACTION_ROLLED_BACK в ErrorMessages.java. Замены выполнены в 9 файлах: DatabaseClient, Database, QueryParser, SubqueryParser, QueryExecutor, SelectQuery, ExplainQuery — ~40 замен литералов на именованные константы.
+Тесты: 42 passed, 0 failed, 0 errors

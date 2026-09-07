@@ -145,7 +145,7 @@ public class QueryExecutor {
         String upperQuery = query.toUpperCase().trim();
         
         // Extract tables from SELECT ... FROM ...
-        int fromIndex = upperQuery.indexOf(" FROM ");
+        int fromIndex = upperQuery.indexOf(MessageConstants.SQL_FROM_SPACED);
         if (fromIndex != -1) {
             int endIndex = findNextClauseStart(upperQuery, fromIndex + 6);
             String fromClause = upperQuery.substring(fromIndex + 6, 
@@ -191,7 +191,7 @@ public class QueryExecutor {
      * @return the index of the next clause keyword, or -1 if not found
      */
     private int findNextClauseStart(String query, int startIndex) {
-        int whereIndex = query.indexOf(" WHERE ", startIndex);
+        int whereIndex = query.indexOf(MessageConstants.SQL_WHERE_SPACED, startIndex);
         int groupIndex = query.indexOf(" GROUP BY ", startIndex);
         int havingIndex = query.indexOf(" HAVING ", startIndex);
         int orderIndex = query.indexOf(" ORDER BY ", startIndex);
