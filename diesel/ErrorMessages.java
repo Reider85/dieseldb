@@ -38,4 +38,33 @@ public final class ErrorMessages {
     public static final String INDEX_COVERING_BTREE = "COVERING_BTREE";
 
     public static final String EXIT_COMMAND = "EXIT";
+
+    // S1192 – regex patterns duplicated across QueryParser / SubqueryParser / Database
+    public static final String CASE_INSENSITIVE_START_PATTERN = "(?i)^(";
+    public static final String CASE_INSENSITIVE_GROUP_PATTERN = "(?i)(";
+    public static final String SELECT_KEYWORD = "(SELECT";
+    public static final String FROM_PATTERN = "(?i)FROM\\s+";
+
+    // S1192 – error / status messages
+    public static final String ERROR_NOT_CONNECTED = "Client is not connected: call connect() first";
+    public static final String TRANSACTION_STARTED = "Transaction started: ";
+    public static final String ERROR_PREFIX = "Error: ";
+    public static final String UNBALANCED_PARENS_SUBQUERY = "Unbalanced parentheses in subquery: ";
+
+    // S1192 – column / key message fragments (Table.java)
+    public static final String COLUMN_PREFIX = "Column ";
+    public static final String DUPLICATE_KEY_QUOTED = "Duplicate key '";
+    public static final String FOUND_IN_COLUMN = "' found in column ";
+    public static final String IN_COLUMN = " in column ";
+
+    // S1192 – subquery prefix (SubqueryParser.java)
+    public static final String SUBQUERY_PREFIX = "SUBQUERY_";
+
+    // S1192 – parser tag names (QueryParser.java)
+    public static final String TAG_QUOTED_STRING = "quotedString";
+    public static final String TAG_OPEN_PAREN = "openParen";
+    public static final String TAG_CLOSE_PAREN = "closeParen";
+
+    // S1192 – performance logging (AggregateFunctions.java)
+    public static final String MS_SPEEDUP = "ms, Speedup: ";
 }
