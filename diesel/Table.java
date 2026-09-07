@@ -1916,33 +1916,37 @@ class Table implements Serializable {
     }
 
     private Map.Entry<String, Index> buildIndex(String column, Class<?> keyType, String indexType, int n) {
-        Index index;
-        switch (indexType) {
-            case ErrorMessages.INDEX_BTREE:
-                index = new BTreeIndex(keyType);
-                break;
-            case ErrorMessages.INDEX_HASH:
-                index = new HashIndex(keyType);
-                break;
-            case ErrorMessages.INDEX_UNIQUE:
-                index = new UniqueIndex(keyType);
-                break;
-            case ErrorMessages.INDEX_COMPOSITE_BTREE:
-                return buildCompositeIndex(column, n);
-            case ErrorMessages.INDEX_COVERING_BTREE:
-                return buildCoveringIndex(column, keyType, n);
-            default:
+        return switch (indexType) {
+            case ErrorMessages.INDEX_BTREE -> buildBTreeIndex(column, keyType, n);
+            case ErrorMessages.INDEX_HASH -> buildHashIndex(column, keyType, n);
+            case ErrorMessages.INDEX_UNIQUE -> buildUniqueIndex(column, keyType, n);
+            case ErrorMessages.INDEX_COMPOSITE_BTREE -> buildCompositeIndex(column, n);
+            case ErrorMessages.INDEX_COVERING_BTREE -> buildCoveringIndex(column, keyType, n);
+            default -> {
                 LOGGER.log(Level.WARNING,
                         "Unknown index type ''{0}'' for column ''{1}'' in table {2}, skipping rebuild",
                         new Object[]{indexType, column, name});
-                return null;
-        }
-        if (index instanceof BTreeIndex btree) {
-            Map.Entry<List<Object>, List<Integer>> sorted = bulkLoadSortedKeys(column, n);
-            btree.bulkLoad(sorted.getKey(), sorted.getValue());
-        } else {
-            insertOneByOne(index, column, n);
-        }
+                yield null;
+            }
+        };
+    }
+
+    private Map.Entry<String, Index> buildBTreeIndex(String column, Class<?> keyType, int n) {
+        BTreeIndex index = new BTreeIndex(keyType);
+        Map.Entry<List<Object>, List<Integer>> sorted = bulkLoadSortedKeys(column, n);
+        index.bulkLoad(sorted.getKey(), sorted.getValue());
+        return Map.entry(column, index);
+    }
+
+    private Map.Entry<String, Index> buildHashIndex(String column, Class<?> keyType, int n) {
+        HashIndex index = new HashIndex(keyType);
+        insertOneByOne(index, column, n);
+        return Map.entry(column, index);
+    }
+
+    private Map.Entry<String, Index> buildUniqueIndex(String column, Class<?> keyType, int n) {
+        UniqueIndex index = new UniqueIndex(keyType);
+        insertOneByOne(index, column, n);
         return Map.entry(column, index);
     }
 

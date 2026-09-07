@@ -2167,3 +2167,11 @@ diesel/SelectQuery.java, pom.xml. Verification: quick gate 42/0 BUILD SUCCESS.
 3.0.2 S3776: refactor InsertQuery.execute, UpdateQuery.execute/identifyRows, ConditionEvaluator (3 methods)
 3.0.3 S3776: refactor Database/DatabaseServer/BTreeIndex/BTreeClusteredIndex/QueryExecutor/CliRepl below 15
 3.0.4 S3776: refactor DeleteQuery high-complexity methods below 15
+3.0.5 prompt 5 - S3776 cognitive complexity refactor with early return
+
+Изменения: Table.java: buildIndex() switch expression + extract buildBTreeIndex/buildHashIndex/buildUniqueIndex, QueryParser.java: handleCloseParen/handleSpaceSeparator early return patterns
+Тесты: 42 passed, 0 failed
+Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
+Complexity: reduced from 87/70 to ~15/20 with early returns and extracted methods
+
+Refactored Table.buildIndex() to use Java 21 switch expression for cleaner control flow, extracted each index type into separate methods (buildBTreeIndex, buildHashIndex, buildUniqueIndex). Applied early return patterns to QueryParser.handleCloseParen and handleSpaceSeparator to reduce nesting and improve readability.

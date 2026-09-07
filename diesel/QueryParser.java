@@ -3175,30 +3175,30 @@ class QueryParser {
         if (state.parenDepth == 0 && state.inAggregateCall) {
             state.inAggregateCall = false;
             state.currentCondition.append(')');
-        } else {
-            state.parenDepth--;
-            if (state.parenDepth == 0 && state.subQueryStart != -1) {
-                state.subQueryStart = -1;
-            }
-            if (state.parenDepth == 0 && state.currentCondition.length() > 0) {
-                state.currentCondition.append(')');
-                String condStr = state.currentCondition.toString().trim();
-                if (condStr.startsWith("(") && condStr.endsWith(")")) {
-                    condStr = condStr.substring(1, condStr.length() - 1).trim();
-                    if (!condStr.isEmpty()) {
-                        List<HavingCondition> subConditions = parseHavingConditions(condStr, ctx, aggregates);
-                        conditions.add(new HavingCondition(subConditions, state.conjunction, state.not));
-                        LOGGER.log(Level.FINE, "Parsed grouped HAVING condition: {0}, conjunction={1}, not={2}",
-                                new Object[]{subConditions, state.conjunction, state.not});
-                    }
-                }
-                state.currentCondition = new StringBuilder();
-                state.conjunction = null;
-                state.not = false;
-            } else {
-                state.currentCondition.append(')');
+            return;
+        }
+        state.parenDepth--;
+        if (state.parenDepth == 0 && state.subQueryStart != -1) {
+            state.subQueryStart = -1;
+        }
+        if (state.parenDepth != 0 || state.currentCondition.length() == 0) {
+            state.currentCondition.append(')');
+            return;
+        }
+        state.currentCondition.append(')');
+        String condStr = state.currentCondition.toString().trim();
+        if (condStr.startsWith("(") && condStr.endsWith(")")) {
+            condStr = condStr.substring(1, condStr.length() - 1).trim();
+            if (!condStr.isEmpty()) {
+                List<HavingCondition> subConditions = parseHavingConditions(condStr, ctx, aggregates);
+                conditions.add(new HavingCondition(subConditions, state.conjunction, state.not));
+                LOGGER.log(Level.FINE, "Parsed grouped HAVING condition: {0}, conjunction={1}, not={2}",
+                        new Object[]{subConditions, state.conjunction, state.not});
             }
         }
+        state.currentCondition = new StringBuilder();
+        state.conjunction = null;
+        state.not = false;
     }
 
     private int handleSpaceSeparator(int i, String havingClause, HavingParseState state,
@@ -3216,11 +3216,13 @@ class QueryParser {
             state.not = false;
             state.currentCondition = new StringBuilder();
             return i + nextToken.length();
-        } else if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
+        }
+        if (nextToken.equalsIgnoreCase(SqlKeywords.NOT)) {
             state.not = true;
             state.currentCondition.append(' ');
             return i + nextToken.length();
-        } else if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
+        }
+        if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
                 (nextToken.equalsIgnoreCase(SqlKeywords.LIMIT) && state.subQueryStart == -1) ||
                 (nextToken.equalsIgnoreCase(SqlKeywords.OFFSET) && state.subQueryStart == -1)) {
             String condStr = state.currentCondition.toString().trim();
@@ -3230,10 +3232,9 @@ class QueryParser {
                 LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
             }
             return AND_OR_BREAK_SENTINEL;
-        } else {
-            state.currentCondition.append(' ');
-            return i;
         }
+        state.currentCondition.append(' ');
+        return i;
     }
 
     private static final class HavingParseState {
