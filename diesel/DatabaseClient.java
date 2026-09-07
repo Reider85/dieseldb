@@ -103,7 +103,7 @@ public class DatabaseClient {
         // query before connect() would NPE on out.writeObject below and mask
         // the real cause, so fail with a clear message instead.
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         try {
             Object result;
@@ -138,13 +138,13 @@ public class DatabaseClient {
             } catch (IOException | ClassNotFoundException e) {
                 throw new DieselIOException("Failed to read query result: " + e.getMessage(), e);
             }
-            if (result instanceof String s && s.startsWith("Transaction started: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
             } else if (result instanceof String s &&
                     (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
                 transactionId = null;
             }
-            if (result instanceof String s && s.startsWith("Error: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
                 LOGGER.error("Server error for query '{}': {}", normalizedQuery, result);
                 throw new DieselException(s);
             }
@@ -168,7 +168,7 @@ public class DatabaseClient {
         // query before connect() would NPE on out.writeObject below and mask
         // the real cause, so fail with a clear message instead.
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         if (queries == null || queries.isEmpty()) {
             return Collections.emptyList();
@@ -179,13 +179,13 @@ public class DatabaseClient {
             Object result = in.readObject();
             
             // Handle transaction state changes from batch execution
-            if (result instanceof String s && s.startsWith("Transaction started: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
             } else if (result instanceof String s &&
                     (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
                 transactionId = null;
             }
-            if (result instanceof String s && s.startsWith("Error: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
                 LOGGER.error("Server error for batch query: {}", result);
                 throw new DieselException(s);
             }
@@ -210,13 +210,13 @@ public class DatabaseClient {
      */
     public String prepareStatement(String sqlTemplate) {
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         try {
             out.writeObject(new PrepareMessage(sqlTemplate, transactionId));
             out.flush();
             Object result = in.readObject();
-            if (result instanceof String s && s.startsWith("Error: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
                 throw new DieselException(s);
             }
             return (String) result;
@@ -236,19 +236,19 @@ public class DatabaseClient {
      */
     public Object executePrepared(String statementId, List<Object> params) {
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         try {
             out.writeObject(new ExecutePreparedMessage(statementId, params, transactionId));
             out.flush();
             Object result = readResultFromStream();
-            if (result instanceof String s && s.startsWith("Transaction started: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
             } else if (result instanceof String s &&
                     (s.equals("Transaction committed") || s.equals("Transaction rolled back"))) {
                 transactionId = null;
             }
-            if (result instanceof String s && s.startsWith("Error: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
                 LOGGER.error("Server error for prepared statement '{}': {}", statementId, result);
                 throw new DieselException(s);
             }
@@ -279,7 +279,7 @@ public class DatabaseClient {
      */
     public void closePrepared(String statementId) {
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         try {
             out.writeObject(new ClosePreparedMessage(statementId, transactionId));
@@ -304,13 +304,13 @@ public class DatabaseClient {
      */
     public String openCursor(String query, int fetchSize) {
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         try {
             out.writeObject(new OpenCursorMessage(query, fetchSize, transactionId));
             out.flush();
             Object result = readResultFromStream();
-            if (result instanceof String s && s.startsWith("Error: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
                 LOGGER.error("Server error for cursor open '{}': {}", query, result);
                 throw new DieselException(s);
             }
@@ -334,13 +334,13 @@ public class DatabaseClient {
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> fetchCursor(String cursorId) {
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         try {
             out.writeObject(new FetchCursorMessage(java.util.UUID.fromString(cursorId), transactionId));
             out.flush();
             Object result = readResultFromStream();
-            if (result instanceof String s && s.startsWith("Error: ")) {
+            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
                 LOGGER.error("Server error fetching cursor '{}': {}", cursorId, result);
                 throw new DieselException(s);
             }
@@ -359,7 +359,7 @@ public class DatabaseClient {
      */
     public void closeCursor(String cursorId) {
         if (out == null || in == null) {
-            throw new IllegalStateException("Client is not connected: call connect() first");
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
         }
         try {
             out.writeObject(new CloseCursorMessage(java.util.UUID.fromString(cursorId), transactionId));

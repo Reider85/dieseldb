@@ -438,9 +438,9 @@ public class AggregateFunctions {
         }
         long scalarDoubleTime = System.nanoTime() - start;
         
-        System.out.println("INT SUM - Vector: " + (vectorIntTime / 1_000_000) + "ms, Scalar: " + (scalarIntTime / 1_000_000) + "ms, Speedup: " + String.format("%.2f", (double)scalarIntTime / vectorIntTime) + "x");
-        System.out.println("LONG SUM - Vector: " + (vectorLongTime / 1_000_000) + "ms, Scalar: " + (scalarLongTime / 1_000_000) + "ms, Speedup: " + String.format("%.2f", (double)scalarLongTime / vectorLongTime) + "x");
-        System.out.println("DOUBLE SUM - Vector: " + (vectorDoubleTime / 1_000_000) + "ms, Scalar: " + (scalarDoubleTime / 1_000_000) + "ms, Speedup: " + String.format("%.2f", (double)scalarDoubleTime / vectorDoubleTime) + "x");
+        System.out.println("INT SUM - Vector: " + (vectorIntTime / 1_000_000) + "ms, Scalar: " + (scalarIntTime / 1_000_000) + ErrorMessages.MS_SPEEDUP + String.format("%.2f", (double)scalarIntTime / vectorIntTime) + "x");
+        System.out.println("LONG SUM - Vector: " + (vectorLongTime / 1_000_000) + "ms, Scalar: " + (scalarLongTime / 1_000_000) + ErrorMessages.MS_SPEEDUP + String.format("%.2f", (double)scalarLongTime / vectorLongTime) + "x");
+        System.out.println("DOUBLE SUM - Vector: " + (vectorDoubleTime / 1_000_000) + "ms, Scalar: " + (scalarDoubleTime / 1_000_000) + ErrorMessages.MS_SPEEDUP + String.format("%.2f", (double)scalarDoubleTime / vectorDoubleTime) + "x");
     }
     
     private static long scalarSumInt(int[] array) {

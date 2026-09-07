@@ -265,7 +265,7 @@ public class SubqueryParser {
         List<QueryParser.SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
         Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
         Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
         Pattern starPattern = Pattern.compile("^\\*$");
@@ -283,7 +283,7 @@ public class SubqueryParser {
                 Query<?> subQuery = queryParser.parse(subQueryStr, database);
                 subQueries.add(new QueryParser.SubQuery(subQuery, alias));
                 if (alias != null) {
-                    columnAliases.put("SUBQUERY_" + subQueries.size(), alias);
+                    columnAliases.put(ErrorMessages.SUBQUERY_PREFIX + subQueries.size(), alias);
                 }
                 LOGGER.log(Level.FINE, "Parsed subquery in SELECT: {0}{1}", new Object[]{subQueryStr, alias != null ? " AS " + alias : ""});
             } else if (aggMatcher.matches()) {
@@ -741,15 +741,15 @@ public class SubqueryParser {
             if (quotedStringMatcher.lookingAt()) {
                 token = quotedStringMatcher.group();
                 nextPos = quotedStringMatcher.end();
-                tokenType = "quotedString";
+                tokenType = ErrorMessages.TAG_QUOTED_STRING;
             } else if (openParenMatcher.lookingAt()) {
                 token = openParenMatcher.group();
                 nextPos = openParenMatcher.end();
-                tokenType = "openParen";
+                tokenType = ErrorMessages.TAG_OPEN_PAREN;
             } else if (closeParenMatcher.lookingAt()) {
                 token = closeParenMatcher.group();
                 nextPos = closeParenMatcher.end();
-                tokenType = "closeParen";
+                tokenType = ErrorMessages.TAG_CLOSE_PAREN;
             } else if (clauseMatcher.lookingAt()) {
                 token = clauseMatcher.group();
                 nextPos = clauseMatcher.end();
@@ -765,14 +765,14 @@ public class SubqueryParser {
                 continue;
             }
 
-            if (tokenType.equals("quotedString")) {
+            if (tokenType.equals(ErrorMessages.TAG_QUOTED_STRING)) {
                 // Пропускаем строки в кавычках
-            } else if (tokenType.equals("openParen")) {
+            } else if (tokenType.equals(ErrorMessages.TAG_OPEN_PAREN)) {
                 parenDepth++;
-                if (parenDepth == 1 && currentPos + 7 < query.length() && query.substring(currentPos, currentPos + 7).toUpperCase().startsWith("(SELECT")) {
+                if (parenDepth == 1 && currentPos + 7 < query.length() && query.substring(currentPos, currentPos + 7).toUpperCase().startsWith(ErrorMessages.SELECT_KEYWORD)) {
                     inSubQuery = true;
                 }
-            } else if (tokenType.equals("closeParen")) {
+            } else if (tokenType.equals(ErrorMessages.TAG_CLOSE_PAREN)) {
                 parenDepth--;
                 if (parenDepth == 0 && inSubQuery) {
                     inSubQuery = false;
@@ -809,7 +809,7 @@ public class SubqueryParser {
         List<QueryParser.OrderByInfo> orderBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(orderByClause);
         Pattern columnPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?\\s*(ASC|DESC)?$",
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?\\s*(ASC|DESC)?$",
                 Pattern.DOTALL);
 
         for (String item : items) {
@@ -825,7 +825,7 @@ public class SubqueryParser {
                     validateSubQuery(subQueryStr);
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);
                     subQueries.add(new QueryParser.SubQuery(subQuery, null));
-                    orderBy.add(new QueryParser.OrderByInfo("SUBQUERY_" + subQueries.size(), ascending));
+                    orderBy.add(new QueryParser.OrderByInfo(ErrorMessages.SUBQUERY_PREFIX + subQueries.size(), ascending));
                 } else {
                     columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
                     String normalizedColumn = normalizeColumnName(columnOrSubQuery, tableName, tableAliases);
@@ -844,7 +844,7 @@ public class SubqueryParser {
                                             Map<String, String> groupBySubQueries) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(groupByClause);
-        Pattern columnPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))$", Pattern.DOTALL);
+        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))$", Pattern.DOTALL);
 
         for (String item : items) {
             String trimmedItem = item.trim();
@@ -855,7 +855,7 @@ public class SubqueryParser {
                     String subQueryStr = columnOrSubQuery.substring(1, columnOrSubQuery.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     queryParser.parse(subQueryStr, database);
-                    String marker = "SUBQUERY_" + System.currentTimeMillis();
+                    String marker = ErrorMessages.SUBQUERY_PREFIX + System.currentTimeMillis();
                     groupBy.add(marker);
                     if (groupBySubQueries != null) {
                         groupBySubQueries.put(marker, subQueryStr);
@@ -970,17 +970,17 @@ public class SubqueryParser {
         patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*+'")));
         patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+')*+\\)")));
         patterns.add(Map.entry("In Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Comparison",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Like",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Like Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*+'")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*+'")));
         patterns.add(Map.entry("Null Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
         patterns.add(Map.entry("Comparison Condition",
-                Pattern.compile("(?i)(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|'[^']*'|[-]?\\d+(?:\\.\\d*)?)")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|'[^']*'|[-]?\\d+(?:\\.\\d*)?)")));
         patterns.add(Map.entry("Table Alias", Pattern.compile("(?i)\\b" + SIMPLE_IDENTIFIER_PATTERN + "(?=\\s*\\." + SIMPLE_IDENTIFIER_PATTERN + "\\b)")));
         patterns.add(Map.entry("Logical Operator", Pattern.compile("(?i)\\b(AND|OR)\\b")));
         patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
@@ -1116,7 +1116,7 @@ public class SubqueryParser {
 
     private QueryParser.Condition parseInCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
                 Pattern.DOTALL);
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
@@ -1127,7 +1127,7 @@ public class SubqueryParser {
 
     private QueryParser.Condition parseInValuesCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern valuesInPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$",
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$",
                 Pattern.DOTALL);
         Matcher valuesMatcher = valuesInPattern.matcher(condStr);
         if (!valuesMatcher.matches()) {
@@ -1234,7 +1234,7 @@ public class SubqueryParser {
 
     private QueryParser.Condition parseSubQueryCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern subQueryPattern = Pattern.compile(
-                "(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*(SELECT\\b.*+)$",
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*(SELECT\\b.*+)$",
                 Pattern.DOTALL);
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
         if (!subQueryMatcher.matches()) {
@@ -1277,7 +1277,7 @@ public class SubqueryParser {
             }
         }
         if (endIndex == -1) {
-            throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subQueryContent);
+            throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryContent);
         }
         return subQueryContent.substring(0, endIndex).trim();
     }
@@ -1303,13 +1303,13 @@ public class SubqueryParser {
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth < 0) {
-                        throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subQueryStr);
+                        throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryStr);
                     }
                 }
             }
         }
         if (parenDepth != 0) {
-            throw new IllegalArgumentException("Unbalanced parentheses in subquery: " + subQueryStr);
+            throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryStr);
         }
     }
 
@@ -1320,7 +1320,7 @@ public class SubqueryParser {
         condStr = condStr.replaceAll("([=><!])", " $1 ").replaceAll("\\s+", " ").trim();
         LOGGER.log(Level.FINEST, "Normalized condition: {0}", condStr);
 
-        Pattern likePattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:''|[^'])*+')");
+        Pattern likePattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT\\s+LIKE)\\s*('(?:''|[^'])*+')");
         Matcher likeMatcher = likePattern.matcher(condStr);
         if (likeMatcher.matches()) {
             String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());
@@ -1333,7 +1333,7 @@ public class SubqueryParser {
             return new QueryParser.Condition(normalizedColumn, parsedValue, operator, conjunction, not);
         }
 
-        Pattern isNullPattern = Pattern.compile("(?i)^(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
+        Pattern isNullPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
         Matcher isNullMatcher = isNullPattern.matcher(condStr);
         if (isNullMatcher.matches()) {
             String column = unquoteQualifiedIdentifier(isNullMatcher.group(1).trim());

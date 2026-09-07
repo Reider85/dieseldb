@@ -512,7 +512,7 @@ public class DatabaseServer {
                     } catch (OutOfMemoryError e) {
                         handleOutOfMemory(query, e);
                     } catch (Exception e) {
-                        out.writeObject("Error: " + e.getMessage());
+                        out.writeObject(ErrorMessages.ERROR_PREFIX + e.getMessage());
                         out.flush();
                         LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
                                 new Object[]{query, e.getMessage()});
@@ -597,7 +597,7 @@ public class DatabaseServer {
             } catch (OutOfMemoryError e) {
                 handleOutOfMemory(ps.getSqlTemplate(), e);
             } catch (Exception e) {
-                sendSerializedResult("Error: " + e.getMessage());
+                sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
                 LOGGER.log(Level.SEVERE, "Prepared statement execution failed: {0}, Error: {1}",
                         new Object[]{statementId, e.getMessage()});
             }
@@ -638,7 +638,7 @@ public class DatabaseServer {
                 LOGGER.log(Level.INFO, "Opened cursor {0} for query: {1} (fetchSize={2})",
                         new Object[]{cursorId, ocm.getQuery(), fetchSize});
             } catch (Exception e) {
-                sendSerializedResult("Error: " + e.getMessage());
+                sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
                 LOGGER.log(Level.SEVERE, "Open cursor failed: {0}, Error: {1}",
                         new Object[]{ocm.getQuery(), e.getMessage()});
             }
@@ -662,7 +662,7 @@ public class DatabaseServer {
                 LOGGER.log(Level.FINE, "Fetched {0} rows from cursor {1}",
                         new Object[]{batch.size(), fcm.getCursorId()});
             } catch (Exception e) {
-                sendSerializedResult("Error: " + e.getMessage());
+                sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
                 LOGGER.log(Level.SEVERE, "Fetch cursor failed: {0}, Error: {1}",
                         new Object[]{fcm.getCursorId(), e.getMessage()});
             }

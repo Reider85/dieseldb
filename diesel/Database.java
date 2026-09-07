@@ -474,7 +474,7 @@ class Database {
             transaction.snapshotTable(entry.getKey(), entry.getValue());
         }
         setAutoCommit(false);
-        return "Transaction started: " + newTransactionId;
+        return ErrorMessages.TRANSACTION_STARTED + newTransactionId;
     }
 
     private Object executeCommit(Transaction currentTransaction, UUID transactionId) {

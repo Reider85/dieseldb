@@ -380,7 +380,7 @@ class Table implements Serializable {
             if (!columnTypes.containsKey(column)) {
                 LOGGER.log(Level.SEVERE, "Schema validation failed: Column {0} missing in columnTypes {1}",
                         new Object[]{column, columnTypes.keySet()});
-                throw new IllegalArgumentException("Column " + column + " missing in columnTypes");
+                throw new IllegalArgumentException(ErrorMessages.COLUMN_PREFIX + column + " missing in columnTypes");
             }
         }
         for (String column : columnTypes.keySet()) {
@@ -497,7 +497,7 @@ class Table implements Serializable {
         }
         for (String col : columnNames) {
             if (!columnTypes.containsKey(col)) {
-                throw new ColumnNotFoundException("Column " + col + ErrorMessages.DOES_NOT_EXIST);
+                throw new ColumnNotFoundException(ErrorMessages.COLUMN_PREFIX + col + ErrorMessages.DOES_NOT_EXIST);
             }
         }
         CompositeBTreeIndex index = new CompositeBTreeIndex(columnNames);
@@ -578,11 +578,11 @@ class Table implements Serializable {
      */
     public void createCoveringBTreeIndex(String indexColumn, List<String> coverColumns) {
         if (!columnTypes.containsKey(indexColumn)) {
-            throw new ColumnNotFoundException("Column " + indexColumn + ErrorMessages.DOES_NOT_EXIST);
+            throw new ColumnNotFoundException(ErrorMessages.COLUMN_PREFIX + indexColumn + ErrorMessages.DOES_NOT_EXIST);
         }
         for (String col : coverColumns) {
             if (!columnTypes.containsKey(col)) {
-                throw new ColumnNotFoundException("Column " + col + ErrorMessages.DOES_NOT_EXIST);
+                throw new ColumnNotFoundException(ErrorMessages.COLUMN_PREFIX + col + ErrorMessages.DOES_NOT_EXIST);
             }
         }
         CoveringBTreeIndex index = new CoveringBTreeIndex(
@@ -627,7 +627,7 @@ class Table implements Serializable {
      */
     private void createSecondaryIndex(String columnName, String definition, Function<Class<?>, Index> indexFactory, boolean unique) {
         if (!columnTypes.containsKey(columnName)) {
-            throw new ColumnNotFoundException("Column " + columnName + ErrorMessages.DOES_NOT_EXIST);
+            throw new ColumnNotFoundException(ErrorMessages.COLUMN_PREFIX + columnName + ErrorMessages.DOES_NOT_EXIST);
         }
         Index index = indexFactory.apply(columnTypes.get(columnName));
         if (index instanceof BTreeIndex btree) {
@@ -640,7 +640,7 @@ class Table implements Serializable {
                 Object key = rows.get(i).get(columnName);
                 if (key != null) {
                     if (unique && !seenKeys.add(key)) {
-                        throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique index");
+                        throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_QUOTED + key + ErrorMessages.FOUND_IN_COLUMN + columnName + " while creating unique index");
                     }
                     keys.add(key);
                     indices.add(i);
@@ -670,7 +670,7 @@ class Table implements Serializable {
                 Object key = rows.get(i).get(columnName);
                 if (key != null) {
                     if (unique && !seenKeys.add(key)) {
-                        throw new IllegalStateException("Duplicate key '" + key + "' found in column " + columnName + " while creating unique index");
+                        throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_QUOTED + key + ErrorMessages.FOUND_IN_COLUMN + columnName + " while creating unique index");
                     }
                     index.insert(key, i);
                 }
@@ -692,7 +692,7 @@ class Table implements Serializable {
      */
     public void createUniqueClusteredIndex(String columnName) {
         if (!columnTypes.containsKey(columnName)) {
-            throw new ColumnNotFoundException("Column " + columnName + ErrorMessages.DOES_NOT_EXIST);
+            throw new ColumnNotFoundException(ErrorMessages.COLUMN_PREFIX + columnName + ErrorMessages.DOES_NOT_EXIST);
         }
         if (hasClusteredIndex) {
             throw new IllegalStateException("Table already has a clustered index on " + clusteredIndexColumn);
@@ -730,7 +730,7 @@ class Table implements Serializable {
         // Phase 3: Uniqueness check — O(N) linear scan of sorted data.
         for (int i = 1; i < n; i++) {
             if (compareKeys(keys[sortedOrder[i - 1]], keys[sortedOrder[i]]) == 0) {
-                throw new IllegalStateException("Duplicate key '" + keys[sortedOrder[i]] + "' found in column " + columnName + " while creating unique clustered index");
+                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_QUOTED + keys[sortedOrder[i]] + ErrorMessages.FOUND_IN_COLUMN + columnName + " while creating unique clustered index");
             }
         }
 
@@ -1503,7 +1503,7 @@ class Table implements Serializable {
         if (index instanceof UniqueIndex || index instanceof BTreeClusteredIndex) {
             if (value != null && !index.search(value).isEmpty()) {
                 LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
-                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + " in column " + column);
+                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + ErrorMessages.IN_COLUMN + column);
             }
         }
     }
@@ -1780,12 +1780,12 @@ class Table implements Serializable {
                 if (idx != null && !idx.search(value).isEmpty()) {
                     throw new IllegalStateException(
                             ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX
-                                    + " in column " + col);
+                                    + ErrorMessages.IN_COLUMN + col);
                 }
                 if (!seen.add(value)) {
                     throw new IllegalStateException(
                             ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX
-                                    + " in column " + col + " (within batch)");
+                                    + ErrorMessages.IN_COLUMN + col + " (within batch)");
                 }
             }
         }
