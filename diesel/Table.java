@@ -1893,149 +1893,9 @@ class Table implements Serializable {
 
         List<Future<Map.Entry<String, Index>>> futures = new ArrayList<>();
         for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
-            futures.add(INDEX_BUILD_POOL.submit(() -> {
-                String column = entry.getKey();
-                Class<?> keyType = columnTypes.get(column);
-                Index index;
-                switch (entry.getValue()) {
-                    case ErrorMessages.INDEX_BTREE:
-                        index = new BTreeIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_HASH:
-                        index = new HashIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_UNIQUE:
-                        index = new UniqueIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_COMPOSITE_BTREE: {
-                        String[] colNames = column.split("\\+");
-                        List<String> cols = List.of(colNames);
-                        CompositeBTreeIndex compIndex = new CompositeBTreeIndex(cols);
-                        // Bulk-load composite keys
-                        List<List<Object>> compositeKeys = new ArrayList<>(n);
-                        List<Integer> compositeIndices = new ArrayList<>(n);
-                        for (int i = 0; i < n; i++) {
-                            List<Object> ck = new ArrayList<>(cols.size());
-                            boolean skip = false;
-                            for (String c : cols) {
-                                Object val = rows.get(i).get(c);
-                                if (val == null) { skip = true; break; }
-                                ck.add(val);
-                            }
-                            if (!skip) {
-                                compositeKeys.add(ck);
-                                compositeIndices.add(i);
-                            }
-                        }
-                        List<int[]> cpairs = new ArrayList<>(compositeKeys.size());
-                        for (int i = 0; i < compositeKeys.size(); i++) cpairs.add(new int[]{i});
-                        cpairs.sort((a, b) -> {
-                            CompositeBTreeIndex.CompositeKey k1 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(a[0]));
-                            CompositeBTreeIndex.CompositeKey k2 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(b[0]));
-                            return k1.compareTo(k2);
-                        });
-                        List<List<Object>> sortedCK = new ArrayList<>(compositeKeys.size());
-                        List<Integer> sortedCI = new ArrayList<>(compositeKeys.size());
-                        for (int[] p : cpairs) {
-                            sortedCK.add(compositeKeys.get(p[0]));
-                            sortedCI.add(compositeIndices.get(p[0]));
-                        }
-                        compIndex.bulkLoad(sortedCK, sortedCI);
-                        return Map.entry(column, compIndex);
-                    }
-                    case ErrorMessages.INDEX_COVERING_BTREE: {
-                        // Extract cover columns from indexDefinitions metadata
-                        // For now, we store them as a comma-separated list in a separate map
-                        // For rebuild, we parse the column list from the index definition
-                        // Actually, we need to persist cover column names somewhere.
-                        // Simplified: parse from a convention or store in indexDefinitions
-                        // We'll use a parallel map for cover column lists (see below)
-                        CoveringBTreeIndex coverIndex = new CoveringBTreeIndex(keyType, column, getCoverColumnNames(column));
-                        List<Object> cKeys = new ArrayList<>(n);
-                        List<Integer> cIndices = new ArrayList<>(n);
-                        for (int i = 0; i < n; i++) {
-                            Object key = rows.get(i).get(column);
-                            if (key != null) {
-                                cKeys.add(key);
-                                cIndices.add(i);
-                            }
-                        }
-                        List<int[]> cPairs = new ArrayList<>(cKeys.size());
-                        for (int i = 0; i < cKeys.size(); i++) cPairs.add(new int[]{i});
-                        cPairs.sort((a, b) -> {
-                            @SuppressWarnings("unchecked")
-                            Comparable<Object> c1 = (Comparable<Object>) cKeys.get(a[0]);
-                            return c1.compareTo(cKeys.get(b[0]));
-                        });
-                        List<Object> sortedCK2 = new ArrayList<>(cKeys.size());
-                        List<Integer> sortedCI2 = new ArrayList<>(cKeys.size());
-                        for (int[] p : cPairs) {
-                            sortedCK2.add(cKeys.get(p[0]));
-                            sortedCI2.add(cIndices.get(p[0]));
-                        }
-                        coverIndex.bulkLoadWithCover(sortedCK2, sortedCI2, rows);
-                        return Map.entry(column, coverIndex);
-                    }
-                    default:
-                        LOGGER.log(Level.WARNING,
-                                "Unknown index type ''{0}'' for column ''{1}'' in table {2}, skipping rebuild",
-                                new Object[]{entry.getValue(), column, name});
-                        return null;
-                }
-                if (index instanceof BTreeIndex btree) {
-                    // Bulk-load: collect all key/rowIndex pairs, sort, then build.
-                    List<Object> keys = new ArrayList<>(n);
-                    List<Integer> indices = new ArrayList<>(n);
-                    for (int i = 0; i < n; i++) {
-                        Object key = rows.get(i).get(column);
-                        if (key != null) {
-                            keys.add(key);
-                            indices.add(i);
-                        }
-                    }
-                    // Sort by key using the same comparator BTreeIndex uses.
-                    List<int[]> pairs = new ArrayList<>(keys.size());
-                    for (int i = 0; i < keys.size(); i++) {
-                        pairs.add(new int[]{i});
-                    }
-                    pairs.sort((a, b) -> {
-                        @SuppressWarnings("unchecked")
-                        Comparable<Object> c1 = (Comparable<Object>) keys.get(a[0]);
-                        return c1.compareTo(keys.get(b[0]));
-                    });
-                    List<Object> sortedKeys = new ArrayList<>(keys.size());
-                    List<Integer> sortedIdx = new ArrayList<>(keys.size());
-                    for (int[] pair : pairs) {
-                        sortedKeys.add(keys.get(pair[0]));
-                        sortedIdx.add(indices.get(pair[0]));
-                    }
-                    btree.bulkLoad(sortedKeys, sortedIdx);
-                } else {
-                    // Fallback: one-by-one insert for Hash/Unique indexes.
-                    for (int i = 0; i < n; i++) {
-                        Object key = rows.get(i).get(column);
-                        if (key != null) {
-                            index.insert(key, i);
-                        }
-                    }
-                }
-                return Map.entry(column, index);
-            }));
+            futures.add(INDEX_BUILD_POOL.submit(() -> buildIndex(entry.getKey(), columnTypes.get(entry.getKey()), entry.getValue(), n)));
         }
-
-        for (Future<Map.Entry<String, Index>> future : futures) {
-            try {
-                Map.Entry<String, Index> result = future.get();
-                if (result != null) {
-                    indexes.put(result.getKey(), result.getValue());
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("Secondary index build interrupted", e);
-            } catch (ExecutionException e) {
-                throw new RuntimeException("Secondary index build failed", e.getCause());
-            }
-        }
+        collectIndexResults(futures);
     }
 
     /**
@@ -2050,126 +1910,120 @@ class Table implements Serializable {
         List<Future<Map.Entry<String, Index>>> futures = new ArrayList<>();
         for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
             if (indexes.containsKey(entry.getKey())) continue;
-            futures.add(INDEX_BUILD_POOL.submit(() -> {
-                String column = entry.getKey();
-                Class<?> keyType = columnTypes.get(column);
-                Index index;
-                switch (entry.getValue()) {
-                    case ErrorMessages.INDEX_BTREE:
-                        index = new BTreeIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_HASH:
-                        index = new HashIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_UNIQUE:
-                        index = new UniqueIndex(keyType);
-                        break;
-                    case ErrorMessages.INDEX_COMPOSITE_BTREE: {
-                        String[] colNames = column.split("\\+");
-                        List<String> cols = List.of(colNames);
-                        CompositeBTreeIndex compIndex = new CompositeBTreeIndex(cols);
-                        List<List<Object>> compositeKeys = new ArrayList<>(n);
-                        List<Integer> compositeIndices = new ArrayList<>(n);
-                        for (int i = 0; i < n; i++) {
-                            List<Object> ck = new ArrayList<>(cols.size());
-                            boolean skip = false;
-                            for (String c : cols) {
-                                Object val = rows.get(i).get(c);
-                                if (val == null) { skip = true; break; }
-                                ck.add(val);
-                            }
-                            if (!skip) {
-                                compositeKeys.add(ck);
-                                compositeIndices.add(i);
-                            }
-                        }
-                        List<int[]> cpairs = new ArrayList<>(compositeKeys.size());
-                        for (int i = 0; i < compositeKeys.size(); i++) cpairs.add(new int[]{i});
-                        cpairs.sort((a, b) -> {
-                            CompositeBTreeIndex.CompositeKey k1 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(a[0]));
-                            CompositeBTreeIndex.CompositeKey k2 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(b[0]));
-                            return k1.compareTo(k2);
-                        });
-                        List<List<Object>> sortedCK = new ArrayList<>(compositeKeys.size());
-                        List<Integer> sortedCI = new ArrayList<>(compositeKeys.size());
-                        for (int[] p : cpairs) {
-                            sortedCK.add(compositeKeys.get(p[0]));
-                            sortedCI.add(compositeIndices.get(p[0]));
-                        }
-                        compIndex.bulkLoad(sortedCK, sortedCI);
-                        return Map.entry(column, compIndex);
-                    }
-                    case ErrorMessages.INDEX_COVERING_BTREE: {
-                        CoveringBTreeIndex coverIndex = new CoveringBTreeIndex(keyType, column, getCoverColumnNames(column));
-                        List<Object> cKeys = new ArrayList<>(n);
-                        List<Integer> cIndices = new ArrayList<>(n);
-                        for (int i = 0; i < n; i++) {
-                            Object key = rows.get(i).get(column);
-                            if (key != null) {
-                                cKeys.add(key);
-                                cIndices.add(i);
-                            }
-                        }
-                        List<int[]> cPairs = new ArrayList<>(cKeys.size());
-                        for (int i = 0; i < cKeys.size(); i++) cPairs.add(new int[]{i});
-                        cPairs.sort((a, b) -> {
-                            @SuppressWarnings("unchecked")
-                            Comparable<Object> c1 = (Comparable<Object>) cKeys.get(a[0]);
-                            return c1.compareTo(cKeys.get(b[0]));
-                        });
-                        List<Object> sortedCK2 = new ArrayList<>(cKeys.size());
-                        List<Integer> sortedCI2 = new ArrayList<>(cKeys.size());
-                        for (int[] p : cPairs) {
-                            sortedCK2.add(cKeys.get(p[0]));
-                            sortedCI2.add(cIndices.get(p[0]));
-                        }
-                        coverIndex.bulkLoadWithCover(sortedCK2, sortedCI2, rows);
-                        return Map.entry(column, coverIndex);
-                    }
-                    default:
-                        LOGGER.log(Level.WARNING,
-                                "Unknown index type ''{0}'' for column ''{1}'' in table {2}, skipping rebuild",
-                                new Object[]{entry.getValue(), column, name});
-                        return null;
-                }
-                if (index instanceof BTreeIndex btree) {
-                    List<Object> keys = new ArrayList<>(n);
-                    List<Integer> indices = new ArrayList<>(n);
-                    for (int i = 0; i < n; i++) {
-                        Object key = rows.get(i).get(column);
-                        if (key != null) {
-                            keys.add(key);
-                            indices.add(i);
-                        }
-                    }
-                    List<int[]> pairs = new ArrayList<>(keys.size());
-                    for (int i = 0; i < keys.size(); i++) {
-                        pairs.add(new int[]{i});
-                    }
-                    pairs.sort((a, b) -> {
-                        @SuppressWarnings("unchecked")
-                        Comparable<Object> c1 = (Comparable<Object>) keys.get(a[0]);
-                        return c1.compareTo(keys.get(b[0]));
-                    });
-                    List<Object> sortedKeys = new ArrayList<>(keys.size());
-                    List<Integer> sortedIdx = new ArrayList<>(keys.size());
-                    for (int[] pair : pairs) {
-                        sortedKeys.add(keys.get(pair[0]));
-                        sortedIdx.add(indices.get(pair[0]));
-                    }
-                    btree.bulkLoad(sortedKeys, sortedIdx);
-                } else {
-                    for (int i = 0; i < n; i++) {
-                        Object key = rows.get(i).get(column);
-                        if (key != null) {
-                            index.insert(key, i);
-                        }
-                    }
-                }
-                return Map.entry(column, index);
-            }));
+            futures.add(INDEX_BUILD_POOL.submit(() -> buildIndex(entry.getKey(), columnTypes.get(entry.getKey()), entry.getValue(), n)));
         }
+        collectIndexResults(futures);
+    }
 
+    private Map.Entry<String, Index> buildIndex(String column, Class<?> keyType, String indexType, int n) {
+        Index index;
+        switch (indexType) {
+            case ErrorMessages.INDEX_BTREE:
+                index = new BTreeIndex(keyType);
+                break;
+            case ErrorMessages.INDEX_HASH:
+                index = new HashIndex(keyType);
+                break;
+            case ErrorMessages.INDEX_UNIQUE:
+                index = new UniqueIndex(keyType);
+                break;
+            case ErrorMessages.INDEX_COMPOSITE_BTREE:
+                return buildCompositeIndex(column, n);
+            case ErrorMessages.INDEX_COVERING_BTREE:
+                return buildCoveringIndex(column, keyType, n);
+            default:
+                LOGGER.log(Level.WARNING,
+                        "Unknown index type ''{0}'' for column ''{1}'' in table {2}, skipping rebuild",
+                        new Object[]{indexType, column, name});
+                return null;
+        }
+        if (index instanceof BTreeIndex btree) {
+            Map.Entry<List<Object>, List<Integer>> sorted = bulkLoadSortedKeys(column, n);
+            btree.bulkLoad(sorted.getKey(), sorted.getValue());
+        } else {
+            insertOneByOne(index, column, n);
+        }
+        return Map.entry(column, index);
+    }
+
+    private Map.Entry<String, Index> buildCompositeIndex(String column, int n) {
+        List<String> cols = List.of(column.split("\\+"));
+        CompositeBTreeIndex compIndex = new CompositeBTreeIndex(cols);
+        List<List<Object>> compositeKeys = new ArrayList<>(n);
+        List<Integer> compositeIndices = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            List<Object> ck = new ArrayList<>(cols.size());
+            boolean skip = false;
+            for (String c : cols) {
+                Object val = rows.get(i).get(c);
+                if (val == null) { skip = true; break; }
+                ck.add(val);
+            }
+            if (!skip) {
+                compositeKeys.add(ck);
+                compositeIndices.add(i);
+            }
+        }
+        List<int[]> cpairs = new ArrayList<>(compositeKeys.size());
+        for (int i = 0; i < compositeKeys.size(); i++) cpairs.add(new int[]{i});
+        cpairs.sort((a, b) -> {
+            CompositeBTreeIndex.CompositeKey k1 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(a[0]));
+            CompositeBTreeIndex.CompositeKey k2 = new CompositeBTreeIndex.CompositeKey(compositeKeys.get(b[0]));
+            return k1.compareTo(k2);
+        });
+        List<List<Object>> sortedCK = new ArrayList<>(compositeKeys.size());
+        List<Integer> sortedCI = new ArrayList<>(compositeKeys.size());
+        for (int[] p : cpairs) {
+            sortedCK.add(compositeKeys.get(p[0]));
+            sortedCI.add(compositeIndices.get(p[0]));
+        }
+        compIndex.bulkLoad(sortedCK, sortedCI);
+        return Map.entry(column, compIndex);
+    }
+
+    private Map.Entry<String, Index> buildCoveringIndex(String column, Class<?> keyType, int n) {
+        CoveringBTreeIndex coverIndex = new CoveringBTreeIndex(keyType, column, getCoverColumnNames(column));
+        Map.Entry<List<Object>, List<Integer>> sorted = bulkLoadSortedKeys(column, n);
+        coverIndex.bulkLoadWithCover(sorted.getKey(), sorted.getValue(), rows);
+        return Map.entry(column, coverIndex);
+    }
+
+    private Map.Entry<List<Object>, List<Integer>> bulkLoadSortedKeys(String column, int n) {
+        List<Object> keys = new ArrayList<>(n);
+        List<Integer> indices = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            Object key = rows.get(i).get(column);
+            if (key != null) {
+                keys.add(key);
+                indices.add(i);
+            }
+        }
+        List<int[]> pairs = new ArrayList<>(keys.size());
+        for (int i = 0; i < keys.size(); i++) pairs.add(new int[]{i});
+        pairs.sort((a, b) -> {
+            @SuppressWarnings("unchecked")
+            Comparable<Object> c1 = (Comparable<Object>) keys.get(a[0]);
+            return c1.compareTo(keys.get(b[0]));
+        });
+        List<Object> sortedKeys = new ArrayList<>(keys.size());
+        List<Integer> sortedIdx = new ArrayList<>(keys.size());
+        for (int[] pair : pairs) {
+            sortedKeys.add(keys.get(pair[0]));
+            sortedIdx.add(indices.get(pair[0]));
+        }
+        return Map.entry(sortedKeys, sortedIdx);
+    }
+
+    private void insertOneByOne(Index index, String column, int n) {
+        for (int i = 0; i < n; i++) {
+            Object key = rows.get(i).get(column);
+            if (key != null) {
+                index.insert(key, i);
+            }
+        }
+    }
+
+    private void collectIndexResults(List<Future<Map.Entry<String, Index>>> futures) {
         for (Future<Map.Entry<String, Index>> future : futures) {
             try {
                 Map.Entry<String, Index> result = future.get();
