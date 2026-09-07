@@ -3052,11 +3052,19 @@ class QueryParser {
         return SqlParsingUtils.normalizeColumnName(column, defaultTableName, tableAliases);
     }
 
+    private List<HavingCondition> checkForEmptyHavingClause(String havingClause) {
+        if (havingClause == null || havingClause.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return null;
+    
+}
     private List<HavingCondition> parseHavingConditions(String havingClause, ParseContext ctx,
                                                     List<AggregateFunction> aggregates) {
         List<HavingCondition> conditions = new ArrayList<>();
-        if (havingClause == null || havingClause.isEmpty()) {
-            return new ArrayList<>();
+        List<HavingCondition> result = checkForEmptyHavingClause(havingClause);
+        if (result != null) {
+            return result;
         }
         StringBuilder currentCondition = new StringBuilder();
         boolean inQuotes = false;
