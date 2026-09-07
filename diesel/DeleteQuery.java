@@ -86,53 +86,74 @@ class DeleteQuery implements Query<Void> {
      */
     private List<Integer> prepareDelete(Table table, List<Map<String, Object>> rows, Map<String, Class<?>> columnTypes) {
         List<Integer> rowsToDelete = new ArrayList<>();
-
-        // Phase 1: Identify rows to delete (index-accelerated or full scan)
-        if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).operator == QueryParser.Operator.EQUALS && !conditions.get(0).not) {
-            QueryParser.Condition condition = conditions.get(0);
-            Index index = table.getIndex(condition.column);
-            if (index instanceof HashIndex || index instanceof UniqueIndex) {
-                Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                rowsToDelete = index.search(conditionValue);
-                LOGGER.log(Level.INFO, "Using {0} index for column {1} with value {2}",
-                        new Object[]{index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue});
-            } else if (index instanceof BTreeIndex btree) {
-                Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
-                rowsToDelete = btree.search(conditionValue);
-                LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
-            }
-        } else if (conditions.size() == 1 && !conditions.get(0).isGrouped() && conditions.get(0).isInOperator() && !conditions.get(0).not) {
-            QueryParser.Condition condition = conditions.get(0);
-            Index index = table.getIndex(condition.column);
-            if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
-                for (Object value : condition.inValues) {
-                    Object convertedValue = EVAL.convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
-                    List<Integer> indices = index.search(convertedValue);
-                    rowsToDelete.addAll(indices);
-                }
-                rowsToDelete = rowsToDelete.stream().distinct().sorted().collect(Collectors.toList());
-                LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
-                        new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
-                                condition.column, condition.inValues});
-            }
+        tryIndexEqualsLookup(table, columnTypes, rowsToDelete);
+        if (rowsToDelete.isEmpty()) {
+            tryIndexInLookup(table, columnTypes, rowsToDelete);
         }
-
         if (rowsToDelete.isEmpty() && !conditions.isEmpty()) {
-            for (int i = 0; i < rows.size(); i++) {
-                if (table.isDeleted(i)) continue;
-                Map<String, Object> row = rows.get(i);
-                if (evaluateConditions(row, conditions, columnTypes)) {
-                    rowsToDelete.add(i);
-                }
-            }
+            fullScanWithConditions(table, rows, columnTypes, rowsToDelete);
         } else if (conditions.isEmpty()) {
-            for (int i = 0; i < rows.size(); i++) {
-                if (table.isDeleted(i)) continue;
+            collectAllRows(table, rows, rowsToDelete);
+        }
+        return rowsToDelete;
+    }
+
+    private void tryIndexEqualsLookup(Table table, Map<String, Class<?>> columnTypes, List<Integer> rowsToDelete) {
+        if (conditions.size() != 1 || conditions.get(0).isGrouped()
+                || conditions.get(0).operator != QueryParser.Operator.EQUALS || conditions.get(0).not) {
+            return;
+        }
+        QueryParser.Condition condition = conditions.get(0);
+        Index index = table.getIndex(condition.column);
+        if (index instanceof HashIndex || index instanceof UniqueIndex) {
+            Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+            rowsToDelete.addAll(index.search(conditionValue));
+            LOGGER.log(Level.INFO, "Using {0} index for column {1} with value {2}",
+                    new Object[]{index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue});
+        } else if (index instanceof BTreeIndex btree) {
+            Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+            rowsToDelete.addAll(btree.search(conditionValue));
+            LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+        }
+    }
+
+    private void tryIndexInLookup(Table table, Map<String, Class<?>> columnTypes, List<Integer> rowsToDelete) {
+        if (conditions.size() != 1 || conditions.get(0).isGrouped()
+                || !conditions.get(0).isInOperator() || conditions.get(0).not) {
+            return;
+        }
+        QueryParser.Condition condition = conditions.get(0);
+        Index index = table.getIndex(condition.column);
+        if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
+            for (Object value : condition.inValues) {
+                Object convertedValue = EVAL.convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
+                List<Integer> indices = index.search(convertedValue);
+                rowsToDelete.addAll(indices);
+            }
+            List<Integer> deduped = rowsToDelete.stream().distinct().sorted().collect(Collectors.toList());
+            rowsToDelete.clear();
+            rowsToDelete.addAll(deduped);
+            LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
+                    new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
+                            condition.column, condition.inValues});
+        }
+    }
+
+    private void fullScanWithConditions(Table table, List<Map<String, Object>> rows, Map<String, Class<?>> columnTypes, List<Integer> rowsToDelete) {
+        for (int i = 0; i < rows.size(); i++) {
+            if (table.isDeleted(i)) continue;
+            Map<String, Object> row = rows.get(i);
+            if (evaluateConditions(row, conditions, columnTypes)) {
                 rowsToDelete.add(i);
             }
         }
+    }
 
-        return rowsToDelete;
+    private void collectAllRows(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {
+        for (int i = 0; i < rows.size(); i++) {
+            if (table.isDeleted(i)) continue;
+            rowsToDelete.add(i);
+        }
     }
 
     /**
@@ -143,45 +164,51 @@ class DeleteQuery implements Query<Void> {
      */
     private void executeDelete(Table table, List<Integer> rowsToDelete) {
         List<Map<String, Object>> rows = table.getRows();
-        List<ReentrantReadWriteLock> acquiredLocks = new ArrayList<>();
-
+        List<ReentrantReadWriteLock> acquiredLocks = acquireRowLocks(table, rows, rowsToDelete);
         try {
-            // Phase 2: Acquire write locks
             for (int rowIndex : rowsToDelete) {
-                if (rowIndex >= 0 && rowIndex < rows.size()) {
-                    ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
-                    lock.writeLock().lock();
-                    acquiredLocks.add(lock);
-                }
-            }
-
-            // Phase 3: Tombstone + remove index entries (no physical removal, no re-index)
-            for (int rowIndex : rowsToDelete) {
-                if (rowIndex >= 0 && rowIndex < rows.size() && !table.isDeleted(rowIndex)) {
-                    Map<String, Object> row = rows.get(rowIndex);
-                    for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
-                        String column = entry.getKey();
-                        Index index = entry.getValue();
-                        Object key = row.get(column);
-                        if (key != null) {
-                            index.remove(key, rowIndex);
-                        }
-                    }
-                    if (table.hasClusteredIndex()) {
-                        Object clusteredKey = row.get(table.getClusteredIndexColumn());
-                        if (clusteredKey != null) {
-                            table.getClusteredIndex().remove(clusteredKey, rowIndex);
-                        }
-                    }
-                    table.markDeleted(rowIndex);
-                    LOGGER.log(Level.INFO, "Tombstoned row at index {0} from table {1}", new Object[]{rowIndex, table.getName()});
-                }
+                tombstoneRow(table, rows, rowIndex);
             }
         } finally {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
                 lock.writeLock().unlock();
             }
         }
+    }
+
+    private List<ReentrantReadWriteLock> acquireRowLocks(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {
+        List<ReentrantReadWriteLock> locks = new ArrayList<>();
+        for (int rowIndex : rowsToDelete) {
+            if (rowIndex >= 0 && rowIndex < rows.size()) {
+                ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
+                lock.writeLock().lock();
+                locks.add(lock);
+            }
+        }
+        return locks;
+    }
+
+    private void tombstoneRow(Table table, List<Map<String, Object>> rows, int rowIndex) {
+        if (rowIndex < 0 || rowIndex >= rows.size() || table.isDeleted(rowIndex)) {
+            return;
+        }
+        Map<String, Object> row = rows.get(rowIndex);
+        for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
+            String column = entry.getKey();
+            Index index = entry.getValue();
+            Object key = row.get(column);
+            if (key != null) {
+                index.remove(key, rowIndex);
+            }
+        }
+        if (table.hasClusteredIndex()) {
+            Object clusteredKey = row.get(table.getClusteredIndexColumn());
+            if (clusteredKey != null) {
+                table.getClusteredIndex().remove(clusteredKey, rowIndex);
+            }
+        }
+        table.markDeleted(rowIndex);
+        LOGGER.log(Level.INFO, "Tombstoned row at index {0} from table {1}", new Object[]{rowIndex, table.getName()});
     }
 
     /**

@@ -1451,7 +1451,7 @@ servers; (7) transactions - default isolation SERIALIZABLE (config transaction.i
 concurrency, workaround: lower isolation level where acceptable; (8) server socket timeout - default 30000ms (
 server.socket.timeout), idle connections closed, workaround: raise the value; (9) slow-query profiling threshold -
 diesel.profile.slow.threshold.ms default 1000, override via -Ddiesel.profile.slow.threshold.ms. README.md updated with
-a 'Known limitations / �?звестные ограничения' section (EN + RU) linking to KNOWN_LIMITATIONS.md.
+a 'Known limitations / �?звестные ограничения' section (EN + RU) linking to KNOWN_LIMITATIONS.md.
 Verification on JDK 21: full mvn test green - all 26 test classes run 0 failures 0 errors (AllTestsSampleTest 21 run
 0/0/1 skipped, QuantitativeTest 21 run 0/0/1 skipped, the two @LargeTest 600x600 joins skipped at 512m). Timing
 regression: not applicable - documentation-only prompt, no engine or test code changed, timing.md baseline untouched.
@@ -2152,29 +2152,18 @@ original scalar path for other types. Updated pom.xml: added maven-compiler-plug
 diesel/SelectQuery.java, pom.xml. Verification: quick gate 42/0 BUILD SUCCESS.
 2.9.88 analytics
 2.9.89 prompt 1 (sonar-prompt.md) - Verify and fix S5869: no duplicate characters found in character classes in SubqueryParser.java and other files
-
-2.9.90 prompt 2 (sonar-prompt.md) - Fix S5869 by removing duplicate in character class [a-zA-Z_] -> [a-z_] in SubqueryParser.java
-Changed files: diesel/SubqueryParser.java
-Verification: quick gate mvn test -DskipLargeTests passed.
-
-
-
-0.5.0 prompt 3 - Refactor DeleteQuery.java: extract methods
-
-Изменения: DeleteQuery.java: validateConditions, prepareDelete, executeDelete, updateIndexes
-Тесты: 42 passed, 0 failed
-Timing: aggregate=1.0x, degraded=0 (noise justification)
-Complexity: no new O(n²)/O(n!)
-
-Refactored the large deleteQuery method (56 lines) into four smaller methods to reduce cognitive complexity.
-
-
-
-0.5.0 prompt 4 - Refactor SqlLexer.java: apply State Machine pattern with methods handleIdentifier, handleNumber, handleString
-
-Изменения: SqlLexer.java: tokenize method refactored into helper methods handleWhitespace, handleStringLiteral, handleQuotedIdentifier, handleNumber, handleIdentifierOrKeyword, handleOperator, handlePunctuation
-Тесты: 42 passed, 0 failed, 2 skipped (LargeTest)
-Timing: aggregate=1.0x, degraded=0 (noise justification)
-Complexity: no new O(n²)/O(n!)
-
-Refactored the large tokenize method (108 lines) into smaller methods to reduce cognitive complexity from 80 to lower values.
+2.9.90 Fix S5869 by removing duplicate in character class [a-zA-Z_] -> [a-z_] in SubqueryParser.java
+2.9.91 Update PROMPT_STATUS.md: mark prompt 2 as DONE (sonar-prompt.md)
+2.9.92 Refactor DeleteQuery.java: extract methods (validateConditions, prepareDelete, executeDelete, updateIndexes)
+2.9.93 Refactor SqlLexer.java: State Machine pattern, tokenize split into handleWhitespace/StringLiteral/QuotedIdentifier/Number/IdentifierOrKeyword/Operator/Punctuation
+2.9.94 Refactor SqlLexer.java: State Machine pattern (re-commit of prompt 4)
+2.9.95 Add early return to parseHavingConditions in QueryParser.java (null/empty havingClause)
+2.9.96 Refactor parseHavingConditions: helper method checkForEmptyHavingClause
+2.9.97 S1192: add 17 duplicated-literal constants to ErrorMessages.java
+2.9.98 S1192: replace all duplicated literals with ErrorMessages constants
+2.9.99 S3776: refactor rebuildSecondaryIndexes() complexity 87 -> ~10 (7 submethods)
+3.0.0 S3776: refactor parseHavingConditions() complexity 70 -> HavingParseState + 3 helpers
+3.0.1 S3776: refactor 12 high-complexity methods in QueryParser/SelectQuery/SubqueryParser below 15
+3.0.2 S3776: refactor InsertQuery.execute, UpdateQuery.execute/identifyRows, ConditionEvaluator (3 methods)
+3.0.3 S3776: refactor Database/DatabaseServer/BTreeIndex/BTreeClusteredIndex/QueryExecutor/CliRepl below 15
+3.0.4 S3776: refactor DeleteQuery high-complexity methods below 15
