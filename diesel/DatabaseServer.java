@@ -14,7 +14,7 @@ import java.util.zip.Deflater;
  * against a shared {@link Database}.
  *
  * <p>Each accepted client is handled on a worker thread from a fixed-size
- * pool ({@code POOL_SIZE} workers, bounded queue). Queries arrive as
+ * pool ({@code poolSize} workers, bounded queue). Queries arrive as
  * serialized {@link QueryMessage} objects and the result object is written
  * back; server-side errors are returned as {@code Error: } prefixed Strings.
  * On startup the database is populated from the data directory, and on exit
@@ -31,16 +31,16 @@ public class DatabaseServer {
             props.load(fis);
             fis.close();
             String val = props.getProperty("server.pool.size");
-            if (val != null) POOL_SIZE = Integer.parseInt(val.trim());
+            if (val != null) poolSize = Integer.parseInt(val.trim());
             String val2 = props.getProperty("server.queue.capacity");
-            if (val2 != null) QUEUE_CAPACITY = Integer.parseInt(val2.trim());
+            if (val2 != null) queueCapacity = Integer.parseInt(val2.trim());
         } catch (Exception ignored) {}
     }
 
     private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
     private static final String CONFIG_FILE = ErrorMessages.CONFIG_FILE;
-    private static int POOL_SIZE = 100;
-    private static int QUEUE_CAPACITY = 100;
+    private static int poolSize = 100;
+    private static int queueCapacity = 100;
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
@@ -82,8 +82,8 @@ public class DatabaseServer {
         this.socketTimeout = socketTimeout;
         this.database = database;
         this.executor = new ThreadPoolExecutor(
-                POOL_SIZE, POOL_SIZE, 0L, TimeUnit.MILLISECONDS,
-                new ArrayBlockingQueue<>(QUEUE_CAPACITY),
+                poolSize, poolSize, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
