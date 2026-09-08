@@ -70,7 +70,7 @@ public class ServerConnectionLimitTest {
         int queueCapacity = 100;
         int maxAccepted = poolSize + queueCapacity;
         
-        LOGGER.log(Level.INFO, "Opening " + maxAccepted + " idle connections (pool=" + poolSize + ", queue=" + queueCapacity + ")");
+        LOGGER.log(Level.INFO, "Opening {0} idle connections (pool={1}, queue={2})", new Object[]{maxAccepted, poolSize, queueCapacity});
         
         for (int i = 0; i < maxAccepted; i++) {
             Socket client = new Socket("localhost", port);
@@ -78,7 +78,7 @@ public class ServerConnectionLimitTest {
         }
         
         TestWaitHelper.waitForCondition(() -> true, Duration.ofSeconds(5));
-        LOGGER.log(Level.INFO, "All " + clientSockets.size() + " connections established, now testing rejection");
+        LOGGER.log(Level.INFO, "All {0} connections established, now testing rejection", clientSockets.size());
         
         int rejected = 0;
         int probeCount = 5;
@@ -95,10 +95,10 @@ public class ServerConnectionLimitTest {
                 ObjectInputStream in = new ObjectInputStream(probe.getInputStream());
                 Object response = in.readObject();
                 
-                LOGGER.log(Level.INFO, "Probe " + i + " got response (unexpected): " + response);
+                LOGGER.log(Level.INFO, "Probe {0} got response (unexpected): {1}", new Object[]{i, response});
             } catch (IOException | ClassNotFoundException e) {
                 rejected++;
-                LOGGER.log(Level.INFO, "Probe " + i + " rejected as expected: " + e.getClass().getSimpleName());
+                LOGGER.log(Level.INFO, "Probe {0} rejected as expected: {1}", new Object[]{i, e.getClass().getSimpleName()});
             } finally {
                 if (probe != null) {
                     try { probe.close(); } catch (IOException ignored) { /* socket already closed */ }
@@ -106,7 +106,7 @@ public class ServerConnectionLimitTest {
             }
         }
         
-        LOGGER.log(Level.INFO, "Rejected " + rejected + " out of " + probeCount + " probe connections");
+        LOGGER.log(Level.INFO, "Rejected {0} out of {1} probe connections", new Object[]{rejected, probeCount});
         assertTrue(rejected > 0, "At least some connections beyond pool+queue capacity should be rejected");
         assertEquals(maxAccepted, clientSockets.size(), "All initial connections should be accepted");
     }

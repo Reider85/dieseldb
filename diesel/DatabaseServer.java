@@ -384,8 +384,8 @@ public class DatabaseServer {
                     (double) totalCompressedBytes / totalOriginalBytes : 0.0;
             double avgTimeMs = totalCompressionTimeNanos / 1_000_000.0 / compressionCount;
             
-            LOGGER.log(Level.INFO, 
-                    "Compression metrics [client=%s]: count=%d, totalOriginal=%d bytes, totalCompressed=%d bytes, ratio=%f, avgTime=%fms",
+            LOGGER.log(Level.INFO,
+                    "Compression metrics [client={0}]: count={1}, totalOriginal={2} bytes, totalCompressed={3} bytes, ratio={4}, avgTime={5}ms",
                     new Object[]{
                         clientSocket.getInetAddress(),
                         compressionCount,

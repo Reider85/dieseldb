@@ -80,7 +80,7 @@ public class SocketTimeoutTest {
             in.readFully(data);
             ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data));
             Object response = ois.readObject();
-            LOGGER.log(Level.INFO, "Received response to round-trip query: " + response);
+            LOGGER.log(Level.INFO, "Received response to round-trip query: {0}", response);
             assertFalse(response instanceof String && ((String) response).startsWith("Error:"),
                     "Round-trip query should be answered without an error");
 
