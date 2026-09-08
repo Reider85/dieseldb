@@ -2237,3 +2237,8 @@ Tests: skipped per request
 
 Changes: Removed unused private field socketTimeout from ClientHandler inner class (line 218) and removed its assignment in the constructor. The parameter socketTimeout is still passed to clientSocket.setSoTimeout() directly without storing it as a field.
 Tests: skipped per request
+
+3.0.21 Prompt 28 - S1068: remove unused private fields lastJoinEstimatedRows, lastJoinActualRows from SelectQuery.java
+
+Changes: Removed two unused private transient fields lastJoinEstimatedRows and lastJoinActualRows and their reset assignments in executeSelect(). No functional impact.
+Tests: skipped per request
