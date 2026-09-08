@@ -2223,3 +2223,8 @@ Changes: Renamed static fields POOL_SIZE > poolSize and QUEUE_CAPACITY > queueCa
 
 Changes: Renamed two static fields per S3008 (camelCase): MAX_IN_MEMORY_ROWS → maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES → maxHashTableSizeBytes. Updated all 11 references (declarations, loadHashJoinConfig, setHashJoinConfigForTest, StreamingResultIterator, hash-join guard, ORDER BY logging, partition sizing).
 Tests: skipped per request
+
+3.0.18 Prompt 25 - S3457: verify format specifier/argument correspondence in all 13 cases
+
+Changes: Verified all 13 S3457 occurrences from sonar7.md. All cases already fixed in commit d68f2cf: DatabaseServer.java LOGGER.log %s/%d/%f → MessageFormat {0}/{1}/{2}; SocketTimeoutTest.java and ServerConnectionLimitTest.java string concatenation → {0}/{1} format. No additional changes required.
+Tests: skipped per request
