@@ -11,11 +11,11 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,13 +51,13 @@ public class SocketTimeoutTest {
     }
 
     private void waitForServerReady(int port) {
-        await().atMost(10, TimeUnit.SECONDS).until(() -> {
+        TestWaitHelper.waitForCondition(() -> {
             try (Socket s = new Socket("localhost", port)) {
                 return true;
             } catch (IOException e) {
                 return false;
             }
-        });
+        }, Duration.ofSeconds(10));
     }
 
     @Test

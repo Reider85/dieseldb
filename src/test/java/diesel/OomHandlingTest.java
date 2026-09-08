@@ -9,6 +9,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -18,7 +19,6 @@ import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -154,13 +154,13 @@ public class OomHandlingTest {
     }
 
     private static void waitForServer(int port) throws Exception {
-        await().atMost(15, TimeUnit.SECONDS).until(() -> {
+        TestWaitHelper.waitForCondition(() -> {
             try (Socket socket = new Socket("localhost", port)) {
                 return true;
             } catch (IOException e) {
                 return false;
             }
-        });
+        }, Duration.ofSeconds(15));
     }
 
     private static Object roundTrip(int port, QueryMessage message) throws Exception {

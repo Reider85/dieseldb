@@ -2212,3 +2212,7 @@ Timing: A/B-бенчмарк на 600 строках (тот же harness, OLD=H
 Changes: Removed three regex probe patterns (IN_SUBQUERY_SELECT_START, IN_SUBQUERY_WHERE_CLAUSE, IN_SUBQUERY_OPENING) from SubqueryParser.java and replaced isInSubqueryPattern() with equivalent startsWith/contains checks. The query is already whitespace-normalized, so the single-space strings match the original \s+ boundaries exactly. IN_SUBQUERY_TAIL regex kept for anchored LIMIT/OFFSET tail check.
 Tests: quick gate 42/0/0/0 BUILD SUCCESS; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
 
+3.0.15 Prompt 17 - S2925: Create TestWaitHelper.waitForCondition(Supplier<Boolean>, Duration) and replace all Awaitility usages in 10 test files
+
+Changes: Created TestWaitHelper.java with waitForCondition(Supplier<Boolean>, Duration) wrapping Awaitility. Replaced direct Awaitility.await().atMost(...).until(...) calls in SocketTimeoutTest.java, AnalyzeTableTest.java, GracefulShutdownTest.java, CursorTest.java, ServerConnectionLimitTest.java, PerformanceTest.java, PreparedStatementTest.java, OomHandlingTest.java, AllTestsSampleTest.java, QuantitativeTest.java. Removed Awaitility imports from all 10 files, added java.time.Duration where needed. TestWaitHelper is the sole Awaitility consumer.
+Tests: quick gate 42/0/0/0 BUILD SUCCESS; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS

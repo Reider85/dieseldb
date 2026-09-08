@@ -6,9 +6,9 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -320,7 +320,7 @@ public class PerformanceTest {
 
             // Транзакция 2: Чтение неподтверждённых данных
             Future<?> tx2 = executor.submit(() -> {
-                await().atMost(5, TimeUnit.SECONDS).until(tx1Started::get);
+                TestWaitHelper.waitForCondition(tx1Started::get, Duration.ofSeconds(5));
                 String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
                 database.executeQuery(selectQuery, tx2Id);
             });
@@ -357,7 +357,7 @@ public class PerformanceTest {
             });
 
             Future<?> tx2 = executor.submit(() -> {
-                await().atMost(5, TimeUnit.SECONDS).until(tx1Started2::get);
+                TestWaitHelper.waitForCondition(tx1Started2::get, Duration.ofSeconds(5));
                 String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
                 database.executeQuery(selectQuery, tx2Id);
             });

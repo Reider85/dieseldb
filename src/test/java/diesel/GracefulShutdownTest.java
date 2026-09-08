@@ -9,13 +9,13 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -91,12 +91,12 @@ public class GracefulShutdownTest {
     }
 
     private void waitForServerReady(int port, List<String> outputLines) {
-        await().atMost(15, TimeUnit.SECONDS).until(() -> {
+        TestWaitHelper.waitForCondition(() -> {
             try (Socket s = new Socket("localhost", port)) {
                 return true;
             } catch (IOException e) {
                 return false;
             }
-        });
+        }, Duration.ofSeconds(15));
     }
 }

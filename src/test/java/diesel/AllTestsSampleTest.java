@@ -24,6 +24,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.text.SimpleDateFormat;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -39,7 +40,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
-import static org.awaitility.Awaitility.await;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -1045,13 +1045,13 @@ public class AllTestsSampleTest {
     }
 
     private void waitForPrompt69Server(int port) {
-        await().atMost(15, TimeUnit.SECONDS).until(() -> {
+        TestWaitHelper.waitForCondition(() -> {
             try (Socket s = new Socket("localhost", port)) {
                 return true;
             } catch (IOException e) {
                 return false;
             }
-        });
+        }, Duration.ofSeconds(15));
     }
 
     private void runPrompt70TestQueries() {
@@ -1231,13 +1231,13 @@ public class AllTestsSampleTest {
     }
 
     private void waitForPrompt70Server(int port) {
-        await().atMost(15, TimeUnit.SECONDS).until(() -> {
+        TestWaitHelper.waitForCondition(() -> {
             try (Socket s = new Socket("localhost", port)) {
                 return true;
             } catch (IOException e) {
                 return false;
             }
-        });
+        }, Duration.ofSeconds(15));
     }
 
     private void deletePrompt70Dir(File dir) {

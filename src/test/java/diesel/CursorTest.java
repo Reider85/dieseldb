@@ -7,11 +7,11 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -256,12 +256,12 @@ public class CursorTest {
     }
 
     private static void waitForServer(int port) {
-        await().atMost(15, TimeUnit.SECONDS).until(() -> {
+        TestWaitHelper.waitForCondition(() -> {
             try (Socket socket = new Socket("localhost", port)) {
                 return true;
             } catch (IOException e) {
                 return false;
             }
-        });
+        }, Duration.ofSeconds(15));
     }
 }

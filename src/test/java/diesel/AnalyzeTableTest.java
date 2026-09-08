@@ -7,9 +7,9 @@ import org.junit.jupiter.api.Test;
 import java.io.File;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -146,7 +146,7 @@ public class AnalyzeTableTest {
         createUsersTable();
         insertUsers(5);
         Table table = database.getTable("USERS");
-        await().atMost(5, TimeUnit.SECONDS).until(() -> table.getStatistics().getLastAnalyzedMillis() > 0);
+        TestWaitHelper.waitForCondition(() -> table.getStatistics().getLastAnalyzedMillis() > 0, Duration.ofSeconds(5));
         assertTrue(table.getStatistics().getLastAnalyzedMillis() > 0,
                 "the asynchronous statistics refresh must update lastAnalyzed after INSERT");
     }
