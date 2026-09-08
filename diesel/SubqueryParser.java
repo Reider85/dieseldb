@@ -304,9 +304,9 @@ public class SubqueryParser {
         List<QueryParser.SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*\\)(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
+        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*+SELECT\\s++(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*+\\(\\s*+(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*+SELECT\\s++(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*+\\)(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
         Pattern starPattern = Pattern.compile("^\\*$");
 
         for (String item : selectItems) {
@@ -870,7 +870,7 @@ public class SubqueryParser {
         List<QueryParser.OrderByInfo> orderBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(orderByClause);
         Pattern columnPattern = Pattern.compile(
-                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?\\s*(ASC|DESC)?$",
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*+SELECT\\s++(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*+(?:LIMIT\\s++\\d++(?:\\s++OFFSET\\s++\\d++)?)?\\s*+(ASC|DESC)?$",
                 Pattern.DOTALL);
 
         for (String item : items) {
@@ -905,7 +905,7 @@ public class SubqueryParser {
                                             Map<String, String> groupBySubQueries) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitCommaSeparatedItems(groupByClause);
-        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))$", Pattern.DOTALL);
+        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*+SELECT\\s++(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))$", Pattern.DOTALL);
 
         for (String item : items) {
             String trimmedItem = item.trim();
@@ -1031,11 +1031,11 @@ public class SubqueryParser {
         patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:\\\\.|[^'\\\\])*+'")));
         patterns.add(Map.entry("Grouped Condition", Pattern.compile("\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+')*+\\)")));
         patterns.add(Map.entry("In Condition",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s+AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(NOT\\s*+)?IN\\s*+\\((?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s++AS\\s++" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Comparison",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(=|>|<|>=|<=|!=|<>)\\s*+\\(\\s*+SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*+(?:AS\\s++" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry("Subquery Like",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s+LIKE|LIKE)\\s*\\(\\s*SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?")));
+                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(NOT\\s++LIKE|LIKE)\\s*+\\(\\s*+SELECT\\b(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)\\s*+(?:AS\\s++" + IDENTIFIER_PATTERN + ")?")));
         patterns.add(Map.entry(MessageConstants.TOKEN_LIKE_CONDITION,
                 Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*'(?:\\\\.|[^'\\\\])*+'")));
         patterns.add(Map.entry("Null Condition",
@@ -1177,7 +1177,7 @@ public class SubqueryParser {
 
     private QueryParser.Condition parseInCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern inPattern = Pattern.compile(
-                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)\\s*(?:AS\\s+" + IDENTIFIER_PATTERN + ")?(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s++(NOT\\s++)?IN\\s*+\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)\\s*+(?:AS\\s++" + IDENTIFIER_PATTERN + ")?(?:\\s++LIMIT\\s++\\d++(?:\\s++OFFSET\\s++\\d++)?)?$",
                 Pattern.DOTALL);
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
@@ -1295,7 +1295,7 @@ public class SubqueryParser {
 
     private QueryParser.Condition parseSubQueryCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
         Pattern subQueryPattern = Pattern.compile(
-                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s+LIKE)\\s*\\(\\s*(SELECT\\b.*+)$",
+                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(=|>|<|>=|<=|!=|<>|LIKE|NOT\\s++LIKE)\\s*+\\(\\s*+(SELECT\\b.*+)$",
                 Pattern.DOTALL);
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
         if (!subQueryMatcher.matches()) {
@@ -1722,7 +1722,7 @@ public class SubqueryParser {
             }
         }
 
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*\\(\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*SELECT\\s+(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*\\)(?:\\s+AS\\s+(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
+        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*+\\(\\s*+(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*+SELECT\\s++(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*+\\)(?:\\s++AS\\s++(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
         Matcher aggMatcher = aggPattern.matcher(leftPart);
         if (!aggMatcher.matches()) {
             throw new IllegalArgumentException("Invalid HAVING condition: left side must be an aggregate function: " + leftPart);
