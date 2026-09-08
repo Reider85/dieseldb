@@ -27,6 +27,15 @@ public class SubqueryParser {
     private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-z_]\\w*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
     private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
+
+    // Prompt 12 (java:S5843): decompose the monolithic IN-subquery regex (complexity 46)
+    // into small, composable patterns, each far below the 20-point threshold.
+    private static final Pattern IN_SUBQUERY_SELECT_START = Pattern.compile("(?i)^SELECT\\s+", Pattern.DOTALL);
+    private static final Pattern IN_SUBQUERY_WHERE_CLAUSE = Pattern.compile("(?i)\\bWHERE\\s+", Pattern.DOTALL);
+    private static final Pattern IN_SUBQUERY_OPENING = Pattern.compile("(?i)\\bIN\\s*\\(\\s*SELECT\\b", Pattern.DOTALL);
+    private static final Pattern IN_SUBQUERY_TAIL = Pattern.compile(
+            "(?i)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$", Pattern.DOTALL);
+
     private final QueryParser queryParser;
 
     /**
@@ -69,12 +78,8 @@ public class SubqueryParser {
         LOGGER.log(Level.FINE, "Subqueries detected, parsing with SubqueryParser: {0}", query);
         try {
             if (normalizedQuery.toUpperCase().startsWith(SqlKeywords.SELECT)) {
-                // Проверяем, является ли весь запрос подзапросом в IN
-                Pattern inSubqueryPattern = Pattern.compile(
-                        "(?i)^SELECT\\s+.*?\\s+WHERE\\s+.*?\\s+IN\\s*\\((SELECT(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+)\\)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$",
-                        Pattern.DOTALL);
-                Matcher inMatcher = inSubqueryPattern.matcher(normalizedQuery);
-                if (inMatcher.matches()) {
+                // Проверяем, является ли весь запрос SELECT ... WHERE ... IN (SELECT ...)
+                if (isInSubqueryPattern(normalizedQuery)) {
                     LOGGER.log(Level.FINE, "Detected IN-subquery pattern, using custom parsing");
                     return parseSelectQuery(query, database);
                 }
@@ -87,6 +92,24 @@ public class SubqueryParser {
             LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
             throw e;
         }
+    }
+
+    /**
+     * Returns whether the whole query matches the shape
+     * {@code SELECT ... WHERE ... IN (SELECT ...)} with an optional trailing
+     * {@code LIMIT [OFFSET]}.
+     *
+     * <p>Prompt 12 (java:S5843): the original monolithic regex had complexity 46;
+     * it is decomposed here into four simple, independent patterns.
+     *
+     * @param query the normalized SQL query to inspect
+     * @return true when the query is a SELECT with an IN-subquery in its WHERE
+     */
+    private static boolean isInSubqueryPattern(String query) {
+        return IN_SUBQUERY_SELECT_START.matcher(query).find()
+                && IN_SUBQUERY_WHERE_CLAUSE.matcher(query).find()
+                && IN_SUBQUERY_OPENING.matcher(query).find()
+                && IN_SUBQUERY_TAIL.matcher(query).matches();
     }
 
     /**

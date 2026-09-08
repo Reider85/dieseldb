@@ -1,4 +1,5 @@
-3.0.9 Prompt 9 - S1192: Create MessageConstants class, extract 10 duplicated literals (3+ occurrences) into named constants
+3.0.11 Prompt 12 - S5843: decompose the monolithic IN-subquery regex (complexity 46) in SubqueryParser.java into four simple, composable patterns
 
-Создан класс MessageConstants.java с 8 константами: TOKEN_LOGICAL_OPERATOR, TOKEN_LIKE_CONDITION, TOKEN_CLAUSE, SQL_WHERE_SPACED, SQL_FROM_SPACED, SQL_INDEX_PREFIX, SQL_INDEX_ON, ERROR_BOOLEAN_VALUE_PREFIX. Добавлены TRANSACTION_COMMITTED и TRANSACTION_ROLLED_BACK в ErrorMessages.java. Замены выполнены в 9 файлах: DatabaseClient, Database, QueryParser, SubqueryParser, QueryExecutor, SelectQuery, ExplainQuery — ~40 замен литералов на именованные константы.
-Тесты: 42 passed, 0 failed, 0 errors
+Изменения: монолитный regex в SubqueryParser.parse() (complexity 46, порог 20) был декомпозирован в 4 статических паттерна IN_SUBQUERY_SELECT_START, IN_SUBQUERY_WHERE_CLAUSE, IN_SUBQUERY_OPENING, IN_SUBQUERY_TAIL + метод isInSubqueryPattern(), комбинирующий их через логическое И. Ни один новый паттерн не превышает порога 20. Поведение не изменилось: обе ветки (детект IN-подзапроса и нет) по-прежнему ведут к parseSelectQuery().
+Тесты: quick gate 42/0/0/2 BUILD SUCCESS; targeted SubqueriesTest+NullSafetyTest+ExplainTest+LimitOffsetTest 92/0/0/0; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
+Timing: heavy 600x600 ORDER BY joins без регрессий (primary key 5291.95ms -> 21.06ms, non indexed 4476.78ms -> 19.87ms)

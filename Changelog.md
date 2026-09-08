@@ -2195,3 +2195,9 @@ Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
 
 Добавлена константа SELECT_PATTERN = "(?i)(SELECT" в ErrorMessages.java. Заменены 6 литералов "(?i)FROM\\s+" на существующую константу ErrorMessages.FROM_PATTERN: 4 вхождения в Database.java (extractTableFromSelect, extractTableFromDelete, extractSelectTables, extractDeleteTables) и 2 в QueryParser.java (parseDeleteQuery — normalized/original split). Теперь все вхождения этой regex-строки используют константу.
 Тесты: 42 passed, 0 failed, 0 errors
+
+3.0.11 Prompt 12 - S5843: decompose the monolithic IN-subquery regex (complexity 46) in SubqueryParser.java into four simple, composable patterns
+
+Изменения: монолитный regex в SubqueryParser.parse() (complexity 46, порог 20) был декомпозирован в 4 статических паттерна IN_SUBQUERY_SELECT_START, IN_SUBQUERY_WHERE_CLAUSE, IN_SUBQUERY_OPENING, IN_SUBQUERY_TAIL + метод isInSubqueryPattern(), комбинирующий их через логическое И. Ни один новый паттерн не превышает порога 20. Поведение не изменилось: обе ветки (детект IN-подзапроса и нет) по-прежнему ведут к parseSelectQuery().
+Тесты: quick gate 42/0/0/2 BUILD SUCCESS; targeted SubqueriesTest+NullSafetyTest+ExplainTest+LimitOffsetTest 92/0/0/0; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
+Timing: heavy 600x600 ORDER BY joins без регрессий (primary key 5291.95ms -> 21.06ms, non indexed 4476.78ms -> 19.87ms)
