@@ -1,4 +1,3 @@
-﻿3.0.16 Prompt 21 - S3008: Rename PARALLEL_INDEX_SCAN_THRESHOLD → parallelIndexScanThreshold (camelCase) in BTreeIndex.java
+3.0.17 Prompt 23 - S3008: rename MAX_IN_MEMORY_ROWS > maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES > maxHashTableSizeBytes in SelectQuery.java
 
-Changes: Renamed static field PARALLEL_INDEX_SCAN_THRESHOLD to parallelIndexScanThreshold in diesel/BTreeIndex.java (declaration, setter, 3 comparison sites).
-Tests: not run
+Renamed two static fields per S3008 (camelCase): MAX_IN_MEMORY_ROWS > maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES > maxHashTableSizeBytes. Updated all 11 references.

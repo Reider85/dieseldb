@@ -2216,3 +2216,10 @@ Tests: quick gate 42/0/0/0 BUILD SUCCESS; full acceptance gate (4GB heap, @Large
 
 Changes: Created TestWaitHelper.java with waitForCondition(Supplier<Boolean>, Duration) wrapping Awaitility. Replaced direct Awaitility.await().atMost(...).until(...) calls in SocketTimeoutTest.java, AnalyzeTableTest.java, GracefulShutdownTest.java, CursorTest.java, ServerConnectionLimitTest.java, PerformanceTest.java, PreparedStatementTest.java, OomHandlingTest.java, AllTestsSampleTest.java, QuantitativeTest.java. Removed Awaitility imports from all 10 files, added java.time.Duration where needed. TestWaitHelper is the sole Awaitility consumer.
 Tests: quick gate 42/0/0/0 BUILD SUCCESS; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
+3.0.16 Prompt 22 - S3008: rename POOL_SIZE > poolSize, QUEUE_CAPACITY > queueCapacity in DatabaseServer.java
+
+Changes: Renamed static fields POOL_SIZE > poolSize and QUEUE_CAPACITY > queueCapacity (camelCase per S3008). Updated references in static initializer and ThreadPoolExecutor constructor.
+3.0.17 Prompt 23 - S3008: rename MAX_IN_MEMORY_ROWS → maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES → maxHashTableSizeBytes in SelectQuery.java
+
+Changes: Renamed two static fields per S3008 (camelCase): MAX_IN_MEMORY_ROWS → maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES → maxHashTableSizeBytes. Updated all 11 references (declarations, loadHashJoinConfig, setHashJoinConfigForTest, StreamingResultIterator, hash-join guard, ORDER BY logging, partition sizing).
+Tests: skipped per request

@@ -188,7 +188,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * join is estimated to exceed this many rows, the engine falls back to the
      * block nested loop join instead of materialising a large hash table.
      */
-    private static long MAX_IN_MEMORY_ROWS = 10000;
+    private static long maxInMemoryRows = 10000;
 
     /**
      * Estimated upper bound (in bytes) of the in-memory hash table the engine
@@ -198,7 +198,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * {@code config.properties} ({@code max.hash.table.size.mb}, defaulting
      * to 512 MB).
      */
-    private static long MAX_HASH_TABLE_SIZE_BYTES = 512L * 1024L * 1024L;
+    private static long maxHashTableSizeBytes = 512L * 1024L * 1024L;
 
     /**
      * Maximum number of rows a single SELECT result (or an intermediate join /
@@ -225,7 +225,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     /**
-     * (Re)loads {@code MAX_IN_MEMORY_ROWS}, {@code MAX_HASH_TABLE_SIZE_BYTES} and
+     * (Re)loads {@code maxInMemoryRows}, {@code maxHashTableSizeBytes} and
      * {@code MAX_RESULT_ROWS} from {@code config.properties}. Package-private so
      * tests can force the low-memory hash-join paths by pointing the thresholds
      * at tiny values.
@@ -266,8 +266,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             // Keep the defaults on any config error
             LOGGER.fine("Config error, using defaults: " + ignored.getMessage());
         }
-        MAX_IN_MEMORY_ROWS = inMemoryRows;
-        MAX_HASH_TABLE_SIZE_BYTES = hashMb * 1024L * 1024L;
+        maxInMemoryRows = inMemoryRows;
+        maxHashTableSizeBytes = hashMb * 1024L * 1024L;
         MAX_RESULT_ROWS = maxResultRows;
     }
 
@@ -278,8 +278,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param maxHashTableSizeMb new value for {@code max.hash.table.size.mb}
      */
     static void setHashJoinConfigForTest(long maxInMemoryRows, long maxHashTableSizeMb) {
-        MAX_IN_MEMORY_ROWS = maxInMemoryRows;
-        MAX_HASH_TABLE_SIZE_BYTES = maxHashTableSizeMb * 1024L * 1024L;
+        maxInMemoryRows = maxInMemoryRows;
+        maxHashTableSizeBytes = maxHashTableSizeMb * 1024L * 1024L;
     }
 
     /**
@@ -978,7 +978,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (useStreaming) {
                 spillFallback = new ArrayList<>();
                 try {
-                    spill = new StreamingResultIterator(MAX_IN_MEMORY_ROWS);
+                    spill = new StreamingResultIterator(maxInMemoryRows);
                     spillActive[0] = true;
                 } catch (IOException e) {
                     spillActive[0] = false;
@@ -1078,7 +1078,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
             return runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
         }
-        if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+        if (estimatedRows > maxInMemoryRows || estimatedBytes > maxHashTableSizeBytes) {
             try {
                 ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
                 List<Map<String, Map<String, Object>>> result = runPartitionedHashJoin(setup.buildRows(), setup.buildTable(), setup.probeTable(),
@@ -1290,7 +1290,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (!orderBy.isEmpty()) {
             finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
             LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses (streaming={1})",
-                    new Object[]{orderBy.size(), useStreaming && finalRows.size() > MAX_IN_MEMORY_ROWS});
+                    new Object[]{orderBy.size(), useStreaming && finalRows.size() > maxInMemoryRows});
         }
     }
 
@@ -1801,7 +1801,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (buildRowCount <= 0) {
             return 1;
         }
-        long perPartition = Math.max(1, MAX_IN_MEMORY_ROWS);
+        long perPartition = Math.max(1, maxInMemoryRows);
         int byRows = (int) Math.max(1, Math.ceil((double) buildRowCount / perPartition));
         return Math.max(1, Math.min(256, byRows));
     }
@@ -3488,7 +3488,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         long estimatedRows = buildTable.rowCount();
         long estimatedBytes = estimateHashTableSizeBytes(buildTable.getLiveRows(), buildTable);
-        if (estimatedRows > MAX_IN_MEMORY_ROWS || estimatedBytes > MAX_HASH_TABLE_SIZE_BYTES) {
+        if (estimatedRows > maxInMemoryRows || estimatedBytes > maxHashTableSizeBytes) {
             return "Partitioned Hash Join (spill to disk)";
         }
         return "In-Memory Hash Join";
