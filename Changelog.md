@@ -2232,3 +2232,8 @@ Tests: skipped per request
 
 Changes: Replaced 2 string concatenations in DatabaseServer.java with String.format: "Error: Unknown prepared statement: " + statementId → String.format("Error: Unknown prepared statement: %s", statementId); "Error: Unknown or closed cursor: " + fcm.getCursorId() → String.format("Error: Unknown or closed cursor: %s", fcm.getCursorId()).
 Tests: skipped per request
+
+3.0.20 Prompt 27 - S1068: remove unused private field socketTimeout from ClientHandler in DatabaseServer.java
+
+Changes: Removed unused private field socketTimeout from ClientHandler inner class (line 218) and removed its assignment in the constructor. The parameter socketTimeout is still passed to clientSocket.setSoTimeout() directly without storing it as a field.
+Tests: skipped per request

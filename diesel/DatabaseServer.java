@@ -215,7 +215,6 @@ public class DatabaseServer {
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
         private final Database database;
-        private final int socketTimeout;
         private ObjectOutputStream out;
         private ObjectInputStream in;
         private UUID transactionId;
@@ -270,7 +269,6 @@ public class DatabaseServer {
         public ClientHandler(Socket socket, Database database, int socketTimeout, Properties config) {
             this.clientSocket = socket;
             this.database = database;
-            this.socketTimeout = socketTimeout;
             this.transactionId = null;
             this.compressionAlgorithm = DEFAULT_ALGORITHM;
             try {

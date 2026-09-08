@@ -1,3 +1,4 @@
-3.0.17 Prompt 23 - S3008: rename MAX_IN_MEMORY_ROWS > maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES > maxHashTableSizeBytes in SelectQuery.java
+3.0.20 Prompt 27 - S1068: remove unused private field socketTimeout from ClientHandler in DatabaseServer.java
 
-Renamed two static fields per S3008 (camelCase): MAX_IN_MEMORY_ROWS > maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES > maxHashTableSizeBytes. Updated all 11 references.
+Changes: Removed unused private field socketTimeout from ClientHandler inner class (line 218) and removed its assignment in the constructor. The parameter socketTimeout is still passed to clientSocket.setSoTimeout() directly without storing it as a field.
+Tests: skipped per request
