@@ -28,11 +28,9 @@ public class SubqueryParser {
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
     private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
 
-    // Prompt 12 (java:S5843): decompose the monolithic IN-subquery regex (complexity 46)
-    // into small, composable patterns, each far below the 20-point threshold.
-    private static final Pattern IN_SUBQUERY_SELECT_START = Pattern.compile("(?i)^SELECT\\s+", Pattern.DOTALL);
-    private static final Pattern IN_SUBQUERY_WHERE_CLAUSE = Pattern.compile("(?i)\\bWHERE\\s+", Pattern.DOTALL);
-    private static final Pattern IN_SUBQUERY_OPENING = Pattern.compile("(?i)\\bIN\\s*\\(\\s*SELECT\\b", Pattern.DOTALL);
+    // Prompt 14 (java:S5843): the first three probe patterns are replaced by String
+    // methods (startsWith/contains) in isInSubqueryPattern(). Only the anchored
+    // LIMIT/OFFSET tail remains a regex (it is not a start/contain check).
     private static final Pattern IN_SUBQUERY_TAIL = Pattern.compile(
             "(?i)(?:\\s+LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?)?$", Pattern.DOTALL);
 
@@ -99,16 +97,21 @@ public class SubqueryParser {
      * {@code SELECT ... WHERE ... IN (SELECT ...)} with an optional trailing
      * {@code LIMIT [OFFSET]}.
      *
-     * <p>Prompt 12 (java:S5843): the original monolithic regex had complexity 46;
-     * it is decomposed here into four simple, independent patterns.
+     * <p>Prompt 12/14 (java:S5843): the original monolithic regex had complexity 46.
+     * It is decomposed here into simple probes — the first three are now String
+     * methods (startsWith/contains) with only the anchored LIMIT/OFFSET tail as a regex.
      *
      * @param query the normalized SQL query to inspect
      * @return true when the query is a SELECT with an IN-subquery in its WHERE
      */
     private static boolean isInSubqueryPattern(String query) {
-        return IN_SUBQUERY_SELECT_START.matcher(query).find()
-                && IN_SUBQUERY_WHERE_CLAUSE.matcher(query).find()
-                && IN_SUBQUERY_OPENING.matcher(query).find()
+        // Prompt 14 (java:S5843): replace the three regex probes with equivalent
+        // String methods. The query is already whitespace-normalized, so the
+        // single-space strings match the original \s+ boundaries exactly.
+        String uq = query.toUpperCase();
+        return uq.startsWith(SqlKeywords.SELECT + " ")
+                && uq.contains(SqlKeywords.WHERE + " ")
+                && uq.contains("IN (SELECT")
                 && IN_SUBQUERY_TAIL.matcher(query).matches();
     }
 
