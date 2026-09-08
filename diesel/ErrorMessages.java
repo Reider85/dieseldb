@@ -43,6 +43,7 @@ public final class ErrorMessages {
     public static final String CASE_INSENSITIVE_START_PATTERN = "(?i)^(";
     public static final String CASE_INSENSITIVE_GROUP_PATTERN = "(?i)(";
     public static final String SELECT_KEYWORD = "(SELECT";
+    public static final String SELECT_PATTERN = "(?i)(SELECT";
     public static final String FROM_PATTERN = "(?i)FROM\\s+";
 
     // S1192 – error / status messages

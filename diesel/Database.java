@@ -803,7 +803,7 @@ class Database {
     }
 
     private String extractTableFromSelect(String normalized) {
-        String[] parts = normalized.split("(?i)FROM\\s+", 2);
+        String[] parts = normalized.split(ErrorMessages.FROM_PATTERN, 2);
         if (parts.length < 2) {
             throw new IllegalArgumentException("Cannot extract table name from query: invalid SELECT format");
         }
@@ -827,7 +827,7 @@ class Database {
     }
 
     private String extractTableFromDelete(String normalized) {
-        String[] parts = normalized.split("(?i)FROM\\s+", 2);
+        String[] parts = normalized.split(ErrorMessages.FROM_PATTERN, 2);
         if (parts.length < 2) {
             throw new IllegalArgumentException("Cannot extract table name from query: invalid DELETE format");
         }
@@ -894,7 +894,7 @@ class Database {
     }
 
     private void extractSelectTables(String normalized, Set<String> tables) {
-        String[] fromParts = normalized.split("(?i)FROM\\s+", 2);
+        String[] fromParts = normalized.split(ErrorMessages.FROM_PATTERN, 2);
         if (fromParts.length < 2) {
             return;
         }
@@ -950,7 +950,7 @@ class Database {
     }
 
     private void extractDeleteTables(String normalized, Set<String> tables) {
-        String[] parts = normalized.split("(?i)FROM\\s+", 2);
+        String[] parts = normalized.split(ErrorMessages.FROM_PATTERN, 2);
         if (parts.length >= 2) {
             String tablePart = parts[1].split("(?i)WHERE\\s*", 2)[0].trim();
             tables.add(firstIdentifier(tablePart.split("\\s+")[0]));

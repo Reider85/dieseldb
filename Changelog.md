@@ -2190,3 +2190,8 @@ Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
 
 Создан класс MessageConstants.java с 8 константами: TOKEN_LOGICAL_OPERATOR, TOKEN_LIKE_CONDITION, TOKEN_CLAUSE, SQL_WHERE_SPACED, SQL_FROM_SPACED, SQL_INDEX_PREFIX, SQL_INDEX_ON, ERROR_BOOLEAN_VALUE_PREFIX. Добавлены TRANSACTION_COMMITTED и TRANSACTION_ROLLED_BACK в ErrorMessages.java. Замены выполнены в 9 файлах: DatabaseClient, Database, QueryParser, SubqueryParser, QueryExecutor, SelectQuery, ExplainQuery — ~40 замен литералов на именованные константы.
 Тесты: 42 passed, 0 failed, 0 errors
+
+3.0.10 Prompt 10 - S1192: extract regex literals "(?i)(SELECT" and "(?i)FROM\s+" into SELECT_PATTERN and FROM_PATTERN constants
+
+Добавлена константа SELECT_PATTERN = "(?i)(SELECT" в ErrorMessages.java. Заменены 6 литералов "(?i)FROM\\s+" на существующую константу ErrorMessages.FROM_PATTERN: 4 вхождения в Database.java (extractTableFromSelect, extractTableFromDelete, extractSelectTables, extractDeleteTables) и 2 в QueryParser.java (parseDeleteQuery — normalized/original split). Теперь все вхождения этой regex-строки используют константу.
+Тесты: 42 passed, 0 failed, 0 errors

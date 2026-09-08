@@ -2308,7 +2308,7 @@ class QueryParser {
         LOGGER.log(Level.FINE, "Normalized DELETE query: {0}", normalized);
 
         // Use normalized query for table name extraction (identifiers are uppercased)
-        String[] fromParts = normalized.split("(?i)FROM\\s+", 2);
+        String[] fromParts = normalized.split(ErrorMessages.FROM_PATTERN, 2);
         if (fromParts.length != 2) {
             LOGGER.log(Level.SEVERE, "Invalid DELETE query format: missing FROM clause, normalized: {0}", normalized);
             throw new SyntaxErrorException("Invalid DELETE query format: missing FROM clause");
@@ -2318,7 +2318,7 @@ class QueryParser {
         String tableName = unquoteIdentifier(wherePartsNorm[0].trim());
 
         // Use original query for WHERE condition extraction (preserves string literal case)
-        String[] fromPartsOrig = original.split("(?i)FROM\\s+", 2);
+        String[] fromPartsOrig = original.split(ErrorMessages.FROM_PATTERN, 2);
         List<Condition> conditions = new ArrayList<>();
 
         if (fromPartsOrig.length == 2) {
