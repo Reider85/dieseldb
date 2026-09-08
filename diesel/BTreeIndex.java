@@ -27,7 +27,7 @@ class BTreeIndex implements Index, Serializable {
      * Threshold for using parallel index scan (minimum estimated rows to trigger parallel processing).
      * Below this threshold, sequential scan is used to avoid parallelism overhead.
      */
-    private static long PARALLEL_INDEX_SCAN_THRESHOLD = 10000;
+    private static long parallelIndexScanThreshold = 10000;
     
     /**
      * Shared ForkJoinPool for parallel index scan operations.
@@ -488,7 +488,7 @@ class BTreeIndex implements Index, Serializable {
             // Keep the default on any config error
             LOGGER.fine("Config error for parallel index scan threshold, using default: " + ignored.getMessage());
         }
-        PARALLEL_INDEX_SCAN_THRESHOLD = threshold;
+        parallelIndexScanThreshold = threshold;
     }
     
     /**
@@ -504,7 +504,7 @@ class BTreeIndex implements Index, Serializable {
         // Estimate the number of results to decide whether to use parallel processing
         // For now, we use a heuristic based on tree depth and node sizes
         long estimatedSize = estimateRangeSize(low, high);
-        if (estimatedSize < PARALLEL_INDEX_SCAN_THRESHOLD) {
+        if (estimatedSize < parallelIndexScanThreshold) {
             // Use sequential scan for small ranges
             return rangeSearch(low, high);
         }
@@ -519,7 +519,7 @@ class BTreeIndex implements Index, Serializable {
      */
     public List<Integer> rangeSearchLowParallel(Object low) {
         long estimatedSize = estimateRangeSizeLow(low);
-        if (estimatedSize < PARALLEL_INDEX_SCAN_THRESHOLD) {
+        if (estimatedSize < parallelIndexScanThreshold) {
             return rangeSearchLow(low);
         }
         return executeParallelRangeSearchLow(low);
@@ -531,7 +531,7 @@ class BTreeIndex implements Index, Serializable {
      */
     public List<Integer> rangeSearchHighParallel(Object high) {
         long estimatedSize = estimateRangeSizeHigh(high);
-        if (estimatedSize < PARALLEL_INDEX_SCAN_THRESHOLD) {
+        if (estimatedSize < parallelIndexScanThreshold) {
             return rangeSearchHigh(high);
         }
         return executeParallelRangeSearchHigh(high);

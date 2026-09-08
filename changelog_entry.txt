@@ -1,4 +1,4 @@
-﻿3.0.14 Prompt 16 - S2925: Replace Thread.sleep in tests with Awaitility
+﻿3.0.16 Prompt 21 - S3008: Rename PARALLEL_INDEX_SCAN_THRESHOLD → parallelIndexScanThreshold (camelCase) in BTreeIndex.java
 
-Changes: Replaced all Thread.sleep() calls in test files with Awaitility.await().atMost(...).until(condition). Added awaitility:4.2.0 dependency to pom.xml. Updated: ServerConnectionLimitTest.java, SocketTimeoutTest.java, GracefulShutdownTest.java, CursorTest.java, OomHandlingTest.java, AnalyzeTableTest.java, PerformanceTest.java, PreparedStatementTest.java, QuantitativeTest.java, AllTestsSampleTest.java.
-Tests: BUILD SUCCESS (compilation + test-compile)
+Changes: Renamed static field PARALLEL_INDEX_SCAN_THRESHOLD to parallelIndexScanThreshold in diesel/BTreeIndex.java (declaration, setter, 3 comparison sites).
+Tests: not run
