@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -90,22 +91,12 @@ public class GracefulShutdownTest {
     }
 
     private void waitForServerReady(int port, List<String> outputLines) {
-        long deadline = System.currentTimeMillis() + 15000;
-        while (System.currentTimeMillis() < deadline) {
+        await().atMost(15, TimeUnit.SECONDS).until(() -> {
             try (Socket s = new Socket("localhost", port)) {
-                return;
-            } catch (IOException ignored) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+                return true;
+            } catch (IOException e) {
+                return false;
             }
-        }
-        String log;
-        synchronized (outputLines) {
-            log = String.join("\n", outputLines);
-        }
-        fail("Server process did not start within timeout. Server output:\n" + log);
+        });
     }
 }

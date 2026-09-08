@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.time.LocalDate;
@@ -13,6 +14,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.Locale;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.io.*;
 
 public class PerformanceTest {
@@ -306,8 +308,9 @@ public class PerformanceTest {
             UUID tx1Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
             UUID tx2Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
 
-            // Транзакция 1: Вставка записей
+            AtomicBoolean tx1Started = new AtomicBoolean(false);
             Future<?> tx1 = executor.submit(() -> {
+                tx1Started.set(true);
                 for (int j = 1; j <= RECORD_COUNT; j++) {
                     String insertQuery = String.format("INSERT INTO USERS (ID, USER_CODE, NAME, AGE) VALUES ('%d', 'CODE%d', 'User%d', %d)",
                             j, j, j, 18 + (j % 52));
@@ -317,13 +320,9 @@ public class PerformanceTest {
 
             // Транзакция 2: Чтение неподтверждённых данных
             Future<?> tx2 = executor.submit(() -> {
-                try {
-                    Thread.sleep(50); // Убедимся, что tx1 начинает вставку
-                    String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
-                    database.executeQuery(selectQuery, tx2Id);
-                } catch (InterruptedException e) {
-                    LOGGER.error("Ошибка в tx2: {}", e.getMessage(), e);
-                }
+                await().atMost(5, TimeUnit.SECONDS).until(tx1Started::get);
+                String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
+                database.executeQuery(selectQuery, tx2Id);
             });
 
             try {
@@ -347,7 +346,9 @@ public class PerformanceTest {
             UUID tx2Id = database.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
 
             long startTime = System.nanoTime();
+            AtomicBoolean tx1Started2 = new AtomicBoolean(false);
             Future<?> tx1 = executor.submit(() -> {
+                tx1Started2.set(true);
                 for (int j = 1; j <= RECORD_COUNT; j++) {
                     String insertQuery = String.format("INSERT INTO USERS (ID, USER_CODE, NAME, AGE) VALUES ('%d', 'CODE%d', 'User%d', %d)",
                             j, j, j, 18 + (j % 52));
@@ -356,13 +357,9 @@ public class PerformanceTest {
             });
 
             Future<?> tx2 = executor.submit(() -> {
-                try {
-                    Thread.sleep(50); // Убедимся, что tx1 начинает вставку
-                    String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
-                    database.executeQuery(selectQuery, tx2Id);
-                } catch (InterruptedException e) {
-                    LOGGER.error("Ошибка в tx2: {}", e.getMessage(), e);
-                }
+                await().atMost(5, TimeUnit.SECONDS).until(tx1Started2::get);
+                String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
+                database.executeQuery(selectQuery, tx2Id);
             });
 
             try {

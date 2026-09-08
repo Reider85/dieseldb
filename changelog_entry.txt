@@ -1,5 +1,4 @@
-3.0.12 Prompt 13 - S5843: use possessive quantifiers (++, *+) for regexes with complexity > 30 to reduce backtracking
+﻿3.0.14 Prompt 16 - S2925: Replace Thread.sleep in tests with Awaitility
 
-Изменения: к regex-паттернам со сложностью > 30 применены possessive quantifiers в 18 местах (10 в SubqueryParser.java: parseSelectItems (column/subQuery/agg), ORDER BY, GROUP BY, IN-условия, Subquery Comparison/Like, parseInCondition, parseSubQueryCondition, resolveAggregate; 8 в QueryParser.java: aggPattern, GROUP BY, Comparison Column Condition, Invalid Token, isSubQueryCondition, parseSubQueryCondition, HAVING aggPattern). Принцип: \s* → \s*+, \s+ → \s++, \d+ → \d++ (zero-or-more остаётся \s*+, а не \s++, чтобы сохранить семантику "ноль или более"). Это устраняет backtracking в парсинге SELECT-колонок, подзапросов и условий.
-Тесты: quick gate 42/0/0/2 BUILD SUCCESS; targeted SubqueriesTest 21/0/0/0; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
-Timing: A/B-бенчмарк на 600 строках (тот же harness, OLD=HEAD vs NEW) показал отсутствие регрессий: primary key 0.68ms vs 0.80ms, complex subquery GROUP BY HAVING ~1000ms vs ~1000ms, group by date having ~8.8ms vs ~8.5ms. Расхождения с timing.md (05.08.2026) — устаревший бейзлайн, а не результат этих изменений.
+Changes: Replaced all Thread.sleep() calls in test files with Awaitility.await().atMost(...).until(condition). Added awaitility:4.2.0 dependency to pom.xml. Updated: ServerConnectionLimitTest.java, SocketTimeoutTest.java, GracefulShutdownTest.java, CursorTest.java, OomHandlingTest.java, AnalyzeTableTest.java, PerformanceTest.java, PreparedStatementTest.java, QuantitativeTest.java, AllTestsSampleTest.java.
+Tests: BUILD SUCCESS (compilation + test-compile)

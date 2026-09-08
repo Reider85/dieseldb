@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,19 +51,13 @@ public class SocketTimeoutTest {
     }
 
     private void waitForServerReady(int port) {
-        long deadline = System.currentTimeMillis() + 10000;
-        while (System.currentTimeMillis() < deadline) {
+        await().atMost(10, TimeUnit.SECONDS).until(() -> {
             try (Socket s = new Socket("localhost", port)) {
-                return;
-            } catch (IOException ignored) {
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+                return true;
+            } catch (IOException e) {
+                return false;
             }
-        }
-        fail("Server did not start within timeout");
+        });
     }
 
     @Test

@@ -12,11 +12,13 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -152,15 +154,13 @@ public class OomHandlingTest {
     }
 
     private static void waitForServer(int port) throws Exception {
-        long deadline = System.currentTimeMillis() + 15000;
-        while (System.currentTimeMillis() < deadline) {
+        await().atMost(15, TimeUnit.SECONDS).until(() -> {
             try (Socket socket = new Socket("localhost", port)) {
-                return;
-            } catch (IOException ignored) {
-                Thread.sleep(50);
+                return true;
+            } catch (IOException e) {
+                return false;
             }
-        }
-        throw new IllegalStateException("server did not start within timeout");
+        });
     }
 
     private static Object roundTrip(int port, QueryMessage message) throws Exception {

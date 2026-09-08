@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
+import static org.awaitility.Awaitility.await;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -1044,20 +1045,13 @@ public class AllTestsSampleTest {
     }
 
     private void waitForPrompt69Server(int port) {
-        long deadline = System.currentTimeMillis() + 15000;
-        while (System.currentTimeMillis() < deadline) {
+        await().atMost(15, TimeUnit.SECONDS).until(() -> {
             try (Socket s = new Socket("localhost", port)) {
-                return;
-            } catch (IOException ignored) {
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
+                return true;
+            } catch (IOException e) {
+                return false;
             }
-        }
-        throw new IllegalStateException("Prompt69Test / server did not start within timeout");
+        });
     }
 
     private void runPrompt70TestQueries() {
@@ -1237,20 +1231,13 @@ public class AllTestsSampleTest {
     }
 
     private void waitForPrompt70Server(int port) {
-        long deadline = System.currentTimeMillis() + 15000;
-        while (System.currentTimeMillis() < deadline) {
+        await().atMost(15, TimeUnit.SECONDS).until(() -> {
             try (Socket s = new Socket("localhost", port)) {
-                return;
-            } catch (IOException ignored) {
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
+                return true;
+            } catch (IOException e) {
+                return false;
             }
-        }
-        throw new IllegalStateException("Prompt70Test / server process did not start within timeout");
+        });
     }
 
     private void deletePrompt70Dir(File dir) {

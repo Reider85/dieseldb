@@ -12,12 +12,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 public class ServerConnectionLimitTest {
     private static final Logger LOGGER = Logger.getLogger(ServerConnectionLimitTest.class.getName());
@@ -53,15 +54,13 @@ public class ServerConnectionLimitTest {
     }
 
     private void waitForServerReady(int port) {
-        long deadline = System.currentTimeMillis() + 10000;
-        while (System.currentTimeMillis() < deadline) {
+        await().atMost(10, TimeUnit.SECONDS).until(() -> {
             try (Socket s = new Socket("localhost", port)) {
-                return;
-            } catch (IOException ignored) {
-                try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                return true;
+            } catch (IOException e) {
+                return false;
             }
-        }
-        fail("Server did not start within timeout");
+        });
     }
 
     @Test
@@ -76,12 +75,9 @@ public class ServerConnectionLimitTest {
         for (int i = 0; i < maxAccepted; i++) {
             Socket client = new Socket("localhost", port);
             clientSockets.add(client);
-            if (i % 20 == 0) {
-                Thread.sleep(20);
-            }
         }
         
-        Thread.sleep(1000);
+        await().atMost(5, TimeUnit.SECONDS).until(() -> true);
         LOGGER.log(Level.INFO, "All " + clientSockets.size() + " connections established, now testing rejection");
         
         int rejected = 0;

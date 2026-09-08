@@ -11,7 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -256,19 +258,12 @@ public class PreparedStatementTest {
     }
 
     private static void waitForServer(int port) {
-        long deadline = System.currentTimeMillis() + 15000;
-        while (System.currentTimeMillis() < deadline) {
+        await().atMost(15, TimeUnit.SECONDS).until(() -> {
             try (Socket socket = new Socket("localhost", port)) {
-                return;
-            } catch (IOException ignored) {
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
+                return true;
+            } catch (IOException e) {
+                return false;
             }
-        }
-        throw new IllegalStateException("server did not start within timeout");
+        });
     }
 }
