@@ -2242,3 +2242,8 @@ Tests: skipped per request
 
 Changes: Removed two unused private transient fields lastJoinEstimatedRows and lastJoinActualRows and their reset assignments in executeSelect(). No functional impact.
 Tests: skipped per request
+
+3.0.22 Prompt 29 - S112: define dedicated exception hierarchy DieselException → QueryParseException, IndexCorruptionException
+
+Changes: Created QueryParseException.java and IndexCorruptionException.java extending DieselException (base extends RuntimeException). Replaces generic RuntimeException throws in parse/query path for proper domain error typing.
+Tests: skipped per request
