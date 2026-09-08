@@ -2228,3 +2228,7 @@ Tests: skipped per request
 
 Changes: Verified all 13 S3457 occurrences from sonar7.md. All cases already fixed in commit d68f2cf: DatabaseServer.java LOGGER.log %s/%d/%f → MessageFormat {0}/{1}/{2}; SocketTimeoutTest.java and ServerConnectionLimitTest.java string concatenation → {0}/{1} format. No additional changes required.
 Tests: skipped per request
+3.0.19 Prompt 26 - S3457: replace concatenation "Error: " + var with String.format("Error: %s", var)
+
+Changes: Replaced 2 string concatenations in DatabaseServer.java with String.format: "Error: Unknown prepared statement: " + statementId → String.format("Error: Unknown prepared statement: %s", statementId); "Error: Unknown or closed cursor: " + fcm.getCursorId() → String.format("Error: Unknown or closed cursor: %s", fcm.getCursorId()).
+Tests: skipped per request

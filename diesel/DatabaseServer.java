@@ -628,7 +628,7 @@ public class DatabaseServer {
             String statementId = epm.getStatementId();
             PreparedStatement ps = preparedStatements.get(statementId);
             if (ps == null) {
-                sendSerializedResult("Error: Unknown prepared statement: " + statementId);
+                sendSerializedResult(String.format("Error: Unknown prepared statement: %s", statementId));
                 return;
             }
             transactionId = epm.getTransactionId();
@@ -695,7 +695,7 @@ public class DatabaseServer {
             transactionId = fcm.getTransactionId();
             Cursor cursor = cursors.get(fcm.getCursorId().toString());
             if (cursor == null) {
-                sendSerializedResult("Error: Unknown or closed cursor: " + fcm.getCursorId());
+                sendSerializedResult(String.format("Error: Unknown or closed cursor: %s", fcm.getCursorId()));
                 return;
             }
             try {
