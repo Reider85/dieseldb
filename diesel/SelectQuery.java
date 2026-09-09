@@ -62,10 +62,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     /** Prompt 82: per-execution adaptive state (null when disabled or no joins). */
     private transient QueryOptimizer.QueryExecutionState adaptiveState;
 
-    /** Prompt 82: estimated and actual rows for the most recent join iteration. */
-    private transient long lastJoinEstimatedRows;
-    private transient long lastJoinActualRows;
-
     /**
      * Memoizes {@code normalizeColumnName} results so the millions of
      * repeated per-row normalizations in JOIN/WHERE hot loops collapse to a
@@ -943,9 +939,6 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         } else {
             adaptiveState = null;
         }
-        lastJoinEstimatedRows = 0;
-        lastJoinActualRows = 0;
-
         projectionPlan = buildProjectionPlan();
         lastPlanNanos = System.nanoTime() - planStart;
         execStart = System.nanoTime();
@@ -1143,7 +1136,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 try {
                     newJoinedRows = executeHashJoin(join, joinTable, mainRows, joinedRows, lastStream, ctx);
                 } catch (IOException e) {
-                    throw new RuntimeException(e);
+                    throw new QuerySyntaxException("", e.getMessage());
                 }
             } else {
                 ctx.forJoin(join, false, lastStream, null, null);

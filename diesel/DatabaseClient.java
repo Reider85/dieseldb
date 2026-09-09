@@ -56,7 +56,7 @@ public class DatabaseClient {
             in = new ObjectInputStream(socket.getInputStream());
             performHandshake();
         } catch (IOException | ClassNotFoundException e) {
-            throw new RuntimeException("Failed to connect to " + host + ":" + port, e);
+            throw new QuerySyntaxException("", "Failed to connect to " + host + ":" + port);
         }
     }
 

@@ -1017,7 +1017,7 @@ class Database {
 
         for (Object result : results) {
             if (result instanceof Exception e) {
-                throw new RuntimeException(e);
+                throw new QuerySyntaxException("", e.getMessage());
             }
         }
 
@@ -1109,9 +1109,9 @@ class Database {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new RuntimeException("Batch query execution interrupted", e);
+            throw new QuerySyntaxException("", "Batch query execution interrupted");
         } catch (ExecutionException e) {
-            throw new RuntimeException("Error executing batch queries", e.getCause());
+            throw new QuerySyntaxException("", "Error executing batch queries");
         } finally {
             executor.shutdownNow();
         }

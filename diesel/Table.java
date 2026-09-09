@@ -2036,9 +2036,9 @@ class Table implements Serializable {
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Secondary index build interrupted", e);
+                throw new QuerySyntaxException("", "Secondary index build interrupted");
             } catch (ExecutionException e) {
-                throw new RuntimeException("Secondary index build failed", e.getCause());
+                throw new QuerySyntaxException("", "Secondary index build failed");
             }
         }
     }

@@ -759,7 +759,7 @@ class BTreeIndex implements Index, Serializable {
                             Thread.currentThread().interrupt();
                             return null;
                         } catch (Exception e) {
-                            throw new RuntimeException(e);
+                            throw new QuerySyntaxException("", e.getMessage());
                         }
                     })
                     .filter(Objects::nonNull)
