@@ -55,8 +55,20 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 - Maven is NOT on `PATH`. If you absolutely must call `mvn` manually, use this exact prefix:  
   `$env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-3.9.6\bin\mvn.cmd" <args>`  
   (JDK 17 no longer compiles – pom.xml requires 21).
+  **Alternative (if AxiomJDK not installed):**
+  `$env:JAVA_HOME = "C:\tools\jdk-21.0.12+8"; & "C:\tools\apache-maven-3.9.9\bin\mvn.cmd" <args>`
 - `mvn package` produces a jar without a usable `Main-Class`; launch the engine via `diesel.DatabaseServer` or use `start-server.bat/.sh`.
-- Build: `make build` (or `mvn package -DskipTests`).
+- Build: `make build` (or `mvn package -DskipTests`.
+
+## Git Rules
+
+**NEVER commit these directories/files** (they are in `.gitignore`):
+- `target/` — compiled `.class` files, build output
+- `data/` — runtime database files (`.csv`, `.table`, `.parquet`)
+- `logs/` — application logs (`.log`, `.log.gz`)
+- `timing/` — benchmark timing files
+
+If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ timing/`
 
 ## Tests
 
