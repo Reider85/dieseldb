@@ -1,3 +1,12 @@
-3.0.25 Prompt 32 - S6541: refactor SqlLexer brain method into tokenizeIdentifier(), tokenizeLiteral(), tokenizeOperator()
-Changes: Renamed handleIdentifierOrKeyword() to tokenizeIdentifier(), handleStringLiteral() to tokenizeLiteral(), handleOperator() to tokenizeOperator() in SqlLexer.java per S6541 (Brain Method refactor).
+3.0.26 Prompt 33 - S135: reduce break/continue in loops (Early Return / Extract Method)
+
+Changes: Fixed 15 loops across 9 files per Sonar S135:
+- CliRepl.java: while(true)+4breaks+1continue → condition-based while + extracted readCliLine()
+- DatabaseServer.java: while(true)+2breaks → while(input!=null && dispatchMessage(input))
+- Database.java executeCommit/executeEndBatch: 2× for+2continues each → nested ifs in extracted checkCommitConflicts()
+- QueryParser.java findClauseOutsideSubquery: while+3continues → nested if-else
+- SelectQuery.java: resolveOrderByKeys (nested for+break → extract resolveColumnFromSelect/Alias), tryCoveringIndex (for+2continues → extract isCoverableCondition), filterColumns (for+continue+break → extract extractAllColumns/findFallbackValue)
+- SqlLexer.java tokenize: while+6continues → extracted nextToken()
+- SubqueryParser.java: findMainFromClause (while+3continues → if-else), splitCommaSeparatedItems (for+5continues → if-else + addCommaSeparatedItem), splitInValues (for+4continues → if-else + addInValue), findOperator (for+3continues → nested if), findHavingOperator (for+5continues → nested if)
+- SqlLexer.java tokenizeLiteral skipped: single break for closing quote is semantically necessary
 Tests: skipped per request

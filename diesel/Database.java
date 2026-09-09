@@ -481,26 +481,31 @@ class Database {
         if (currentTransaction == null || !currentTransaction.isActive()) {
             throw new TransactionException("No active transaction to commit");
         }
-        // Optimistic concurrency check: verify shared tables haven't changed since snapshot.
-        for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
-            String tableName = entry.getKey();
-            Table modifiedTable = entry.getValue();
-            if (modifiedTable == null) continue;
-            Table sharedTable = tables.get(tableName);
-            if (sharedTable == null) continue;
-            Long snapshotVersion = currentTransaction.getSnapshotVersions().get(tableName);
-            if (snapshotVersion != null && sharedTable.getVersion() != snapshotVersion) {
-                throw new TransactionException(
-                    "Write-write conflict on table " + tableName
-                    + ": shared table version changed from " + snapshotVersion
-                    + " to " + sharedTable.getVersion() + " since transaction began");
-            }
-        }
+        checkCommitConflicts(currentTransaction);
         persistModifiedTables(currentTransaction.getModifiedTables(), true);
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
         return ErrorMessages.TRANSACTION_COMMITTED;
+    }
+
+    private void checkCommitConflicts(Transaction currentTransaction) {
+        for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
+            String tableName = entry.getKey();
+            Table modifiedTable = entry.getValue();
+            if (modifiedTable != null) {
+                Table sharedTable = tables.get(tableName);
+                if (sharedTable != null) {
+                    Long snapshotVersion = currentTransaction.getSnapshotVersions().get(tableName);
+                    if (snapshotVersion != null && sharedTable.getVersion() != snapshotVersion) {
+                        throw new TransactionException(
+                            "Write-write conflict on table " + tableName
+                            + ": shared table version changed from " + snapshotVersion
+                            + " to " + sharedTable.getVersion() + " since transaction began");
+                    }
+                }
+            }
+        }
     }
 
     private Object executeRollback(Transaction currentTransaction, UUID transactionId) {
@@ -546,15 +551,17 @@ class Database {
         for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
             String tableName = entry.getKey();
             Table modifiedTable = entry.getValue();
-            if (modifiedTable == null) continue;
-            Table sharedTable = tables.get(tableName);
-            if (sharedTable == null) continue;
-            Long snapshotVersion = currentTransaction.getSnapshotVersions().get(tableName);
-            if (snapshotVersion != null && sharedTable.getVersion() != snapshotVersion) {
-                throw new TransactionException(
-                    "Write-write conflict on table " + tableName
-                    + ": shared table version changed from " + snapshotVersion
-                    + " to " + sharedTable.getVersion() + " since batch began");
+            if (modifiedTable != null) {
+                Table sharedTable = tables.get(tableName);
+                if (sharedTable != null) {
+                    Long snapshotVersion = currentTransaction.getSnapshotVersions().get(tableName);
+                    if (snapshotVersion != null && sharedTable.getVersion() != snapshotVersion) {
+                        throw new TransactionException(
+                            "Write-write conflict on table " + tableName
+                            + ": shared table version changed from " + snapshotVersion
+                            + " to " + sharedTable.getVersion() + " since batch began");
+                    }
+                }
             }
         }
         for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {

@@ -1860,26 +1860,24 @@ class QueryParser {
 
         while (currentPos < query.length()) {
             ClauseScanToken token = matchClauseScanToken(query, currentPos, clausePattern);
-            if (token == null) {
+            if (token != null) {
+                if (ErrorMessages.TAG_QUOTED_STRING.equals(token.tokenType)) {
+                    currentPos = token.endPos;
+                } else if (MessageConstants.TOKEN_CLAUSE.equals(token.tokenType) && !inQuotes && parenDepth == 0) {
+                    lastClauseIndex = currentPos;
+                    currentPos = token.endPos;
+                } else {
+                    parenDepth = updateClauseScanParenDepth(token.tokenType, parenDepth);
+                    if (parenDepth < 0) {
+                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
+                                new Object[]{currentPos, query});
+                        return -1;
+                    }
+                    currentPos = token.endPos;
+                }
+            } else {
                 currentPos++;
-                continue;
             }
-            if (token.tokenType.equals(ErrorMessages.TAG_QUOTED_STRING)) {
-                currentPos = token.endPos;
-                continue;
-            }
-            if (token.tokenType.equals(MessageConstants.TOKEN_CLAUSE) && !inQuotes && parenDepth == 0) {
-                lastClauseIndex = currentPos;
-                currentPos = token.endPos;
-                continue;
-            }
-            parenDepth = updateClauseScanParenDepth(token.tokenType, parenDepth);
-            if (parenDepth < 0) {
-                LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                        new Object[]{currentPos, query});
-                return -1;
-            }
-            currentPos = token.endPos;
         }
 
         if (parenDepth != 0) {

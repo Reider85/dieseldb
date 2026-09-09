@@ -442,15 +442,10 @@ public class DatabaseServer {
                 // Perform compression handshake before starting query loop
                 Object pendingInput = performHandshake();
 
-                while (true) {
-                    Object input = readNextInput(pendingInput);
-                    pendingInput = null;
-                    if (input == null) {
-                        break;
-                    }
-                    if (!dispatchMessage(input)) {
-                        break;
-                    }
+                Object input = readNextInput(pendingInput);
+                pendingInput = null;
+                while (input != null && dispatchMessage(input)) {
+                    input = readNextInput(null);
                 }
             } catch (IOException | ClassNotFoundException e) {
                 LOGGER.log(Level.SEVERE, "Client handler error: {0}", e.getMessage());

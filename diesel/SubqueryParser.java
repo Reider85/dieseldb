@@ -237,42 +237,36 @@ public class SubqueryParser {
             int literalEnd = trySkipStringOrIdentifierLiteral(query, currentPos);
             if (literalEnd != -1) {
                 currentPos = literalEnd;
-                continue;
-            }
-
-            char c = query.charAt(currentPos);
-            if (c == '\'') {
+            } else if (query.charAt(currentPos) == '\'') {
                 inQuotes = !inQuotes;
                 currentPos++;
-                continue;
-            }
-            if (inQuotes) {
+            } else if (inQuotes) {
                 currentPos++;
-                continue;
-            }
-
-            int subqueryEnd = trySkipSubqueryClause(query, currentPos);
-            if (subqueryEnd == -2) {
-                return -1;
-            }
-            if (subqueryEnd != -1) {
-                currentPos = subqueryEnd;
-                continue;
-            }
-
-            if (c == '(') {
-                bracketDepth++;
-            } else if (c == ')') {
-                bracketDepth--;
-                if (bracketDepth < 0) {
+            } else {
+                int subqueryEnd = trySkipSubqueryClause(query, currentPos);
+                if (subqueryEnd == -2) {
                     return -1;
                 }
-            } else if (bracketDepth == 0) {
-                if (fromPattern.matcher(query).region(currentPos, query.length()).lookingAt()) {
-                    return currentPos;
+                if (subqueryEnd != -1) {
+                    currentPos = subqueryEnd;
+                } else if (query.charAt(currentPos) == '(') {
+                    bracketDepth++;
+                    currentPos++;
+                } else if (query.charAt(currentPos) == ')') {
+                    bracketDepth--;
+                    if (bracketDepth < 0) {
+                        return -1;
+                    }
+                    currentPos++;
+                } else if (bracketDepth == 0) {
+                    if (fromPattern.matcher(query).region(currentPos, query.length()).lookingAt()) {
+                        return currentPos;
+                    }
+                    currentPos++;
+                } else {
+                    currentPos++;
                 }
             }
-            currentPos++;
         }
         return -1;
     }
@@ -944,44 +938,44 @@ public class SubqueryParser {
         boolean inQuotes = false;
         boolean inQuotedIdentifier = false;
 
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                currentItem.append(c);
-                continue;
-            }
-            if (c == '"' && !inQuotes) {
-                inQuotedIdentifier = !inQuotedIdentifier;
-                currentItem.append(c);
-                continue;
-            }
-            if (!inQuotes && !inQuotedIdentifier) {
-                if (c == '(') {
-                    parenDepth++;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    currentItem.append(c);
-                    continue;
-                } else if (c == ',' && parenDepth == 0) {
-                    String item = currentItem.toString().trim();
-                    if (!item.isEmpty()) {
-                        items.add(item);
-                    }
-                    currentItem = new StringBuilder();
-                    continue;
-                }
-            }
-            currentItem.append(c);
-        }
+for (int i = 0; i < input.length(); i++) {
+             char c = input.charAt(i);
+             if (c == '\'') {
+                 inQuotes = !inQuotes;
+                 currentItem.append(c);
+             } else if (c == '"' && !inQuotes) {
+                 inQuotedIdentifier = !inQuotedIdentifier;
+                 currentItem.append(c);
+             } else if (!inQuotes && !inQuotedIdentifier) {
+                 if (c == '(') {
+                     parenDepth++;
+                     currentItem.append(c);
+                 } else if (c == ')') {
+                     parenDepth--;
+                     currentItem.append(c);
+                 } else if (c == ',' && parenDepth == 0) {
+                     addCommaSeparatedItem(currentItem, items);
+                 } else {
+                     currentItem.append(c);
+                 }
+             } else {
+                 currentItem.append(c);
+             }
+         }
 
         String lastItem = currentItem.toString().trim();
         if (!lastItem.isEmpty()) {
             items.add(lastItem);
         }
         return items;
+    }
+
+    private static void addCommaSeparatedItem(StringBuilder currentItem, List<String> items) {
+        String item = currentItem.toString().trim();
+        if (!item.isEmpty()) {
+            items.add(item);
+        }
+        currentItem.setLength(0);
     }
 
     private List<QueryParser.Condition> parseConditions(String conditionStr, ParseContext ctx) {
@@ -1262,38 +1256,40 @@ public class SubqueryParser {
         int parenDepth = 0;
 
         for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                current.append(c);
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                    current.append(c);
-                    continue;
-                } else if (c == ')') {
-                    parenDepth--;
-                    current.append(c);
-                    continue;
-                } else if (c == ',' && parenDepth == 0) {
-                    String value = current.toString().trim();
-                    if (!value.isEmpty()) {
-                        values.add(value);
-                    }
-                    current = new StringBuilder();
-                    continue;
-                }
-            }
-            current.append(c);
-        }
+             char c = input.charAt(i);
+             if (c == '\'') {
+                 inQuotes = !inQuotes;
+                 current.append(c);
+             } else if (!inQuotes) {
+                 if (c == '(') {
+                     parenDepth++;
+                     current.append(c);
+                 } else if (c == ')') {
+                     parenDepth--;
+                     current.append(c);
+                 } else if (c == ',' && parenDepth == 0) {
+                     addInValue(current, values);
+                 } else {
+                     current.append(c);
+                 }
+             } else {
+                 current.append(c);
+             }
+         }
 
         String value = current.toString().trim();
         if (!value.isEmpty()) {
             values.add(value);
         }
         return values;
+    }
+
+    private static void addInValue(StringBuilder current, List<String> values) {
+        String val = current.toString().trim();
+        if (!val.isEmpty()) {
+            values.add(val);
+        }
+        current.setLength(0);
     }
 
     private QueryParser.Condition parseSubQueryCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
@@ -1466,15 +1462,11 @@ public class SubqueryParser {
             char c = condStr.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
+            } else if (!inQuotes) {
                 if (c == '(') {
                     parenDepth++;
-                    continue;
                 } else if (c == ')') {
                     parenDepth--;
-                    continue;
                 } else if (parenDepth == 0) {
                     for (String op : operators) {
                         Pattern opPattern = Pattern.compile("(?i)" + Pattern.quote(op));
@@ -1684,28 +1676,20 @@ public class SubqueryParser {
             char ch = condStr.charAt(i);
             if (ch == '\'') {
                 inQuotes = !inQuotes;
-                continue;
-            }
-            if (inQuotes) {
-                continue;
-            }
-            if (ch == '(') {
-                parenDepth++;
-                continue;
-            }
-            if (ch == ')') {
-                parenDepth--;
-                continue;
-            }
-            if (parenDepth > 0) {
-                continue;
-            }
-            for (String op : operators) {
-                if (condStr.regionMatches(true, i, op, 0, op.length())) {
-                    char prevChar = i > 0 ? condStr.charAt(i - 1) : ' ';
-                    char nextChar = i + op.length() < condStr.length() ? condStr.charAt(i + op.length()) : ' ';
-                    if (Character.isWhitespace(prevChar) && Character.isWhitespace(nextChar)) {
-                        return new QueryParser.OperatorInfo(op, i, i + op.length());
+            } else if (!inQuotes) {
+                if (ch == '(') {
+                    parenDepth++;
+                } else if (ch == ')') {
+                    parenDepth--;
+                } else if (parenDepth == 0) {
+                    for (String op : operators) {
+                        if (condStr.regionMatches(true, i, op, 0, op.length())) {
+                            char prevChar = i > 0 ? condStr.charAt(i - 1) : ' ';
+                            char nextChar = i + op.length() < condStr.length() ? condStr.charAt(i + op.length()) : ' ';
+                            if (Character.isWhitespace(prevChar) && Character.isWhitespace(nextChar)) {
+                                return new QueryParser.OperatorInfo(op, i, i + op.length());
+                            }
+                        }
                     }
                 }
             }

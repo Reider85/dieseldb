@@ -105,37 +105,33 @@ public class CliRepl {
     public void run() {
         printHelp();
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-        while (true) {
+        String line = readCliLine(reader);
+        while (line != null && !line.trim().isEmpty()
+                && !line.trim().toUpperCase().equals(ErrorMessages.EXIT_COMMAND)
+                && !line.trim().toUpperCase().equals("QUIT")) {
             out.print(PROMPT);
             out.flush();
-            String line;
-            try {
-                line = reader.readLine();
-            } catch (IOException e) {
-                LOGGER.error("Error reading input: {}", e.getMessage());
-                break;
-            }
-            if (line == null || line.trim().isEmpty()) {
-                break;
-            }
             String query = line.trim();
             if (query.endsWith(";")) {
                 query = query.substring(0, query.length() - 1).trim();
             }
-            if (query.isEmpty()) {
-                break;
-            }
-            String command = query.toUpperCase();
-            if (command.equals(ErrorMessages.EXIT_COMMAND) || command.equals("QUIT")) {
-                break;
-            }
-            if (command.equals("HELP")) {
+            if (query.equalsIgnoreCase("HELP")) {
                 printHelp();
-                continue;
+            } else {
+                execute(query);
             }
-            execute(query);
+            line = readCliLine(reader);
         }
         disconnect();
+    }
+
+    private String readCliLine(BufferedReader reader) {
+        try {
+            return reader.readLine();
+        } catch (IOException e) {
+            LOGGER.error("Error reading input: {}", e.getMessage());
+            return null;
+        }
     }
 
     private void execute(String query) {

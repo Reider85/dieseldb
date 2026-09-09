@@ -2260,35 +2260,40 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         List<String> keys = new ArrayList<>(orderBy.size());
         for (QueryParser.OrderByInfo order : orderBy) {
             String column = order.column;
-            String normalizedColumn = null;
-            String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-
-            for (String selectColumn : columns) {
-                String[] parts = selectColumn.trim().split("\\s+AS\\s+|\\s+", 2);
-                String selectBase = parts[0].trim();
-                String selectAlias = parts.length > 1 ? parts[1].trim() : null;
-                String baseUnqualified = selectBase.contains(".") ? selectBase.split("\\.")[1].trim() : selectBase;
-                if (unqualifiedColumn.equalsIgnoreCase(selectAlias == null ? baseUnqualified : selectAlias)) {
-                    normalizedColumn = normalizeColumnName(selectBase, mainTableName);
-                    break;
-                }
-            }
-
+            String normalizedColumn = resolveColumnFromSelect(column);
             if (normalizedColumn == null) {
-                for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
-                    if (column.equalsIgnoreCase(aliasEntry.getKey() + "." + unqualifiedColumn)) {
-                        normalizedColumn = aliasEntry.getValue() + "." + unqualifiedColumn;
-                        break;
-                    }
-                }
+                normalizedColumn = resolveColumnFromAlias(column);
             }
-
             if (normalizedColumn == null) {
                 normalizedColumn = normalizeColumnName(column, mainTableName);
             }
             keys.add(normalizedColumn);
         }
         return keys;
+    }
+
+    private String resolveColumnFromSelect(String column) {
+        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+        for (String selectColumn : columns) {
+            String[] parts = selectColumn.trim().split("\\s+AS\\s+|\\s+", 2);
+            String selectBase = parts[0].trim();
+            String selectAlias = parts.length > 1 ? parts[1].trim() : null;
+            String baseUnqualified = selectBase.contains(".") ? selectBase.split("\\.")[1].trim() : selectBase;
+            if (unqualifiedColumn.equalsIgnoreCase(selectAlias == null ? baseUnqualified : selectAlias)) {
+                return normalizeColumnName(selectBase, mainTableName);
+            }
+        }
+        return null;
+    }
+
+    private String resolveColumnFromAlias(String column) {
+        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
+        for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
+            if (column.equalsIgnoreCase(aliasEntry.getKey() + "." + unqualifiedColumn)) {
+                return aliasEntry.getValue() + "." + unqualifiedColumn;
+            }
+        }
+        return null;
     }
 
     /**
@@ -2654,27 +2659,29 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return coveredRows;
     }
 
-    private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> rowIndices,
-                                                        List<QueryParser.Condition> conditions, String tableName) {
+private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> rowIndices,
+                                                         List<QueryParser.Condition> conditions, String tableName) {
         Set<String> requiredColumns = collectRequiredSelectColumns();
         if (requiredColumns.isEmpty()) {
             return null;
         }
         for (QueryParser.Condition condition : conditions) {
-            if (condition.isGrouped() || condition.isColumnComparison() || condition.not) {
-                continue;
-            }
-            String columnName = normalizeColumnName(condition.column, tableName);
-            if (columnName == null) {
-                continue;
-            }
-            String unqualified = normalizeColumnKey(columnName, tableName);
-            Index index = table.getIndex(unqualified);
-            if (index instanceof CoveringBTreeIndex coverIndex && coverIndex.coversColumns(requiredColumns)) {
-                return buildCoveredRows(table, coverIndex, rowIndices);
+            if (isCoverableCondition(condition)) {
+                String columnName = normalizeColumnName(condition.column, tableName);
+                if (columnName != null) {
+                    String unqualified = normalizeColumnKey(columnName, tableName);
+                    Index index = table.getIndex(unqualified);
+                    if (index instanceof CoveringBTreeIndex coverIndex && coverIndex.coversColumns(requiredColumns)) {
+                        return buildCoveredRows(table, coverIndex, rowIndices);
+                    }
+                }
             }
         }
         return null;
+    }
+
+    private boolean isCoverableCondition(QueryParser.Condition condition) {
+        return !condition.isGrouped() && !condition.isColumnComparison() && !condition.not;
     }
 
     /**
@@ -3120,26 +3127,35 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Map<String, Object> filtered = new HashMap<>();
         for (int ci = 0; ci < columns.size(); ci++) {
             ColumnProjection proj = plan.get(ci);
-            if (proj.normalized == null) {
-                for (Map.Entry<String, Object> entry : row.entrySet()) {
-                    String key = entry.getKey();
-                    String unqualifiedKey = key.contains(".") ? key.split("\\.", 2)[1].trim() : key.trim();
-                    filtered.put(unqualifiedKey, entry.getValue());
-                }
-                continue;
-            }
-            if (row.containsKey(proj.normalized)) {
+            if (proj.normalized != null && row.containsKey(proj.normalized)) {
                 filtered.put(proj.alias, row.get(proj.normalized));
+            } else if (proj.normalized == null) {
+                extractAllColumns(row, filtered);
             } else {
-                for (String candidate : proj.fallbackKeys) {
-                    if (row.containsKey(candidate)) {
-                        filtered.put(proj.alias, row.get(candidate));
-                        break;
-                    }
+                Object value = findFallbackValue(row, proj.fallbackKeys);
+                if (value != null) {
+                    filtered.put(proj.alias, value);
                 }
             }
         }
         return filtered;
+    }
+
+    private void extractAllColumns(Map<String, Object> row, Map<String, Object> filtered) {
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            String key = entry.getKey();
+            String unqualifiedKey = key.contains(".") ? key.split("\\.", 2)[1].trim() : key.trim();
+            filtered.put(unqualifiedKey, entry.getValue());
+        }
+    }
+
+    private Object findFallbackValue(Map<String, Object> row, List<String> fallbackKeys) {
+        for (String candidate : fallbackKeys) {
+            if (row.containsKey(candidate)) {
+                return row.get(candidate);
+            }
+        }
+        return null;
     }
 
     private String normalizeColumnName(String column, String defaultTable) {
