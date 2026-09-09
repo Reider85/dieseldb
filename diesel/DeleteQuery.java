@@ -55,15 +55,50 @@ class DeleteQuery implements Query<Void> {
     @Override
     public Void execute(Table table) {
         LOGGER.log(Level.FINE, "Executing DeleteQuery for table: {0}", table.getName());
-        validateConditions();
+        validateInput();
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         List<Integer> rowsToDelete = prepareDelete(table, rows, columnTypes);
-        executeDelete(table, rowsToDelete);
+        List<ReentrantReadWriteLock> locks = acquireLock(table, rows, rowsToDelete);
+        try {
+            performDelete(table, rows, rowsToDelete);
+        } finally {
+            releaseLock(locks);
+        }
         updateIndexes(table, rowsToDelete.size());
         LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
         lastAffectedRows = rowsToDelete.size();
         return null;
+    }
+
+    private void validateInput() {
+        if (conditions == null) {
+            throw new IllegalArgumentException("Delete conditions cannot be null");
+        }
+    }
+
+    private List<ReentrantReadWriteLock> acquireLock(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {
+        List<ReentrantReadWriteLock> locks = new ArrayList<>();
+        for (int rowIndex : rowsToDelete) {
+            if (rowIndex >= 0 && rowIndex < rows.size()) {
+                ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
+                lock.writeLock().lock();
+                locks.add(lock);
+            }
+        }
+        return locks;
+    }
+
+    private void performDelete(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {
+        for (int rowIndex : rowsToDelete) {
+            tombstoneRow(table, rows, rowIndex);
+        }
+    }
+
+    private void releaseLock(List<ReentrantReadWriteLock> locks) {
+        for (ReentrantReadWriteLock lock : locks) {
+            lock.writeLock().unlock();
+        }
     }
 
     /**
@@ -156,27 +191,7 @@ class DeleteQuery implements Query<Void> {
         }
     }
 
-    /**
-     * Executes the deletion: acquires locks, tombstones rows, removes index entries.
-     *
-     * @param table the table to delete from
-     * @param rowsToDelete list of row indices to delete
-     */
-    private void executeDelete(Table table, List<Integer> rowsToDelete) {
-        List<Map<String, Object>> rows = table.getRows();
-        List<ReentrantReadWriteLock> acquiredLocks = acquireRowLocks(table, rows, rowsToDelete);
-        try {
-            for (int rowIndex : rowsToDelete) {
-                tombstoneRow(table, rows, rowIndex);
-            }
-        } finally {
-            for (ReentrantReadWriteLock lock : acquiredLocks) {
-                lock.writeLock().unlock();
-            }
-        }
-    }
-
-    private List<ReentrantReadWriteLock> acquireRowLocks(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {
+ List<ReentrantReadWriteLock> acquireRowLocks(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {
         List<ReentrantReadWriteLock> locks = new ArrayList<>();
         for (int rowIndex : rowsToDelete) {
             if (rowIndex >= 0 && rowIndex < rows.size()) {
