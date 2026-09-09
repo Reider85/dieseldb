@@ -1,3 +1,13 @@
 # Documentation and analytics
 analytics/sonaranalytics7.md
 analytics/sonar-prompt.md
+
+# Build output
+target/
+
+# Runtime data
+data/
+logs/
+
+# Benchmark timings
+timing/

@@ -1,8 +1,0 @@
-ID,CLIENT,NAME
-1,"clientA","prompt68-committed"
-2,"clientA","prompt68-uncommitted"
-4,"concurrent","prompt68-concurrent-1"
-5,"concurrent","prompt68-concurrent-2"
-6,"concurrent","prompt68-concurrent-3"
-7,"concurrent","prompt68-concurrent-4"
-8,"concurrent","prompt68-concurrent-5"
