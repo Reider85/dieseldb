@@ -274,7 +274,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param maxHashTableSizeMb new value for {@code max.hash.table.size.mb}
      */
     static void setHashJoinConfigForTest(long maxInMemoryRows, long maxHashTableSizeMb) {
-        maxInMemoryRows = maxInMemoryRows;
+        SelectQuery.maxInMemoryRows = maxInMemoryRows;
         maxHashTableSizeBytes = maxHashTableSizeMb * 1024L * 1024L;
     }
 

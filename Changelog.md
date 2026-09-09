@@ -2273,3 +2273,8 @@ Changes: Fixed 15 loops across 9 files per Sonar S135:
 - SubqueryParser.java: findMainFromClause (while+3continues → if-else), splitCommaSeparatedItems (for+5continues → if-else + addCommaSeparatedItem), splitInValues (for+4continues → if-else + addInValue), findOperator (for+3continues → nested if), findHavingOperator (for+5continues → nested if)
 - SqlLexer.java tokenizeLiteral skipped: single break for closing quote is semantically necessary
 Tests: skipped per request
+
+3.0.27 Fix: HashJoinMemoryTest.partitionedHashJoinUsedWhenRowsExceedMaxInMemory - static field maxInMemoryRows shadowed by same-named parameter in setHashJoinConfigForTest
+
+Changes: Qualified the assignment with the class name in SelectQuery.setHashJoinConfigForTest(): ``maxInMemoryRows = maxInMemoryRows`` (parameter shadowing the static field, a no-op) → ``SelectQuery.maxInMemoryRows = maxInMemoryRows``. The static maxInMemoryRows field was previously never updated by the test override, so row-budget overflow (200 rows > budget 5) never routed to the partitioned hash join and wrongly fell through to the in-memory hash join.
+Tests: HashJoinMemoryTest#partitionedHashJoinUsedWhenRowsExceedMaxInMemory PASS (partitioned hash join triggered, partitions=40); quick gate (mvn test -DskipLargeTests) 0/0/0/2 BUILD SUCCESS
