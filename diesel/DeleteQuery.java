@@ -170,9 +170,15 @@ class DeleteQuery implements Query<Void> {
             rowsToDelete.clear();
             rowsToDelete.addAll(deduped);
             LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
-                    new Object[]{index instanceof HashIndex ? "hash" : index instanceof BTreeIndex ? "B-tree" : "unique",
+                    new Object[]{indexTypeName(index),
                             condition.column, condition.inValues});
         }
+    }
+
+    private String indexTypeName(Index index) {
+        if (index instanceof HashIndex) return "hash";
+        if (index instanceof BTreeIndex) return "B-tree";
+        return "unique";
     }
 
     private void fullScanWithConditions(Table table, List<Map<String, Object>> rows, Map<String, Class<?>> columnTypes, List<Integer> rowsToDelete) {

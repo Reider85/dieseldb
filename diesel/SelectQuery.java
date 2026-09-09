@@ -2247,7 +2247,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                      if (value1 == null) return order.ascending ? -1 : 1;
                      if (value2 == null) return order.ascending ? 1 : -1;
                      int c = compareValues(value1, value2);
-                     return c != 0 ? (order.ascending ? c : -c) : 0;
+                     return applySortDirection(c, order.ascending);
                  })
                  .filter(c -> c != 0)
                  .findFirst()
@@ -3058,6 +3058,10 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             return c1.compareTo(rc);
         }
         throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
+    }
+
+    private int applySortDirection(int c, boolean ascending) {
+        return c != 0 ? (ascending ? c : -c) : 0;
     }
 
     private ThreeValuedLogic evaluateNestedCondition(boolean notFlag, boolean value) {

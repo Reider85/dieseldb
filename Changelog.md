@@ -2301,3 +2301,10 @@ Changes: Replaced 3 nested ternary expressions in SelectQuery.java:
 - compareValues: left == right ? 0 : (left == null ? -1 : 1) → evaluateNestedCondition(left == right, 0, left == null, -1, 1)
 Added two private overloaded evaluateNestedCondition() methods.
 Tests: skipped per request
+
+3.0.30 Prompt 36 - S3358: extract remaining nested ternaries (max depth = 1 level)
+
+Changes: Replaced 3 nested ternary expressions in 3 files:
+- QueryParser.java:371 → resolveColumnRef(column, subQuery) inside AggregateFunction.toString()
+- DeleteQuery.java:173 → indexTypeName(Index index) for index type logging
+- SelectQuery.java:2250 → applySortDirection(int c, boolean ascending) in compareRows()

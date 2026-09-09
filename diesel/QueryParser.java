@@ -368,12 +368,17 @@ class QueryParser {
         public String toString() {
             StringBuilder sb = new StringBuilder();
             sb.append(functionName).append("(");
-            sb.append(column == null ? (subQuery != null ? subQuery.toString() : "*") : column);
+            sb.append(resolveColumnRef(column, subQuery));
             sb.append(")");
             if (alias != null) {
                 sb.append(" AS ").append(alias);
             }
             return sb.toString();
+        }
+
+        private String resolveColumnRef(String column, SubQuery subQuery) {
+            if (column != null) return column;
+            return subQuery != null ? subQuery.toString() : "*";
         }
     }
 
