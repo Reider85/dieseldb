@@ -1,1 +1,0 @@
-S135: replace continue with Stream.filter().forEach() across 9 files

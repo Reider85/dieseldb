@@ -52,6 +52,11 @@ class SqlParsingUtils {
      */
     static String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {
         String unquoted = unquoteQualifiedIdentifier(column);
+        // Prompt 37 (java:S2259): unquoteQualifiedIdentifier returns null when
+        // the input column is null; dereferencing it below would NPE.
+        if (unquoted == null) {
+            throw new QueryParseException("Column name must not be null");
+        }
         if (unquoted.contains(".")) {
             String[] parts = unquoted.split("\\.");
             String tableOrAlias = parts[0].trim();

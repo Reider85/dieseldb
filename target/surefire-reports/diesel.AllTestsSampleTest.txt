@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: diesel.AllTestsSampleTest
+-------------------------------------------------------------------------------
+Tests run: 21, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 105.3 s -- in diesel.AllTestsSampleTest

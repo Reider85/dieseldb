@@ -2308,3 +2308,15 @@ Changes: Replaced 3 nested ternary expressions in 3 files:
 - QueryParser.java:371 → resolveColumnRef(column, subQuery) inside AggregateFunction.toString()
 - DeleteQuery.java:173 → indexTypeName(Index index) for index type logging
 - SelectQuery.java:2250 → applySortDirection(int c, boolean ascending) in compareRows()
+
+3.0.31 Prompt 37 - S2259: add null-checks for nullable variables to prevent NullPointerException
+
+Changes: Added 7 null-guards across 3 files:
+- SqlParsingUtils.java:54 → unquoted null-check after unquoteQualifiedIdentifier()
+- QueryParser.java:833 → normalized null-check after toUpperCasePreservingQuotedIdentifiers()
+- QueryParser.java:926 → innerNormalized null-check in parseExplainQuery()
+- QueryParser.java:1710 → tableAndJoinsOriginal null-guard in parseAdditionalClauses()
+- QueryParser.java:1750 → parsedLimit null-guard after extractLimit()
+- QueryParser.java:1760 → extractedOffset null-guard after extractOffset()
+- SelectQuery.java:3509 → buildTable null-guard in join strategy selection
+All guards throw QueryParseException with descriptive message.

@@ -3507,6 +3507,11 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             return "Nested Loop";
         }
         Table buildTable = joinTable != null && joinTable.rowCount() <= mainTable.rowCount() ? joinTable : mainTable;
+        // Prompt 37 (java:S2259): buildTable could be null when both joinTable
+        // and mainTable are null; dereferencing it below would NPE.
+        if (buildTable == null) {
+            throw new QueryParseException("Cannot determine build table for join strategy");
+        }
         Table probeTable = buildTable == joinTable ? mainTable : joinTable;
         if (probeTable != null && preferNestedLoopByStatistics(buildTable, probeTable)) {
             return "Nested Loop (chosen by statistics)";

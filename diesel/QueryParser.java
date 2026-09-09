@@ -831,6 +831,11 @@ class QueryParser {
         try {
             // Normalize and remove surrounding parentheses
             String normalized = toUpperCasePreservingQuotedIdentifiers(query.trim());
+            // Prompt 37 (java:S2259): toUpperCasePreservingQuotedIdentifiers
+            // returns null for null input; guard against that.
+            if (normalized == null) {
+                throw new QueryParseException("Failed to normalize query");
+            }
             while (normalized.startsWith("(") && normalized.endsWith(")")) {
                 normalized = toUpperCasePreservingQuotedIdentifiers(normalized.substring(1, normalized.length() - 1).trim());
             }
@@ -924,6 +929,11 @@ class QueryParser {
         }
         String inner = rest.trim();
         String innerNormalized = toUpperCasePreservingQuotedIdentifiers(inner);
+        // Prompt 37 (java:S2259): toUpperCasePreservingQuotedIdentifiers
+        // returns null for null input; guard against that.
+        if (innerNormalized == null) {
+            throw new QueryParseException("Failed to normalize EXPLAIN inner query");
+        }
         if (!(innerNormalized.startsWith(SqlKeywords.SELECT) || innerNormalized.startsWith(SqlKeywords.INSERT)
                 || innerNormalized.startsWith(SqlKeywords.UPDATE) || innerNormalized.startsWith(SqlKeywords.DELETE))) {
             throw new IllegalArgumentException("EXPLAIN supports only SELECT, INSERT, UPDATE and DELETE statements");
@@ -1709,6 +1719,11 @@ class QueryParser {
     // Парсит дополнительные клаузы (WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET)
     private AdditionalClauses parseAdditionalClauses(String tableAndJoinsOriginal, ParseContext ctx,
                                                      List<AggregateFunction> aggregates, List<SubQuery> subQueries) {
+        // Prompt 37 (java:S2259): tableAndJoinsOriginal is nullable; dereferencing
+        // it in findClauseOutsideSubquery below would NPE.
+        if (tableAndJoinsOriginal == null) {
+            throw new QueryParseException("Table and joins clause must not be null");
+        }
         List<Condition> conditions = new ArrayList<>();
         List<String> groupBy = new ArrayList<>();
         List<HavingCondition> havingConditions = new ArrayList<>();
@@ -1748,6 +1763,11 @@ class QueryParser {
         int limitIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
         if (limitIndex != -1) {
             ParsedLimitOffset parsedLimit = extractLimit(tableAndJoinsOriginal, limitIndex);
+            // Prompt 37 (java:S2259): extractLimit returns a record with nullable
+            // Integer fields; guard before dereferencing.
+            if (parsedLimit == null) {
+                throw new QueryParseException("Failed to parse LIMIT clause");
+            }
             limit = parsedLimit.limit;
             offset = parsedLimit.offset;
             tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, limitIndex, tableAndJoinsOriginal.length());
@@ -1757,7 +1777,11 @@ class QueryParser {
         if (limitIndex == -1) {
             int offsetIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET);
             if (offsetIndex != -1) {
-                offset = extractOffset(tableAndJoinsOriginal, offsetIndex);
+                Integer extractedOffset = extractOffset(tableAndJoinsOriginal, offsetIndex);
+                // Prompt 37 (java:S2259): extractOffset can return null.
+                if (extractedOffset != null) {
+                    offset = extractedOffset;
+                }
                 tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, offsetIndex, tableAndJoinsOriginal.length());
             }
         }
