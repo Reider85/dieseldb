@@ -2332,3 +2332,12 @@ Changes: Wrapped 6 unprotected calls to toUpperCasePreservingQuotedIdentifiers()
 - QueryParser.java:3570 → orElse(normalized) in normalizeQueryString()
 Added java.util.Optional import to Database.java.
 Tests: 42 run, 0 failures, 0 errors.
+
+3.0.33 Prompt 39 - S2259: add Objects.requireNonNull() for parameters to prevent NullPointerException
+
+Changes: Added Objects.requireNonNull() checks to 15 locations across 3 files:
+- SqlParsingUtils.java → normalizeColumnName() (defaultTableName, tableAliases), parseOperator() (operatorStr), validateColumn() (column)
+- QueryParser.java → SubQuery (query), Condition ctors (column, operator, subQuery), JoinInfo (tableName, joinType, onConditions), OrderByInfo (column), AggregateFunction (functionName), HavingCondition (aggregate, operator), SelectItems (columns, aggregates, subQueries, columnAliases), OperatorInfo (operator), Token (type, value), parse() (database), parsePrepared() (ps, database)
+- SelectQuery.java → SelectQueryCore (tableName), JoinContext (spillActive, whereConditions, combinedColumnTypes, tables, acquiredLocks)
+Added java.util.Objects import to SqlParsingUtils.java.
+Tests: 42 run, 0 failures, 0 errors.

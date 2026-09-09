@@ -1,6 +1,7 @@
 package diesel;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -51,6 +52,8 @@ class SqlParsingUtils {
      * Resolves table aliases to actual table names.
      */
     static String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {
+        Objects.requireNonNull(defaultTableName, "Default table name must not be null");
+        Objects.requireNonNull(tableAliases, "Table aliases must not be null");
         String unquoted = unquoteQualifiedIdentifier(column);
         // Prompt 37 (java:S2259): unquoteQualifiedIdentifier returns null when
         // the input column is null; dereferencing it below would NPE.
@@ -71,6 +74,7 @@ class SqlParsingUtils {
      * Converts an operator string to the corresponding Operator enum.
      */
     static QueryParser.Operator parseOperator(String operatorStr) {
+        Objects.requireNonNull(operatorStr, "Operator string must not be null");
         return switch (operatorStr.toUpperCase().trim()) {
             case "=" -> QueryParser.Operator.EQUALS;
             case "!=", "<>" -> QueryParser.Operator.NOT_EQUALS;
@@ -89,6 +93,7 @@ class SqlParsingUtils {
      * Throws IllegalArgumentException if the column is not found.
      */
     static void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
+        Objects.requireNonNull(column, "Column name must not be null");
         String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
         boolean found = false;
         for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {

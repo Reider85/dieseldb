@@ -518,6 +518,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         public SelectQueryCore(String tableName, String tableAlias,
                                List<String> columns, List<QueryParser.AggregateFunction> aggregates) {
+            Objects.requireNonNull(tableName, "SelectQueryCore tableName must not be null");
             this.tableName = tableName;
             this.tableAlias = tableAlias;
             this.columns = columns != null ? new ArrayList<>(columns) : new ArrayList<>();
@@ -808,6 +809,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     Map<String, Class<?>> combinedColumnTypes,
                     Map<String, Table> tables,
                     List<ReentrantReadWriteLock> acquiredLocks) {
+            Objects.requireNonNull(spillActive, "JoinContext spillActive must not be null");
+            Objects.requireNonNull(whereConditions, "JoinContext whereConditions must not be null");
+            Objects.requireNonNull(combinedColumnTypes, "JoinContext combinedColumnTypes must not be null");
+            Objects.requireNonNull(tables, "JoinContext tables must not be null");
+            Objects.requireNonNull(acquiredLocks, "JoinContext acquiredLocks must not be null");
             this.spill = spill;
             this.spillActive = spillActive;
             this.spillFallback = spillFallback;

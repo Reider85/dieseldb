@@ -103,6 +103,7 @@ class QueryParser {
         String alias;
 
         SubQuery(Query<?> query, String alias) {
+            Objects.requireNonNull(query, "SubQuery query must not be null");
             this.query = query;
             this.alias = alias;
         }
@@ -126,6 +127,8 @@ class QueryParser {
         List<Condition> subConditions;
 
         Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
+            Objects.requireNonNull(column, "Condition column must not be null");
+            Objects.requireNonNull(operator, "Condition operator must not be null");
             this.column = column;
             this.value = value;
             this.rightColumn = null;
@@ -139,6 +142,7 @@ class QueryParser {
         }
 
         Condition(String column, List<Object> inValues, String conjunction, boolean not) {
+            Objects.requireNonNull(column, "Condition column must not be null");
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -165,6 +169,7 @@ class QueryParser {
         }
 
         Condition(String column, String rightColumn, Operator operator, String conjunction, boolean not) {
+            Objects.requireNonNull(column, "Condition column must not be null");
             this.column = column;
             this.value = null;
             this.rightColumn = rightColumn;
@@ -178,6 +183,8 @@ class QueryParser {
         }
 
         Condition(String column, Operator operator, String conjunction, boolean not) {
+            Objects.requireNonNull(column, "Condition column must not be null");
+            Objects.requireNonNull(operator, "Condition operator must not be null");
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -191,6 +198,8 @@ class QueryParser {
         }
 
         Condition(String column, SubQuery subQuery, Operator operator, String conjunction, boolean not) {
+            Objects.requireNonNull(column, "Condition column must not be null");
+            Objects.requireNonNull(subQuery, "Condition subQuery must not be null");
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -204,6 +213,8 @@ class QueryParser {
         }
 
         Condition(String column, SubQuery subQuery, String conjunction, boolean not) {
+            Objects.requireNonNull(column, "Condition column must not be null");
+            Objects.requireNonNull(subQuery, "Condition subQuery must not be null");
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -312,6 +323,9 @@ class QueryParser {
         }
 
         JoinInfo(String originalTable, String tableName, String alias, String leftColumn, String rightColumn, JoinType joinType, List<Condition> onConditions) {
+            Objects.requireNonNull(tableName, "JoinInfo tableName must not be null");
+            Objects.requireNonNull(joinType, "JoinInfo joinType must not be null");
+            Objects.requireNonNull(onConditions, "JoinInfo onConditions must not be null");
             this.originalTable = originalTable;
             this.tableName = tableName;
             this.alias = alias;
@@ -334,6 +348,7 @@ class QueryParser {
         boolean ascending;
 
         OrderByInfo(String column, boolean ascending) {
+            Objects.requireNonNull(column, "OrderByInfo column must not be null");
             this.column = column;
             this.ascending = ascending;
         }
@@ -351,6 +366,7 @@ class QueryParser {
         String alias;
 
         AggregateFunction(String functionName, String column, String alias) {
+            Objects.requireNonNull(functionName, "AggregateFunction name must not be null");
             this.functionName = functionName.toUpperCase();
             this.column = column;
             this.subQuery = null;
@@ -358,6 +374,7 @@ class QueryParser {
         }
 
         AggregateFunction(String functionName, SubQuery subQuery, String alias) {
+            Objects.requireNonNull(functionName, "AggregateFunction name must not be null");
             this.functionName = functionName.toUpperCase();
             this.column = null;
             this.subQuery = subQuery;
@@ -391,6 +408,8 @@ class QueryParser {
         List<HavingCondition> subConditions;
 
         HavingCondition(AggregateFunction aggregate, Operator operator, Object value, String conjunction, boolean not) {
+            Objects.requireNonNull(aggregate, "HavingCondition aggregate must not be null");
+            Objects.requireNonNull(operator, "HavingCondition operator must not be null");
             this.aggregate = aggregate;
             this.operator = operator;
             this.value = value;
@@ -449,6 +468,10 @@ class QueryParser {
 
         SelectItems(List<String> columns, List<AggregateFunction> aggregates, List<SubQuery> subQueries,
                     Map<String, String> columnAliases) {
+            Objects.requireNonNull(columns, "SelectItems columns must not be null");
+            Objects.requireNonNull(aggregates, "SelectItems aggregates must not be null");
+            Objects.requireNonNull(subQueries, "SelectItems subQueries must not be null");
+            Objects.requireNonNull(columnAliases, "SelectItems columnAliases must not be null");
             this.columns = columns;
             this.aggregates = aggregates;
             this.subQueries = subQueries;
@@ -523,6 +546,7 @@ class QueryParser {
         int endIndex;
 
         OperatorInfo(String operator, int index, int endIndex) {
+            Objects.requireNonNull(operator, "OperatorInfo operator must not be null");
             this.operator = operator;
             this.index = index;
             this.endIndex = endIndex;
@@ -538,6 +562,8 @@ class QueryParser {
         final String value;
 
         Token(TokenType type, String value) {
+            Objects.requireNonNull(type, "Token type must not be null");
+            Objects.requireNonNull(value, "Token value must not be null");
             this.type = type;
             this.value = value;
         }
@@ -825,6 +851,7 @@ class QueryParser {
      * @throws IllegalArgumentException if the query is null, empty or unsupported
      */
     public Query<?> parse(String query, Database database) {
+        Objects.requireNonNull(database, "Database must not be null");
         if (query == null) {
             throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
@@ -3626,6 +3653,8 @@ class QueryParser {
      * @return the parsed query for the currently bound parameters
      */
     public Query<?> parsePrepared(PreparedStatement ps, Database database) {
+        Objects.requireNonNull(ps, "PreparedStatement must not be null");
+        Objects.requireNonNull(database, "Database must not be null");
         return ps.getParsedQuery(database);
     }
 }
