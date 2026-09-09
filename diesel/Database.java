@@ -12,6 +12,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -176,7 +177,9 @@ class Database {
         long parseNanos = 0;
         if (maxRowsHint == null) {
             String trimmed = cleanQuery.trim();
-            if (QueryParser.toUpperCasePreservingQuotedIdentifiers(trimmed).startsWith(SqlKeywords.SELECT)) {
+            // Prompt 38 (java:S2259): toUpperCasePreservingQuotedIdentifiers can
+            // return null; wrap in Optional to avoid NPE.
+            if (Optional.ofNullable(QueryParser.toUpperCasePreservingQuotedIdentifiers(trimmed)).orElse("").startsWith(SqlKeywords.SELECT)) {
                 try {
                     normalizedSelect = QueryCache.normalize(trimmed);
                     parsedQuery = queryCache.get(normalizedSelect, queryCache.currentEpoch());
@@ -243,7 +246,10 @@ class Database {
             throw new IllegalArgumentException("Cursor fetch size must be positive, got " + fetchSize);
         }
         String cleanQuery = stripMaxRowsHint(query);
-        String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(cleanQuery.trim());
+        // Prompt 38 (java:S2259): toUpperCasePreservingQuotedIdentifiers can
+        // return null; wrap in Optional to avoid NPE.
+        String normalized = Optional.ofNullable(
+                QueryParser.toUpperCasePreservingQuotedIdentifiers(cleanQuery.trim())).orElse("");
         if (!normalized.startsWith(SqlKeywords.SELECT)) {
             throw new IllegalArgumentException(
                     "Cursor can only be opened over a SELECT query, got: " + cleanQuery.trim());
@@ -787,7 +793,10 @@ class Database {
 
     /** Extracts the name of the table a query operates on from the normalized query text. */
     private String extractTableName(String query) {
-        String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
+        // Prompt 38 (java:S2259): toUpperCasePreservingQuotedIdentifiers can
+        // return null; wrap in Optional to avoid NPE.
+        String normalized = Optional.ofNullable(
+                QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim())).orElse("");
         if (normalized.startsWith(SqlKeywords.SELECT)) {
             return extractTableFromSelect(normalized);
         }
@@ -867,7 +876,10 @@ class Database {
      */
     private Set<String> extractAllTableNames(String query) {
         Set<String> tables = new HashSet<>();
-        String normalized = QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim());
+        // Prompt 38 (java:S2259): toUpperCasePreservingQuotedIdentifiers can
+        // return null; wrap in Optional to avoid NPE.
+        String normalized = Optional.ofNullable(
+                QueryParser.toUpperCasePreservingQuotedIdentifiers(query.trim())).orElse("");
         
         if (normalized.startsWith(SqlKeywords.SELECT)) {
             extractSelectTables(normalized, tables);

@@ -2320,3 +2320,15 @@ Changes: Added 7 null-guards across 3 files:
 - QueryParser.java:1760 → extractedOffset null-guard after extractOffset()
 - SelectQuery.java:3509 → buildTable null-guard in join strategy selection
 All guards throw QueryParseException with descriptive message.
+
+3.0.32 Prompt 38 - S2259: wrap nullable toUpperCasePreservingQuotedIdentifiers calls in Optional.ofNullable().orElse()
+
+Changes: Wrapped 6 unprotected calls to toUpperCasePreservingQuotedIdentifiers() in Optional.ofNullable().orElse() to prevent NullPointerException:
+- Database.java:179 → orElse("") in executeQuery() cache-hit path
+- Database.java:246 → orElse("") in executeCursor()
+- Database.java:790 → orElse("") in extractTableName()
+- Database.java:870 → orElse("") in extractAllTableNames()
+- QueryParser.java:840 → orElse(normalized) in parse() while-loop
+- QueryParser.java:3570 → orElse(normalized) in normalizeQueryString()
+Added java.util.Optional import to Database.java.
+Tests: 42 run, 0 failures, 0 errors.

@@ -837,7 +837,11 @@ class QueryParser {
                 throw new QueryParseException("Failed to normalize query");
             }
             while (normalized.startsWith("(") && normalized.endsWith(")")) {
-                normalized = toUpperCasePreservingQuotedIdentifiers(normalized.substring(1, normalized.length() - 1).trim());
+                // Prompt 38 (java:S2259): toUpperCasePreservingQuotedIdentifiers can
+                // return null; wrap in Optional to avoid NPE on next iteration.
+                normalized = Optional.ofNullable(
+                        toUpperCasePreservingQuotedIdentifiers(normalized.substring(1, normalized.length() - 1).trim()))
+                        .orElse(normalized);
             }
             LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
             Query<?> lexerResult = parseWithLexer(query, normalized, database);
@@ -3567,7 +3571,9 @@ class QueryParser {
                 .replaceAll("\\s+\\)", ")")
                 .replaceAll("(?i)\\bID\\s*=\\s*U\\.ID\\b", "ID=U.ID")
                 .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID");
-        normalized = toUpperCasePreservingQuotedIdentifiers(normalized);
+        // Prompt 38 (java:S2259): toUpperCasePreservingQuotedIdentifiers can
+        // return null; wrap in Optional to avoid NPE on replaceAll.
+        normalized = Optional.ofNullable(toUpperCasePreservingQuotedIdentifiers(normalized)).orElse(normalized);
         return normalized
                 .replaceAll("\\s*=", "=")
                 .replaceAll("=\\s*", "=");
