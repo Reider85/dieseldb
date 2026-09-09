@@ -17,7 +17,7 @@ import java.util.UUID;
 class ExecutePreparedMessage implements Serializable {
     private static final long serialVersionUID = 1L;
     private final String statementId;
-    private final List<Object> params;
+    private final transient List<Object> params;
     private final UUID transactionId;
 
     /**

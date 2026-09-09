@@ -50,9 +50,9 @@ class BTreeIndex implements Index, Serializable {
 
     private static class Node implements Serializable {
         private static final long serialVersionUID = 1L;
-        List<Object> keys;
-        List<List<Integer>> rowIndices; // For leaf nodes, each key maps to a list of row indices
-        List<Node> children; // For internal nodes
+        transient List<Object> keys;
+        transient List<List<Integer>> rowIndices; // For leaf nodes, each key maps to a list of row indices
+        transient List<Node> children; // For internal nodes
         boolean isLeaf;
 
         Node(boolean isLeaf) {

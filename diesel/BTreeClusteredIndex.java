@@ -19,9 +19,9 @@ class BTreeClusteredIndex implements Index, Serializable {
 
     private static class Node implements Serializable {
         private static final long serialVersionUID = 1L;
-        List<Object> keys;
-        List<Integer> rowIndices; // For leaf nodes
-        List<Node> children; // For internal nodes
+        transient List<Object> keys;
+        transient List<Integer> rowIndices; // For leaf nodes
+        transient List<Node> children; // For internal nodes
         boolean isLeaf;
 
         Node(boolean isLeaf) {
