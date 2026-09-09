@@ -2914,7 +2914,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         Object value = row.get(column);
         boolean isNull = value == null;
         boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
-        return (condition.not ? !result : result) ? TRUE : FALSE;
+        return evaluateNestedCondition(condition.not, result);
     }
 
     private ThreeValuedLogic evaluateInCondition(Map<String, Object> row, QueryParser.Condition condition,
@@ -3023,12 +3023,12 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             default:
                 throw new IllegalStateException(ErrorMessages.UNSUPPORTED_OPERATOR_PREFIX + condition.operator);
         }
-        return (condition.not ? !comparisonResult : comparisonResult) ? TRUE : FALSE;
+        return evaluateNestedCondition(condition.not, comparisonResult);
     }
 
     private int compareValues(Object left, Object right) {
         if (left == null || right == null) {
-            return left == right ? 0 : (left == null ? -1 : 1);
+            return evaluateNestedCondition(left == right, 0, left == null, -1, 1);
         }
         if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
             return lbd.compareTo(rbd);
@@ -3058,6 +3058,14 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             return c1.compareTo(rc);
         }
         throw new IllegalArgumentException("Incompatible types for comparison: " + left.getClass() + " and " + right.getClass());
+    }
+
+    private ThreeValuedLogic evaluateNestedCondition(boolean notFlag, boolean value) {
+        return (notFlag ? !value : value) ? TRUE : FALSE;
+    }
+
+    private int evaluateNestedCondition(boolean isEqual, int equalValue, boolean isNull, int nullValue, int nonNullValue) {
+        return isEqual ? equalValue : (isNull ? nullValue : nonNullValue);
     }
 
     private static boolean isIntegral(Object value) {

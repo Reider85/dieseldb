@@ -2292,3 +2292,12 @@ Changes:
 - QueryParser.java: findMainFromClause (for+if-else), findOnClausePosition (IntStream.forEach+state arrays), parseInValues (stream+filter+map+collect), findClosingParen (for+if-else), scanPreservingWhitespace (IntStream.forEach+if-else), collapseWhitespaceOutsideSubqueries (IntStream.forEach+if-else)
 - SubqueryParser.java: findMatchingClosingParen (IntStream.forEach+state arrays), findOnClausePosition (IntStream.forEach+state arrays), findClauseOutsideSubquery (if-else with correct +1 advance), parseInValues (stream+filter+map+collect), validateSubQuery (IntStream.forEach+state arrays)
 Tests: quick gate (mvn test -DskipLargeTests) 42/0/0/2 BUILD SUCCESS
+
+3.0.29 Prompt 35 - S3358: extract nested ternary operators into evaluateNestedCondition()
+
+Changes: Replaced 3 nested ternary expressions in SelectQuery.java:
+- evaluateIsNullCondition: (condition.not ? !result : result) ? TRUE : FALSE → evaluateNestedCondition(condition.not, result)
+- evaluateComparisonCondition: (condition.not ? !comparisonResult : comparisonResult) ? TRUE : FALSE → evaluateNestedCondition(condition.not, comparisonResult)
+- compareValues: left == right ? 0 : (left == null ? -1 : 1) → evaluateNestedCondition(left == right, 0, left == null, -1, 1)
+Added two private overloaded evaluateNestedCondition() methods.
+Tests: skipped per request
