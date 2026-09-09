@@ -5,6 +5,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Executes a DELETE statement: removes every row matching the WHERE
@@ -175,20 +176,19 @@ class DeleteQuery implements Query<Void> {
     }
 
     private void fullScanWithConditions(Table table, List<Map<String, Object>> rows, Map<String, Class<?>> columnTypes, List<Integer> rowsToDelete) {
-        for (int i = 0; i < rows.size(); i++) {
-            if (table.isDeleted(i)) continue;
-            Map<String, Object> row = rows.get(i);
-            if (evaluateConditions(row, conditions, columnTypes)) {
-                rowsToDelete.add(i);
-            }
-        }
+        IntStream.range(0, rows.size())
+                .filter(i -> !table.isDeleted(i))
+                .forEach(i -> {
+                    if (evaluateConditions(rows.get(i), conditions, columnTypes)) {
+                        rowsToDelete.add(i);
+                    }
+                });
     }
 
     private void collectAllRows(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {
-        for (int i = 0; i < rows.size(); i++) {
-            if (table.isDeleted(i)) continue;
-            rowsToDelete.add(i);
-        }
+        IntStream.range(0, rows.size())
+                .filter(i -> !table.isDeleted(i))
+                .forEach(rowsToDelete::add);
     }
 
  List<ReentrantReadWriteLock> acquireRowLocks(Table table, List<Map<String, Object>> rows, List<Integer> rowsToDelete) {

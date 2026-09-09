@@ -11,6 +11,7 @@ import java.util.logging.ConsoleHandler;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -1276,17 +1277,17 @@ class QueryParser {
         int bracketDepth = 0;
         int currentPos = 0;
 
-        while (currentPos < query.length()) {
+        for (; currentPos < query.length(); ) {
             MainFromTokenInfo info = matchMainFromToken(query, currentPos);
             if (info == null) {
                 currentPos++;
-                continue;
+            } else {
+                int result = handleMainFromToken(info, bracketDepth, query);
+                if (result == -2) return -1;
+                if (result >= 0) return result;
+                bracketDepth = handleMainFromBracketDepth(info.tokenType, bracketDepth);
+                currentPos = info.endPos;
             }
-            int result = handleMainFromToken(info, bracketDepth, query);
-            if (result == -2) return -1;
-            if (result >= 0) return result;
-            bracketDepth = handleMainFromBracketDepth(info.tokenType, bracketDepth);
-            currentPos = info.endPos;
         }
 
         if (bracketDepth != 0) {
@@ -1925,32 +1926,30 @@ class QueryParser {
         return parenDepth;
     }
 
-    private int findOnClausePosition(String joinPart) {
-        boolean inQuotes = false;
-        int parenDepth = 0;
-        Pattern onPattern = Pattern.compile("(?i)\\bON\\b");
-
-        for (int i = 0; i < joinPart.length(); i++) {
-            char c = joinPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0) {
-                    Matcher onMatcher = onPattern.matcher(joinPart.substring(i));
-                    if (onMatcher.lookingAt()) {
-                        return i;
-                    }
-                }
-            }
-        }
-        return -1;
-    }
+     private int findOnClausePosition(String joinPart) {
+         boolean[] inQuotes = {false};
+         int[] parenDepth = {0};
+         Pattern onPattern = Pattern.compile("(?i)\\bON\\b");
+         int[] onIndex = {-1};
+         IntStream.range(0, joinPart.length()).forEach(i -> {
+             char c = joinPart.charAt(i);
+             if (c == '\'') {
+                 inQuotes[0] = !inQuotes[0];
+             } else if (!inQuotes[0]) {
+                 if (c == '(') {
+                     parenDepth[0]++;
+                 } else if (c == ')') {
+                     parenDepth[0]--;
+                 } else if (parenDepth[0] == 0) {
+                     Matcher onMatcher = onPattern.matcher(joinPart.substring(i));
+                     if (onMatcher.lookingAt()) {
+                         onIndex[0] = i;
+                     }
+                 }
+             }
+         });
+         return onIndex[0];
+     }
     private List<String> splitSelectItems(String selectPart) {
         if (selectPart == null || selectPart.trim().isEmpty()) {
             return new ArrayList<>();
@@ -2853,14 +2852,11 @@ class QueryParser {
         }
 
         // Разделение списка значений с учётом кавычек
-        List<String> valueParts = splitInValues(valuesStr);
-        List<Object> inValues = new ArrayList<>();
-        for (String val : valueParts) {
-            String trimmedVal = val.trim();
-            if (trimmedVal.isEmpty()) continue;
-            Object value = parseConditionValue(trimmedVal, columnType);
-            inValues.add(value);
-        }
+        List<Object> inValues = splitInValues(valuesStr).stream()
+                .map(String::trim)
+                .filter(val -> !val.isEmpty())
+                .map(val -> parseConditionValue(val, columnType))
+                .collect(Collectors.toList());
         if (inValues.isEmpty()) {
             throw new IllegalArgumentException("Empty IN list in: " + condStr);
         }
@@ -3393,20 +3389,18 @@ class QueryParser {
         int parenDepth = 0;
         boolean inQuotes = false;
 
-        for (int i = startIndex; i < str.length(); i++) {
-            char c = str.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                parenDepth = updateParenDepth(c, parenDepth);
-                if (parenDepth == 0) {
-                    validateSubqueryStructure(str, startIndex, i);
-                    return i;
-                }
-            }
-        }
+         for (int i = startIndex; i < str.length(); i++) {
+             char c = str.charAt(i);
+             if (c == '\'') {
+                 inQuotes = !inQuotes;
+             } else if (!inQuotes) {
+                 parenDepth = updateParenDepth(c, parenDepth);
+                 if (parenDepth == 0) {
+                     validateSubqueryStructure(str, startIndex, i);
+                     return i;
+                 }
+             }
+         }
 
         throw new IllegalArgumentException("Парная закрывающая скобка не найдена в строке: " + str.substring(startIndex));
     }
@@ -3461,18 +3455,18 @@ class QueryParser {
         boolean[] inQuotes = {false};
         int[] parenDepth = {0};
         boolean[] inSubQuery = {false};
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c == '\'') {
-                inQuotes[0] = !inQuotes[0];
-                result.append(c);
-                continue;
-            }
-            if (!inQuotes[0]) {
-                trackSubQueryBoundary(c, i, input, parenDepth, inSubQuery);
-            }
-            result.append(c);
-        }
+         IntStream.range(0, input.length()).forEach(i -> {
+             char c = input.charAt(i);
+             if (c == '\'') {
+                 inQuotes[0] = !inQuotes[0];
+                 result.append(c);
+             } else {
+                 if (!inQuotes[0]) {
+                     trackSubQueryBoundary(c, i, input, parenDepth, inSubQuery);
+                 }
+                 result.append(c);
+             }
+         });
         return new SubQueryScanner(result.toString(), inSubQuery[0]);
     }
 
@@ -3506,22 +3500,22 @@ class QueryParser {
         boolean[] inQuotes = {false};
         int[] parenDepth = {0};
         boolean[] inSubQuery = {false};
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c == '\'') {
-                inQuotes[0] = !inQuotes[0];
-                result.append(c);
-                continue;
-            }
-            if (!inQuotes[0]) {
-                trackSubQueryBoundary(c, i, input, parenDepth, inSubQuery);
-            }
-            if (!inSubQuery[0] && Character.isWhitespace(c) && result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
-                // collapse consecutive whitespace outside subqueries
-            } else {
-                result.append(c);
-            }
-        }
+         IntStream.range(0, input.length()).forEach(i -> {
+             char c = input.charAt(i);
+             if (c == '\'') {
+                 inQuotes[0] = !inQuotes[0];
+                 result.append(c);
+             } else {
+                 if (!inQuotes[0]) {
+                     trackSubQueryBoundary(c, i, input, parenDepth, inSubQuery);
+                 }
+                 if (!inSubQuery[0] && Character.isWhitespace(c) && result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
+                     // collapse consecutive whitespace outside subqueries
+                 } else {
+                     result.append(c);
+                 }
+             }
+         });
         return result.toString();
     }
 

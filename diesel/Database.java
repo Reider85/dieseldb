@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.IntStream;
 
 /**
  * Central database engine. Owns the shared table map, the active client
@@ -564,18 +565,18 @@ class Database {
                 }
             }
         }
-        for (Map.Entry<String, Table> entry : currentTransaction.getModifiedTables().entrySet()) {
-            Table modifiedTable = entry.getValue();
-            if (modifiedTable == null) continue;
-            try {
-                modifiedTable.flushDeferredIndexUpdates();
-            } catch (RuntimeException e) {
-                currentTransaction.setInactive();
-                activeTransactions.remove(transactionId);
-                setAutoCommit(false);
-                throw new TransactionException("Batch failed: " + e.getMessage());
-            }
-        }
+        currentTransaction.getModifiedTables().entrySet().stream()
+                .filter(e -> e.getValue() != null)
+                .forEach(entry -> {
+                    try {
+                        entry.getValue().flushDeferredIndexUpdates();
+                    } catch (RuntimeException e) {
+                        currentTransaction.setInactive();
+                        activeTransactions.remove(transactionId);
+                        setAutoCommit(false);
+                        throw new TransactionException("Batch failed: " + e.getMessage());
+                    }
+                });
         persistModifiedTables(currentTransaction.getModifiedTables(), true);
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
@@ -1059,13 +1060,10 @@ class Database {
         List<List<Integer>> batches = new ArrayList<>();
         boolean[] assigned = new boolean[size];
         
-        for (int i = 0; i < size; i++) {
-            if (assigned[i]) continue;
-            
+        IntStream.range(0, size).filter(i -> !assigned[i]).forEach(i -> {
             List<Integer> currentBatch = new ArrayList<>();
             currentBatch.add(i);
             assigned[i] = true;
-            
             for (int j = i + 1; j < size; j++) {
                 if (assigned[j]) continue;
                 if (canJoinBatch(currentBatch, j, size, dependencies)) {
@@ -1073,9 +1071,8 @@ class Database {
                     assigned[j] = true;
                 }
             }
-            
             batches.add(currentBatch);
-        }
+        });
         return batches;
     }
 

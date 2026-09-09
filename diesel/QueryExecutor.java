@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.stream.IntStream;
 
 /**
  * Executes database queries in parallel when they are independent (access different tables).
@@ -259,17 +260,10 @@ public class QueryExecutor {
         List<List<Integer>> groups = new ArrayList<>();
         boolean[] assigned = new boolean[queryTables.size()];
         
-        for (int i = 0; i < queryTables.size(); i++) {
-            if (assigned[i]) {
-                continue;
-            }
-            
-            // Start a new group with query i
+        IntStream.range(0, queryTables.size()).filter(i -> !assigned[i]).forEach(i -> {
             List<Integer> group = new ArrayList<>();
             group.add(i);
             assigned[i] = true;
-            
-            // Find all queries that share tables with any query in the group
             boolean changed;
             do {
                 changed = false;
@@ -277,10 +271,8 @@ public class QueryExecutor {
                 for (int queryIdx : group) {
                     groupTables.addAll(queryTables.get(queryIdx));
                 }
-                
                 for (int j = 0; j < queryTables.size(); j++) {
                     if (!assigned[j]) {
-                        // Check if query j shares any table with the group
                         Set<String> queryJTables = queryTables.get(j);
                         boolean sharesTable = false;
                         for (String table : queryJTables) {
@@ -289,7 +281,6 @@ public class QueryExecutor {
                                 break;
                             }
                         }
-                        
                         if (sharesTable) {
                             group.add(j);
                             assigned[j] = true;
@@ -298,9 +289,8 @@ public class QueryExecutor {
                     }
                 }
             } while (changed);
-            
             groups.add(group);
-        }
+        });
         
         return groups;
     }

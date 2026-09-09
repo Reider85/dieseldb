@@ -5,6 +5,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Executes an UPDATE statement: for every row matching the WHERE conditions,
@@ -265,25 +266,24 @@ class UpdateQuery implements Query<Void> {
         }
     }
 
-    private void fullTableScanWithCondition(List<Map<String, Object>> rows,
-                                            Map<String, Class<?>> columnTypes,
-                                            Table table, List<Integer> rowsToUpdate) {
-        for (int i = 0; i < rows.size(); i++) {
-            if (table.isDeleted(i)) continue;
-            Map<String, Object> row = rows.get(i);
-            if (evaluateConditions(row, conditions, columnTypes)) {
-                rowsToUpdate.add(i);
-            }
-        }
-    }
+     private void fullTableScanWithCondition(List<Map<String, Object>> rows,
+                                             Map<String, Class<?>> columnTypes,
+                                             Table table, List<Integer> rowsToUpdate) {
+         IntStream.range(0, rows.size())
+                 .filter(i -> !table.isDeleted(i))
+                 .forEach(i -> {
+                     if (evaluateConditions(rows.get(i), conditions, columnTypes)) {
+                         rowsToUpdate.add(i);
+                     }
+                 });
+     }
 
-    private void fullTableScanAll(List<Map<String, Object>> rows,
-                                  Table table, List<Integer> rowsToUpdate) {
-        for (int i = 0; i < rows.size(); i++) {
-            if (table.isDeleted(i)) continue;
-            rowsToUpdate.add(i);
-        }
-    }
+     private void fullTableScanAll(List<Map<String, Object>> rows,
+                                       Table table, List<Integer> rowsToUpdate) {
+         IntStream.range(0, rows.size())
+                 .filter(i -> !table.isDeleted(i))
+                 .forEach(rowsToUpdate::add);
+     }
 
     private static final ConditionEvaluator EVAL = new ConditionEvaluator();
 

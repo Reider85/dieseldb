@@ -45,6 +45,7 @@ import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 import java.util.zip.CRC32;
+import java.util.stream.IntStream;
 
 /**
  * Contract implemented by every index (secondary and clustered) that maps
@@ -1347,30 +1348,30 @@ class Table implements Serializable {
         if (formatVersion >= 3) {
             // Restore secondary indexes from serialized data.
             int indexCount = ois.readInt();
-            for (int i = 0; i < indexCount; i++) {
-                String key = ois.readUTF();
-                byte[] indexBytes = (byte[]) ois.readObject();
-                long storedChecksum = ois.readLong();
-                long computedChecksum = computeChecksumFromBytes(indexBytes);
-                if (storedChecksum != computedChecksum) {
-                    LOGGER.log(Level.WARNING,
-                            "Checksum mismatch for index ''{0}'' in table {1}, will rebuild",
-                            new Object[]{key, name});
-                    continue;
-                }
+            IntStream.range(0, indexCount).forEach(i -> {
                 try {
-                    Index idx = (Index) new ObjectInputStream(
-                            new ByteArrayInputStream(indexBytes)).readObject();
-                    indexes.put(key, idx);
-                    LOGGER.log(Level.FINE,
-                            "Restored index ''{0}'' from serialized data for table {1}",
-                            new Object[]{key, name});
+                    String key = ois.readUTF();
+                    byte[] indexBytes = (byte[]) ois.readObject();
+                    long storedChecksum = ois.readLong();
+                    long computedChecksum = computeChecksumFromBytes(indexBytes);
+                    if (storedChecksum != computedChecksum) {
+                        LOGGER.log(Level.WARNING,
+                                "Checksum mismatch for index ''{0}'' in table {1}, will rebuild",
+                                new Object[]{key, name});
+                    } else {
+                        Index idx = (Index) new ObjectInputStream(
+                                new ByteArrayInputStream(indexBytes)).readObject();
+                        indexes.put(key, idx);
+                        LOGGER.log(Level.FINE,
+                                "Restored index ''{0}'' from serialized data for table {1}",
+                                new Object[]{key, name});
+                    }
                 } catch (Exception e) {
                     LOGGER.log(Level.WARNING,
-                            "Failed to deserialize index ''{0}'' in table {1}: {2}",
-                            new Object[]{key, name, e.getMessage()});
+                            "Failed to deserialize index in table {0}: {1}",
+                            new Object[]{name, e.getMessage()});
                 }
-            }
+            });
             // Restore clustered index from serialized data.
             boolean hasSerializedClustered = ois.readBoolean();
             if (hasSerializedClustered) {
@@ -1445,7 +1446,7 @@ class Table implements Serializable {
      */
     public void addRow(Map<String, Object> row) {
         Map<String, Object> validatedRow = new HashMap<>();
-        for (String col : columns) {
+        columns.forEach(col -> {
             Object value;
             Sequence sequence = sequences.get(col);
             if (sequence != null) {
@@ -1469,11 +1470,11 @@ class Table implements Serializable {
             }
             if (value == null) {
                 validatedRow.put(col, null);
-                continue;
+            } else {
+                validateColumnValueType(col, expectedType, value);
+                validatedRow.put(col, value);
             }
-            validateColumnValueType(col, expectedType, value);
-            validatedRow.put(col, value);
-        }
+        });
 
         if (hasClusteredIndex) {
             Object key = validatedRow.get(clusteredIndexColumn);
@@ -1730,7 +1731,7 @@ class Table implements Serializable {
                                                    Set<Object> batchClusteredKeys,
                                                    Map<String, Set<Object>> batchUniqueKeys) {
         Map<String, Object> validatedRow = new HashMap<>();
-        for (String col : columns) {
+        columns.forEach(col -> {
             Object value;
             Sequence sequence = sequences.get(col);
             if (sequence != null) {
@@ -1751,11 +1752,11 @@ class Table implements Serializable {
             }
             if (value == null) {
                 validatedRow.put(col, null);
-                continue;
+            } else {
+                validateColumnValueType(col, expectedType, value);
+                validatedRow.put(col, value);
             }
-            validateColumnValueType(col, expectedType, value);
-            validatedRow.put(col, value);
-        }
+        });
 
         // Clustered uniqueness
         if (hasClusteredIndex) {
@@ -1908,10 +1909,10 @@ class Table implements Serializable {
         int n = rows.size();
 
         List<Future<Map.Entry<String, Index>>> futures = new ArrayList<>();
-        for (Map.Entry<String, String> entry : indexDefinitions.entrySet()) {
-            if (indexes.containsKey(entry.getKey())) continue;
-            futures.add(INDEX_BUILD_POOL.submit(() -> buildIndex(entry.getKey(), columnTypes.get(entry.getKey()), entry.getValue(), n)));
-        }
+        indexDefinitions.entrySet().stream()
+                .filter(entry -> !indexes.containsKey(entry.getKey()))
+                .forEach(entry -> futures.add(INDEX_BUILD_POOL.submit(
+                        () -> buildIndex(entry.getKey(), columnTypes.get(entry.getKey()), entry.getValue(), n))));
         collectIndexResults(futures);
     }
 
@@ -2063,24 +2064,27 @@ class Table implements Serializable {
                 writer.write(String.join(",", columns));
                 writer.newLine();
 
-                for (int i = 0; i < rows.size(); i++) {
-                    if (isDeleted(i)) {
-                        continue;
-                    }
-                    ReentrantReadWriteLock lock = getRowLock(i);
-                    lock.readLock().lock();
-                    try {
-                        Map<String, Object> row = rows.get(i);
-                        List<String> values = new ArrayList<>();
-                        for (String column : columns) {
-                            values.add(formatValue(row.get(column)));
-                        }
-                        writer.write(String.join(",", values));
-                        writer.newLine();
-                    } finally {
-                        lock.readLock().unlock();
-                    }
-                }
+                IntStream.range(0, rows.size())
+                        .filter(i -> !isDeleted(i))
+                        .forEach(i -> {
+                            ReentrantReadWriteLock lock = getRowLock(i);
+                            lock.readLock().lock();
+                            try {
+                                Map<String, Object> row = rows.get(i);
+                                List<String> values = new ArrayList<>();
+                                for (String column : columns) {
+                                    values.add(formatValue(row.get(column)));
+                                }
+                                try {
+                                    writer.write(String.join(",", values));
+                                    writer.newLine();
+                                } catch (IOException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            } finally {
+                                lock.readLock().unlock();
+                            }
+                        });
 
                 isFileInitialized = true;
                 LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",

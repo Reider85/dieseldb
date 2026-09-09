@@ -8,6 +8,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Parser for queries containing subqueries.
@@ -271,28 +273,27 @@ public class SubqueryParser {
         return -1;
     }
 
-    private int findMatchingClosingParen(String query, int startPos) {
-        int depth = 1;
-        boolean inQuotes = false;
-        for (int i = startPos; i < query.length(); i++) {
-            char c = query.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    depth++;
-                } else if (c == ')') {
-                    depth--;
-                    if (depth == 0) {
-                        return i;
-                    }
-                }
-            }
-        }
-        return -1;
-    }
+     private int findMatchingClosingParen(String query, int startPos) {
+         int[] depth = {1};
+         boolean[] inQuotes = {false};
+         int[] result = {-1};
+         IntStream.range(startPos, query.length()).forEach(i -> {
+             char c = query.charAt(i);
+             if (c == '\'') {
+                 inQuotes[0] = !inQuotes[0];
+             } else if (!inQuotes[0]) {
+                 if (c == '(') {
+                     depth[0]++;
+                 } else if (c == ')') {
+                     depth[0]--;
+                     if (depth[0] == 0 && result[0] == -1) {
+                         result[0] = i;
+                     }
+                 }
+             }
+         });
+         return result[0];
+     }
 
     private QueryParser.SelectItems parseSelectItems(String selectPart, Database database) {
         List<String> selectItems = splitCommaSeparatedItems(selectPart);
@@ -560,31 +561,28 @@ public class SubqueryParser {
         };
     }
 
-    private int findOnClausePosition(String joinPart) {
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        int onIndex = -1;
-
-        for (int i = 0; i < joinPart.length(); i++) {
-            char c = joinPart.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                } else if (parenDepth == 0 && i + 2 < joinPart.length() &&
-                        joinPart.substring(i, i + 2).toUpperCase().equals(SqlKeywords.ON)) {
-                    onIndex = i;
-                    i += 2;
-                }
-            }
-        }
-        return onIndex;
-    }
+     private int findOnClausePosition(String joinPart) {
+         boolean[] inQuotes = {false};
+         int[] parenDepth = {0};
+         int[] onIndex = {-1};
+         IntStream.range(0, joinPart.length()).forEach(i -> {
+             char c = joinPart.charAt(i);
+             if (c == '\'') {
+                 inQuotes[0] = !inQuotes[0];
+             } else if (!inQuotes[0]) {
+                 if (c == '(') {
+                     parenDepth[0]++;
+                 } else if (c == ')') {
+                     parenDepth[0]--;
+                 } else if (parenDepth[0] == 0
+                         && i + 2 < joinPart.length()
+                         && joinPart.substring(i, i + 2).toUpperCase().equals(SqlKeywords.ON)) {
+                     onIndex[0] = i;
+                 }
+             }
+         });
+         return onIndex[0];
+     }
 
     private String extractOnClause(String joinPart) {
         int onIndex = findOnClausePosition(joinPart);
@@ -820,8 +818,7 @@ public class SubqueryParser {
 
             if (token == null) {
                 currentPos++;
-                continue;
-            }
+            } else {
 
             if (tokenType.equals(ErrorMessages.TAG_QUOTED_STRING)) {
                 // Пропускаем строки в кавычках
@@ -845,6 +842,7 @@ public class SubqueryParser {
             }
 
             currentPos = nextPos;
+            }
         }
 
         if (parenDepth != 0) {
@@ -1209,16 +1207,13 @@ for (int i = 0; i < input.length(); i++) {
         return new QueryParser.Condition(normalizedColumn, inValues, conjunction, inNot);
     }
 
-    private List<Object> parseInValues(List<String> valueParts, String normalizedColumn, Class<?> columnType) {
-        List<Object> inValues = new ArrayList<>();
-        for (String val : valueParts) {
-            String trimmedVal = val.trim();
-            if (trimmedVal.isEmpty()) continue;
-            Object value = parseConditionValue(normalizedColumn, trimmedVal, columnType);
-            inValues.add(value);
-        }
-        return inValues;
-    }
+     private List<Object> parseInValues(List<String> valueParts, String normalizedColumn, Class<?> columnType) {
+         return valueParts.stream()
+                 .map(String::trim)
+                 .filter(val -> !val.isEmpty())
+                 .map(val -> parseConditionValue(normalizedColumn, val, columnType))
+                 .collect(Collectors.toList());
+     }
 
     private QueryParser.Condition parseInSubQueryCondition(Matcher inMatcher, ParseContext ctx, String conjunction, boolean not) {
         String column = unquoteQualifiedIdentifier(inMatcher.group(1).trim());
@@ -1349,26 +1344,24 @@ for (int i = 0; i < input.length(); i++) {
         if (!subQueryStr.toUpperCase().contains(MessageConstants.SQL_FROM_SPACED)) {
             throw new IllegalArgumentException("Invalid subquery: missing FROM clause: " + subQueryStr);
         }
-        int parenDepth = 0;
-        boolean inQuotes = false;
-        for (int i = 0; i < subQueryStr.length(); i++) {
-            char c = subQueryStr.charAt(i);
-            if (c == '\'') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '(') {
-                    parenDepth++;
-                } else if (c == ')') {
-                    parenDepth--;
-                    if (parenDepth < 0) {
-                        throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryStr);
-                    }
-                }
-            }
-        }
-        if (parenDepth != 0) {
+        int[] parenDepth = {0};
+         boolean[] inQuotes = {false};
+         IntStream.range(0, subQueryStr.length()).forEach(i -> {
+             char c = subQueryStr.charAt(i);
+             if (c == '\'') {
+                 inQuotes[0] = !inQuotes[0];
+             } else if (!inQuotes[0]) {
+                 if (c == '(') {
+                     parenDepth[0]++;
+                 } else if (c == ')') {
+                     parenDepth[0]--;
+                     if (parenDepth[0] < 0) {
+                         throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryStr);
+                     }
+                 }
+             }
+         });
+        if (parenDepth[0] != 0) {
             throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryStr);
         }
     }

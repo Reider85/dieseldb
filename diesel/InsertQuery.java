@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.stream.IntStream;
 
 /**
  * Executes an INSERT INTO statement: converts the raw values to the column
@@ -67,7 +68,7 @@ class InsertQuery implements Query<Void> {
         }
         Map<String, Object> row = new HashMap<>();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
-        for (int i = 0; i < columns.size(); i++) {
+        IntStream.range(0, columns.size()).forEach(i -> {
             String column = columns.get(i);
             Object value = values.get(i);
             Class<?> expectedType = columnTypes.get(column);
@@ -76,11 +77,10 @@ class InsertQuery implements Query<Void> {
             }
             if (value == null) {
                 row.put(column, null);
-                continue;
+            } else {
+                row.put(column, convertValue(value, column, expectedType));
             }
-            value = convertValue(value, column, expectedType);
-            row.put(column, value);
-        }
+        });
         insertRow(table, row);
         return null;
     }

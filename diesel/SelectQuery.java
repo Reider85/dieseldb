@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Objects;
+import java.util.stream.IntStream;
 
 /**
  * Executes a SELECT statement against a table: applies WHERE conditions
@@ -1203,17 +1204,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         initializeGroupAggregateKeys();
 
         List<Map<String, Object>> finalRows = new ArrayList<>();
-        for (List<Object> groupKey : groupedRows.keySet()) {
-            List<Map<String, Object>> group = groupedRows.get(groupKey);
-            Map<String, Object> resultRow = buildGroupResultRow(groupKey, group, combinedColumnTypes);
-
-            if (!havingConditions.isEmpty() && !evaluateHavingConditions(resultRow, havingConditions)) {
-                continue;
-            }
-
-            checkResultRowLimit(finalRows.size(), "group by");
-            finalRows.add(resultRow);
-        }
+        groupedRows.entrySet().stream()
+                .map(entry -> buildGroupResultRow(entry.getKey(), entry.getValue(), combinedColumnTypes))
+                .filter(resultRow -> havingConditions.isEmpty() || evaluateHavingConditions(resultRow, havingConditions))
+                .forEach(resultRow -> {
+                    checkResultRowLimit(finalRows.size(), "group by");
+                    finalRows.add(resultRow);
+                });
 
         LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
                 new Object[]{groupBy.size(), finalRows.size()});
@@ -1316,14 +1313,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         } else {
             int rowsSkipped = (offset != null) ? offset : 0;
             int maxRows = (limit != null) ? limit : Integer.MAX_VALUE;
-            List<Map<String, Object>> selectedRows = new ArrayList<>();
-            for (int i = 0; i < finalRows.size() && selectedRows.size() < maxRows; i++) {
-                if (rowsSkipped > 0) {
-                    rowsSkipped--;
-                    continue;
-                }
-                selectedRows.add(finalRows.get(i));
-            }
+            List<Map<String, Object>> selectedRows = IntStream.range(0, finalRows.size())
+                    .skip(rowsSkipped)
+                    .limit(maxRows)
+                    .mapToObj(finalRows::get)
+                    .collect(Collectors.toList());
             if (groupAggregateKeys.isEmpty()) {
                 for (Map<String, Object> row : selectedRows) {
                     checkResultRowLimit(result.size(), ErrorMessages.STAGE_RESULT);
@@ -1453,40 +1447,54 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private void spillBuildPartitions(List<Map<String, Object>> buildRows, Table buildTable,
             String buildColumnKey, int partitionCount, File tempDir, JoinContext ctx) throws IOException {
         DataOutputStream[] writers = new DataOutputStream[partitionCount];
-        for (int i = 0; i < buildRows.size(); i++) {
-            Map<String, Object> row = buildRows.get(i);
-            Object key = row.get(buildColumnKey);
-            if (key == null) {
-                continue;
-            }
-            int p = (key.hashCode() & 0x7fffffff) % partitionCount;
-            if (writers[p] == null) {
-                writers[p] = new DataOutputStream(new BufferedOutputStream(
-                        new FileOutputStream(new File(tempDir, "build-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
-            }
-            writeBinaryRow(writers[p], row);
-            ReentrantReadWriteLock lock = buildTable.getRowLock(i);
-            lock.readLock().lock();
-            ctx.acquiredLocks.add(lock);
-        }
+        IntStream.range(0, buildRows.size())
+                .filter(i -> buildRows.get(i).get(buildColumnKey) != null)
+                .forEach(i -> {
+                    Map<String, Object> row = buildRows.get(i);
+                    Object key = row.get(buildColumnKey);
+                    int p = (key.hashCode() & 0x7fffffff) % partitionCount;
+                    if (writers[p] == null) {
+                        try {
+                            writers[p] = new DataOutputStream(new BufferedOutputStream(
+                                    new FileOutputStream(new File(tempDir, "build-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                    try {
+                        writeBinaryRow(writers[p], row);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                    ReentrantReadWriteLock lock = buildTable.getRowLock(i);
+                    lock.readLock().lock();
+                    ctx.acquiredLocks.add(lock);
+                });
         closePartitionWriters(writers);
     }
 
     private void spillProbePartitions(List<Map<String, Object>> probeRows,
             String probeColumnKey, int partitionCount, File tempDir) throws IOException {
         DataOutputStream[] writers = new DataOutputStream[partitionCount];
-        for (Map<String, Object> row : probeRows) {
-            Object key = row.get(probeColumnKey);
-            if (key == null) {
-                continue;
-            }
-            int p = (key.hashCode() & 0x7fffffff) % partitionCount;
-            if (writers[p] == null) {
-                writers[p] = new DataOutputStream(new BufferedOutputStream(
-                        new FileOutputStream(new File(tempDir, "probe-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
-            }
-            writeBinaryRow(writers[p], row);
-        }
+        probeRows.stream()
+                .filter(row -> row.get(probeColumnKey) != null)
+                .forEach(row -> {
+                    Object key = row.get(probeColumnKey);
+                    int p = (key.hashCode() & 0x7fffffff) % partitionCount;
+                    if (writers[p] == null) {
+                        try {
+                            writers[p] = new DataOutputStream(new BufferedOutputStream(
+                                    new FileOutputStream(new File(tempDir, "probe-" + p + ErrorMessages.BIN_EXTENSION)), 1 << 20));
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                    try {
+                        writeBinaryRow(writers[p], row);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
         closePartitionWriters(writers);
     }
 
@@ -2225,29 +2233,26 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 .collect(Collectors.toList());
     }
 
-    private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
-        for (int i = 0; i < orderBy.size(); i++) {
-            QueryParser.OrderByInfo order = orderBy.get(i);
-            Object value1 = row1.get(orderByKeys.get(i));
-            Object value2 = row2.get(orderByKeys.get(i));
-
-            if (value1 == null && value2 == null) {
-                continue;
-            }
-            if (value1 == null) {
-                return order.ascending ? -1 : 1;
-            }
-            if (value2 == null) {
-                return order.ascending ? 1 : -1;
-            }
-
-            int comparison = compareValues(value1, value2);
-            if (comparison != 0) {
-                return order.ascending ? comparison : -comparison;
-            }
-        }
-        return 0;
-    }
+     private int compareRows(Map<String, Object> row1, Map<String, Object> row2, List<QueryParser.OrderByInfo> orderBy) {
+         return IntStream.range(0, orderBy.size())
+                 .filter(i -> {
+                     Object value1 = row1.get(orderByKeys.get(i));
+                     Object value2 = row2.get(orderByKeys.get(i));
+                     return !(value1 == null && value2 == null);
+                 })
+                 .map(i -> {
+                     QueryParser.OrderByInfo order = orderBy.get(i);
+                     Object value1 = row1.get(orderByKeys.get(i));
+                     Object value2 = row2.get(orderByKeys.get(i));
+                     if (value1 == null) return order.ascending ? -1 : 1;
+                     if (value2 == null) return order.ascending ? 1 : -1;
+                     int c = compareValues(value1, value2);
+                     return c != 0 ? (order.ascending ? c : -c) : 0;
+                 })
+                 .filter(c -> c != 0)
+                 .findFirst()
+                 .orElse(0);
+     }
 
     /**
      * Resolves the flattened row key each ORDER BY clause reads, so the hot
@@ -2413,13 +2418,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             ensureJoinColumnIndex(tables.get(join.tableName), join.tableName, join.rightColumn);
             return;
         }
-        for (QueryParser.Condition condition : join.onConditions) {
-            if (condition.operator != QueryParser.Operator.EQUALS || !condition.isColumnComparison() || condition.not) {
-                continue;
-            }
-            ensureJoinColumnIndex(tables.get(mainTableName), mainTableName, resolveJoinColumn(condition, mainTableName));
-            ensureJoinColumnIndex(tables.get(join.tableName), join.tableName, resolveJoinColumn(condition, join.tableName));
-        }
+        join.onConditions.stream()
+                .filter(condition -> condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison() && !condition.not)
+                .forEach(condition -> {
+                    ensureJoinColumnIndex(tables.get(mainTableName), mainTableName, resolveJoinColumn(condition, mainTableName));
+                    ensureJoinColumnIndex(tables.get(join.tableName), join.tableName, resolveJoinColumn(condition, join.tableName));
+                });
     }
 
     /**
@@ -3092,30 +3096,30 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
 
     private List<ColumnProjection> buildProjectionPlan() {
         List<ColumnProjection> plan = new ArrayList<>(columns.size());
-        for (String column : columns) {
+        columns.forEach(column -> {
             String trimmed = column.trim();
             if (trimmed.equals("*")) {
                 plan.add(new ColumnProjection(null, null, Collections.emptyList()));
-                continue;
-            }
-            String normalizedColumn = normalizeColumnName(column, mainTableName);
-            String columnAlias = normalizeColumnKey(column, mainTableName);
-            String[] parts = trimmed.split("\\s+AS\\s+|\\s+", 2);
-            if (parts.length > 1) {
-                columnAlias = parts[1].trim();
-                if (!CharOps.isAsciiIdentifier(columnAlias)) {
-                    columnAlias = normalizeColumnKey(column, mainTableName);
+            } else {
+                String normalizedColumn = normalizeColumnName(column, mainTableName);
+                String columnAlias = normalizeColumnKey(column, mainTableName);
+                String[] parts = trimmed.split("\\s+AS\\s+|\\s+", 2);
+                if (parts.length > 1) {
+                    columnAlias = parts[1].trim();
+                    if (!CharOps.isAsciiIdentifier(columnAlias)) {
+                        columnAlias = normalizeColumnKey(column, mainTableName);
+                    }
                 }
-            }
-            List<String> fallbackKeys = new ArrayList<>();
-            if (!column.contains(".")) {
-                String unqualifiedColumn = column.trim();
-                for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
-                    fallbackKeys.add(aliasEntry.getValue() + "." + unqualifiedColumn);
+                List<String> fallbackKeys = new ArrayList<>();
+                if (!column.contains(".")) {
+                    String unqualifiedColumn = column.trim();
+                    for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
+                        fallbackKeys.add(aliasEntry.getValue() + "." + unqualifiedColumn);
+                    }
                 }
+                plan.add(new ColumnProjection(normalizedColumn, columnAlias, fallbackKeys));
             }
-            plan.add(new ColumnProjection(normalizedColumn, columnAlias, fallbackKeys));
-        }
+        });
         return plan;
     }
 

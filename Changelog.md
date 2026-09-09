@@ -2278,3 +2278,17 @@ Tests: skipped per request
 
 Changes: Qualified the assignment with the class name in SelectQuery.setHashJoinConfigForTest(): ``maxInMemoryRows = maxInMemoryRows`` (parameter shadowing the static field, a no-op) → ``SelectQuery.maxInMemoryRows = maxInMemoryRows``. The static maxInMemoryRows field was previously never updated by the test override, so row-budget overflow (200 rows > budget 5) never routed to the partitioned hash join and wrongly fell through to the in-memory hash join.
 Tests: HashJoinMemoryTest#partitionedHashJoinUsedWhenRowsExceedMaxInMemory PASS (partitioned hash join triggered, partitions=40); quick gate (mvn test -DskipLargeTests) 0/0/0/2 BUILD SUCCESS
+
+3.0.28 S135: replace continue with Stream.filter().forEach() across 9 files
+
+Changes:
+- Database.java: commitBatch (stream+filter+forEach), groupIntoBatches (IntStream.range+filter+forEach)
+- DeleteQuery.java: fullScanWithConditions, collectAllRows → IntStream.range+filter+forEach
+- InsertQuery.java: executeInsert → IntStream.forEach (null values correctly preserved via if-else)
+- QueryExecutor.java: groupIndependentQueries → IntStream.range+filter+forEach
+- UpdateQuery.java: fullTableScanWithCondition, fullTableScanAll → IntStream.range+filter+forEach
+- Table.java: deserializeIndexes (IntStream.forEach), addRow/validateRowForBulk (columns.forEach with if-else for null), rebuildMissingSecondaryIndexes (stream+filter+forEach), saveToFile (IntStream.range+filter+forEach)
+- SelectQuery.java: GROUP BY HAVING (entrySet().stream().map().filter().forEach), offset skip (IntStream.skip+limit), spillBuildPartitions/spillProbePartitions (IntStream.forEach with IOException handling), compareRows (IntStream.filter+map+findFirst), ensureJoinColumnIndexes (stream+filter+forEach), buildProjectionPlan (columns.forEach with if-else)
+- QueryParser.java: findMainFromClause (for+if-else), findOnClausePosition (IntStream.forEach+state arrays), parseInValues (stream+filter+map+collect), findClosingParen (for+if-else), scanPreservingWhitespace (IntStream.forEach+if-else), collapseWhitespaceOutsideSubqueries (IntStream.forEach+if-else)
+- SubqueryParser.java: findMatchingClosingParen (IntStream.forEach+state arrays), findOnClausePosition (IntStream.forEach+state arrays), findClauseOutsideSubquery (if-else with correct +1 advance), parseInValues (stream+filter+map+collect), validateSubQuery (IntStream.forEach+state arrays)
+Tests: quick gate (mvn test -DskipLargeTests) 42/0/0/2 BUILD SUCCESS
