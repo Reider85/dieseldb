@@ -120,32 +120,24 @@ public class SqlLexer {
         this.length = sql.length();
         this.tokens = new ArrayList<>();
 
-        while (pos < length) {
-            if (handleWhitespace()) {
-                continue;
+while (pos < length) {
+            if (!nextToken()) {
+                throw new IllegalArgumentException("Unexpected character '" + sql.charAt(pos) + "' at position " + pos);
             }
-            if (handleStringLiteral()) {
-                continue;
-            }
-            if (handleQuotedIdentifier()) {
-                continue;
-            }
-            if (handleNumber()) {
-                continue;
-            }
-            if (handleIdentifierOrKeyword()) {
-                continue;
-            }
-            if (handleOperator()) {
-                continue;
-            }
-            if (handlePunctuation()) {
-                continue;
-            }
-            throw new IllegalArgumentException("Unexpected character '" + sql.charAt(pos) + "' at position " + pos);
         }
 
         return tokens;
+    }
+
+    private boolean nextToken() {
+        if (handleWhitespace()) return true;
+        if (tokenizeLiteral()) return true;
+        if (handleQuotedIdentifier()) return true;
+        if (handleNumber()) return true;
+        if (tokenizeIdentifier()) return true;
+        if (tokenizeOperator()) return true;
+        if (handlePunctuation()) return true;
+        return false;
     }
 
     private boolean handleWhitespace() {
@@ -156,7 +148,7 @@ public class SqlLexer {
         return false;
     }
 
-    private boolean handleStringLiteral() {
+     private boolean tokenizeLiteral() {
         if (sql.charAt(pos) != '\'') {
             return false;
         }
@@ -164,24 +156,23 @@ public class SqlLexer {
         sb.append(sql.charAt(pos));
         pos++;
         boolean closed = false;
-        while (pos < length) {
-            char ch = sql.charAt(pos);
-            sb.append(ch);
-            pos++;
-            if (ch == '\'') {
-                if (pos < length && sql.charAt(pos) == '\'') {
-                    sb.append(sql.charAt(pos));
-                    pos++;
-                    continue;
-                }
-                closed = true;
-                break;
-            }
-            if (ch == '\\' && pos < length) {
-                sb.append(sql.charAt(pos));
-                pos++;
-            }
-        }
+while (pos < length) {
+             char ch = sql.charAt(pos);
+             sb.append(ch);
+             pos++;
+             if (ch == '\'') {
+                 if (pos < length && sql.charAt(pos) == '\'') {
+                     sb.append(sql.charAt(pos));
+                     pos++;
+                 } else {
+                     closed = true;
+                     break;
+                 }
+             } else if (ch == '\\' && pos < length) {
+                 sb.append(sql.charAt(pos));
+                 pos++;
+             }
+         }
         if (!closed) {
             throw new IllegalArgumentException("Unterminated string literal at position " + pos);
         }
@@ -233,7 +224,7 @@ public class SqlLexer {
         return true;
     }
 
-    private boolean handleIdentifierOrKeyword() {
+     private boolean tokenizeIdentifier() {
         if (!(Character.isLetter(sql.charAt(pos)) || sql.charAt(pos) == '_')) {
             return false;
         }
@@ -254,7 +245,7 @@ public class SqlLexer {
         return true;
     }
 
-    private boolean handleOperator() {
+     private boolean tokenizeOperator() {
         for (String op : OPERATORS) {
             if (sql.startsWith(op, pos)) {
                 tokens.add(new Token(TokenType.COMPARISON_OPERATOR, op));

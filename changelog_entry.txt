@@ -1,4 +1,3 @@
-3.0.21 Prompt 28 - S1068: remove unused private fields lastJoinEstimatedRows, lastJoinActualRows from SelectQuery.java
-
-Changes: Removed two unused private transient fields lastJoinEstimatedRows and lastJoinActualRows and their reset assignments in executeSelect(). No functional impact.
+3.0.25 Prompt 32 - S6541: refactor SqlLexer brain method into tokenizeIdentifier(), tokenizeLiteral(), tokenizeOperator()
+Changes: Renamed handleIdentifierOrKeyword() to tokenizeIdentifier(), handleStringLiteral() to tokenizeLiteral(), handleOperator() to tokenizeOperator() in SqlLexer.java per S6541 (Brain Method refactor).
 Tests: skipped per request

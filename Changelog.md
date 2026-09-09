@@ -2247,3 +2247,17 @@ Tests: skipped per request
 
 Changes: Created QueryParseException.java and IndexCorruptionException.java extending DieselException (base extends RuntimeException). Replaces generic RuntimeException throws in parse/query path for proper domain error typing.
 Tests: skipped per request
+3.0.23 Prompt 30 - S112: Replace throw new RuntimeException() with QuerySyntaxException(sql, reason) per Sonar S112
+
+Changes: Replaced remaining generic RuntimeException throws with QuerySyntaxException(sql, reason) across the codebase for proper domain error typing per Sonar S112.
+Tests: skipped per request
+
+3.0.24 Prompt 31 - S6541: DeleteQuery.execute() refactored into validateInput(), acquireLock(), performDelete(), releaseLock()
+
+Changes: Refactored the monolithic DeleteQuery.execute() method into four focused private methods (validateInput, acquireLock, performDelete, releaseLock) to reduce cognitive complexity per Sonar S6541.
+Tests: skipped per request
+
+3.0.25 Prompt 32 - S6541: refactor SqlLexer brain method into tokenizeIdentifier(), tokenizeLiteral(), tokenizeOperator()
+
+Changes: Renamed handleIdentifierOrKeyword() to tokenizeIdentifier(), handleStringLiteral() to tokenizeLiteral(), handleOperator() to tokenizeOperator() in SqlLexer.java per S6541 (Brain Method refactor).
+Tests: skipped per request
