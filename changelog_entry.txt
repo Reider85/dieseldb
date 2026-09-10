@@ -1,1 +1,1 @@
-3.0.44 Config consolidation - single root config.properties for every class via new diesel/ConfigLoader.java (removed src/main/resources duplicate)
+3.0.45 CSV storage: replace file_based with csv (extends AbstractRowStorage)

@@ -17,7 +17,8 @@ import java.util.Map;
  *
  * @see AbstractRowStorage
  * @see InMemoryRowStorage
- * @see FileBasedRowStorage
+ * @see CsvRowStorage
+ * @see TsvRowStorage
  * @see StorageFactory
  */
 public interface RowStorage {

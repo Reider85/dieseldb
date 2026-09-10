@@ -2425,3 +2425,16 @@ Changes:
 - diesel/Table.java, diesel/QueryParser.java, diesel/DatabaseServer.java, diesel/DieselDatabase.java: classpath reads (ClassLoader.getResourceAsStream) replaced with ConfigLoader - the root config.properties is now the single source of truth for the whole engine; storage.type, logging.level.diesel, transaction.isolation.level, server.socket.timeout now resolve from the CWD file (tests run with CWD = repo root, so config-driven values are picked up by the suite)
 - diesel/SelectQuery.java, diesel/BTreeIndex.java, diesel/QueryOptimizer.java, diesel/QueryProfiler.java, diesel/BloomFilter.java, diesel/PreparedStatement.java: duplicated FileInputStream/File blocks replaced with ConfigLoader - same keys, same defaults, same fail-safe fallback (behaviour unchanged)
 - src/main/resources/config.properties: deleted (duplicate bundled into target/classes; no longer read by any class)
+
+3.0.45 CSV storage: replace file_based with csv (extends AbstractRowStorage)
+
+Changes:
+- diesel/storage/CsvRowWriter.java (new): AutoCloseable comma-delimited writer per RFC 4180 - fields containing commas, double-quotes or newlines are double-quote enclosed, literal quotes doubled (""), null -> empty field, BigDecimal -> toPlainString()
+- diesel/storage/CsvRowReader.java (new): AutoCloseable streaming reader (Iterator<Map<String,Object>>), lazy line prefetch with multi-line quoted-field accumulation, readHeader()/readAll(), RFC 4180 parseLine() + type conversion back to declared column types
+- diesel/storage/CsvRowStorage.java (new): extends AbstractRowStorage; in-memory rows buffer, saveToFile() writes .csv (data) + .table (serialized column metadata), loadFromFile() streams the .csv via CsvRowReader with header/type validation
+- diesel/storage/StorageFactory.java: storage type "file_based" -> "csv", now maps to CsvRowStorage (in_memory | csv | tsv)
+- diesel/Table.java: instanceof FileBasedRowStorage -> CsvRowStorage, dataDir wiring so the CSV file resolves to the database data directory
+- diesel/storage/FileBasedRowStorage.java (deleted): replaced by CsvRowStorage (old class extended InMemoryRowStorage and only loaded from .table; new class extends AbstractRowStorage and loads from .csv like TsvRowStorage)
+- diesel/storage/RowStorage.java: javadoc @see updated to CsvRowStorage/TsvRowStorage
+- config.properties: commented documentation line "## Storage type: in_memory | csv | tsv" above storage.type = in_memory (default unchanged)
+- src/test/java/diesel/CsvStorageTest.java (new): 18 tests covering value escaping (comma/quote/newline), parseLine() quoted-field handling, writer+reader round-trips, null/empty-table handling, storage CRUD (insert/update/delete/scan), save+load round-trip, StorageFactory "csv" wiring, and Database integration with storage.type set via system property

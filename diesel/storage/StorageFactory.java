@@ -12,7 +12,7 @@ import java.util.logging.Logger;
  *
  * <ul>
  *   <li>{@code in_memory} (default) &mdash; {@link InMemoryRowStorage}</li>
- *   <li>{@code file_based} &mdash; {@link FileBasedRowStorage}</li>
+ *   <li>{@code csv} &mdash; {@link CsvRowStorage}</li>
  *   <li>{@code tsv} &mdash; {@link TsvRowStorage}</li>
  * </ul>
  */
@@ -27,8 +27,8 @@ public final class StorageFactory {
     /**
      * Creates a {@link RowStorage} of the requested type.
      *
-     * @param type        the storage type name ({@code "in_memory"} or
-     *                    {@code "file_based"})
+     * @param type        the storage type name ({@code "in_memory"},
+     *                    {@code "csv"} or {@code "tsv"})
      * @param tableName   the table name
      * @param columns     the ordered column names
      * @param columnTypes the column name to type mapping
@@ -39,9 +39,9 @@ public final class StorageFactory {
                                     List<String> columns, Map<String, Class<?>> columnTypes) {
         String resolved = (type != null && !type.isBlank()) ? type.trim().toLowerCase() : "in_memory";
         return switch (resolved) {
-            case "file_based" -> {
-                LOGGER.log(Level.FINE, "Creating FileBasedRowStorage for table {0}", tableName);
-                yield new FileBasedRowStorage(tableName, columns, columnTypes);
+            case "csv" -> {
+                LOGGER.log(Level.FINE, "Creating CsvRowStorage for table {0}", tableName);
+                yield new CsvRowStorage(tableName, columns, columnTypes);
             }
             case "tsv" -> {
                 LOGGER.log(Level.FINE, "Creating TsvRowStorage for table {0}", tableName);

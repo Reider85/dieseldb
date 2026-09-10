@@ -48,7 +48,7 @@ import java.util.zip.CRC32;
 import java.util.stream.IntStream;
 import diesel.storage.RowStorage;
 import diesel.storage.InMemoryRowStorage;
-import diesel.storage.FileBasedRowStorage;
+import diesel.storage.CsvRowStorage;
 import diesel.storage.StorageFactory;
 
 /**
@@ -262,9 +262,9 @@ class Table implements Serializable {
                 System.getProperty("diesel.storage.type",
                         getConfigProperty("storage.type", "in_memory")),
                 name, columns, columnTypes);
-        if (this.storage instanceof FileBasedRowStorage fbrs) {
+        if (this.storage instanceof CsvRowStorage crs) {
             String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
-            fbrs.setDataDir(dir);
+            crs.setDataDir(dir);
         }
         if (this.storage instanceof diesel.storage.TsvRowStorage tvs) {
             String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
