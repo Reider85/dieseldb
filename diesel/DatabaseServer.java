@@ -672,6 +672,8 @@ public class DatabaseServer {
                 sendSerializedResult(cursorId);
                 LOGGER.log(Level.INFO, "Opened cursor {0} for query: {1} (fetchSize={2})",
                         new Object[]{cursorId, ocm.getQuery(), fetchSize});
+            } catch (OutOfMemoryError e) {
+                handleOutOfMemory(ocm.getQuery(), e);
             } catch (Exception e) {
                 sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
                 LOGGER.log(Level.SEVERE, "Open cursor failed: {0}, Error: {1}",
@@ -696,6 +698,8 @@ public class DatabaseServer {
                 sendSerializedResult(batch);
                 LOGGER.log(Level.FINE, "Fetched {0} rows from cursor {1}",
                         new Object[]{batch.size(), fcm.getCursorId()});
+            } catch (OutOfMemoryError e) {
+                handleOutOfMemory("cursor fetch: " + fcm.getCursorId(), e);
             } catch (Exception e) {
                 sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
                 LOGGER.log(Level.SEVERE, "Fetch cursor failed: {0}, Error: {1}",

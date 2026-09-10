@@ -2349,3 +2349,9 @@ Tests: 42 run, 0 failures, 0 errors.
 Changes: Two root-cause fixes in SubqueryParser.parseTableAndJoins:
 - Bug A (600 rows): tableName was reassigned to last join table in the loop but TableJoins.tableName was returned from that mutated variable; derived table alias was lost and the real JOIN table overwrote the virtual table in executeSelect's tables map. Fix: capture mainTableName before the join loop (mirroring QueryParser line 1608) and return it.
 - Bug B (unbalanced parentheses): naive joinPattern regex split on INNER JOIN inside parenthesized derived subqueries, breaking parentheses balance. Fix: replace with paren/quote-aware splitTopLevelJoinParts() that skips JOIN keywords at paren depth > 0.
+
+3.0.36 Prompt 13 - Catch OutOfMemoryError in cursor operations (handleOpenCursor, handleFetchCursor)
+
+Changes: Added catch (OutOfMemoryError) to handleOpenCursor() and handleFetchCursor() in DatabaseServer.ClientHandler. Previously OOM was only caught in executeQueryMessage() and handleExecutePrepared(), leaving cursor operations unprotected. Now all query execution paths log context (query text, rows produced, peak memory) and send the friendly "Error: Query exceeded memory limit" message to the client.
+Files: diesel/DatabaseServer.java (lines 675, 701)
+Tests: 42 run, 0 failures, 0 errors.

@@ -11,7 +11,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Handler;
@@ -137,6 +139,100 @@ public class OomHandlingTest {
                     "the server must log the row count and peak memory context of the OOM query");
         } finally {
             logger.removeHandler(handler);
+        }
+    }
+
+    /** Database that throws OutOfMemoryError on executeCursor (cursor open). */
+    static class OomCursorOpenDatabase extends Database {
+        @Override
+        public Cursor executeCursor(String query, int fetchSize, UUID transactionId) {
+            throw new OutOfMemoryError("Java heap space");
+        }
+    }
+
+    @Test
+    void serverRespondsWithOomMessageOnCursorOpen() throws Exception {
+        int port = freePort();
+        DatabaseServer server = new DatabaseServer(port, 5000, new OomCursorOpenDatabase());
+        Thread serverThread = new Thread(server::start, "oom-cursor-open-test-server");
+        serverThread.start();
+        try {
+            waitForServer(port);
+            try (Socket client = new Socket("localhost", port)) {
+                client.setSoTimeout(10000);
+                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
+                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
+                out.writeObject(new OpenCursorMessage("SELECT * FROM USERS", 10, null));
+                out.flush();
+                Object response = in.readObject();
+                assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", response,
+                        "the client must receive the friendly OOM message on cursor open");
+            }
+        } finally {
+            server.stop();
+            serverThread.interrupt();
+        }
+    }
+
+    /** Database whose cursor fetch() throws OutOfMemoryError. */
+    static class OomCursorFetchDatabase extends Database {
+        @Override
+        public Cursor executeCursor(String query, int fetchSize, UUID transactionId) {
+            Iterator<Map<String, Object>> oomIterator = new Iterator<>() {
+                @Override
+                public boolean hasNext() {
+                    return true;
+                }
+
+                @Override
+                public Map<String, Object> next() {
+                    throw new OutOfMemoryError("Java heap space");
+                }
+            };
+            return new Cursor(UUID.randomUUID(), query, fetchSize, oomIterator);
+        }
+    }
+
+    @Test
+    void serverRespondsWithOomMessageOnCursorFetch() throws Exception {
+        int port = freePort();
+        DatabaseServer server = new DatabaseServer(port, 5000, new OomCursorFetchDatabase());
+        Thread serverThread = new Thread(server::start, "oom-cursor-fetch-test-server");
+        serverThread.start();
+        try {
+            waitForServer(port);
+            try (Socket client = new Socket("localhost", port)) {
+                client.setSoTimeout(10000);
+                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
+                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
+                out.writeObject(new OpenCursorMessage("SELECT * FROM USERS", 10, null));
+                out.flush();
+
+                // Read cursor ID: marker byte + length + serialized object
+                byte marker = in.readByte();
+                int len = in.readInt();
+                byte[] data = in.readNBytes(len);
+                Object cursorIdResponse = deserializeBytes(data);
+                assertTrue(cursorIdResponse instanceof String, "server should return a cursor id string");
+                UUID cursorId = UUID.fromString((String) cursorIdResponse);
+
+                out.writeObject(new FetchCursorMessage(cursorId, null));
+                out.flush();
+
+                // OOM is caught and sent via writeObject (not sendSerializedResult)
+                Object fetchResponse = in.readObject();
+                assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", fetchResponse,
+                        "the client must receive the friendly OOM message on cursor fetch");
+            }
+        } finally {
+            server.stop();
+            serverThread.interrupt();
+        }
+    }
+
+    private static Object deserializeBytes(byte[] data) throws Exception {
+        try (ObjectInputStream ois = new ObjectInputStream(new java.io.ByteArrayInputStream(data))) {
+            return ois.readObject();
         }
     }
 
