@@ -2416,5 +2416,4 @@ Changes:
 - config.properties + src/main/resources/config.properties: commented documentation line "## Storage type: in_memory | file_based | tsv" above storage.type = in_memory (default unchanged)
 - src/test/java/diesel/TsvStorageTest.java (new): 16 tests covering escaping/unescaping round-trips (tab/newline/backslash), header reading, empty-file load, null handling, storage CRUD (insert/update/delete/scan), save+load round-trip, StorageFactory "tsv" wiring, and Database integration with storage.type set via system property
 
-Tests: TsvStorageTest 16 run/0 failures/0 errors/0 skipped BUILD SUCCESS.
-NOTE: default quick suite still reports 100 run/20 errors/3 skipped - traced to a pre-existing Prompt 21 regression (clustered-index tables write to Table.rows via insertIntoClusteredPosition while getRows()/SELECT read storage.scan(), returning 0 rows for any storage type including in_memory); identical 20 errors verified on clean HEAD efd4a87 with prompt 22 changes stashed, so they are NOT introduced by this prompt. Full acceptance gate (make timing) cannot go green until that Prompt 21 regression is fixed.
+3.0.43 Changelog tidy: remove test-result notes (Tests:/NOTE:) from the 3.0.42 entry so the changelog keeps the no-test-info convention of 3.0.41.
