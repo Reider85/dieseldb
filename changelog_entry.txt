@@ -1,12 +1,13 @@
-3.0.40 Prompt 19 - Performance regression tests (quality gate): new PerformanceRegressionTest measures 10 key queries (1 warmup + 5 runs, median), compares against tracked baseline analytics/regression_baseline.md (±20%, ignores sub-11ms micro-queries), fails build with a report on >20% degradation, appends history to analytics/performance_history.csv, supports -Ddiesel.updateBaseline=true to re-baseline; CI workflow updated to JDK 21 (pom requires 21) with a dedicated performance regression step; pom surefire includes updated.
+3.0.42 Prompt 22 - TSV storage basic implementation (TSV хранилище - базовая реализация)
 
 Changes:
-- src/test/java/diesel/PerformanceRegressionTest.java (new): KEY_QUERIES (group|test|sql), median-of-5 measurement, baseline load/seed/update, AssertionError regression report, performance_history.csv append
-- analytics/regression_baseline.md (new): tracked baseline for 10 key queries (seeded from timing/timing29.md)
-- analytics/performance_history.csv (new): performance history log (timestamp,group,test,query,baseline_ms,measured_ms,ratio,result)
-- pom.xml: PerformanceRegressionTest added to surefire includes (default and -Pci)
-- .github/workflows/ci.yml: JDK 17 -> 21, added "Performance regression check" step (mvn -Pci -Dtest=PerformanceRegressionTest test) and performance-history artifact upload
+- diesel/storage/TsvRowWriter.java (new): AutoCloseable tab-delimited writer with escapeValue() (\t -> \\t, \n -> \\n, \r -> \\r, \\ -> \\\\, null -> empty string, BigDecimal -> toPlainString())
+- diesel/storage/TsvRowReader.java (new): AutoCloseable streaming reader (Iterator<Map<String,Object>>), lazy line prefetch, readHeader()/readAll(), unescape() + type conversion back to declared column types
+- diesel/storage/TsvRowStorage.java (new): extends AbstractRowStorage; in-memory rows buffer, saveToFile() writes .tsv (data) + .table (serialized column metadata), loadFromFile() streams the .tsv via TsvRowReader with header/type validation
+- diesel/storage/StorageFactory.java: StorageFactory.createStorage() now maps storage type "tsv" to TsvRowStorage (in_memory | file_based | tsv)
+- diesel/Table.java: constructors set dataDir on TsvRowStorage (same wiring as FileBasedRowStorage) so the TSV file resolves to the database data directory
+- config.properties + src/main/resources/config.properties: commented documentation line "## Storage type: in_memory | file_based | tsv" above storage.type = in_memory (default unchanged)
+- src/test/java/diesel/TsvStorageTest.java (new): 16 tests covering escaping/unescaping round-trips (tab/newline/backslash), header reading, empty-file load, null handling, storage CRUD (insert/update/delete/scan), save+load round-trip, StorageFactory "tsv" wiring, and Database integration with storage.type set via system property
 
-Tests: quick gate 100 run/0 failures/0 errors/3 skipped (large excluded) BUILD SUCCESS; full gate (-Ddiesel.largeTests=true, -Xmx4g) 100 run/0 failures/0 errors/0 skipped BUILD SUCCESS; compare-timing.sh exit 0 (0 regressions, 29 unchanged, 110 improvements); PerformanceRegressionTest green on both gates (all key queries faster than baseline).
-Timing: full suite 100/0/0/0; regression check 10/10 OK, no degradation > 1.2x.
-Profile check: not run - make check-profile target and ProfileMain.java are absent from this environment.
+Tests: TsvStorageTest 16 run/0 failures/0 errors/0 skipped BUILD SUCCESS.
+NOTE: default quick suite still reports 100 run/20 errors/3 skipped - traced to a pre-existing Prompt 21 regression (clustered-index tables write to Table.rows via insertIntoClusteredPosition while getRows()/SELECT read storage.scan(), returning 0 rows for any storage type including in_memory); identical 20 errors verified on clean HEAD efd4a87 with prompt 22 changes stashed, so they are NOT introduced by this prompt. Full acceptance gate (make timing) cannot go green until that Prompt 21 regression is fixed.

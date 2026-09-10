@@ -13,6 +13,7 @@ import java.util.logging.Logger;
  * <ul>
  *   <li>{@code in_memory} (default) &mdash; {@link InMemoryRowStorage}</li>
  *   <li>{@code file_based} &mdash; {@link FileBasedRowStorage}</li>
+ *   <li>{@code tsv} &mdash; {@link TsvRowStorage}</li>
  * </ul>
  */
 public final class StorageFactory {
@@ -41,6 +42,10 @@ public final class StorageFactory {
             case "file_based" -> {
                 LOGGER.log(Level.FINE, "Creating FileBasedRowStorage for table {0}", tableName);
                 yield new FileBasedRowStorage(tableName, columns, columnTypes);
+            }
+            case "tsv" -> {
+                LOGGER.log(Level.FINE, "Creating TsvRowStorage for table {0}", tableName);
+                yield new TsvRowStorage(tableName, columns, columnTypes);
             }
             default -> {
                 LOGGER.log(Level.FINE, "Creating InMemoryRowStorage for table {0}", tableName);

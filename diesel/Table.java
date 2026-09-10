@@ -266,6 +266,10 @@ class Table implements Serializable {
             String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
             fbrs.setDataDir(dir);
         }
+        if (this.storage instanceof diesel.storage.TsvRowStorage tvs) {
+            String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
+            tvs.setDataDir(dir);
+        }
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.sequences = sequences != null ? new ConcurrentHashMap<>(sequences) : new ConcurrentHashMap<>();
