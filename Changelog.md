@@ -2391,3 +2391,16 @@ Changes:
 Tests: quick gate 100 run/0 failures/0 errors/3 skipped (large excluded) BUILD SUCCESS; full gate (-Ddiesel.largeTests=true, -Xmx4g) 100 run/0 failures/0 errors/0 skipped BUILD SUCCESS; compare-timing.sh exit 0 (0 regressions, 29 unchanged, 110 improvements); PerformanceRegressionTest green on both gates (all key queries faster than baseline).
 Timing: full suite 100/0/0/0; regression check 10/10 OK, no degradation > 1.2x.
 Profile check: not run - make check-profile target and ProfileMain.java are absent from this environment.
+
+3.0.41 Prompt 21 - RowBased storage refactoring: unified RowStorage interface (CRITICAL architecture)
+
+Changes:
+- diesel/storage/RowStorage.java (new): interface with open(), close(), scan(), insert(), update(), delete(), saveToFile(), loadFromFile()
+- diesel/storage/AbstractRowStorage.java (new): abstract base class with columns, columnTypes, tableName, resolveFilePath()
+- diesel/storage/InMemoryRowStorage.java (new): pure in-memory implementation (List<Map<String,Object>>)
+- diesel/storage/FileBasedRowStorage.java (new): extends InMemoryRowStorage with CSV + .table serialisation persistence
+- diesel/storage/StorageFactory.java (new): factory creating RowStorage by type name (in_memory | file_based)
+- diesel/Table.java: added transient RowStorage storage field, initialized via StorageFactory in constructors and readObject; getRows() delegates to storage.scan(); addRow insertAtEnd() delegates to storage.insert(); removeRow() delegates to storage.delete(); saveToFile() delegates to storage.saveToFile(); added getStorage() accessor and getConfigProperty() helper
+- config.properties + src/main/resources/config.properties: added storage.type = in_memory
+
+BUILD SUCCESS (80 source files compiled, no test run per request).

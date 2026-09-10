@@ -46,6 +46,10 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 import java.util.zip.CRC32;
 import java.util.stream.IntStream;
+import diesel.storage.RowStorage;
+import diesel.storage.InMemoryRowStorage;
+import diesel.storage.FileBasedRowStorage;
+import diesel.storage.StorageFactory;
 
 /**
  * Contract implemented by every index (secondary and clustered) that maps
@@ -141,6 +145,7 @@ class Table implements Serializable {
     private final Map<String, Class<?>> columnTypes;
     private final String primaryKeyColumn;
     private final List<Map<String, Object>> rows;
+    private transient RowStorage storage;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
     private transient Map<String, Index> indexes;
     private transient Map<String, Sequence> sequences;
@@ -253,6 +258,14 @@ class Table implements Serializable {
         this.columnTypes.putAll(columnTypes);
         this.primaryKeyColumn = primaryKeyColumn;
         this.rows = new ArrayList<>();
+        this.storage = StorageFactory.create(
+                System.getProperty("diesel.storage.type",
+                        getConfigProperty("storage.type", "in_memory")),
+                name, columns, columnTypes);
+        if (this.storage instanceof FileBasedRowStorage fbrs) {
+            String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
+            fbrs.setDataDir(dir);
+        }
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.sequences = sequences != null ? new ConcurrentHashMap<>(sequences) : new ConcurrentHashMap<>();
@@ -311,6 +324,7 @@ class Table implements Serializable {
         this.columnTypes = columnTypes;
         this.primaryKeyColumn = primaryKeyColumn;
         this.rows = new ArrayList<>();
+        this.storage = new InMemoryRowStorage(name, columns, columnTypes);
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.sequences = new ConcurrentHashMap<>();
@@ -1136,6 +1150,9 @@ class Table implements Serializable {
     public List<Map<String, Object>> getRows() {
         tableLock.readLock().lock();
         try {
+            if (storage != null) {
+                return storage.scan();
+            }
             return new ArrayList<>(rows);
         } finally {
             tableLock.readLock().unlock();
@@ -1196,7 +1213,11 @@ class Table implements Serializable {
         if (rowIndex < 0 || rowIndex >= rows.size()) {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
-        rows.remove(rowIndex);
+        if (storage != null) {
+            storage.delete(rowIndex);
+        } else {
+            rows.remove(rowIndex);
+        }
         // Row indexes shift down by one, so the locks of this and all following rows are stale.
         for (int i = rowIndex; i <= rows.size(); i++) {
             rowLocks.remove(i);
@@ -1331,6 +1352,10 @@ class Table implements Serializable {
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.tableLock = new ReentrantReadWriteLock();
+        this.storage = StorageFactory.create(
+                System.getProperty("diesel.storage.type",
+                        getConfigProperty("storage.type", "in_memory")),
+                name, columns, columnTypes);
         // Backward compat: format v1 wrote hasClusteredIndex/clusteredIndexColumn twice
         // (once by defaultWriteObject, once explicitly). v2 removed the redundant write.
         if (formatVersion < 2) {
@@ -1555,7 +1580,11 @@ class Table implements Serializable {
         ReentrantReadWriteLock lock = getRowLock(rowIndex);
         lock.writeLock().lock();
         try {
-            rows.add(row);
+            if (storage != null) {
+                storage.insert(row);
+            } else {
+                rows.add(row);
+            }
             insertRowIntoIndexes(row, rowIndex);
         } finally {
             lock.writeLock().unlock();
@@ -2055,6 +2084,22 @@ class Table implements Serializable {
         return dir + File.separator + tableName + extension;
     }
 
+    private static String getConfigProperty(String key, String defaultValue) {
+        try (var input = Table.class.getClassLoader().getResourceAsStream("config.properties")) {
+            if (input == null) return defaultValue;
+            java.util.Properties props = new java.util.Properties();
+            props.load(input);
+            return props.getProperty(key, defaultValue);
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+
+    /** Returns the underlying {@link RowStorage} used by this table. */
+    public RowStorage getStorage() {
+        return storage;
+    }
+
     /**
      * Writes the table contents (header plus rows) to a CSV file in the data
      * directory. Each row is read under its lock while writing.
@@ -2063,6 +2108,15 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
+        if (storage != null) {
+            tableLock.readLock().lock();
+            try {
+                storage.saveToFile(tableName);
+            } finally {
+                tableLock.readLock().unlock();
+            }
+            return;
+        }
         tableLock.readLock().lock();
         try {
             String fileName = resolveFilePath(tableName, ".csv");
