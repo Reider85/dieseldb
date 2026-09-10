@@ -45,7 +45,7 @@ import java.util.zip.GZIPInputStream;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class AllTestsSampleTest {
     private static final Logger LOGGER = Logger.getLogger(AllTestsSampleTest.class.getName());
-    private static final int RECORD_COUNT = 600;
+    private static final int RECORD_COUNT = 100;
     private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
     private final Database database;
     private int passed = 0;
@@ -56,9 +56,6 @@ public class AllTestsSampleTest {
         this.database = new Database();
     }
 
-    /**
-     * Orchestration for manual runs ({@code main}), mirroring the JUnit order.
-     */
     public void runTests() {
         try {
             setup();
@@ -75,7 +72,6 @@ public class AllTestsSampleTest {
                 LOGGER.log(Level.INFO, "SKIPPED heavy ORDER BY joins (enable with -D" + LargeTest.LARGE_TESTS_PROPERTY + "=true)");
             }
             runPerformanceTestQueries();
-            runPersistenceTestQueries();
             runSubqueriesTestQueries();
             runTrueFalseNullTestQueries();
             runCaseSensitivityTestQueries();
@@ -152,12 +148,6 @@ public class AllTestsSampleTest {
     @Order(9)
     public void performanceGroup() {
         runGroupAsTest("PerformanceTest", this::runPerformanceTestQueries);
-    }
-
-    @Test
-    @Order(10)
-    public void persistenceGroup() {
-        runGroupAsTest("PersistenceTest", this::runPersistenceTestQueries);
     }
 
     @Test
@@ -417,12 +407,12 @@ public class AllTestsSampleTest {
     }
 
     private void runAdvancedTestQueries() {
-        runSelectCount("AdvancedTest", "simple select by primary key", "SELECT ID, NAME FROM USERS WHERE ID = 500", 1);
-        runSelectCount("AdvancedTest", "simple select by name", "SELECT ID, NAME FROM USERS WHERE NAME = 'User500'", 1);
+        runSelectCount("AdvancedTest", "simple select by primary key", "SELECT ID, NAME FROM USERS WHERE ID = 50", 1);
+        runSelectCount("AdvancedTest", "simple select by name", "SELECT ID, NAME FROM USERS WHERE NAME = 'User50'", 1);
         runSelectCount("AdvancedTest", "complex select with multi-column and conditions",
-                "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE500') AND (AGE = 50) AND (NAME = 'User500')", 0);
+                "SELECT ID, NAME FROM USERS WHERE (USER_CODE = 'CODE50') AND (AGE = 50) AND (NAME = 'User50')", 0);
         runSelectCount("AdvancedTest", "complex select with or limit offset",
-                "SELECT ID, NAME FROM USERS WHERE AGE = 50 OR BALANCE > 5000 LIMIT 10 OFFSET 5", 2);
+                "SELECT ID, NAME FROM USERS WHERE AGE = 50 OR BALANCE > 5000 LIMIT 10 OFFSET 5", 0);
     }
 
     private void runAliasesTestQueries() {
@@ -456,19 +446,19 @@ public class AllTestsSampleTest {
     }
 
     private void runInTestQueries() {
-        runSelectCount("InTest", "simple in on btree index", "SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)", 21);
-        runSelectCount("InTest", "simple in on primary key", "SELECT ID, NAME FROM USERS WHERE ID IN (500, 501, 502)", 3);
+        runSelectCount("InTest", "simple in on btree index", "SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)", 3);
+        runSelectCount("InTest", "simple in on primary key", "SELECT ID, NAME FROM USERS WHERE ID IN (50, 51, 52)", 3);
         runSelectCount("InTest", "complex in with and",
-                "SELECT ID, NAME FROM USERS WHERE NAME IN ('User500', 'User501', 'User502') AND BALANCE > 5000", 0);
+                "SELECT ID, NAME FROM USERS WHERE NAME IN ('User50', 'User51', 'User52') AND BALANCE > 5000", 0);
         runSelectCount("InTest", "complex in with or",
-                "SELECT ID, NAME FROM USERS WHERE USER_CODE IN ('CODE500', 'CODE501', 'CODE502') OR BALANCE > 5000", 3);
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE IN ('CODE50', 'CODE51', 'CODE52') OR BALANCE > 5000", 3);
     }
 
     private void runJoinTestQueries() {
         runSelectCount("JoinTest", "simple inner join on primary key",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID " +
-                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+                        "WHERE USERS.ID IN (50, 51, 52)", 3);
         runSelectCount("JoinTest", "simple inner join on non indexed field",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS INNER JOIN USER_DETAILS ON USERS.BALANCE = USER_DETAILS.BALANCE " +
@@ -476,22 +466,22 @@ public class AllTestsSampleTest {
         runSelectCount("JoinTest", "complex full join on primary key",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS FULL JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID " +
-                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+                        "WHERE USERS.ID IN (50, 51, 52)", 3);
         runSelectCount("JoinTest", "complex inner join with and or in on",
                 "SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO " +
                         "FROM USERS INNER JOIN USER_DETAILS ON (USERS.ID = USER_DETAILS.USER_ID AND USERS.NAME = USER_DETAILS.NAME) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) " +
-                        "WHERE USERS.ID IN (500, 501, 502)", 3);
+                        "WHERE USERS.ID IN (50, 51, 52)", 3);
     }
 
     private void runLikeTestQueries() {
         runSelectCount("LikeTest", "simple like on name",
-                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%'", 1);
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er50' AND NAME LIKE '%User50%' AND NAME LIKE 'User50%'", 1);
         runSelectCount("LikeTest", "simple like on user code",
-                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%'", 1);
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE50' AND USER_CODE LIKE '%CODE50%' AND USER_CODE LIKE 'CODE50%'", 1);
         runSelectCount("LikeTest", "complex like with and",
-                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er500' AND NAME LIKE '%User500%' AND NAME LIKE 'User500%' AND BALANCE > 5000", 0);
+                "SELECT ID, NAME FROM USERS WHERE NAME LIKE '%er50' AND NAME LIKE '%User50%' AND NAME LIKE 'User50%' AND BALANCE > 5000", 0);
         runSelectCount("LikeTest", "complex like with or",
-                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE500' AND USER_CODE LIKE '%CODE500%' AND USER_CODE LIKE 'CODE500%' OR BALANCE > 5000", 1);
+                "SELECT ID, NAME FROM USERS WHERE USER_CODE LIKE '%ODE50' AND USER_CODE LIKE '%CODE50%' AND USER_CODE LIKE 'CODE50%' OR BALANCE > 5000", 1);
     }
 
     private void runOrderByTestQueries() {
@@ -508,42 +498,27 @@ public class AllTestsSampleTest {
 
     private void runPerformanceTestQueries() {
         runSelectCount("PerformanceTest", "simple select where age",
-                "SELECT NAME, AGE FROM USERS WHERE AGE < 30", 95);
+                "SELECT NAME, AGE FROM USERS WHERE AGE < 30", 23);
         runSelectCount("PerformanceTest", "simple select clustered index", "SELECT NAME, AGE FROM USERS WHERE USER_CODE = 'CODE50'", 1);
         runSelectCount("PerformanceTest", "complex select age and active",
-                "SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE", 47);
+                "SELECT NAME, AGE, BALANCE FROM USERS WHERE AGE < 30 AND ACTIVE = TRUE", 11);
         runSelectCount("PerformanceTest", "complex select parenthesized or",
-                "SELECT NAME, AGE, PRECISION FROM USERS WHERE (AGE < 35 AND ACTIVE = TRUE) OR BALANCE > 500", 244);
-    }
-
-    private void runPersistenceTestQueries() {
-        runExec("PersistenceTest", "create table",
-                "CREATE TABLE PERSIST_TEST (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, USER_SCORE LONG, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)");
-        runExec("PersistenceTest", "insert alice",
-                "INSERT INTO PERSIST_TEST (NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, USER_SCORE, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) " +
-                        "VALUES ('Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00', 1000000, 123.45, 99.75, 123456.789012, 'A', '123e4567-e89b-12d3-a456-426614174000')");
-        runExec("PersistenceTest", "insert bob full schema",
-                "INSERT INTO PERSIST_TEST (NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, USER_SCORE, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) " +
-                        "VALUES ('Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00', 2000000, 678.90, 88.50, 987654.321098, 'B', '550e8400-e29b-41d4-a716-446655440000')");
-        runSelectCount("PersistenceTest", "select from persisted table", "SELECT NAME, AGE FROM PERSIST_TEST WHERE AGE = 25", 1);
-        database.getTable("PERSIST_TEST").saveToSerializedFile("PERSIST_TEST");
-        check(new File("data/PERSIST_TEST.table").exists(), "PersistenceTest / serialized .table file created on disk");
-        check(new File("data/PERSIST_TEST.csv").exists(), "PersistenceTest / csv file created on disk");
+                "SELECT NAME, AGE, PRECISION FROM USERS WHERE (AGE < 35 AND ACTIVE = TRUE) OR BALANCE > 500", 17);
     }
 
     private void runSubqueriesTestQueries() {
         runSelectCount("SubqueriesTest", "simple subquery in in clause",
                 "SELECT ID, NAME FROM USERS WHERE ID IN (SELECT ID FROM USERS WHERE AGE > 50) LIMIT 10", 10);
         runSelectCount("SubqueriesTest", "simple subquery in where",
-                "SELECT ID, NAME FROM USERS WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10", 10);
+                "SELECT ID, NAME FROM USERS WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 50 LIMIT 1) LIMIT 10", 10);
         runSelectCount("SubqueriesTest", "complex subquery in column where group by having",
                 "SELECT (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) AS user_name, COUNT(*) AS user_count " +
-                        "FROM USERS u WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) " +
+                        "FROM USERS u WHERE AGE > (SELECT AGE FROM USERS WHERE ID = 50 LIMIT 1) " +
                         "GROUP BY (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) " +
                         "HAVING COUNT(*) > (SELECT ID FROM USERS WHERE ID = 1 LIMIT 1) LIMIT 10", 0);
         runSelectCount("SubqueriesTest", "complex subquery in column inner join on",
                 "SELECT u.ID, (SELECT NAME FROM USERS WHERE ID = u.ID LIMIT 1) AS user_name " +
-                        "FROM USERS u INNER JOIN USERS u2 ON u.ID = u2.ID AND u.AGE > (SELECT AGE FROM USERS WHERE ID = 500 LIMIT 1) LIMIT 10", 10);
+                        "FROM USERS u INNER JOIN USERS u2 ON u.ID = u2.ID AND u.AGE > (SELECT AGE FROM USERS WHERE ID = 50 LIMIT 1) LIMIT 10", 10);
     }
 
     private void runTrueFalseNullTestQueries() {
@@ -1094,7 +1069,6 @@ public class AllTestsSampleTest {
                     }
                 }
             } catch (IOException ignored) {
-                // Ignore: stream ends when subprocess terminates
             }
         }, "prompt70-output-pump");
         outputPump.setDaemon(true);

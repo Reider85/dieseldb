@@ -7,7 +7,7 @@ JAVA_HOME ?= /usr/lib/jvm/java-21-openjdk-amd64
 MVN ?= mvn
 MVN_PATH ?= $(shell which mvn)
 
-.PHONY: all build test large-test timing profile clean help check-timing
+.PHONY: all build test quick-test large-test timing profile clean help check-timing
 
 # Default target
 all: build
@@ -21,6 +21,11 @@ build:
 test:
 	@echo "Running unit tests..."
 	$(MVN) -Ptest test
+
+## Run quick tests (all small test classes, no @LargeTest, -Xmx512m)
+quick-test:
+	@echo "Running quick tests (all small classes, no @LargeTest)..."
+	$(MVN) test -DskipLargeTests
 
 ## Run large tests (requires more heap)
 large-test:

@@ -67,6 +67,17 @@
                     <includes>
                         <include>**/AllTestsSampleTest.java</include>
                         <include>**/QuantitativeTest.java</include>
+                        <include>**/AbstractDieselTest.java</include>
+                        <include>**/AdvancedQueryTest.java</include>
+                        <include>**/AliasesQueryTest.java</include>
+                        <include>**/GroupByQueryTest.java</include>
+                        <include>**/InQueryTest.java</include>
+                        <include>**/JoinQueryTest.java</include>
+                        <include>**/LikeQueryTest.java</include>
+                        <include>**/OrderByQueryTest.java</include>
+                        <include>**/PerformanceQueryTest.java</include>
+                        <include>**/SubqueryQueryTest.java</include>
+                        <include>**/NullSafetyQueryTest.java</include>
                     </includes>
                     <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
@@ -113,6 +124,17 @@
                             <includes>
                                 <include>**/AllTestsSampleTest.java</include>
                                 <include>**/QuantitativeTest.java</include>
+                                <include>**/AbstractDieselTest.java</include>
+                                <include>**/AdvancedQueryTest.java</include>
+                                <include>**/AliasesQueryTest.java</include>
+                                <include>**/GroupByQueryTest.java</include>
+                                <include>**/InQueryTest.java</include>
+                                <include>**/JoinQueryTest.java</include>
+                                <include>**/LikeQueryTest.java</include>
+                                <include>**/OrderByQueryTest.java</include>
+                                <include>**/PerformanceQueryTest.java</include>
+                                <include>**/SubqueryQueryTest.java</include>
+                                <include>**/NullSafetyQueryTest.java</include>
                             </includes>
                             <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
