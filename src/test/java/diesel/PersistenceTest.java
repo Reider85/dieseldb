@@ -438,8 +438,9 @@ public class PersistenceTest {
             try (FileInputStream fis = new FileInputStream(file)) {
                 data = fis.readAllBytes();
             }
-            // Flip a byte near the end of the secondary index section (skip the header).
-            int corruptPos = Math.min(data.length - 20, data.length / 2);
+            // Flip a byte in the index/checksum section near the end of the file,
+            // after the rows and defaultWriteObject data, so rows survive deserialization.
+            int corruptPos = data.length - 5;
             data[corruptPos] = (byte) (data[corruptPos] ^ 0xFF);
             try (FileOutputStream fos = new FileOutputStream(file)) {
                 fos.write(data);

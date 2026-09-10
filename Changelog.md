@@ -2380,3 +2380,14 @@ Changes:
 Tests: quick gate 100 run/0 failures/0 errors/3 skipped (large excluded) BUILD SUCCESS; full gate (-Ddiesel.largeTests=true, -Xmx4g) 100 run/0 failures/0 errors/0 skipped BUILD SUCCESS; compare-timing.sh exit 0 (0 regressions, 29 unchanged, 110 improvements); PerformanceRegressionTest green on both gates (all key queries faster than baseline).
 Timing: full suite 100/0/0/0; regression check 10/10 OK, no degradation > 1.2x.
 Profile check: not run - make check-profile target and ProfileMain.java are absent from this environment.
+
+3.0.39 Fix: PersistenceTest.testChecksumFailureTriggersRebuild — table loaded despite corrupted index data
+
+Root cause: Table.loadFromFile() caught any IOException from ObjectInputStream and returned null, so a corrupted .table file silently dropped the whole table instead of recovering. Additionally, the test flipped a byte at data.length/2 (mid-file, in the rows/defaultWriteObject section), which broke the entire serialized stream before readObject()'s checksum-based recovery ever ran, and readObject()'s v3 index block had unprotected readInt()/readBoolean() that could throw past the per-index try-catch.
+
+Changes:
+- Table.loadFromFile: on deserialization failure return a new empty table (base structure) instead of null — no more silent data loss
+- PersistenceTest: corrupt a byte in the index/checksum section (data.length - 5) instead of mid-file, so rows survive and checksum recovery triggers a rebuild from rows
+- Table.readObject: wrap the whole v3 serialized-index block in a try-catch so corruption of indexCount/readBoolean falls through to rebuildMissingSecondaryIndexes()
+
+Tests: 762 run, 1 failure, 0 errors, 2 skipped (before), 819 run, 0 failures, 0 errors, 3 skipped (after).

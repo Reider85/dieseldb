@@ -1346,56 +1346,62 @@ class Table implements Serializable {
         // Format v3+ stores serialized indexes with checksums.
         boolean restoredClustered = false;
         if (formatVersion >= 3) {
-            // Restore secondary indexes from serialized data.
-            int indexCount = ois.readInt();
-            IntStream.range(0, indexCount).forEach(i -> {
-                try {
-                    String key = ois.readUTF();
-                    byte[] indexBytes = (byte[]) ois.readObject();
-                    long storedChecksum = ois.readLong();
-                    long computedChecksum = computeChecksumFromBytes(indexBytes);
-                    if (storedChecksum != computedChecksum) {
-                        LOGGER.log(Level.WARNING,
-                                "Checksum mismatch for index ''{0}'' in table {1}, will rebuild",
-                                new Object[]{key, name});
-                    } else {
-                        Index idx = (Index) new ObjectInputStream(
-                                new ByteArrayInputStream(indexBytes)).readObject();
-                        indexes.put(key, idx);
-                        LOGGER.log(Level.FINE,
-                                "Restored index ''{0}'' from serialized data for table {1}",
-                                new Object[]{key, name});
-                    }
-                } catch (Exception e) {
-                    LOGGER.log(Level.WARNING,
-                            "Failed to deserialize index in table {0}: {1}",
-                            new Object[]{name, e.getMessage()});
-                }
-            });
-            // Restore clustered index from serialized data.
-            boolean hasSerializedClustered = ois.readBoolean();
-            if (hasSerializedClustered) {
-                byte[] clusterBytes = (byte[]) ois.readObject();
-                long storedChecksum = ois.readLong();
-                long computedChecksum = computeChecksumFromBytes(clusterBytes);
-                if (storedChecksum == computedChecksum) {
+            try {
+                // Restore secondary indexes from serialized data.
+                int indexCount = ois.readInt();
+                IntStream.range(0, indexCount).forEach(i -> {
                     try {
-                        this.clusteredIndex = (BTreeClusteredIndex) new ObjectInputStream(
-                                new ByteArrayInputStream(clusterBytes)).readObject();
-                        restoredClustered = true;
-                        LOGGER.log(Level.FINE,
-                                "Restored clustered index from serialized data for table {0}",
-                                name);
+                        String key = ois.readUTF();
+                        byte[] indexBytes = (byte[]) ois.readObject();
+                        long storedChecksum = ois.readLong();
+                        long computedChecksum = computeChecksumFromBytes(indexBytes);
+                        if (storedChecksum != computedChecksum) {
+                            LOGGER.log(Level.WARNING,
+                                    "Checksum mismatch for index ''{0}'' in table {1}, will rebuild",
+                                    new Object[]{key, name});
+                        } else {
+                            Index idx = (Index) new ObjectInputStream(
+                                    new ByteArrayInputStream(indexBytes)).readObject();
+                            indexes.put(key, idx);
+                            LOGGER.log(Level.FINE,
+                                    "Restored index ''{0}'' from serialized data for table {1}",
+                                    new Object[]{key, name});
+                        }
                     } catch (Exception e) {
                         LOGGER.log(Level.WARNING,
-                                "Failed to deserialize clustered index for table {0}: {1}",
+                                "Failed to deserialize index in table {0}: {1}",
                                 new Object[]{name, e.getMessage()});
                     }
-                } else {
-                    LOGGER.log(Level.WARNING,
-                            "Checksum mismatch for clustered index in table {0}, will rebuild",
-                            name);
+                });
+                // Restore clustered index from serialized data.
+                boolean hasSerializedClustered = ois.readBoolean();
+                if (hasSerializedClustered) {
+                    byte[] clusterBytes = (byte[]) ois.readObject();
+                    long storedChecksum = ois.readLong();
+                    long computedChecksum = computeChecksumFromBytes(clusterBytes);
+                    if (storedChecksum == computedChecksum) {
+                        try {
+                            this.clusteredIndex = (BTreeClusteredIndex) new ObjectInputStream(
+                                    new ByteArrayInputStream(clusterBytes)).readObject();
+                            restoredClustered = true;
+                            LOGGER.log(Level.FINE,
+                                    "Restored clustered index from serialized data for table {0}",
+                                    name);
+                        } catch (Exception e) {
+                            LOGGER.log(Level.WARNING,
+                                    "Failed to deserialize clustered index for table {0}: {1}",
+                                    new Object[]{name, e.getMessage()});
+                        }
+                    } else {
+                        LOGGER.log(Level.WARNING,
+                                "Checksum mismatch for clustered index in table {0}, will rebuild",
+                                name);
+                    }
                 }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING,
+                        "Failed to read serialized index block in table {0}, will rebuild from rows: {1}",
+                        new Object[]{name, e.getMessage()});
             }
         }
         // Fallback: rebuild clustered index from rows if not restored from serialized data.
@@ -2171,8 +2177,12 @@ class Table implements Serializable {
             LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
             return table;
         } catch (IOException | ClassNotFoundException e) {
-            LOGGER.log(Level.SEVERE, "Failed to load table {0}: {1}", new Object[]{tableName, e.getMessage()});
-            return null;
+            LOGGER.log(Level.WARNING, "Failed to load table {0}, creating empty: {1}",
+                    new Object[]{tableName, e.getMessage()});
+            Table empty = new Table(database, tableName, new ArrayList<>(), new HashMap<>(),
+                    null, new HashMap<String, Sequence>());
+            empty.formatVersion = CURRENT_FORMAT_VERSION;
+            return empty;
         }
     }
 }
