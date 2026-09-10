@@ -76,6 +76,7 @@
                         <include>**/LikeQueryTest.java</include>
                         <include>**/OrderByQueryTest.java</include>
                         <include>**/PerformanceQueryTest.java</include>
+                        <include>**/PerformanceRegressionTest.java</include>
                         <include>**/SubqueryQueryTest.java</include>
                         <include>**/NullSafetyQueryTest.java</include>
                     </includes>
@@ -133,6 +134,7 @@
                                 <include>**/LikeQueryTest.java</include>
                                 <include>**/OrderByQueryTest.java</include>
                                 <include>**/PerformanceQueryTest.java</include>
+                                <include>**/PerformanceRegressionTest.java</include>
                                 <include>**/SubqueryQueryTest.java</include>
                                 <include>**/NullSafetyQueryTest.java</include>
                             </includes>

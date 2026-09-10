@@ -16,15 +16,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
           cache: maven
       
       - name: Build and run tests with CI profile
         run: mvn -B clean verify -P ci
+      
+      - name: Performance regression check
+        run: mvn -B -P ci -Dtest=PerformanceRegressionTest test
+      
+      - name: Upload performance history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-history
+          path: analytics/performance_history.csv
+          retention-days: 7
       
       - name: Upload test reports
         uses: actions/upload-artifact@v4

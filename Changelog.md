@@ -2367,3 +2367,16 @@ Changes:
 - Added missing java.io imports to both BTreeIndex.java and BTreeClusteredIndex.java
 
 Tests: 42 run, 0 failures, 0 errors, 2 skipped.
+
+3.0.38 Prompt 19 - Performance regression tests (quality gate): new PerformanceRegressionTest measures 10 key queries (1 warmup + 5 runs, median), compares against tracked baseline analytics/regression_baseline.md (±20%, ignores sub-11ms micro-queries), fails build with a report on >20% degradation, appends history to analytics/performance_history.csv, supports -Ddiesel.updateBaseline=true to re-baseline; CI workflow updated to JDK 21 (pom requires 21) with a dedicated performance regression step; pom surefire includes updated.
+
+Changes:
+- src/test/java/diesel/PerformanceRegressionTest.java (new): KEY_QUERIES (group|test|sql), median-of-5 measurement, baseline load/seed/update, AssertionError regression report, performance_history.csv append
+- analytics/regression_baseline.md (new): tracked baseline for 10 key queries (seeded from timing/timing29.md)
+- analytics/performance_history.csv (new): performance history log (timestamp,group,test,query,baseline_ms,measured_ms,ratio,result)
+- pom.xml: PerformanceRegressionTest added to surefire includes (default and -Pci)
+- .github/workflows/ci.yml: JDK 17 -> 21, added "Performance regression check" step (mvn -Pci -Dtest=PerformanceRegressionTest test) and performance-history artifact upload
+
+Tests: quick gate 100 run/0 failures/0 errors/3 skipped (large excluded) BUILD SUCCESS; full gate (-Ddiesel.largeTests=true, -Xmx4g) 100 run/0 failures/0 errors/0 skipped BUILD SUCCESS; compare-timing.sh exit 0 (0 regressions, 29 unchanged, 110 improvements); PerformanceRegressionTest green on both gates (all key queries faster than baseline).
+Timing: full suite 100/0/0/0; regression check 10/10 OK, no degradation > 1.2x.
+Profile check: not run - make check-profile target and ProfileMain.java are absent from this environment.
