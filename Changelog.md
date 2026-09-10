@@ -2418,6 +2418,7 @@ Changes:
 
 3.0.43 Changelog tidy: remove test-result notes (Tests:/NOTE:) from the 3.0.42 entry so the changelog keeps the no-test-info convention of 3.0.41.
 
+<<<<<<< HEAD
 3.0.44 Config consolidation - single root config.properties for every class (новый diesel/ConfigLoader.java)
 
 Changes:
@@ -2438,3 +2439,9 @@ Changes:
 - diesel/storage/RowStorage.java: javadoc @see updated to CsvRowStorage/TsvRowStorage
 - config.properties: commented documentation line "## Storage type: in_memory | csv | tsv" above storage.type = in_memory (default unchanged)
 - src/test/java/diesel/CsvStorageTest.java (new): 18 tests covering value escaping (comma/quote/newline), parseLine() quoted-field handling, writer+reader round-trips, null/empty-table handling, storage CRUD (insert/update/delete/scan), save+load round-trip, StorageFactory "csv" wiring, and Database integration with storage.type set via system property
+
+3.0.46 Prompt 23 - TSV storage indexing and search (TSV хранилище - индексация и поиск)
+
+Changes:
+- diesel/storage/TsvIndexManager.java (new): self-contained index manager for TSV-backed tables - sorted primary-key TreeMap index (O(log n) exact + inclusive range search by primary key or secondary index), incremental insert/remove of indexed rows, reindex() rebuild, LRU block cache (access-order LinkedHashMap, tsv.block.size = 1000 rows per block, tsv.cache.max.blocks = 64) with getBlock()/loadAllBlocksParallel() and cache hit/miss counters, and parallel TSV file reading on a dedicated daemon ForkJoinPool (line-range chunk readers via TsvRowReader, gated by tsv.parallel.read.threshold = 10000 rows) plus a sequential fallback and loadAndIndex() convenience method
+- config.properties: add "tsv.block.size = 1000", "tsv.cache.max.blocks = 64", "tsv.parallel.read.threshold = 10000" above the storage.type line (read lazily from the root config via ErrorMessages.CONFIG_FILE with defaults in TsvIndexManager)

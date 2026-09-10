@@ -1,1 +1,5 @@
-3.0.45 CSV storage: replace file_based with csv (extends AbstractRowStorage)
+3.0.46 Prompt 23 - TSV storage indexing and search (TSV хранилище - индексация и поиск)
+
+Changes:
+- diesel/storage/TsvIndexManager.java (new): self-contained index manager for TSV-backed tables - sorted primary-key TreeMap index (O(log n) exact + inclusive range search by primary key or secondary index), incremental insert/remove of indexed rows, reindex() rebuild, LRU block cache (access-order LinkedHashMap, tsv.block.size = 1000 rows per block, tsv.cache.max.blocks = 64) with getBlock()/loadAllBlocksParallel() and cache hit/miss counters, and parallel TSV file reading on a dedicated daemon ForkJoinPool (line-range chunk readers via TsvRowReader, gated by tsv.parallel.read.threshold = 10000 rows) plus a sequential fallback and loadAndIndex() convenience method
+- config.properties: add "tsv.block.size = 1000", "tsv.cache.max.blocks = 64", "tsv.parallel.read.threshold = 10000" above the storage.type line (read lazily from the root config via ErrorMessages.CONFIG_FILE with defaults in TsvIndexManager)
