@@ -263,24 +263,9 @@ class QueryProfiler implements DynamicMBean {
                 LOGGER.debug("Invalid slow threshold property, using config file/default: {}", ignored.getMessage());
             }
         }
-        try {
-            File configFile = new File("config.properties");
-            if (configFile.exists()) {
-                Properties props = new Properties();
-                try (FileInputStream fis = new FileInputStream(configFile)) {
-                    props.load(fis);
-                }
-                String raw = props.getProperty(SLOW_THRESHOLD_PROPERTY);
-                if (raw != null) {
-                    long parsed = Long.parseLong(raw.trim());
-                    if (parsed >= 0) {
-                        return parsed;
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-            // Keep the default on any config error
-            LOGGER.debug("Config file error, using default: {}", ignored.getMessage());
+        long configured = ConfigLoader.getLong(SLOW_THRESHOLD_PROPERTY, -1L);
+        if (configured >= 0) {
+            return configured;
         }
         return DEFAULT_SLOW_THRESHOLD_MS;
     }

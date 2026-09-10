@@ -2417,3 +2417,11 @@ Changes:
 - src/test/java/diesel/TsvStorageTest.java (new): 16 tests covering escaping/unescaping round-trips (tab/newline/backslash), header reading, empty-file load, null handling, storage CRUD (insert/update/delete/scan), save+load round-trip, StorageFactory "tsv" wiring, and Database integration with storage.type set via system property
 
 3.0.43 Changelog tidy: remove test-result notes (Tests:/NOTE:) from the 3.0.42 entry so the changelog keeps the no-test-info convention of 3.0.41.
+
+3.0.44 Config consolidation - single root config.properties for every class (новый diesel/ConfigLoader.java)
+
+Changes:
+- diesel/ConfigLoader.java (new): package-private fail-safe loader reading config.properties from the process working directory (CWD) via ErrorMessages.CONFIG_FILE; typed helpers getString/getInt/getLong/getDouble/getBoolean; missing/unreadable file yields empty Properties and callers keep defaults
+- diesel/Table.java, diesel/QueryParser.java, diesel/DatabaseServer.java, diesel/DieselDatabase.java: classpath reads (ClassLoader.getResourceAsStream) replaced with ConfigLoader - the root config.properties is now the single source of truth for the whole engine; storage.type, logging.level.diesel, transaction.isolation.level, server.socket.timeout now resolve from the CWD file (tests run with CWD = repo root, so config-driven values are picked up by the suite)
+- diesel/SelectQuery.java, diesel/BTreeIndex.java, diesel/QueryOptimizer.java, diesel/QueryProfiler.java, diesel/BloomFilter.java, diesel/PreparedStatement.java: duplicated FileInputStream/File blocks replaced with ConfigLoader - same keys, same defaults, same fail-safe fallback (behaviour unchanged)
+- src/main/resources/config.properties: deleted (duplicate bundled into target/classes; no longer read by any class)

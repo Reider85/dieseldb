@@ -20,16 +20,8 @@ class BloomFilter implements Serializable {
     private static double DEFAULT_FPP = 0.01;
 
     static {
-        try {
-            java.util.Properties props = new java.util.Properties();
-            java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
-            props.load(fis);
-            fis.close();
-            String val = props.getProperty("bloom.filter.hashes");
-            if (val != null) DEFAULT_NUM_HASHES = Integer.parseInt(val.trim());
-            String val2 = props.getProperty("bloom.filter.fpp");
-            if (val2 != null) DEFAULT_FPP = Double.parseDouble(val2.trim());
-        } catch (Exception ignored) {}
+        DEFAULT_NUM_HASHES = ConfigLoader.getInt("bloom.filter.hashes", DEFAULT_NUM_HASHES);
+        DEFAULT_FPP = ConfigLoader.getDouble("bloom.filter.fpp", DEFAULT_FPP);
     }
 
     private final BitSet bits;

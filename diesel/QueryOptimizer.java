@@ -70,23 +70,17 @@ final class QueryOptimizer {
 
     static void loadAdaptiveConfig() {
         try {
-            File configFile = new File(ErrorMessages.CONFIG_FILE);
-            if (configFile.exists()) {
-                java.util.Properties props = new java.util.Properties();
-                try (FileInputStream fis = new FileInputStream(configFile)) {
-                    props.load(fis);
-                }
-                String rawEnabled = props.getProperty(ENABLED_KEY);
-                if (rawEnabled != null) enabled = Boolean.parseBoolean(rawEnabled.trim());
-                String rawThreshold = props.getProperty(THRESHOLD_KEY);
-                if (rawThreshold != null) threshold = Double.parseDouble(rawThreshold.trim());
-                String rawLearning = props.getProperty(LEARNING_KEY);
-                if (rawLearning != null) learning = Boolean.parseBoolean(rawLearning.trim());
-                String rawCache = props.getProperty(CACHE_SIZE_KEY);
-                if (rawCache != null) cacheSize = Integer.parseInt(rawCache.trim());
-                String rawSample = props.getProperty(SAMPLING_KEY);
-                if (rawSample != null) samplingRows = Integer.parseInt(rawSample.trim());
-            }
+            java.util.Properties props = ConfigLoader.load();
+            String rawEnabled = props.getProperty(ENABLED_KEY);
+            if (rawEnabled != null) enabled = Boolean.parseBoolean(rawEnabled.trim());
+            String rawThreshold = props.getProperty(THRESHOLD_KEY);
+            if (rawThreshold != null) threshold = Double.parseDouble(rawThreshold.trim());
+            String rawLearning = props.getProperty(LEARNING_KEY);
+            if (rawLearning != null) learning = Boolean.parseBoolean(rawLearning.trim());
+            String rawCache = props.getProperty(CACHE_SIZE_KEY);
+            if (rawCache != null) cacheSize = Integer.parseInt(rawCache.trim());
+            String rawSample = props.getProperty(SAMPLING_KEY);
+            if (rawSample != null) samplingRows = Integer.parseInt(rawSample.trim());
         } catch (Exception ignored) {
             LOGGER.fine("Adaptive config error, using defaults: " + ignored.getMessage());
         }

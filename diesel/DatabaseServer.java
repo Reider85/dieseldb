@@ -26,10 +26,7 @@ import java.util.zip.Deflater;
 public class DatabaseServer {
     static {
         try {
-            java.util.Properties props = new java.util.Properties();
-            java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
-            props.load(fis);
-            fis.close();
+            java.util.Properties props = ConfigLoader.load();
             String val = props.getProperty("server.pool.size");
             if (val != null) poolSize = Integer.parseInt(val.trim());
             String val2 = props.getProperty("server.queue.capacity");
@@ -89,18 +86,7 @@ public class DatabaseServer {
 
     // Load configuration and return Properties object
     private static Properties loadConfig() {
-        Properties props = new Properties();
-        try (InputStream input = DatabaseServer.class.getClassLoader().getResourceAsStream(CONFIG_FILE)) {
-            if (input == null) {
-                LOGGER.log(Level.SEVERE, "Configuration file {0} not found", CONFIG_FILE);
-                return props; // Return empty Properties
-            }
-            props.load(input);
-            return props;
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to load {0}: {1}", new Object[]{CONFIG_FILE, e.getMessage()});
-            return props; // Return empty Properties
-        }
+        return ConfigLoader.load();
     }
 
     // Log configuration parameters
@@ -241,16 +227,8 @@ public class DatabaseServer {
         private static final int DEFAULT_CURSOR_FETCH_SIZE = 1000;
 
         static {
-            try {
-                java.util.Properties props = new java.util.Properties();
-                java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
-                props.load(fis);
-                fis.close();
-                String val = props.getProperty("compression.threshold.bytes");
-                if (val != null) DEFAULT_COMPRESSION_THRESHOLD = Integer.parseInt(val.trim());
-                String val2 = props.getProperty("compression.level");
-                if (val2 != null) DEFAULT_COMPRESSION_LEVEL = Integer.parseInt(val2.trim());
-            } catch (Exception ignored) {}
+            DEFAULT_COMPRESSION_THRESHOLD = ConfigLoader.getInt("compression.threshold.bytes", DEFAULT_COMPRESSION_THRESHOLD);
+            DEFAULT_COMPRESSION_LEVEL = ConfigLoader.getInt("compression.level", DEFAULT_COMPRESSION_LEVEL);
         }
 
         private static final String DEFAULT_ALGORITHM = "GZIP";

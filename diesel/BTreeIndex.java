@@ -488,24 +488,7 @@ class BTreeIndex implements Index, Serializable {
      * Loads parallel index scan configuration from config.properties.
      */
     private static void loadParallelIndexScanConfig() {
-        long threshold = 10000; // default
-        try {
-            File configFile = new File(ErrorMessages.CONFIG_FILE);
-            if (configFile.exists()) {
-                java.util.Properties props = new java.util.Properties();
-                try (FileInputStream fis = new FileInputStream(configFile)) {
-                    props.load(fis);
-                }
-                String raw = props.getProperty("parallel.index.scan.threshold");
-                if (raw != null) {
-                    threshold = Long.parseLong(raw.trim());
-                }
-            }
-        } catch (Exception ignored) {
-            // Keep the default on any config error
-            LOGGER.fine("Config error for parallel index scan threshold, using default: " + ignored.getMessage());
-        }
-        parallelIndexScanThreshold = threshold;
+        parallelIndexScanThreshold = ConfigLoader.getLong("parallel.index.scan.threshold", 10000);
     }
     
     /**

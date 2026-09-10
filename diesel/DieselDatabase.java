@@ -25,18 +25,7 @@ public class DieselDatabase {
 
     // Load configuration and return Properties object
     private static Properties loadConfig() {
-        Properties props = new Properties();
-        try (InputStream input = DieselDatabase.class.getClassLoader().getResourceAsStream(CONFIG_FILE)) {
-            if (input == null) {
-                LOGGER.error("Configuration file {} not found", CONFIG_FILE);
-                return props; // Return empty Properties
-            }
-            props.load(input);
-            return props;
-        } catch (IOException e) {
-            LOGGER.error("Failed to load {}: {}", CONFIG_FILE, e.getMessage());
-            return props; // Return empty Properties
-        }
+        return ConfigLoader.load();
     }
 
     // Get isolation level from Properties

@@ -228,41 +228,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * at tiny values.
      */
     static void loadHashJoinConfig() {
-        long inMemoryRows = 10000;
-        long hashMb = 512;
-        long maxResultRows = 1_000_000;
-        try {
-            File configFile = new File(ErrorMessages.CONFIG_FILE);
-            if (configFile.exists()) {
-                java.util.Properties props = new java.util.Properties();
-                try (FileInputStream fis = new FileInputStream(configFile)) {
-                    props.load(fis);
-                }
-                String raw = props.getProperty("max.inmemory.rows");
-                if (raw != null) {
-                    inMemoryRows = Long.parseLong(raw.trim());
-                }
-                String rawHash = props.getProperty("max.hash.table.size.mb");
-                if (rawHash != null) {
-                    hashMb = Long.parseLong(rawHash.trim());
-                }
-                String rawResult = props.getProperty("max.result.rows");
-                if (rawResult != null) {
-                    maxResultRows = Long.parseLong(rawResult.trim());
-                }
-                String rawHashOverhead = props.getProperty("hash.join.overhead.rows");
-                if (rawHashOverhead != null) {
-                    HASH_JOIN_OVERHEAD_ROWS = Long.parseLong(rawHashOverhead.trim());
-                }
-                String rawMemorySample = props.getProperty("select.memory.sample.interval");
-                if (rawMemorySample != null) {
-                    MEMORY_SAMPLE_INTERVAL = Long.parseLong(rawMemorySample.trim());
-                }
-            }
-        } catch (Exception ignored) {
-            // Keep the defaults on any config error
-            LOGGER.fine("Config error, using defaults: " + ignored.getMessage());
-        }
+        long inMemoryRows = ConfigLoader.getLong("max.inmemory.rows", 10000);
+        long hashMb = ConfigLoader.getLong("max.hash.table.size.mb", 512);
+        long maxResultRows = ConfigLoader.getLong("max.result.rows", 1_000_000);
+        HASH_JOIN_OVERHEAD_ROWS = ConfigLoader.getLong("hash.join.overhead.rows", 1000);
+        MEMORY_SAMPLE_INTERVAL = ConfigLoader.getLong("select.memory.sample.interval", 4096);
         maxInMemoryRows = inMemoryRows;
         maxHashTableSizeBytes = hashMb * 1024L * 1024L;
         MAX_RESULT_ROWS = maxResultRows;

@@ -54,22 +54,7 @@ public class PreparedStatement {
     };
 
     private static int loadMaxCacheSize() {
-        try {
-            java.util.Properties props = new java.util.Properties();
-            java.io.FileInputStream fis = new java.io.FileInputStream("config.properties");
-            try {
-                props.load(fis);
-            } finally {
-                fis.close();
-            }
-            String val = props.getProperty("query.cache.max.size");
-            if (val != null) {
-                return Integer.parseInt(val.trim());
-            }
-        } catch (Exception ignored) {
-            // Missing/unsupported config falls through to the default.
-        }
-        return DEFAULT_MAX_CACHE_SIZE;
+        return ConfigLoader.getInt("query.cache.max.size", DEFAULT_MAX_CACHE_SIZE);
     }
 
     /**

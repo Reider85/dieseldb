@@ -1,1 +1,1 @@
-3.0.43 Changelog tidy: remove test-result notes (Tests:/NOTE:) from the 3.0.42 entry so the changelog keeps the no-test-info convention of 3.0.41.
+3.0.44 Config consolidation - single root config.properties for every class via new diesel/ConfigLoader.java (removed src/main/resources duplicate)

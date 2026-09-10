@@ -2089,14 +2089,7 @@ class Table implements Serializable {
     }
 
     private static String getConfigProperty(String key, String defaultValue) {
-        try (var input = Table.class.getClassLoader().getResourceAsStream("config.properties")) {
-            if (input == null) return defaultValue;
-            java.util.Properties props = new java.util.Properties();
-            props.load(input);
-            return props.getProperty(key, defaultValue);
-        } catch (Exception e) {
-            return defaultValue;
-        }
+        return ConfigLoader.getString(key, defaultValue);
     }
 
     /** Returns the underlying {@link RowStorage} used by this table. */
