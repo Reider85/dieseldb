@@ -1,5 +1,8 @@
 package diesel;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.*;
 import java.util.logging.Logger;
@@ -29,6 +32,20 @@ class BTreeClusteredIndex implements Index, Serializable {
             this.keys = new ArrayList<>();
             this.rowIndices = isLeaf ? new ArrayList<>() : null;
             this.children = isLeaf ? null : new ArrayList<>();
+        }
+
+        private void writeObject(ObjectOutputStream out) throws IOException {
+            out.defaultWriteObject();
+            out.writeObject(keys);
+            out.writeObject(rowIndices);
+            out.writeObject(children);
+        }
+
+        private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+            in.defaultReadObject();
+            keys = (List<Object>) in.readObject();
+            rowIndices = (List<Integer>) in.readObject();
+            children = (List<Node>) in.readObject();
         }
     }
 

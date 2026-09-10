@@ -2355,3 +2355,15 @@ Changes: Two root-cause fixes in SubqueryParser.parseTableAndJoins:
 Changes: Added catch (OutOfMemoryError) to handleOpenCursor() and handleFetchCursor() in DatabaseServer.ClientHandler. Previously OOM was only caught in executeQueryMessage() and handleExecutePrepared(), leaving cursor operations unprotected. Now all query execution paths log context (query text, rows produced, peak memory) and send the friendly "Error: Query exceeded memory limit" message to the client.
 Files: diesel/DatabaseServer.java (lines 675, 701)
 Tests: 42 run, 0 failures, 0 errors.
+
+3.0.37 Fix: transient fields in Serializable classes broke deserialization of BTreeIndex, BTreeClusteredIndex, and ExecutePreparedMessage
+
+Root cause: Prompt 40 (6dcc927) added `transient` to keys/rowIndices/children in BTreeIndex.Node and BTreeClusteredIndex.Node, and to params in ExecutePreparedMessage, but never added readObject/writeObject to reconstruct them.
+
+Changes:
+- BTreeIndex.Node: added writeObject/readObject to explicitly serialize keys, rowIndices, children (without this, indexes loaded from .table files had null keys → NPE)
+- BTreeClusteredIndex.Node: same fix
+- ExecutePreparedMessage: removed transient from params — this is a wire-protocol message sent via ObjectOutputStream, params must survive the transfer (without this, server received null params → ? not replaced → parser error)
+- Added missing java.io imports to both BTreeIndex.java and BTreeClusteredIndex.java
+
+Tests: 42 run, 0 failures, 0 errors, 2 skipped.

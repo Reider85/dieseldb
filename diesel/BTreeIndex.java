@@ -1,8 +1,11 @@
 package diesel;
 
-import java.io.Serializable;
-import java.io.FileInputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ForkJoinPool;
@@ -60,6 +63,20 @@ class BTreeIndex implements Index, Serializable {
             this.keys = new ArrayList<>();
             this.rowIndices = isLeaf ? new ArrayList<>() : null;
             this.children = isLeaf ? null : new ArrayList<>();
+        }
+
+        private void writeObject(ObjectOutputStream out) throws IOException {
+            out.defaultWriteObject();
+            out.writeObject(keys);
+            out.writeObject(rowIndices);
+            out.writeObject(children);
+        }
+
+        private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+            in.defaultReadObject();
+            keys = (List<Object>) in.readObject();
+            rowIndices = (List<List<Integer>>) in.readObject();
+            children = (List<Node>) in.readObject();
         }
     }
 
