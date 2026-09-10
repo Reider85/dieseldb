@@ -363,16 +363,7 @@ public class SubqueryParser {
         String tableAlias = null;
         Map<String, String> tableAliases = new HashMap<>();
 
-        Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN)\\s+");
-        Matcher joinMatcher = joinPattern.matcher(normalized);
-        List<String> joinParts = new ArrayList<>();
-        int lastEnd = 0;
-        while (joinMatcher.find()) {
-            joinParts.add(normalized.substring(lastEnd, joinMatcher.start()).trim());
-            joinParts.add(joinMatcher.group(1).trim());
-            lastEnd = joinMatcher.end();
-        }
-        joinParts.add(normalized.substring(lastEnd).trim());
+        List<String> joinParts = splitTopLevelJoinParts(normalized);
 
         String mainTablePart = joinParts.get(0).trim();
         Table derivedMainTable = null;
@@ -408,6 +399,7 @@ public class SubqueryParser {
             tableAliases.put(tableName, tableName);
         }
 
+        String mainTableName = tableName;
         for (int i = 1; i < joinParts.size() - 1; i += 2) {
             String joinTypeStr = joinParts.get(i).toUpperCase();
             String joinPart = joinParts.get(i + 1).trim();
@@ -451,7 +443,83 @@ public class SubqueryParser {
             tableName = joinTableName;
         }
 
-        return new QueryParser.TableJoins(tableName, tableAlias, joins, tableAliases, combinedColumnTypes, derivedMainTable);
+        return new QueryParser.TableJoins(mainTableName, tableAlias, joins, tableAliases, combinedColumnTypes, derivedMainTable);
+    }
+
+    /**
+     * Splits a FROM-clause string on top-level JOIN keywords (INNER JOIN, LEFT
+     * JOIN, ...) while ignoring occurrences that appear inside a parenthesized
+     * derived table or a quoted string. A naive regex split would truncate a
+     * derived table such as {@code (SELECT ... INNER JOIN ...)} at the inner
+     * JOIN and leave its parentheses unbalanced.
+     *
+     * @param normalized the whitespace-normalized FROM clause
+     * @return an alternating list of table parts and join keywords
+     */
+    private List<String> splitTopLevelJoinParts(String normalized) {
+        List<String> parts = new ArrayList<>();
+        int parenDepth = 0;
+        int lastEnd = 0;
+        int pos = 0;
+        while (pos < normalized.length()) {
+            char c = normalized.charAt(pos);
+            if (c == '\'') {
+                int quoteEnd = normalized.indexOf('\'', pos + 1);
+                if (quoteEnd == -1) {
+                    quoteEnd = normalized.length();
+                }
+                pos = quoteEnd + 1;
+                continue;
+            }
+            if (c == '(') {
+                parenDepth++;
+                pos++;
+                continue;
+            }
+            if (c == ')') {
+                parenDepth--;
+                pos++;
+                continue;
+            }
+            if (parenDepth > 0) {
+                pos++;
+                continue;
+            }
+            String keyword = matchJoinKeywordAt(normalized, pos);
+            if (keyword != null) {
+                parts.add(normalized.substring(lastEnd, pos).trim());
+                parts.add(keyword.trim());
+                pos += keyword.trim().length();
+                lastEnd = pos;
+                continue;
+            }
+            pos++;
+        }
+        parts.add(normalized.substring(lastEnd).trim());
+        return parts;
+    }
+
+    /**
+     * Returns the JOIN keyword (with surrounding spaces trimmed) located at
+     * position {@code pos} of {@code normalized}, or null when none starts
+     * there. Recognizes the six supported join forms, matching the longest
+     * keyword first.
+     */
+    private String matchJoinKeywordAt(String normalized, int pos) {
+        String[] keywords = {SqlKeywords.INNER_JOIN, SqlKeywords.LEFT_JOIN, SqlKeywords.RIGHT_JOIN,
+                SqlKeywords.FULL_JOIN, SqlKeywords.CROSS_JOIN, SqlKeywords.JOIN};
+        for (String keyword : keywords) {
+            if (pos + keyword.length() <= normalized.length()
+                    && normalized.regionMatches(true, pos, keyword, 0, keyword.length())) {
+                if (pos == 0 || Character.isWhitespace(normalized.charAt(pos - 1))) {
+                    int end = pos + keyword.length();
+                    if (end == normalized.length() || Character.isWhitespace(normalized.charAt(end))) {
+                        return keyword;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /**

@@ -2341,3 +2341,11 @@ Changes: Added Objects.requireNonNull() checks to 15 locations across 3 files:
 - SelectQuery.java → SelectQueryCore (tableName), JoinContext (spillActive, whereConditions, combinedColumnTypes, tables, acquiredLocks)
 Added java.util.Objects import to SqlParsingUtils.java.
 Tests: 42 run, 0 failures, 0 errors.
+
+3.0.34 Prompt 40 - S1948: add transient to keys, rowIndices, children, params in Serializable classes
+
+3.0.35 Prompt 9 - Fix LIMIT in subqueries: derived table name was overwritten by last JOIN table, and JOIN keywords inside derived subqueries broke paren balance
+
+Changes: Two root-cause fixes in SubqueryParser.parseTableAndJoins:
+- Bug A (600 rows): tableName was reassigned to last join table in the loop but TableJoins.tableName was returned from that mutated variable; derived table alias was lost and the real JOIN table overwrote the virtual table in executeSelect's tables map. Fix: capture mainTableName before the join loop (mirroring QueryParser line 1608) and return it.
+- Bug B (unbalanced parentheses): naive joinPattern regex split on INNER JOIN inside parenthesized derived subqueries, breaking parentheses balance. Fix: replace with paren/quote-aware splitTopLevelJoinParts() that skips JOIN keywords at paren depth > 0.

@@ -195,4 +195,61 @@ public class SubqueriesTest {
                 "SELECT ID FROM (SELECT ID FROM USERS WHERE AGE > 0) AS subq ORDER BY subq.ID DESC LIMIT 3", null);
         assertEquals(3, result.size(), "outer ORDER BY + LIMIT over a derived table must work");
     }
+
+    private void growUsersTo(int targetCount) {
+        Table table = database.getTable("USERS");
+        for (int i = RECORD_COUNT + 1; i <= targetCount; i++) {
+            String query = String.format(
+                    "INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE) VALUES ('CODE%d', 'User%d', %d, %s)",
+                    i, i, 18 + (i % 82), new BigDecimal(100 + (i % 9000)).setScale(2, RoundingMode.HALF_UP)
+            );
+            database.executeQuery(query, null);
+        }
+        table.saveToFile("USERS");
+    }
+
+    @Test
+    void derivedTableLimitLargerDataset() {
+        growUsersTo(600);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT ID, NAME FROM USERS WHERE AGE > 0 LIMIT 10) AS subq", null);
+        assertEquals(10, result.size(), "LIMIT 10 inside derived table must return 10 rows on a 600-row table");
+    }
+
+    @Test
+    void derivedTableJoinedWithRealTableAppliesLimit() {
+        growUsersTo(600);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT ID FROM USERS WHERE AGE > 0 LIMIT 10) AS subq INNER JOIN USERS u ON subq.ID = u.ID", null);
+        assertEquals(10, result.size(), "derived table LIMIT 10 joined with a real table must return 10 rows, got " + result.size());
+    }
+
+    @Test
+    void derivedTableWithJoinInsideAndLimit() {
+        growUsersTo(600);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT u.ID FROM USERS u INNER JOIN USERS u2 ON u.ID = u2.ID LIMIT 10) AS subq", null);
+        assertEquals(10, result.size(), "LIMIT 10 inside a derived table containing a JOIN must return 10 rows, got " + result.size());
+    }
+
+    @Test
+    void nestedDerivedTablesTwoLevelsLimitLargeDataset() {
+        growUsersTo(600);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT ID FROM (SELECT ID, NAME FROM USERS WHERE AGE > 0 LIMIT 10) AS inner_sub LIMIT 5) AS outer_sub", null);
+        assertEquals(5, result.size(), "nested derived tables must apply LIMIT at each level, got " + result.size());
+    }
+
+    @Test
+    void derivedTableLimitWithAggregate() {
+        growUsersTo(600);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> result = (List<Map<String, Object>>) database.executeQuery(
+                "SELECT * FROM (SELECT AGE, COUNT(*) AS CNT FROM USERS GROUP BY AGE LIMIT 10) AS subq", null);
+        assertEquals(10, result.size(), "aggregate derived table LIMIT 10 must return 10 rows, got " + result.size());
+    }
 }
