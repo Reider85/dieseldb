@@ -2476,6 +2476,8 @@ Changes:
 - diesel/storage/CsvRowReader.java: added BOM stripping (UTF-8/UTF-16LE/UTF-16BE), column-mapping-by-name (case-insensitive TreeMap), header-vs-schema validation with configurable mismatch mode (storage.header.mismatch.mode=fail|warn), parseDataLine() now maps file columns to schema columns by position via columnMapping array
 - diesel/storage/TsvRowReader.java: same header mapping changes as CsvRowReader
 - config.properties: added storage.header.mismatch.mode=fail
-- pom.xml: added CsvTsvHeaderMappingTest to surefire includes (default + ci profiles)
-- src/test/java/diesel/CsvTsvHeaderMappingTest.java (new): 15 tests covering column reorder, extra/missing columns (fail+warn modes), BOM handling, exact-match header, and round-trip save+load with reordered columns
+- pom.xml: included CsvTsvHeaderMappingTest in surefire filters (default + ci profiles)
+- src/test/java/diesel/CsvTsvHeaderMappingTest.java (new): column reorder, extra/missing columns (fail+warn modes), BOM handling, exact-match header, round-trip save+load with reordered columns
 - PROMPT_STATUS.md: Section 1a added, prompt 24 marked DONE
+
+3.0.50 Changelog tidy: cleaned test wording in the 3.0.49 entry (kept the no-test-info convention of 3.0.41); commit message reworded without test-run notes.
