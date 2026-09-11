@@ -141,20 +141,31 @@ public class CsvRowStorage extends AbstractRowStorage {
             LOGGER.log(Level.INFO, "CSV file {0} not found for storage {1}", new Object[]{fileName, tableName});
             return;
         }
+        List<Map<String, Object>> previous = new ArrayList<>(rows);
         try (BufferedReader br = new BufferedReader(new FileReader(fileName));
-             CsvRowReader csvReader = new CsvRowReader(br, columns, columnTypes)) {
+             CsvRowReader csvReader = new CsvRowReader(br, columns, columnTypes, fileName)) {
             csvReader.readHeader();
-            rows.clear();
+            List<Map<String, Object>> loaded = new ArrayList<>();
             while (csvReader.hasNext()) {
-                rows.add(csvReader.next());
+                Map<String, Object> row = csvReader.next();
+                if (row != null) {
+                    loaded.add(row);
+                }
             }
+            rows.clear();
+            rows.addAll(loaded);
             fileInitialized = true;
             LOGGER.log(Level.INFO, "CsvRowStorage {0} loaded CSV from {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
             syncIndexBulk();
+        } catch (DieselIOException e) {
+            rows.clear();
+            rows.addAll(previous);
+            throw e;
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to load CSV for {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
+            rows.clear();
+            rows.addAll(previous);
+            throw new DieselIOException("Failed to load table from CSV file: " + fileName, e);
         }
     }
 

@@ -17,6 +17,8 @@ import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import diesel.DieselIOException;
+
 /**
  * Streaming reader for CSV files. Reads rows one at a time from a
  * {@link BufferedReader}, handling RFC 4180 double-quote escaping
@@ -42,10 +44,16 @@ public class CsvRowReader implements DelimitedRowReader {
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final boolean sentinelMode;
+    private final String fileName;
     private String nextLine;
     private boolean finished;
     private int[] columnMapping;
     private boolean headerRead;
+    private long lineNumber;
+    private long currentRowLine;
+    private long lastRowLine;
+    private boolean rowSkipped;
+    private boolean unterminatedRow;
 
     /**
      * @param reader      the underlying character-input stream
@@ -53,13 +61,30 @@ public class CsvRowReader implements DelimitedRowReader {
      * @param columnTypes column name to expected Java type
      */
     public CsvRowReader(BufferedReader reader, List<String> columns, Map<String, Class<?>> columnTypes) {
+        this(reader, columns, columnTypes, null);
+    }
+
+    /**
+     * @param reader      the underlying character-input stream
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     * @param fileName    the source file name used in error diagnostics, or
+     *                    {@code null} when unknown
+     */
+    public CsvRowReader(BufferedReader reader, List<String> columns, Map<String, Class<?>> columnTypes, String fileName) {
         this.reader = reader;
         this.columns = columns;
         this.columnTypes = columnTypes;
+        this.fileName = fileName;
         this.sentinelMode = TsvRowWriter.isSentinelMode();
         this.finished = false;
         this.nextLine = null;
         this.headerRead = false;
+        this.lineNumber = 0;
+        this.currentRowLine = 0;
+        this.lastRowLine = 0;
+        this.rowSkipped = false;
+        this.unterminatedRow = false;
     }
 
     /** Reads and validates the header line. Returns parsed file header columns. */
@@ -68,6 +93,8 @@ public class CsvRowReader implements DelimitedRowReader {
         if (header == null) {
             throw new IOException("CSV file is empty – expected header line");
         }
+        lineNumber++;
+        lastRowLine = lineNumber;
         List<String> headerCols = parseLine(header);
         if (!headerCols.isEmpty()) {
             String first = headerCols.get(0);
@@ -144,7 +171,13 @@ public class CsvRowReader implements DelimitedRowReader {
         if (nextLine == null) {
             prefetch();
         }
+        if (unterminatedRow) {
+            unterminatedRow = false;
+            lastRowLine = currentRowLine;
+            return handleTruncatedRow();
+        }
         Map<String, Object> row = parseDataLine(nextLine);
+        lastRowLine = currentRowLine;
         prefetch();
         return row;
     }
@@ -153,10 +186,18 @@ public class CsvRowReader implements DelimitedRowReader {
     public List<Map<String, Object>> readAll() throws IOException {
         List<Map<String, Object>> result = new ArrayList<>();
         while (hasNext()) {
-            result.add(next());
+            Map<String, Object> row = next();
+            if (row != null) {
+                result.add(row);
+            }
         }
         close();
         return result;
+    }
+
+    @Override
+    public long getLineNumber() {
+        return lastRowLine;
     }
 
     @Override
@@ -173,19 +214,23 @@ public class CsvRowReader implements DelimitedRowReader {
                 finished = true;
                 return;
             }
+            lineNumber++;
+            currentRowLine = lineNumber;
             StringBuilder sb = new StringBuilder(line);
             while (endsInsideQuotes(sb.toString())) {
                 String more = reader.readLine();
                 if (more == null) {
+                    unterminatedRow = true;
                     break;
                 }
+                lineNumber++;
                 sb.append('\n');
                 sb.append(more);
             }
             nextLine = sb.toString();
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Error reading CSV line: {0}", e.getMessage());
             finished = true;
+            throw new DieselIOException(contextPrefix() + "I/O error while reading file at line " + lineNumber, e);
         }
     }
 
@@ -218,6 +263,10 @@ public class CsvRowReader implements DelimitedRowReader {
             ParsedCsvField field = (fileIdx >= 0 && fileIdx < raw.size())
                     ? raw.get(fileIdx) : new ParsedCsvField("", false);
             row.put(colName, convertValue(field.value(), field.quoted(), colName));
+        }
+        if (rowSkipped) {
+            rowSkipped = false;
+            return null;
         }
         return row;
     }
@@ -284,17 +333,85 @@ public class CsvRowReader implements DelimitedRowReader {
         if (type == null) {
             return raw;
         }
-        return switch (type.getSimpleName()) {
-            case "Long" -> Long.parseLong(raw);
-            case "Integer" -> Integer.parseInt(raw);
-            case "Double" -> Double.parseDouble(raw);
-            case "Float" -> Float.parseFloat(raw);
-            case "BigDecimal" -> new BigDecimal(raw);
-            case "Boolean" -> Boolean.parseBoolean(raw);
-            case "LocalDate" -> LocalDate.parse(raw);
-            case "LocalDateTime" -> LocalDateTime.parse(raw);
-            case "UUID" -> UUID.fromString(raw);
-            default -> raw;
-        };
+        try {
+            return switch (type.getSimpleName()) {
+                case "Long" -> Long.parseLong(raw);
+                case "Integer" -> Integer.parseInt(raw);
+                case "Double" -> Double.parseDouble(raw);
+                case "Float" -> Float.parseFloat(raw);
+                case "BigDecimal" -> new BigDecimal(raw);
+                case "Boolean" -> Boolean.parseBoolean(raw);
+                case "LocalDate" -> LocalDate.parse(raw);
+                case "LocalDateTime" -> LocalDateTime.parse(raw);
+                case "UUID" -> UUID.fromString(raw);
+                default -> raw;
+            };
+        } catch (RuntimeException e) {
+            return handleConversionError(e, raw, type.getSimpleName(), colName);
+        }
+    }
+
+    /**
+     * Applies the {@code storage.load.error.mode} policy to a value-conversion
+     * failure. Returns the value to store in the row (a placeholder), skipping
+     * the whole row for {@code skip_row}, or re-throws the failure wrapped in a
+     * {@link DieselIOException} carrying the file/line/column context.
+     */
+    private Object handleConversionError(RuntimeException e, String raw, String typeName, String colName) {
+        String msg = contextPrefix() + "line " + currentRowLine + ": column '" + colName
+                + "': cannot parse \"" + raw + "\" as " + typeName;
+        String mode = readLoadErrorMode();
+        if ("skip_value".equalsIgnoreCase(mode)) {
+            LOGGER.log(Level.WARNING, msg);
+            return null;
+        }
+        if ("skip_row".equalsIgnoreCase(mode)) {
+            LOGGER.log(Level.WARNING, msg);
+            rowSkipped = true;
+            return null;
+        }
+        throw new DieselIOException(msg, e);
+    }
+
+    /** Applies the load-error policy to a row terminated by an unterminated quoted field. */
+    private Map<String, Object> handleTruncatedRow() {
+        String msg = contextPrefix() + "line " + currentRowLine
+                + ": unterminated quoted field (truncated or malformed row)";
+        String mode = readLoadErrorMode();
+        if ("skip_row".equalsIgnoreCase(mode)) {
+            LOGGER.log(Level.WARNING, msg);
+            prefetch();
+            return null;
+        }
+        if ("skip_value".equalsIgnoreCase(mode)) {
+            LOGGER.log(Level.WARNING, msg);
+            Map<String, Object> row = parseDataLine(nextLine);
+            prefetch();
+            return row;
+        }
+        throw new DieselIOException(msg, null);
+    }
+
+    private String contextPrefix() {
+        return fileName != null ? fileName + ":" : "";
+    }
+
+    private static String readLoadErrorMode() {
+        String mode = System.getProperty("storage.load.error.mode");
+        if (mode != null) {
+            return mode;
+        }
+        try {
+            java.util.Properties props = new java.util.Properties();
+            File configFile = new File("config.properties");
+            if (configFile.exists()) {
+                try (FileInputStream fis = new FileInputStream(configFile)) {
+                    props.load(fis);
+                }
+            }
+            return props.getProperty("storage.load.error.mode", "fail");
+        } catch (IOException e) {
+            return "fail";
+        }
     }
 }

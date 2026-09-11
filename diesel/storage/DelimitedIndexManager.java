@@ -835,7 +835,10 @@ public abstract class DelimitedIndexManager {
                 }
                 List<Map<String, Object>> blockRows = new ArrayList<>((int) range.size());
                 for (long i = range.start; i < range.end && reader.hasNext(); i++) {
-                    blockRows.add(reader.next());
+                    Map<String, Object> row = reader.next();
+                    if (row != null) {
+                        blockRows.add(row);
+                    }
                 }
                 return blockRows;
             } catch (IOException e) {

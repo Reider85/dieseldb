@@ -81,6 +81,7 @@
                         <include>**/NullSafetyQueryTest.java</include>
                         <include>**/CsvIndexManagerTest.java</include>
                         <include>**/CsvTsvHeaderMappingTest.java</include>
+                        <include>**/LoadErrorHandlingTest.java</include>
                     </includes>
                     <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
@@ -141,6 +142,7 @@
                                 <include>**/NullSafetyQueryTest.java</include>
                                 <include>**/CsvIndexManagerTest.java</include>
                                 <include>**/CsvTsvHeaderMappingTest.java</include>
+                                <include>**/LoadErrorHandlingTest.java</include>
                             </includes>
                             <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>

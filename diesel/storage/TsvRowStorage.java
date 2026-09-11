@@ -145,20 +145,31 @@ public class TsvRowStorage extends AbstractRowStorage {
             LOGGER.log(Level.INFO, "TSV file {0} not found for storage {1}", new Object[]{fileName, tableName});
             return;
         }
+        List<Map<String, Object>> previous = new ArrayList<>(rows);
         try (BufferedReader br = new BufferedReader(new FileReader(fileName));
-             TsvRowReader tsvReader = new TsvRowReader(br, columns, columnTypes)) {
+             TsvRowReader tsvReader = new TsvRowReader(br, columns, columnTypes, fileName)) {
             tsvReader.readHeader();
-            rows.clear();
+            List<Map<String, Object>> loaded = new ArrayList<>();
             while (tsvReader.hasNext()) {
-                rows.add(tsvReader.next());
+                Map<String, Object> row = tsvReader.next();
+                if (row != null) {
+                    loaded.add(row);
+                }
             }
+            rows.clear();
+            rows.addAll(loaded);
             fileInitialized = true;
             LOGGER.log(Level.INFO, "TsvRowStorage {0} loaded TSV from {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
             syncIndexBulk();
+        } catch (DieselIOException e) {
+            rows.clear();
+            rows.addAll(previous);
+            throw e;
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to load TSV for {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
+            rows.clear();
+            rows.addAll(previous);
+            throw new DieselIOException("Failed to load table from TSV file: " + fileName, e);
         }
     }
 

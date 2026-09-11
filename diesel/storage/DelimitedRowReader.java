@@ -30,6 +30,17 @@ public interface DelimitedRowReader extends Iterator<Map<String, Object>>, AutoC
      */
     List<Map<String, Object>> readAll() throws IOException;
 
+    /**
+     * Returns the 1-based physical line number on which the last consumed row
+     * started. The header line is line 1; the first data row starts at line 2.
+     * For CSV multi-line quoted fields, the returned line number reflects the
+     * start of the logical row. Returns {@code 0} before {@link #readHeader()}
+     * has been called.
+     *
+     * @return the line number of the last consumed row (1-based), or 0
+     */
+    long getLineNumber();
+
     @Override
     void close() throws IOException;
 }

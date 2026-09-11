@@ -1,6 +1,6 @@
 ﻿# Prompt Status Tracker
 
-> Latest: **Prompt 26 (Section 1a) DONE (2026-09-11)** — Distinguish NULL from empty string in CSV/TSV via storage.null.representation=legacy|sentinel: TSV writes null as \N (literal \N data escaped to \\N), CSV writes "" as quoted field and null as unquoted empty; readers decode both directions losslessly. Default legacy = old round-trip semantics. Gate: quick 138/0/0, full suite 138/0/0 green.
+> Latest: **Prompt 27 (Section 1a) DONE (2026-09-11)** — Load error handling & diagnostics: CsvRowReader/TsvRowReader wrap conversion failures in DieselIOException with file:line:column context (users.csv:bad.csv:line N: column 'X': cannot parse ...), unterminated CSV quoted fields detected, storage.load.error.mode = fail|skip_row|skip_value (default fail), transactional loadCsv/loadTsv roll back to previous rows on failure instead of leaving truncated tables, getLineNumber() added to DelimitedRowReader. Gate: quick 148/0/0/3, full suite 148/0/0/0 green, timing no regressions (exit 0).
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -85,6 +85,7 @@
 | 24 | ✅ DONE (2026-09-11) | CSV/TSV header column mapping — readHeader() parses file header, strips BOM, builds column mapping by name (case-insensitive), validates against schema. Configurable mismatch mode (fail|warn). Quick 133/0/0. |
 | 25 | ✅ DONE (2026-09-11) | Stable row-id instead of positional indexes in DelimitedIndexManager — key→rowId indexes + rowId→position map, insertAt shifts only positions (no rebuild), deleteRow uses tombstones with 25% compaction threshold; cluster insert / search correctness regression tests. Quick 138/0/0, full suite 138/0/0. |
 | 26 | ✅ DONE (2026-09-11) | Distinguish NULL from empty string in CSV/TSV (sentinel \N) — new storage.null.representation=legacy\|sentinel config; sentinel mode: TSV null→\N (literal \N escaped to \\N), CSV ""→quoted field / null→unquoted empty; readers decode losslessly; legacy keeps old semantics. New NullSentinelTest (10 tests). Quick 138/0/0, full suite 138/0/0 green. |
+| 27 | ✅ DONE (2026-09-11) | Load error handling and diagnostics (file:line:column) — CsvRowReader/TsvRowReader wrap conversion failures in DieselIOException with file:line:column context (bad.csv:line 3: column 'AGE': cannot parse "xyz" as Integer); unterminated CSV quoted fields detected at EOF; new storage.load.error.mode = fail|skip_row|skip_value (default fail) with skip modes logging + skipping; loadCsv/loadTsv now transactional (rollback to previous rows on DieselIOException/IOException, then rethrow); getLineNumber() added to DelimitedRowReader. New LoadErrorHandlingTest (10 tests). Quick 148/0/0/3, full suite 148/0/0/0 green, timing no regressions (exit 0). |
 
 ### Section 2: Sonar Top-10 Pareto (41-50)
 

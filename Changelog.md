@@ -2512,3 +2512,17 @@ Changes:
 - diesel/storage/TsvRowWriter.java: escapeValue() now pre-scans for \t/\n/\r/\\ and returns the raw string without StringBuilder allocation when no escaping is needed (mirrors the CSV fast path); isSentinelMode() no longer opens and reads config.properties from disk on every writeRow() call - the file is loaded once into a static ROOT_PROPS field, while the storage.null.representation system property override is still checked on every call so runtime mode switches (NullSentinelTest) keep working
 - The TSV read hot path previously allocated a StringBuilder and an intermediate String per field even for plain numbers/strings; combined with the regex split and per-row config file reads, TSV was roughly 10x slower than CSV and is now expected to be comparable (single-char tab delimiter vs comma)
 - Тесты: quick suite 138 run / 0 failures / 3 skipped (1 pre-existing error AllTestsSampleTest.prompt69Group - stale .table cast, fails on clean tree too and is unrelated); TSV/CSV index/header/sentinel tests 82/82 green
+
+3.0.55 Prompt 27 - load error handling and diagnostics (file:line:column)
+
+Changes:
+- diesel/storage/DelimitedRowReader.java: added getLineNumber() returning the 1-based physical line number of the last consumed row (header = line 1, multi-line CSV fields collapse to the row start, 0 before readHeader())
+- diesel/storage/CsvRowReader.java: new 4-arg constructor (fileName) for error diagnostics; tracks lineNumber/currentRowLine/lastRowLine; detects unterminated quoted fields at EOF (truncated row) and applies the error policy; failed value conversions wrapped in DieselIOException carrying file/line/column context (users.csv:bad.csv:line 3: column 'AGE': cannot parse "xyz" as Integer); new readLoadErrorMode() config helper (System property, then config.properties); next() returns null for rows skipped under skip_row (readAll filters nulls); prefetch() throws DieselIOException on I/O errors instead of silently stopping
+- diesel/storage/TsvRowReader.java: same diagnostics/error-policy pattern as CsvRowReader (no multi-line/truncation logic)
+- diesel/storage/CsvRowStorage.java: loadCsv() is now transactional - rows are replaced only on success; on DieselIOException/IOException the previous rows are restored and the error is rethrown instead of leaving a silently truncated table
+- diesel/storage/TsvRowStorage.java: same transactional loadTsv() change
+- diesel/storage/DelimitedIndexManager.java: ReadRangeTask skips null rows (skip_row policy) instead of throwing NullPointerException
+- config.properties: added storage.load.error.mode = fail | skip_row | skip_value (default: fail)
+- pom.xml: included LoadErrorHandlingTest in surefire filters (default + ci profiles)
+- src/test/java/diesel/LoadErrorHandlingTest.java (new): 10 tests - CSV/TSV broken value in the middle of the file with file:line:column diagnostics, truncated CSV quoted field, skip_row drops the bad row (CSV+TSV), skip_value keeps the row with a null placeholder, storage rollback on load failure, getLineNumber() line tracking
+- Тесты: quick suite 148 run / 0 failures / 0 errors / 3 skipped; full suite (4GB heap, @LargeTest) 148 run / 0 failures / 0 errors / 0 skipped BUILD SUCCESS; timing comparison timing68 vs baseline timing.md - no regressions (exit 0)
