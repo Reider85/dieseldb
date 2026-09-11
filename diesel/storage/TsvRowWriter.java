@@ -37,7 +37,15 @@ public class TsvRowWriter implements AutoCloseable {
 
     /** Writes the header line (column names separated by tabs). */
     public void writeHeader() throws IOException {
-        writer.write(String.join("\t", columns));
+        boolean sentinel = isSentinelMode();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) {
+                sb.append('\t');
+            }
+            sb.append(escapeValue(columns.get(i), sentinel));
+        }
+        writer.write(sb.toString());
         writer.newLine();
     }
 

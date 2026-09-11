@@ -2526,3 +2526,11 @@ Changes:
 - pom.xml: included LoadErrorHandlingTest in surefire filters (default + ci profiles)
 - src/test/java/diesel/LoadErrorHandlingTest.java (new): 10 tests - CSV/TSV broken value in the middle of the file with file:line:column diagnostics, truncated CSV quoted field, skip_row drops the bad row (CSV+TSV), skip_value keeps the row with a null placeholder, storage rollback on load failure, getLineNumber() line tracking
 - Тесты: quick suite 148 run / 0 failures / 0 errors / 3 skipped; full suite (4GB heap, @LargeTest) 148 run / 0 failures / 0 errors / 0 skipped BUILD SUCCESS; timing comparison timing68 vs baseline timing.md - no regressions (exit 0)
+
+3.0.56 Prompt 28 - escape header on write (CSV RFC 4180 / TSV backslash)
+
+Changes:
+- diesel/storage/CsvRowWriter.java: writeHeader() now escapes each column name with escapeValue() (RFC 4180 quoting) instead of a bare String.join(",", columns), so names containing commas, quotes or newlines no longer silently corrupt the header line
+- diesel/storage/TsvRowWriter.java: writeHeader() now escapes each column name with escapeValue() (backslash-escaping of tab/newline/backslash) instead of a bare String.join("\t", columns)
+- diesel/storage/TsvRowReader.java: readHeader() now unescapes each parsed header name before building the column mapping, so escaped column names (e.g. "a\tb") re-match the schema column after load (pairs with Prompt 24 header mapping)
+- src/test/java/diesel/CsvTsvHeaderMappingTest.java: added csvEscapedHeaderRoundTrip and tsvEscapedHeaderRoundTrip covering columns "price, rub" and "a\tb"

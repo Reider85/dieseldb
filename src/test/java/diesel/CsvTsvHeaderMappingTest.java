@@ -181,6 +181,32 @@ class CsvTsvHeaderMappingTest {
         }
     }
 
+    @Test
+    void csvEscapedHeaderRoundTrip() throws IOException {
+        List<String> schemaWithComma = List.of("id", "price, rub");
+        Map<String, Class<?>> types = new LinkedHashMap<>();
+        types.put("id", Integer.class);
+        types.put("price, rub", Integer.class);
+
+        Path f = tempDir.resolve("escaped_header.csv");
+        try (BufferedWriter bw = Files.newBufferedWriter(f, StandardCharsets.UTF_8);
+             CsvRowWriter writer = new CsvRowWriter(bw, schemaWithComma)) {
+            writer.writeHeader();
+            writer.writeRow(Map.of("id", 1, "price, rub", 99));
+        }
+
+        String headerLine = Files.readAllLines(f, StandardCharsets.UTF_8).get(0);
+        assertEquals("id,\"price, rub\"", headerLine);
+
+        try (BufferedReader br = Files.newBufferedReader(f, StandardCharsets.UTF_8);
+             CsvRowReader reader = new CsvRowReader(br, schemaWithComma, types, f.toString())) {
+            assertEquals(List.of("id", "price, rub"), reader.readHeader());
+            Map<String, Object> row = reader.next();
+            assertEquals(1, row.get("id"));
+            assertEquals(99, row.get("price, rub"));
+        }
+    }
+
     // ── TSV tests ───────────────────────────────────────────────────
 
     @Test
@@ -295,6 +321,33 @@ class CsvTsvHeaderMappingTest {
             assertEquals("Bob", row2.get("NAME"));
             assertEquals(25, row2.get("AGE"));
             assertEquals("London", row2.get("CITY"));
+        }
+    }
+
+    @Test
+    void tsvEscapedHeaderRoundTrip() throws IOException {
+        String tabColumn = "a\tb";
+        List<String> schemaWithTab = List.of("id", tabColumn);
+        Map<String, Class<?>> types = new LinkedHashMap<>();
+        types.put("id", Integer.class);
+        types.put(tabColumn, Integer.class);
+
+        Path f = tempDir.resolve("escaped_header.tsv");
+        try (BufferedWriter bw = Files.newBufferedWriter(f, StandardCharsets.UTF_8);
+             TsvRowWriter writer = new TsvRowWriter(bw, schemaWithTab)) {
+            writer.writeHeader();
+            writer.writeRow(Map.of("id", 1, tabColumn, 7));
+        }
+
+        String headerLine = Files.readAllLines(f, StandardCharsets.UTF_8).get(0);
+        assertEquals("id\ta\\tb", headerLine);
+
+        try (BufferedReader br = Files.newBufferedReader(f, StandardCharsets.UTF_8);
+             TsvRowReader reader = new TsvRowReader(br, schemaWithTab, types, f.toString())) {
+            assertEquals(List.of("id", tabColumn), reader.readHeader());
+            Map<String, Object> row = reader.next();
+            assertEquals(1, row.get("id"));
+            assertEquals(7, row.get(tabColumn));
         }
     }
 

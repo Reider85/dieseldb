@@ -1,6 +1,6 @@
 ﻿# Prompt Status Tracker
 
-> Latest: **Prompt 27 (Section 1a) DONE (2026-09-11)** — Load error handling & diagnostics: CsvRowReader/TsvRowReader wrap conversion failures in DieselIOException with file:line:column context (users.csv:bad.csv:line N: column 'X': cannot parse ...), unterminated CSV quoted fields detected, storage.load.error.mode = fail|skip_row|skip_value (default fail), transactional loadCsv/loadTsv roll back to previous rows on failure instead of leaving truncated tables, getLineNumber() added to DelimitedRowReader. Gate: quick 148/0/0/3, full suite 148/0/0/0 green, timing no regressions (exit 0).
+> Latest: **Prompt 28 (Section 1a) DONE (2026-09-11)** — Header escaping on write: CsvRowWriter/TsvRowWriter.writeHeader() escape each column name (RFC 4180 quoting for CSV, backslash-escaping for TSV) instead of a bare join, so names like `price, rub` / `a\tb` no longer silently corrupt the header; TsvRowReader.readHeader() unescapes header names so they re-match the schema after load. New round-trip tests csvEscapedHeaderRoundTrip/tsvEscapedHeaderRoundTrip. Quick suite 150/0/0/3 BUILD SUCCESS.
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -86,6 +86,7 @@
 | 25 | ✅ DONE (2026-09-11) | Stable row-id instead of positional indexes in DelimitedIndexManager — key→rowId indexes + rowId→position map, insertAt shifts only positions (no rebuild), deleteRow uses tombstones with 25% compaction threshold; cluster insert / search correctness regression tests. Quick 138/0/0, full suite 138/0/0. |
 | 26 | ✅ DONE (2026-09-11) | Distinguish NULL from empty string in CSV/TSV (sentinel \N) — new storage.null.representation=legacy\|sentinel config; sentinel mode: TSV null→\N (literal \N escaped to \\N), CSV ""→quoted field / null→unquoted empty; readers decode losslessly; legacy keeps old semantics. New NullSentinelTest (10 tests). Quick 138/0/0, full suite 138/0/0 green. |
 | 27 | ✅ DONE (2026-09-11) | Load error handling and diagnostics (file:line:column) — CsvRowReader/TsvRowReader wrap conversion failures in DieselIOException with file:line:column context (bad.csv:line 3: column 'AGE': cannot parse "xyz" as Integer); unterminated CSV quoted fields detected at EOF; new storage.load.error.mode = fail|skip_row|skip_value (default fail) with skip modes logging + skipping; loadCsv/loadTsv now transactional (rollback to previous rows on DieselIOException/IOException, then rethrow); getLineNumber() added to DelimitedRowReader. New LoadErrorHandlingTest (10 tests). Quick 148/0/0/3, full suite 148/0/0/0 green, timing no regressions (exit 0). |
+| 28 | ✅ DONE (2026-09-11) | Escape column names in writeHeader — CsvRowWriter.writeHeader() and TsvRowWriter.writeHeader() escape each column name via escapeValue() (RFC 4180 quoting for CSV, backslash-escaping for TSV) instead of a bare String.join; TsvRowReader.readHeader() unescapes parsed header names so escaped names (a\tb) re-match the schema (pairs with Prompt 24). New tests csvEscapedHeaderRoundTrip/tsvEscapedHeaderRoundTrip ("price, rub", "a\tb"). Quick 150/0/0/3. |
 
 ### Section 2: Sonar Top-10 Pareto (41-50)
 

@@ -94,7 +94,10 @@ public class TsvRowReader implements DelimitedRowReader {
         lineNumber++;
         lastRowLine = lineNumber;
         String[] headerCols = header.split("\t", -1);
-        List<String> headerList = new ArrayList<>(List.of(headerCols));
+        List<String> headerList = new ArrayList<>(headerCols.length);
+        for (String col : headerCols) {
+            headerList.add(unescape(col));
+        }
         if (!headerList.isEmpty()) {
             String first = headerList.get(0);
             if (first.startsWith(BOM)) {

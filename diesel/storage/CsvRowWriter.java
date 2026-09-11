@@ -31,7 +31,15 @@ public class CsvRowWriter implements AutoCloseable {
 
     /** Writes the header line (column names separated by commas). */
     public void writeHeader() throws IOException {
-        writer.write(String.join(",", columns));
+        boolean sentinel = TsvRowWriter.isSentinelMode();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(escapeValue(columns.get(i), sentinel));
+        }
+        writer.write(sb.toString());
         writer.newLine();
     }
 
