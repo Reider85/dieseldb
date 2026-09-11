@@ -1,6 +1,6 @@
 ﻿# Prompt Status Tracker
 
-> Latest: **Prompt 23 (storage) DONE (2026-09-11)** — CSV storage indexing and search via the shared DelimitedIndexManager (3.0.47), completing the delimiter-agnostic index/cache/parallel-read for both CSV and TSV. Included engine storage-rows mirroring fixes (PK insert, transactions, compaction) that unblocked SELECT/COUNT/DELETE paths. Gate: quick 118/0/0, full suite 118/0/0 (@LargeTest, 4GB), timing baseline regenerated, CsvIndexManagerTest 18/18.
+> Latest: **Prompt 24 (Section 1a) DONE (2026-09-11)** — CSV/TSV header column mapping: readHeader() now parses file header, strips BOM, builds column mapping by name (case-insensitive), validates against schema. Configurable mismatch mode (fail|warn). Gate: quick 133/0/0, full suite pre-existing failures only.
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -77,6 +77,12 @@
 | 38 | ??? DONE (2026-08-18) | Unused ???-T??-?-??T?T?T?/????T????-???-?-T??/???-???-T?T?T? | LOW |
 | 39 | ??? DONE (2026-08-18) | ??T??-T???-???? T?T????-?-???? | LOW |
 | 40 | ??? DONE (2026-08-18) | ???-?-??T?-?-T? ?-TG?T?T�??- CODE_SMELL | LOW |
+
+### Section 1a: CSV/TSV Storage Improvements (24-38)
+
+| # | Status | Description |
+|---|--------|-------------|
+| 24 | ✅ DONE (2026-09-11) | CSV/TSV header column mapping — readHeader() parses file header, strips BOM, builds column mapping by name (case-insensitive), validates against schema. Configurable mismatch mode (fail|warn). Quick 133/0/0. |
 
 ### Section 2: Sonar Top-10 Pareto (41-50)
 

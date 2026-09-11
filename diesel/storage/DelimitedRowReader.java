@@ -17,9 +17,10 @@ public interface DelimitedRowReader extends Iterator<Map<String, Object>>, AutoC
     /**
      * Consumes and validates the schema header line of the underlying stream.
      *
-     * @throws IOException on I/O errors
+     * @return the parsed column names from the file header
+     * @throws IOException on I/O errors or header/schema mismatch when in fail mode
      */
-    void readHeader() throws IOException;
+    List<String> readHeader() throws IOException;
 
     /**
      * Reads every remaining row of the underlying stream.

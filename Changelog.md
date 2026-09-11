@@ -2468,3 +2468,14 @@ Changes:
 - analytics/prompt3.md: expanded analytics report
 - analytics/performance_history.csv: performance history data
 - config.properties: storage.type changed from in_memory to tsv
+
+3.0.49 CSV/TSV header column mapping
+
+Changes:
+- diesel/storage/DelimitedRowReader.java: readHeader() now returns List<String> (parsed header column names) instead of void
+- diesel/storage/CsvRowReader.java: added BOM stripping (UTF-8/UTF-16LE/UTF-16BE), column-mapping-by-name (case-insensitive TreeMap), header-vs-schema validation with configurable mismatch mode (storage.header.mismatch.mode=fail|warn), parseDataLine() now maps file columns to schema columns by position via columnMapping array
+- diesel/storage/TsvRowReader.java: same header mapping changes as CsvRowReader
+- config.properties: added storage.header.mismatch.mode=fail
+- pom.xml: added CsvTsvHeaderMappingTest to surefire includes (default + ci profiles)
+- src/test/java/diesel/CsvTsvHeaderMappingTest.java (new): 15 tests covering column reorder, extra/missing columns (fail+warn modes), BOM handling, exact-match header, and round-trip save+load with reordered columns
+- PROMPT_STATUS.md: Section 1a added, prompt 24 marked DONE

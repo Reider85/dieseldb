@@ -1,16 +1,18 @@
 package diesel.storage;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -34,12 +36,15 @@ import java.util.logging.Logger;
 public class CsvRowReader implements DelimitedRowReader {
 
     private static final Logger LOGGER = Logger.getLogger(CsvRowReader.class.getName());
+    private static final String BOM = "\uFEFF";
 
     private final BufferedReader reader;
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private String nextLine;
     private boolean finished;
+    private int[] columnMapping;
+    private boolean headerRead;
 
     /**
      * @param reader      the underlying character-input stream
@@ -52,19 +57,72 @@ public class CsvRowReader implements DelimitedRowReader {
         this.columnTypes = columnTypes;
         this.finished = false;
         this.nextLine = null;
+        this.headerRead = false;
     }
 
-    /** Reads and validates the header line. */
-    public void readHeader() throws IOException {
+    /** Reads and validates the header line. Returns parsed file header columns. */
+    public List<String> readHeader() throws IOException {
         String header = reader.readLine();
         if (header == null) {
             throw new IOException("CSV file is empty – expected header line");
         }
         List<String> headerCols = parseLine(header);
-        if (headerCols.size() != columns.size()) {
-            LOGGER.log(Level.WARNING,
-                    "CSV header column count ({0}) differs from schema ({1}), proceeding anyway",
-                    new Object[]{headerCols.size(), columns.size()});
+        if (!headerCols.isEmpty()) {
+            String first = headerCols.get(0);
+            if (first.startsWith(BOM)) {
+                headerCols.set(0, first.substring(BOM.length()));
+            }
+        }
+        buildColumnMapping(headerCols);
+        headerRead = true;
+        return headerCols;
+    }
+
+    private void buildColumnMapping(List<String> fileHeader) throws IOException {
+        columnMapping = new int[columns.size()];
+        Map<String, Integer> fileIndexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < fileHeader.size(); i++) {
+            String name = fileHeader.get(i).trim();
+            if (!name.isEmpty()) {
+                fileIndexByName.put(name, i);
+            }
+        }
+        List<String> missing = new ArrayList<>();
+        for (int i = 0; i < columns.size(); i++) {
+            String schemaCol = columns.get(i);
+            Integer fileIdx = fileIndexByName.get(schemaCol);
+            columnMapping[i] = (fileIdx != null) ? fileIdx : -1;
+            if (fileIdx == null) {
+                missing.add(schemaCol);
+            }
+        }
+        if (!missing.isEmpty()) {
+            String msg = "CSV header columns missing from file (required by schema): " + missing;
+            String mode = readMismatchMode();
+            if ("fail".equalsIgnoreCase(mode)) {
+                throw new IOException(msg);
+            } else {
+                LOGGER.log(Level.WARNING, msg);
+            }
+        }
+    }
+
+    private static String readMismatchMode() {
+        String mode = System.getProperty("storage.header.mismatch.mode");
+        if (mode != null) {
+            return mode;
+        }
+        try {
+            java.util.Properties props = new java.util.Properties();
+            File configFile = new File("config.properties");
+            if (configFile.exists()) {
+                try (FileInputStream fis = new FileInputStream(configFile)) {
+                    props.load(fis);
+                }
+            }
+            return props.getProperty("storage.header.mismatch.mode", "fail");
+        } catch (IOException e) {
+            return "fail";
         }
     }
 
@@ -154,7 +212,8 @@ public class CsvRowReader implements DelimitedRowReader {
         Map<String, Object> row = new HashMap<>();
         for (int i = 0; i < columns.size(); i++) {
             String colName = columns.get(i);
-            String rawValue = (i < raw.size()) ? raw.get(i) : "";
+            int fileIdx = columnMapping[i];
+            String rawValue = (fileIdx >= 0 && fileIdx < raw.size()) ? raw.get(fileIdx) : "";
             row.put(colName, convertValue(rawValue, colName));
         }
         return row;
