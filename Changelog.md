@@ -2461,3 +2461,10 @@ Changes:
 - config.properties: add "csv.block.size = 1000", "csv.cache.max.blocks = 64", "csv.parallel.read.threshold = 10000" above the storage.type line
 - pom.xml: include CsvIndexManagerTest in surefire includes (default and ci profiles)
 - src/test/java/diesel/CsvIndexManagerTest.java (new): indexed primary-key and secondary search, inclusive range search, incremental insert/remove, reindex, block splitting/getBlock, page cache hit/miss counters, loadAllBlocksParallel vs sequential equivalence, and file-existence handling on loadFromFile
+
+3.0.48 analytics
+
+Changes:
+- analytics/prompt3.md: expanded analytics report
+- analytics/performance_history.csv: performance history data
+- config.properties: storage.type changed from in_memory to tsv
