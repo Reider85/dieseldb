@@ -128,13 +128,25 @@ public abstract class AbstractRowStorage implements RowStorage {
     }
 
     /**
-     * Mirrors a new row into the index manager after the physical insert.
-     * The row index must be the row's index in the storage after insertion.
+     * Mirrors a position-shifted insert into the index manager. The row at
+     * {@code rowIndex} was just physically inserted, shifting all later rows.
+     * The index manager updates its position map without rebuilding indexes.
      */
     protected void syncIndexInsert(Map<String, Object> row, int rowIndex) {
         DelimitedIndexManager manager = index();
         if (manager != null) {
-            manager.insertIndexedRow(row, rowIndex);
+            manager.insertAt(rowIndex, row);
+        }
+    }
+
+    /**
+     * Mirrors an append-only insert into the index manager. The row was
+     * added at the end of the storage — no position shifting needed.
+     */
+    protected void syncIndexAppend(Map<String, Object> row, int rowIndex) {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.appendIndexedRow(row, rowIndex);
         }
     }
 
@@ -144,19 +156,18 @@ public abstract class AbstractRowStorage implements RowStorage {
     protected void syncIndexUpdate(Map<String, Object> oldRow, int rowIndex, Map<String, Object> newRow) {
         DelimitedIndexManager manager = index();
         if (manager != null) {
-            manager.removeIndexedRow(oldRow, rowIndex);
-            manager.insertIndexedRow(newRow, rowIndex);
+            manager.updateRow(oldRow, rowIndex, newRow);
         }
     }
 
     /**
-     * Mirrors a delete into the index manager. The row physically shifts later
-     * indexes, so the whole index is rebuilt to stay consistent.
+     * Mirrors a delete into the index manager. Uses the stable rowId for
+     * incremental index removal and position shifting instead of a full rebuild.
      */
     protected void syncIndexDelete(int rowIndex) {
         DelimitedIndexManager manager = index();
         if (manager != null) {
-            manager.buildIndexes(scan(), primaryKeyColumn);
+            manager.deleteRow(rowIndex);
         }
     }
 

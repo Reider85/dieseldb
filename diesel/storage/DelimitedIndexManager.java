@@ -8,10 +8,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionException;
@@ -88,9 +90,14 @@ public abstract class DelimitedIndexManager {
 
     private List<Map<String, Object>> rows = new ArrayList<>();
     private String primaryKeyColumn;
-    private final NavigableMap<Object, Integer> primaryKeyIndex = new TreeMap<>(KEY_ORDER);
-    private final Map<String, NavigableMap<Object, List<Integer>>> secondaryIndexes =
+    private final NavigableMap<Object, Long> primaryKeyIndex = new TreeMap<>(KEY_ORDER);
+    private final Map<String, NavigableMap<Object, List<Long>>> secondaryIndexes =
             new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+
+    private long nextRowId = 0;
+    private final NavigableMap<Long, Integer> rowIdToPosition = new TreeMap<>();
+    private final Set<Long> deletedRowIds = new HashSet<>();
+    private static final double COMPACTION_THRESHOLD = 0.25;
 
     private final int blockSize;
     private final int maxCacheBlocks;
@@ -157,6 +164,9 @@ public abstract class DelimitedIndexManager {
         this.primaryKeyColumn = resolveColumn(primaryKeyColumn);
         this.primaryKeyIndex.clear();
         this.secondaryIndexes.clear();
+        this.rowIdToPosition.clear();
+        this.deletedRowIds.clear();
+        this.nextRowId = 0;
         this.blockCache.clear();
         this.cacheHits.set(0);
         this.cacheMisses.set(0);
@@ -181,11 +191,15 @@ public abstract class DelimitedIndexManager {
         if (secondaryIndexes.containsKey(canonical)) {
             return true;
         }
-        NavigableMap<Object, List<Integer>> index = new TreeMap<>(KEY_ORDER);
+        NavigableMap<Object, List<Long>> index = new TreeMap<>(KEY_ORDER);
         for (int i = 0; i < rows.size(); i++) {
+            Long rid = positionToRowId(i);
+            if (rid == null) {
+                continue;
+            }
             Object key = rows.get(i).get(canonical);
             if (key != null) {
-                index.computeIfAbsent(key, k -> new ArrayList<>()).add(i);
+                index.computeIfAbsent(key, k -> new ArrayList<>()).add(rid);
             }
         }
         secondaryIndexes.put(canonical, index);
@@ -195,61 +209,202 @@ public abstract class DelimitedIndexManager {
     /** Rebuilds the primary-key index and every secondary index from the current rows. */
     public void reindex() {
         primaryKeyIndex.clear();
-        for (NavigableMap<Object, List<Integer>> index : secondaryIndexes.values()) {
+        for (NavigableMap<Object, List<Long>> index : secondaryIndexes.values()) {
             index.clear();
         }
+        rowIdToPosition.clear();
+        deletedRowIds.clear();
+        nextRowId = 0;
         for (int i = 0; i < rows.size(); i++) {
-            insertIndexedRow(rows.get(i), i);
+            long rid = nextRowId++;
+            rowIdToPosition.put(rid, i);
+            insertIndexedRow(rows.get(i), rid);
         }
     }
 
     /**
      * Injects a new row into all maintained indexes.
      *
-     * @param row      the row map
-     * @param rowIndex the row index associated with the row
+     * @param row  the row map
+     * @param rowId the stable row identifier
      */
-    public void insertIndexedRow(Map<String, Object> row, int rowIndex) {
+    public void insertIndexedRow(Map<String, Object> row, long rowId) {
         if (primaryKeyColumn != null) {
             Object key = row.get(primaryKeyColumn);
             if (key != null) {
-                primaryKeyIndex.put(key, rowIndex);
+                primaryKeyIndex.put(key, rowId);
             }
         }
-        for (Map.Entry<String, NavigableMap<Object, List<Integer>>> entry : secondaryIndexes.entrySet()) {
+        for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
             Object key = row.get(entry.getKey());
             if (key != null) {
-                entry.getValue().computeIfAbsent(key, k -> new ArrayList<>()).add(rowIndex);
+                entry.getValue().computeIfAbsent(key, k -> new ArrayList<>()).add(rowId);
             }
         }
     }
 
     /**
+     * Appends a row at the given position (end of storage). Assigns a new
+     * rowId and registers it in the position map. No position shifting.
+     *
+     * @param row      the row data
+     * @param rowIndex the position (should be at the end)
+     */
+    public void appendIndexedRow(Map<String, Object> row, int rowIndex) {
+        long rid = nextRowId++;
+        rowIdToPosition.put(rid, rowIndex);
+        if (rowIndex >= rows.size()) {
+            rows.add(row);
+        } else {
+            rows.add(rowIndex, row);
+        }
+        insertIndexedRow(row, rid);
+    }
+
+    /**
      * Removes a row from all maintained indexes.
      *
-     * @param row      the row map
-     * @param rowIndex the row index to disassociate
+     * @param row  the row map
+     * @param rowId the stable row identifier to disassociate
      */
-    public void removeIndexedRow(Map<String, Object> row, int rowIndex) {
+    public void removeIndexedRow(Map<String, Object> row, long rowId) {
         if (primaryKeyColumn != null) {
             Object key = row.get(primaryKeyColumn);
-            if (key != null && rowIndex == primaryKeyIndex.getOrDefault(key, -1)) {
+            if (key != null && rowId == primaryKeyIndex.getOrDefault(key, -1L)) {
                 primaryKeyIndex.remove(key);
             }
         }
-        for (Map.Entry<String, NavigableMap<Object, List<Integer>>> entry : secondaryIndexes.entrySet()) {
+        for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
             Object key = row.get(entry.getKey());
             if (key == null) {
                 continue;
             }
-            List<Integer> indexes = entry.getValue().get(key);
-            if (indexes != null) {
-                indexes.remove(Integer.valueOf(rowIndex));
-                if (indexes.isEmpty()) {
+            List<Long> ids = entry.getValue().get(key);
+            if (ids != null) {
+                ids.remove(rowId);
+                if (ids.isEmpty()) {
                     entry.getValue().remove(key);
                 }
             }
         }
+    }
+
+    /**
+     * Updates a row in all maintained indexes at the given physical position.
+     * The rowId stays the same; only the key→rowId mappings are refreshed.
+     *
+     * @param oldRow  the previous row data
+     * @param rowIndex the physical position
+     * @param newRow  the new row data
+     */
+    public void updateRow(Map<String, Object> oldRow, int rowIndex, Map<String, Object> newRow) {
+        Long rid = positionToRowId(rowIndex);
+        if (rid == null) {
+            return;
+        }
+        removeIndexedRow(oldRow, rid);
+        insertIndexedRow(newRow, rid);
+    }
+
+    // ─── Stable row-id: insertAt / deleteRow / compact ───────────────
+
+    /**
+     * Inserts a row at the given physical position, shifting all later
+     * positions up by one. Assigns a new stable rowId. Index key→rowId
+     * mappings for existing rows are <em>not</em> touched — only the
+     * position map is updated. O(n) in the number of rows after the
+     * insertion point.
+     *
+     * @param rowIndex the zero-based position at which to insert
+     * @param row      the row data
+     */
+    public void insertAt(int rowIndex, Map<String, Object> row) {
+        long rid = nextRowId++;
+        rowIdToPosition.put(rid, rowIndex);
+        if (rowIndex >= rows.size()) {
+            rows.add(row);
+        } else {
+            rows.add(rowIndex, row);
+        }
+        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
+            if (e.getValue() >= rowIndex && e.getKey() != rid) {
+                e.setValue(e.getValue() + 1);
+            }
+        }
+        insertIndexedRow(row, rid);
+    }
+
+    /**
+     * Marks the row at the given physical position as deleted (tombstone).
+     * Shifts all later positions down by one. Triggers a compaction when
+     * the fraction of deleted rowIds exceeds {@link #COMPACTION_THRESHOLD}.
+     *
+     * @param rowIndex the zero-based position of the row to delete
+     */
+    public void deleteRow(int rowIndex) {
+        Long rid = positionToRowId(rowIndex);
+        if (rid == null) {
+            return;
+        }
+        Map<String, Object> row = rows.remove(rowIndex);
+        removeIndexedRow(row, rid);
+        rowIdToPosition.remove(rid);
+        deletedRowIds.add(rid);
+        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
+            if (e.getValue() > rowIndex) {
+                e.setValue(e.getValue() - 1);
+            }
+        }
+        int liveRows = rowIdToPosition.size();
+        if (liveRows > 0 && (double) deletedRowIds.size() / liveRows > COMPACTION_THRESHOLD) {
+            compact();
+        }
+    }
+
+    /**
+     * Full rebuild: clears all tombstones, reassigns rowIds sequentially,
+     * and rebuilds every index from scratch.
+     */
+    public void compact() {
+        reindex();
+    }
+
+    /** Returns the number of tombstoned (deleted) rowIds pending compaction. */
+    public int getDeletedCount() {
+        return deletedRowIds.size();
+    }
+
+    // ─── Internal row-id helpers ────────────────────────────────────
+
+    /**
+     * Returns the rowId at the given physical position, or {@code null}
+     * if no mapping exists (e.g. after a raw list mutation without an
+     * index sync).
+     */
+    private Long positionToRowId(int position) {
+        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
+            if (e.getValue() == position) {
+                return e.getKey();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Translates a collection of rowIds into their current physical
+     * positions, sorted ascending, omitting any rowIds whose position
+     * is unknown.
+     */
+    private List<Integer> translateRowIdsToPositions(List<Long> rowIds) {
+        List<Integer> result = new ArrayList<>(rowIds.size());
+        for (Long rid : rowIds) {
+            Integer pos = rowIdToPosition.get(rid);
+            if (pos != null) {
+                result.add(pos);
+            }
+        }
+        result.sort(Integer::compareTo);
+        return result;
     }
 
     // ─── Index queries ───────────────────────────────────────────────
@@ -279,8 +434,12 @@ public abstract class DelimitedIndexManager {
         if (key == null || primaryKeyColumn == null || primaryKeyIndex.isEmpty()) {
             return List.of();
         }
-        Integer rowIndex = primaryKeyIndex.get(key);
-        return rowIndex == null ? List.of() : List.of(rowIndex);
+        Long rowId = primaryKeyIndex.get(key);
+        if (rowId == null) {
+            return List.of();
+        }
+        Integer pos = rowIdToPosition.get(rowId);
+        return pos == null ? List.of() : List.of(pos);
     }
 
     /**
@@ -297,12 +456,12 @@ public abstract class DelimitedIndexManager {
         if (primaryKeyColumn != null && primaryKeyColumn.equalsIgnoreCase(column)) {
             return searchByPrimaryKey(key);
         }
-        NavigableMap<Object, List<Integer>> index = secondaryIndexes.get(column);
+        NavigableMap<Object, List<Long>> index = secondaryIndexes.get(column);
         if (index == null) {
             return List.of();
         }
-        List<Integer> indexes = index.get(key);
-        return indexes == null ? List.of() : new ArrayList<>(indexes);
+        List<Long> ids = index.get(key);
+        return ids == null ? List.of() : translateRowIdsToPositions(ids);
     }
 
     /**
@@ -318,23 +477,24 @@ public abstract class DelimitedIndexManager {
             return List.of();
         }
         if (primaryKeyColumn != null && primaryKeyColumn.equalsIgnoreCase(column)) {
-            return collectIndexes(subRange(primaryKeyIndex, low, high));
+            return collectPositions(subRange(primaryKeyIndex, low, high));
         }
-        NavigableMap<Object, List<Integer>> index = secondaryIndexes.get(column);
+        NavigableMap<Object, List<Long>> index = secondaryIndexes.get(column);
         if (index == null) {
             return List.of();
         }
-        return collectIndexes(subRange(index, low, high));
+        return collectPositions(subRange(index, low, high));
     }
 
     // ─── Block cache ─────────────────────────────────────────────────
 
     /** Returns the number of fixed-size blocks the current rows are split into. */
     public int getNumBlocks() {
-        if (rows.isEmpty()) {
+        int count = rowIdToPosition.size();
+        if (count == 0) {
             return 0;
         }
-        return (rows.size() + blockSize - 1) / blockSize;
+        return (count + blockSize - 1) / blockSize;
     }
 
     /** Returns the number of rows per block. */
@@ -344,7 +504,7 @@ public abstract class DelimitedIndexManager {
 
     /** Returns the current row count. */
     public int getRowCount() {
-        return rows.size();
+        return rowIdToPosition.size();
     }
 
     /**
@@ -570,21 +730,23 @@ public abstract class DelimitedIndexManager {
         return map;
     }
 
-    private static List<Integer> collectIndexes(Map<Object, ?> entries) {
+    private List<Integer> collectPositions(Map<Object, ?> entries) {
         if (entries.isEmpty()) {
             return List.of();
         }
-        List<Integer> result = new ArrayList<>();
+        List<Long> rowIds = new ArrayList<>();
         for (Object value : entries.values()) {
-            if (value instanceof Integer rowIndex) {
-                result.add(rowIndex);
-            } else if (value instanceof List<?> indexes) {
-                for (Object index : indexes) {
-                    result.add((Integer) index);
+            if (value instanceof Long rid) {
+                rowIds.add(rid);
+            } else if (value instanceof List<?> ids) {
+                for (Object id : ids) {
+                    if (id instanceof Long rid) {
+                        rowIds.add(rid);
+                    }
                 }
             }
         }
-        return result;
+        return translateRowIdsToPositions(rowIds);
     }
 
     private static java.util.Properties loadRootConfig() {

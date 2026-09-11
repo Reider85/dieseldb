@@ -132,13 +132,15 @@ class CsvIndexManagerTest {
     @Test
     void incrementalInsertAndRemoveKeepIndexesConsistent() {
         CsvIndexManager m = manager(new ArrayList<>(sampleRows()), "ID");
-        m.insertIndexedRow(row(6L, "Frank", 20), 5);
+        // Append a row — uses appendIndexedRow (assigns rowId 5, position 5)
+        m.appendIndexedRow(row(6L, "Frank", 20), 5);
         assertEquals(List.of(5), m.searchByPrimaryKey(6L));
-        m.removeIndexedRow(row(2L, "Bob", 30), 1);
+        // Delete row at position 1 (ID=2) — shifts later positions down by 1
+        m.deleteRow(1);
         assertTrue(m.searchByPrimaryKey(2L).isEmpty());
         assertEquals(List.of(0), m.searchByPrimaryKey(1L));
-        // Incremental index maintenance does not shift sibling indexes.
-        assertEquals(List.of(5), m.searchByPrimaryKey(6L));
+        // After delete, row with ID=6 shifted from pos 5 to pos 4
+        assertEquals(List.of(4), m.searchByPrimaryKey(6L));
     }
 
     @Test
@@ -366,6 +368,97 @@ class CsvIndexManagerTest {
         s.open();
         s.setPrimaryKeyColumn("ID");
         assertFalse(s.isIndexed());
+    }
+
+    // ─── Prompt 25: stable row-id tests ──────────────────────────────
+
+    @Test
+    void clusteredInsertAtMiddleThenSearchCorrect() {
+        CsvIndexManager m = manager(new ArrayList<>(sampleRows()), "ID");
+        // Insert row with ID=10 at position 2 (between Bob and Carol)
+        Map<String, Object> inserted = row(10L, "Zara", 28);
+        m.insertAt(2, inserted);
+
+        // Existing rows shifted: Alice=0, Bob=1, Zara=2, Carol=3, Dave=4, Eve=5
+        assertEquals(List.of(0), m.searchByPrimaryKey(1L));
+        assertEquals(List.of(1), m.searchByPrimaryKey(2L));
+        assertEquals(List.of(2), m.searchByPrimaryKey(10L));
+        assertEquals(List.of(3), m.searchByPrimaryKey(3L));
+        assertEquals(List.of(4), m.searchByPrimaryKey(4L));
+        assertEquals(List.of(5), m.searchByPrimaryKey(5L));
+        assertEquals(6, m.getRowCount());
+    }
+
+    @Test
+    void secondaryIndexCorrectAfterInsertAt() {
+        CsvIndexManager m = manager(new ArrayList<>(sampleRows()), "ID");
+        m.createIndex("AGE");
+        // Before insert: AGE=30 at positions [1, 4]
+        assertEquals(List.of(1, 4), m.search("AGE", 30));
+
+        // Insert at position 2: Bob shifts to 1 (unchanged), new row at 2, Carol shifts to 3, etc.
+        m.insertAt(2, row(10L, "Zara", 30));
+        // AGE=30 should now be at positions [1, 2, 5] (Bob, Zara, Eve)
+        assertEquals(List.of(1, 2, 5), m.search("AGE", 30));
+    }
+
+    @Test
+    void massInsertAtDoesNotDegradeToQuadratic() {
+        CsvIndexManager m = manager(new ArrayList<>(), "ID");
+        // Start with one row
+        m.appendIndexedRow(row(1L, "First", 10), 0);
+
+        long start = System.nanoTime();
+        // Insert 1000 rows at position 0 (always shifting everything)
+        for (int i = 2; i <= 1000; i++) {
+            m.insertAt(0, row(i, "Row" + i, 10));
+        }
+        long elapsed = System.nanoTime() - start;
+
+        assertEquals(1000, m.getRowCount());
+        // Verify first and last are findable
+        assertEquals(List.of(999), m.searchByPrimaryKey(1L));
+        assertEquals(List.of(0), m.searchByPrimaryKey(1000L));
+        // Should complete in under 2 seconds (O(n) per insert, 1000 inserts)
+        assertTrue(elapsed < 2_000_000_000L, "Mass insertAt took " + (elapsed / 1_000_000) + "ms, expected < 2000ms");
+    }
+
+    @Test
+    void deleteThenInsertAtMaintainsIndexCorrectness() {
+        CsvIndexManager m = manager(new ArrayList<>(sampleRows()), "ID");
+        // Delete Bob (position 1)
+        m.deleteRow(1);
+        assertEquals(4, m.getRowCount());
+        assertTrue(m.searchByPrimaryKey(2L).isEmpty());
+        assertEquals(List.of(0), m.searchByPrimaryKey(1L));
+        assertEquals(List.of(1), m.searchByPrimaryKey(3L));
+
+        // Now insert at position 1 (between Alice and Carol)
+        m.insertAt(1, row(2L, "Bobby", 32));
+        assertEquals(5, m.getRowCount());
+        assertEquals(List.of(0), m.searchByPrimaryKey(1L));
+        assertEquals(List.of(1), m.searchByPrimaryKey(2L));
+        assertEquals(List.of(2), m.searchByPrimaryKey(3L));
+    }
+
+    @Test
+    void storageInsertAtThenSearchCorrect() {
+        CsvRowStorage s = new CsvRowStorage("T", COLS, types());
+        s.open();
+        s.setPrimaryKeyColumn("ID");
+        s.insert(row(1L, "Alice", 25));
+        s.insert(row(2L, "Bob", 30));
+        s.insert(row(3L, "Carol", 35));
+
+        // InsertAt position 1 (between Alice and Bob)
+        s.insertAt(1, row(10L, "Zara", 28));
+
+        // Storage: Alice=0, Zara=1, Bob=2, Carol=3
+        assertEquals(List.of(0), s.searchByPrimaryKey(1L));
+        assertEquals(List.of(1), s.searchByPrimaryKey(10L));
+        assertEquals(List.of(2), s.searchByPrimaryKey(2L));
+        assertEquals(List.of(3), s.searchByPrimaryKey(3L));
+        assertEquals(4, s.scan().size());
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────

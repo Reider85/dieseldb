@@ -1,6 +1,6 @@
 ﻿# Prompt Status Tracker
 
-> Latest: **Prompt 24 (Section 1a) DONE (2026-09-11)** — CSV/TSV header column mapping: readHeader() now parses file header, strips BOM, builds column mapping by name (case-insensitive), validates against schema. Configurable mismatch mode (fail|warn). Gate: quick 133/0/0, full suite pre-existing failures only.
+> Latest: **Prompt 25 (Section 1a) DONE (2026-09-11)** — Stable row-id instead of positional indexes in DelimitedIndexManager: key->rowId indexes + rowId->position map, insertAt shifts only positions (no rebuild), deleteRow uses tombstones with 25% compaction threshold. Gate: quick 138/0/0, full suite 138/0/0 green.
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -83,6 +83,7 @@
 | # | Status | Description |
 |---|--------|-------------|
 | 24 | ✅ DONE (2026-09-11) | CSV/TSV header column mapping — readHeader() parses file header, strips BOM, builds column mapping by name (case-insensitive), validates against schema. Configurable mismatch mode (fail|warn). Quick 133/0/0. |
+| 25 | ✅ DONE (2026-09-11) | Stable row-id instead of positional indexes in DelimitedIndexManager — key→rowId indexes + rowId→position map, insertAt shifts only positions (no rebuild), deleteRow uses tombstones with 25% compaction threshold; cluster insert / search correctness regression tests. Quick 138/0/0, full suite 138/0/0. |
 
 ### Section 2: Sonar Top-10 Pareto (41-50)
 

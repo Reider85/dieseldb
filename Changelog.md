@@ -2481,3 +2481,11 @@ Changes:
 - PROMPT_STATUS.md: Section 1a added, prompt 24 marked DONE
 
 3.0.50 Changelog tidy: cleaned test wording in the 3.0.49 entry (kept the no-test-info convention of 3.0.41); commit message reworded without test-run notes.
+
+3.0.51 Prompt 25 - stable row-id instead of positional indexes in DelimitedIndexManager
+
+Changes:
+- diesel/storage/DelimitedIndexManager.java: index structures switched from positional (key -> rowIndex) to stable rowId (key -> rowId, secondary key -> List<rowId>); added a monotonic rowId counter, rowIdToPosition position map and deletedRowIds tombstone set; new insertAt(rowIndex, row) shifts only the position map (O(n) shift, no index rebuild) so clustered-PK inserts in the middle leave searchByPrimaryKey/search/rangeSearch correct; new deleteRow(rowIndex) removes the row from the index and shifts positions incrementally, compacts (full reindex) once the tombstone ratio exceeds 25%; appendIndexedRow()/updateRow() added for append and index-stable update paths; searchByPrimaryKey/search/rangeSearch resolve rowIds to current positions, preserving the public List<Integer> return contract; getRowCount/getNumBlocks now read live rows from rowIdToPosition
+- diesel/storage/AbstractRowStorage.java: syncIndexInsert now delegates to manager.insertAt(rowIndex, row) (position-shifting insert), new syncIndexAppend delegates to appendIndexedRow, syncIndexUpdate delegates to updateRow, and syncIndexDelete delegates to manager.deleteRow(rowIndex) instead of a full buildIndexes(scan(), pk) rebuild per delete (O(n log n) -> O(log n + shift) per operation)
+- diesel/storage/CsvRowStorage.java / TsvRowStorage.java: insert() (append path) calls syncIndexAppend instead of syncIndexInsert
+- src/test/java/diesel/CsvIndexManagerTest.java: clustered-insert regression tests - clusteredInsertAtMiddleThenSearchCorrect, secondaryIndexCorrectAfterInsertAt, massInsertAtDoesNotDegradeToQuadratic, deleteThenInsertAtMaintainsIndexCorrectness, storageInsertAtThenSearchCorrect, and updated incrementalInsertAndRemoveKeepIndexesConsistent to the rowId API

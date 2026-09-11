@@ -79,7 +79,7 @@ public class CsvRowStorage extends AbstractRowStorage {
     @Override
     public void insert(Map<String, Object> row) {
         rows.add(new HashMap<>(row));
-        syncIndexInsert(rows.get(rows.size() - 1), rows.size() - 1);
+        syncIndexAppend(rows.get(rows.size() - 1), rows.size() - 1);
     }
 
     @Override
