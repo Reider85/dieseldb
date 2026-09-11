@@ -31,7 +31,7 @@ import java.util.logging.Logger;
  *   reader.close();
  * </pre>
  */
-public class TsvRowReader implements Iterator<Map<String, Object>>, AutoCloseable {
+public class TsvRowReader implements DelimitedRowReader {
 
     private static final Logger LOGGER = Logger.getLogger(TsvRowReader.class.getName());
 

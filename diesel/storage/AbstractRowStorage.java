@@ -17,6 +17,15 @@ public abstract class AbstractRowStorage implements RowStorage {
     protected final Map<String, Class<?>> columnTypes;
     protected final String tableName;
     protected String dataDir;
+    private String primaryKeyColumn;
+
+    /**
+     * Optional index/cache manager used by delimited file backends (CSV/TSV)
+     * to provide prompt-23 functionality: primary-key and secondary indexes,
+     * an LRU block cache and parallel file reading. Subclasses provide one via
+     * {@link #createIndexManager()}; other backends keep it {@code null}.
+     */
+    protected DelimitedIndexManager indexManager;
 
     /**
      * @param tableName  the table name
@@ -61,5 +70,104 @@ public abstract class AbstractRowStorage implements RowStorage {
     protected String resolveFilePath(String extension) {
         String dir = (dataDir != null && !dataDir.isBlank()) ? dataDir : ".";
         return dir + File.separator + tableName + extension;
+    }
+
+    // ─── Index / cache manager hooks (prompt 23) ────────────────────
+
+    /**
+     * Creates the {@link DelimitedIndexManager} backing this storage, or
+     * returns {@code null} when the storage does not maintain indexes.
+     */
+    protected DelimitedIndexManager createIndexManager() {
+        return null;
+    }
+
+    /**
+     * Lazily initialises and returns the index manager of this storage.
+     * The engine does not necessarily call {@link RowStorage#open()}, so the
+     * manager is created on first use.
+     *
+     * @return the index manager, or {@code null} when indexes are not maintained
+     */
+    protected DelimitedIndexManager index() {
+        if (indexManager == null) {
+            indexManager = createIndexManager();
+        }
+        return indexManager;
+    }
+
+    /**
+     * Returns the index manager of this storage, or {@code null} when indexes
+     * are not maintained.
+     */
+    public DelimitedIndexManager getIndexManager() {
+        return indexManager;
+    }
+
+    /** Returns whether this storage maintains an index manager. */
+    public boolean isIndexed() {
+        return index() != null;
+    }
+
+    /**
+     * Sets the primary-key column and rebuilds the index structures when this
+     * storage maintains an index manager. A no-op otherwise.
+     */
+    @Override
+    public void setPrimaryKeyColumn(String primaryKeyColumn) {
+        this.primaryKeyColumn = primaryKeyColumn;
+        DelimitedIndexManager manager = index();
+        if (manager != null && primaryKeyColumn != null) {
+            manager.buildIndexes(scan(), primaryKeyColumn);
+        }
+    }
+
+    /** Returns the configured primary-key column, or {@code null}. */
+    public String getPrimaryKeyColumn() {
+        return primaryKeyColumn;
+    }
+
+    /**
+     * Mirrors a new row into the index manager after the physical insert.
+     * The row index must be the row's index in the storage after insertion.
+     */
+    protected void syncIndexInsert(Map<String, Object> row, int rowIndex) {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.insertIndexedRow(row, rowIndex);
+        }
+    }
+
+    /**
+     * Mirrors an index-stable update (same row index) into the index manager.
+     */
+    protected void syncIndexUpdate(Map<String, Object> oldRow, int rowIndex, Map<String, Object> newRow) {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.removeIndexedRow(oldRow, rowIndex);
+            manager.insertIndexedRow(newRow, rowIndex);
+        }
+    }
+
+    /**
+     * Mirrors a delete into the index manager. The row physically shifts later
+     * indexes, so the whole index is rebuilt to stay consistent.
+     */
+    protected void syncIndexDelete(int rowIndex) {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.buildIndexes(scan(), primaryKeyColumn);
+        }
+    }
+
+    /**
+     * Rebuilds the index structures from the current rows, used after a bulk
+     * load ({@code loadFromFile}) or a wholesale row replacement.
+     */
+    protected void syncIndexBulk() {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.buildIndexes(scan(), primaryKeyColumn);
+        }
     }
 }

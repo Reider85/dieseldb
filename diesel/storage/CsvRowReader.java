@@ -31,7 +31,7 @@ import java.util.logging.Logger;
  *   reader.close();
  * </pre>
  */
-public class CsvRowReader implements Iterator<Map<String, Object>>, AutoCloseable {
+public class CsvRowReader implements DelimitedRowReader {
 
     private static final Logger LOGGER = Logger.getLogger(CsvRowReader.class.getName());
 
@@ -130,7 +130,7 @@ public class CsvRowReader implements Iterator<Map<String, Object>>, AutoCloseabl
     }
 
     /** Returns whether the partial text ends inside an unterminated quoted field. */
-    private static boolean endsInsideQuotes(String text) {
+    static boolean endsInsideQuotes(String text) {
         boolean inQuotes = false;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);

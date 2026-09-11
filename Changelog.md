@@ -2418,7 +2418,6 @@ Changes:
 
 3.0.43 Changelog tidy: remove test-result notes (Tests:/NOTE:) from the 3.0.42 entry so the changelog keeps the no-test-info convention of 3.0.41.
 
-<<<<<<< HEAD
 3.0.44 Config consolidation - single root config.properties for every class (новый diesel/ConfigLoader.java)
 
 Changes:
@@ -2445,3 +2444,20 @@ Changes:
 Changes:
 - diesel/storage/TsvIndexManager.java (new): self-contained index manager for TSV-backed tables - sorted primary-key TreeMap index (O(log n) exact + inclusive range search by primary key or secondary index), incremental insert/remove of indexed rows, reindex() rebuild, LRU block cache (access-order LinkedHashMap, tsv.block.size = 1000 rows per block, tsv.cache.max.blocks = 64) with getBlock()/loadAllBlocksParallel() and cache hit/miss counters, and parallel TSV file reading on a dedicated daemon ForkJoinPool (line-range chunk readers via TsvRowReader, gated by tsv.parallel.read.threshold = 10000 rows) plus a sequential fallback and loadAndIndex() convenience method
 - config.properties: add "tsv.block.size = 1000", "tsv.cache.max.blocks = 64", "tsv.parallel.read.threshold = 10000" above the storage.type line (read lazily from the root config via ErrorMessages.CONFIG_FILE with defaults in TsvIndexManager)
+
+3.0.47 Prompt 23 - CSV storage indexing and search (shared delimited index manager)
+
+Changes:
+- diesel/storage/DelimitedIndexManager.java (new): delimiter-agnostic index manager for CSV/TSV-backed tables, generalized from TsvIndexManager - sorted primary-key TreeMap index (O(log n) exact + inclusive range search over the primary key or any indexed column), incremental insert/remove of indexed rows, reindex() rebuild, LRU block cache (block.size / cache.max.blocks / parallel.read.threshold read from config), getBlock()/loadAllBlocksParallel() with hit/miss counters, and parallel file reading on a dedicated daemon ForkJoinPool (line-range chunk readers via DelimitedRowReader) with a sequential fallback and loadAndIndex()
+- diesel/storage/TsvIndexManager.java: now a thin subclass of DelimitedIndexManager (TsvRowReader::new, "tsv", multi-line rows disabled), keeping its 3.0.46 public API (mayContainMultiLineRows, Block, LineRange, ReadRangeTask)
+- diesel/storage/CsvIndexManager.java (new), diesel/storage/DelimitedRowReader.java (new), diesel/storage/RowReaderFactory.java (new): CSV factory returning CsvRowReader (RFC 4180, multi-line quoted fields supported); RowReaderFactory is storage-type-neutral
+- diesel/storage/AbstractRowStorage.java: indexManager field + lazy index()/getIndexManager()/isIndexed()/setPrimaryKeyColumn() and syncIndexInsert/Update/Delete/Bulk() mirroring hooks used by the delimited backends (isIndexed() moved here from CsvRowStorage/TsvRowStorage, which kept their public accessors)
+- diesel/storage/CsvRowReader.java: implements DelimitedRowReader (endsInsideQuotes moved/kept package-private for the shared reader contract)
+- diesel/storage/CsvRowStorage.java / TsvRowStorage.java: createIndexManager() wiring (CsvIndexManager / TsvIndexManager), search/rangeSearch/getNumBlocks/getBlock/loadAllBlocksParallel/cache counters/invalidateCache accessors, insertAt()/setRows() storage-mirror support, loadFromFile(String, boolean) with missing-file guard
+- diesel/storage/RowStorage.java: new insertAt(int, Map) and setRows(List) interface methods documented for engine mirroring
+- diesel/Table.java: engine storage-rows maintenance fixes - insertIntoClusteredPosition() now mirrors PK inserts into the storage at the same index (storage.scan()/SELECT/COUNT read storage, so PK rows were previously invisible), copyForTransaction() mirrors the copied rows into the transaction table's storage, and compact() calls storage.setRows() after tombstone removal (storage previously kept deleted rows, breaking DELETE + SELECT); in-memory tables persist CSV files only in server mode (diesel.inmemory.persist, set by DatabaseServer.main) so the prompt-70 server-termination contract holds without slowing embedded uses
+- diesel/DatabaseServer.java: sets diesel.inmemory.persist=true at startup
+- diesel/storage/InMemoryRowStorage.java: insertAt() implementation for the extended RowStorage contract
+- config.properties: add "csv.block.size = 1000", "csv.cache.max.blocks = 64", "csv.parallel.read.threshold = 10000" above the storage.type line
+- pom.xml: include CsvIndexManagerTest in surefire includes (default and ci profiles)
+- src/test/java/diesel/CsvIndexManagerTest.java (new): indexed primary-key and secondary search, inclusive range search, incremental insert/remove, reindex, block splitting/getBlock, page cache hit/miss counters, loadAllBlocksParallel vs sequential equivalence, and file-existence handling on loadFromFile

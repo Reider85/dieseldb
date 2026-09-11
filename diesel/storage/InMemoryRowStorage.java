@@ -45,6 +45,11 @@ public class InMemoryRowStorage extends AbstractRowStorage {
     }
 
     @Override
+    public void insertAt(int rowIndex, Map<String, Object> row) {
+        rows.add(rowIndex, new HashMap<>(row));
+    }
+
+    @Override
     public void update(int rowIndex, Map<String, Object> row) {
         rows.set(rowIndex, new HashMap<>(row));
     }

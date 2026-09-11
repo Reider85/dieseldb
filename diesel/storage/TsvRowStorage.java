@@ -48,6 +48,11 @@ public class TsvRowStorage extends AbstractRowStorage {
         super(tableName, columns, columnTypes);
     }
 
+    @Override
+    protected DelimitedIndexManager createIndexManager() {
+        return new TsvIndexManager(tableName, columns, columnTypes);
+    }
+
     /** Returns whether this storage has been persisted to disk at least once. */
     public boolean isFileInitialized() {
         return fileInitialized;
@@ -62,7 +67,7 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     @Override
     public void open() {
-        // No resources to acquire for TSV in-memory buffer.
+        indexManager = index();
     }
 
     @Override
@@ -78,16 +83,26 @@ public class TsvRowStorage extends AbstractRowStorage {
     @Override
     public void insert(Map<String, Object> row) {
         rows.add(new HashMap<>(row));
+        syncIndexInsert(rows.get(rows.size() - 1), rows.size() - 1);
+    }
+
+    @Override
+    public void insertAt(int rowIndex, Map<String, Object> row) {
+        rows.add(rowIndex, new HashMap<>(row));
+        syncIndexInsert(rows.get(rowIndex), rowIndex);
     }
 
     @Override
     public void update(int rowIndex, Map<String, Object> row) {
+        Map<String, Object> oldRow = rows.get(rowIndex);
         rows.set(rowIndex, new HashMap<>(row));
+        syncIndexUpdate(oldRow, rowIndex, rows.get(rowIndex));
     }
 
     @Override
     public void delete(int rowIndex) {
         rows.remove(rowIndex);
+        syncIndexDelete(rowIndex);
     }
 
     // ─── Persistence ────────────────────────────────────────────────
@@ -140,6 +155,7 @@ public class TsvRowStorage extends AbstractRowStorage {
             fileInitialized = true;
             LOGGER.log(Level.INFO, "TsvRowStorage {0} loaded TSV from {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
+            syncIndexBulk();
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to load TSV for {0}: {1}",
                     new Object[]{tableName, e.getMessage()});
@@ -193,6 +209,123 @@ public class TsvRowStorage extends AbstractRowStorage {
     public void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
         rows.addAll(newRows);
+        syncIndexBulk();
+    }
+
+    // ─── Index / cache accessors (prompt 23) ──────────────────────
+
+    /** Returns the indexed column names maintained by this storage. */
+    public List<String> getIndexColumns() {
+        DelimitedIndexManager manager = index();
+        return manager == null ? List.of() : manager.getIndexColumns();
+    }
+
+    /**
+     * Fast primary-key lookup.
+     *
+     * @param key the primary-key value
+     * @return matching row indexes, or an empty list when absent
+     */
+    public List<Integer> searchByPrimaryKey(Object key) {
+        DelimitedIndexManager manager = index();
+        return manager == null ? List.of() : manager.searchByPrimaryKey(key);
+    }
+
+    /**
+     * Equality search over the primary-key or a secondary index.
+     *
+     * @param column the column to search (case-insensitive)
+     * @param key    the value to look up
+     * @return matching row indexes, or an empty list when no index exists
+     */
+    public List<Integer> search(String column, Object key) {
+        DelimitedIndexManager manager = index();
+        return manager == null ? List.of() : manager.search(column, key);
+    }
+
+    /**
+     * Inclusive range search over an indexed column.
+     *
+     * @param column the column to search (case-insensitive)
+     * @param low    inclusive lower bound, or {@code null} for open-ended
+     * @param high   inclusive upper bound, or {@code null} for open-ended
+     * @return matching row indexes, or an empty list when no index exists
+     */
+    public List<Integer> rangeSearch(String column, Object low, Object high) {
+        DelimitedIndexManager manager = index();
+        return manager == null ? List.of() : manager.rangeSearch(column, low, high);
+    }
+
+    /** Returns the number of fixed-size blocks the rows are split into. */
+    public int getNumBlocks() {
+        DelimitedIndexManager manager = index();
+        return manager == null ? 0 : manager.getNumBlocks();
+    }
+
+    /** Returns the number of rows per cache block. */
+    public int getBlockSize() {
+        DelimitedIndexManager manager = index();
+        return manager == null ? 0 : manager.getBlockSize();
+    }
+
+    /**
+     * Returns the block with the given index, loading it into the LRU cache if
+     * not already present.
+     *
+     * @param blockIndex the zero-based block index
+     * @return the cached block
+     */
+    public DelimitedIndexManager.Block getBlock(int blockIndex) {
+        return index().getBlock(blockIndex);
+    }
+
+    /** Pro-actively loads every block into the cache (parallel when large). */
+    public List<DelimitedIndexManager.Block> loadAllBlocksParallel() {
+        DelimitedIndexManager manager = index();
+        return manager == null ? List.of() : manager.loadAllBlocksParallel();
+    }
+
+    /** Returns the number of block-cache hits. */
+    public long getCacheHitCount() {
+        DelimitedIndexManager manager = index();
+        return manager == null ? 0 : manager.getCacheHitCount();
+    }
+
+    /** Returns the number of block-cache misses. */
+    public long getCacheMissCount() {
+        DelimitedIndexManager manager = index();
+        return manager == null ? 0 : manager.getCacheMissCount();
+    }
+
+    /** Discards all cached blocks. */
+    public void invalidateCache() {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.invalidateCache();
+        }
+    }
+
+    /**
+     * Loads the TSV file (parallel when beneficial) and builds the primary-key
+     * index, replacing the current rows.
+     *
+     * @param tableName the table name, used as the file base name
+     * @param parallel  whether to allow the parallel read path
+     * @throws java.io.IOException on I/O errors
+     */
+    public void loadFromFile(String tableName, boolean parallel) throws java.io.IOException {
+        String fileName = resolveFilePath(".tsv");
+        if (!new File(fileName).exists()) {
+            return;
+        }
+        DelimitedIndexManager manager = index();
+        List<Map<String, Object>> loaded = parallel
+                ? manager.loadFromFileParallel(fileName)
+                : manager.loadFromFileSequential(fileName);
+        rows.clear();
+        rows.addAll(loaded);
+        fileInitialized = true;
+        manager.buildIndexes(rows, getPrimaryKeyColumn());
     }
 
     /**

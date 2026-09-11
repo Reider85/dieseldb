@@ -48,7 +48,7 @@ import java.util.zip.CRC32;
 import java.util.stream.IntStream;
 import diesel.storage.RowStorage;
 import diesel.storage.InMemoryRowStorage;
-import diesel.storage.CsvRowStorage;
+import diesel.storage.AbstractRowStorage;
 import diesel.storage.StorageFactory;
 
 /**
@@ -262,13 +262,12 @@ class Table implements Serializable {
                 System.getProperty("diesel.storage.type",
                         getConfigProperty("storage.type", "in_memory")),
                 name, columns, columnTypes);
-        if (this.storage instanceof CsvRowStorage crs) {
+        if (this.storage instanceof AbstractRowStorage ars) {
             String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
-            crs.setDataDir(dir);
-        }
-        if (this.storage instanceof diesel.storage.TsvRowStorage tvs) {
-            String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
-            tvs.setDataDir(dir);
+            ars.setDataDir(dir);
+            if (primaryKeyColumn != null) {
+                ars.setPrimaryKeyColumn(primaryKeyColumn);
+            }
         }
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
@@ -361,6 +360,11 @@ class Table implements Serializable {
         // Deep-copy rows: new list, each row Map shallow-copied.
         for (Map<String, Object> row : this.rows) {
             copy.rows.add(new HashMap<>(row));
+        }
+        // Mirror the copied rows into the copy's (fresh) storage, keeping the
+        // storage/rows alignment the main table relies on for queries.
+        for (int i = 0; i < copy.rows.size(); i++) {
+            copy.storage.insertAt(i, copy.rows.get(i));
         }
 
         // Deep-copy deletedRows BitSet.
@@ -1289,6 +1293,9 @@ class Table implements Serializable {
 
             rows.clear();
             rows.addAll(newRows);
+            if (storage != null) {
+                storage.setRows(newRows);
+            }
 
             deletedRows = new BitSet();
 
@@ -1360,6 +1367,12 @@ class Table implements Serializable {
                 System.getProperty("diesel.storage.type",
                         getConfigProperty("storage.type", "in_memory")),
                 name, columns, columnTypes);
+        if (this.storage instanceof AbstractRowStorage ars) {
+            ars.setDataDir(database != null && database.getDataDir() != null ? database.getDataDir() : ".");
+            if (primaryKeyColumn != null) {
+                ars.setPrimaryKeyColumn(primaryKeyColumn);
+            }
+        }
         // Backward compat: format v1 wrote hasClusteredIndex/clusteredIndexColumn twice
         // (once by defaultWriteObject, once explicitly). v2 removed the redundant write.
         if (formatVersion < 2) {
@@ -1571,6 +1584,9 @@ class Table implements Serializable {
         lock.writeLock().lock();
         try {
             rows.add(insertIndex, row);
+            if (storage != null) {
+                storage.insertAt(insertIndex, row);
+            }
             clusteredIndex.insert(clusteredKey, insertIndex);
             insertRowIntoIndexes(row, insertIndex);
             updateIndicesAfterInsert(insertIndex);
@@ -2105,53 +2121,64 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
-        if (storage != null) {
-            tableLock.readLock().lock();
-            try {
-                storage.saveToFile(tableName);
-            } finally {
-                tableLock.readLock().unlock();
-            }
-            return;
-        }
         tableLock.readLock().lock();
         try {
-            String fileName = resolveFilePath(tableName, ".csv");
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
-                writer.write(String.join(",", columns));
-                writer.newLine();
-
-                IntStream.range(0, rows.size())
-                        .filter(i -> !isDeleted(i))
-                        .forEach(i -> {
-                            ReentrantReadWriteLock lock = getRowLock(i);
-                            lock.readLock().lock();
-                            try {
-                                Map<String, Object> row = rows.get(i);
-                                List<String> values = new ArrayList<>();
-                                for (String column : columns) {
-                                    values.add(formatValue(row.get(column)));
-                                }
-                                try {
-                                    writer.write(String.join(",", values));
-                                    writer.newLine();
-                                } catch (IOException e) {
-                                    throw new RuntimeException(e);
-                                }
-                            } finally {
-                                lock.readLock().unlock();
-                            }
-                        });
-
-                isFileInitialized = true;
-                LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
-                        new Object[]{tableName, fileName, rows.size()});
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
-                throw new DieselIOException("Failed to save table to file: " + fileName, e);
+            if (storage != null && !(storage instanceof InMemoryRowStorage)) {
+                storage.saveToFile(tableName);
+                return;
+            }
+            if (storage == null || inMemoryPersistEnabled()) {
+                writeLegacyCsv(tableName);
             }
         } finally {
             tableLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Whether in-memory tables should be persisted to CSV files on every
+     * save. Enabled in server mode ({@code diesel.DatabaseServer}) so that
+     * server-terminated tables leave durable CSV files behind; embedded
+     * {@link Database} usage keeps the in-memory fast path.
+     */
+    private static boolean inMemoryPersistEnabled() {
+        return "true".equalsIgnoreCase(System.getProperty("diesel.inmemory.persist", "false"));
+    }
+
+    private void writeLegacyCsv(String tableName) {
+        String fileName = resolveFilePath(tableName, ".csv");
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
+            writer.write(String.join(",", columns));
+            writer.newLine();
+
+            IntStream.range(0, rows.size())
+                    .filter(i -> !isDeleted(i))
+                    .forEach(i -> {
+                        ReentrantReadWriteLock lock = getRowLock(i);
+                        lock.readLock().lock();
+                        try {
+                            Map<String, Object> row = rows.get(i);
+                            List<String> values = new ArrayList<>();
+                            for (String column : columns) {
+                                values.add(formatValue(row.get(column)));
+                            }
+                            try {
+                                writer.write(String.join(",", values));
+                                writer.newLine();
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        } finally {
+                            lock.readLock().unlock();
+                        }
+                    });
+
+            isFileInitialized = true;
+            LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
+                    new Object[]{tableName, fileName, rows.size()});
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
+            throw new DieselIOException("Failed to save table to file: " + fileName, e);
         }
     }
 
@@ -2224,6 +2251,12 @@ class Table implements Serializable {
                         + ", max supported: " + CURRENT_FORMAT_VERSION);
             }
             table.database = database;
+            if (table.storage instanceof AbstractRowStorage ars) {
+                ars.setDataDir(dir);
+                if (table.primaryKeyColumn != null) {
+                    ars.setPrimaryKeyColumn(table.primaryKeyColumn);
+                }
+            }
             table.setFileInitialized(true);
             LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
             return table;

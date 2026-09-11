@@ -711,6 +711,7 @@ public class DatabaseServer {
      * @param args optional {@code port} and {@code dataDir} arguments
      */
     public static void main(String[] args) {
+        System.setProperty("diesel.inmemory.persist", "true");
         int port = 3306;
         if (args.length > 0) {
             try {

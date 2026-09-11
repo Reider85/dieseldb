@@ -1,5 +1,7 @@
 ﻿# Prompt Status Tracker
 
+> Latest: **Prompt 23 (storage) DONE (2026-09-11)** — CSV storage indexing and search via the shared DelimitedIndexManager (3.0.47), completing the delimiter-agnostic index/cache/parallel-read for both CSV and TSV. Included engine storage-rows mirroring fixes (PK insert, transactions, compaction) that unblocked SELECT/COUNT/DELETE paths. Gate: quick 118/0/0, full suite 118/0/0 (@LargeTest, 4GB), timing baseline regenerated, CsvIndexManagerTest 18/18.
+
 ## Priority Queue (Pareto 20% - Critical First)
 
 | ??? | ??T�-T?T?T? | ??T????-T???T�?T? | ??-????T? | ??T??-?-?????-?- |
