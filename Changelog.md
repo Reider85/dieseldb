@@ -2489,3 +2489,5 @@ Changes:
 - diesel/storage/AbstractRowStorage.java: syncIndexInsert now delegates to manager.insertAt(rowIndex, row) (position-shifting insert), new syncIndexAppend delegates to appendIndexedRow, syncIndexUpdate delegates to updateRow, and syncIndexDelete delegates to manager.deleteRow(rowIndex) instead of a full buildIndexes(scan(), pk) rebuild per delete (O(n log n) -> O(log n + shift) per operation)
 - diesel/storage/CsvRowStorage.java / TsvRowStorage.java: insert() (append path) calls syncIndexAppend instead of syncIndexInsert
 - src/test/java/diesel/CsvIndexManagerTest.java: clustered-insert regression tests - clusteredInsertAtMiddleThenSearchCorrect, secondaryIndexCorrectAfterInsertAt, massInsertAtDoesNotDegradeToQuadratic, deleteThenInsertAtMaintainsIndexCorrectness, storageInsertAtThenSearchCorrect, and updated incrementalInsertAndRemoveKeepIndexesConsistent to the rowId API
+
+3.0.52 analytics
