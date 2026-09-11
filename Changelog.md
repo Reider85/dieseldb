@@ -2492,6 +2492,9 @@ Changes:
 
 3.0.52 analytics
 
+Changes:
+- analytics/prompt3.md: expanded analytics report (+695 lines)
+
 3.0.53 Prompt 26 - distinguish NULL from empty string in CSV/TSV (sentinel \N)
 
 Changes:
