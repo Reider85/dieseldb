@@ -2491,3 +2491,13 @@ Changes:
 - src/test/java/diesel/CsvIndexManagerTest.java: clustered-insert regression tests - clusteredInsertAtMiddleThenSearchCorrect, secondaryIndexCorrectAfterInsertAt, massInsertAtDoesNotDegradeToQuadratic, deleteThenInsertAtMaintainsIndexCorrectness, storageInsertAtThenSearchCorrect, and updated incrementalInsertAndRemoveKeepIndexesConsistent to the rowId API
 
 3.0.52 analytics
+
+3.0.53 Prompt 26 - distinguish NULL from empty string in CSV/TSV (sentinel \N)
+
+Changes:
+- config.properties: added storage.null.representation = legacy | sentinel (default: legacy); legacy preserves the old round-trip semantics for existing files, sentinel is the new lossless mode
+- diesel/storage/TsvRowWriter.java: added TsvRowWriter.isSentinelMode() config helper (System property override, then config.properties) shared by the delimited storage package; new escapeValue(Object, boolean) writes null as \N in sentinel mode (MySQL/ClickHouse convention) instead of an empty field, literal \N data is escaped to \\N by the existing backslash escaping; writeRow() resolves the sentinel flag once per row
+- diesel/storage/TsvRowReader.java: convertValue() in sentinel mode maps the \N sentinel to null and an empty field to "" (empty string distinct from null); legacy mode keeps the empty-field->null behavior
+- diesel/storage/CsvRowWriter.java: escapeValue(Object, boolean) in sentinel mode writes "" as a quoted "" field (RFC 4180) and null as an unquoted empty field, keeping null and empty string distinct on disk; writeRow() uses the shared sentinel flag
+- diesel/storage/CsvRowReader.java: new parseDataFields() returning a value + quoting flag (nested ParsedCsvField record); parseDataLine() uses it so convertValue() in sentinel mode maps an unquoted empty field to null and a quoted empty field to ""; the public parseLine() entry point and legacy-mode behavior are unchanged
+- src/test/java/diesel/NullSentinelTest.java (new): 10 tests - TSV/CSV round-trips distinguishing null vs "" vs literal \N vs tabs/backslashes, on-disk representation in both modes, legacy-mode compatibility, and cross-mode read semantics (legacy TSV nulls read as empty strings in sentinel mode; legacy CSV nulls still read as null)

@@ -35,18 +35,18 @@ public class CsvRowWriter implements AutoCloseable {
         writer.newLine();
     }
 
-    /**
-     * Writes a single data row.
+    /** Writes a single data row.
      *
      * @param row the column-to-value map
      */
     public void writeRow(Map<String, Object> row) throws IOException {
+        boolean sentinel = TsvRowWriter.isSentinelMode();
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append(',');
             }
-            sb.append(escapeValue(row.get(columns.get(i))));
+            sb.append(escapeValue(row.get(columns.get(i)), sentinel));
         }
         writer.write(sb.toString());
         writer.newLine();
@@ -63,12 +63,22 @@ public class CsvRowWriter implements AutoCloseable {
     }
 
     /**
+     * Escapes a single value for CSV output per RFC 4180 using the current
+     * {@code storage.null.representation} config setting.
+     */
+    public static String escapeValue(Object value) {
+        return escapeValue(value, TsvRowWriter.isSentinelMode());
+    }
+
+    /**
      * Escapes a single value for CSV output per RFC 4180.
      * The value is enclosed in double-quotes if it contains a comma,
      * a double-quote, or a newline. Literal double-quotes inside
      * the value are doubled ({@code ""}).
+     * In sentinel mode a null is written as an unquoted empty field and an
+     * empty string as a quoted {@code ""}, which keeps the two distinct.
      */
-    public static String escapeValue(Object value) {
+    public static String escapeValue(Object value, boolean sentinelMode) {
         if (value == null) {
             return "";
         }
@@ -77,6 +87,9 @@ public class CsvRowWriter implements AutoCloseable {
             raw = bd.toPlainString();
         } else {
             raw = value.toString();
+        }
+        if (sentinelMode && raw.isEmpty()) {
+            return "\"\"";
         }
         boolean needsQuoting = false;
         for (int i = 0; i < raw.length(); i++) {

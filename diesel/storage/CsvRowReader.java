@@ -41,6 +41,7 @@ public class CsvRowReader implements DelimitedRowReader {
     private final BufferedReader reader;
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
+    private final boolean sentinelMode;
     private String nextLine;
     private boolean finished;
     private int[] columnMapping;
@@ -55,6 +56,7 @@ public class CsvRowReader implements DelimitedRowReader {
         this.reader = reader;
         this.columns = columns;
         this.columnTypes = columnTypes;
+        this.sentinelMode = TsvRowWriter.isSentinelMode();
         this.finished = false;
         this.nextLine = null;
         this.headerRead = false;
@@ -208,13 +210,14 @@ public class CsvRowReader implements DelimitedRowReader {
     }
 
     private Map<String, Object> parseDataLine(String line) {
-        List<String> raw = parseLine(line);
+        List<ParsedCsvField> raw = parseDataFields(line);
         Map<String, Object> row = new HashMap<>();
         for (int i = 0; i < columns.size(); i++) {
             String colName = columns.get(i);
             int fileIdx = columnMapping[i];
-            String rawValue = (fileIdx >= 0 && fileIdx < raw.size()) ? raw.get(fileIdx) : "";
-            row.put(colName, convertValue(rawValue, colName));
+            ParsedCsvField field = (fileIdx >= 0 && fileIdx < raw.size())
+                    ? raw.get(fileIdx) : new ParsedCsvField("", false);
+            row.put(colName, convertValue(field.value(), field.quoted(), colName));
         }
         return row;
     }
@@ -225,8 +228,20 @@ public class CsvRowReader implements DelimitedRowReader {
      */
     public static List<String> parseLine(String line) {
         List<String> fields = new ArrayList<>();
+        for (ParsedCsvField f : parseDataFields(line)) {
+            fields.add(f.value());
+        }
+        return fields;
+    }
+
+    /** A raw field parsed from a CSV line together with its quoting flag. */
+    record ParsedCsvField(String value, boolean quoted) {}
+
+    private static List<ParsedCsvField> parseDataFields(String line) {
+        List<ParsedCsvField> fields = new ArrayList<>();
         StringBuilder sb = new StringBuilder();
         boolean inQuotes = false;
+        boolean fieldQuoted = false;
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
             if (inQuotes) {
@@ -243,20 +258,26 @@ public class CsvRowReader implements DelimitedRowReader {
             } else {
                 if (c == '"') {
                     inQuotes = true;
+                    fieldQuoted = true;
                 } else if (c == ',') {
-                    fields.add(sb.toString());
+                    fields.add(new ParsedCsvField(sb.toString(), fieldQuoted));
                     sb.setLength(0);
+                    fieldQuoted = false;
                 } else {
                     sb.append(c);
                 }
             }
         }
-        fields.add(sb.toString());
+        fields.add(new ParsedCsvField(sb.toString(), fieldQuoted));
         return fields;
     }
 
-    private Object convertValue(String raw, String colName) {
-        if (raw.isEmpty()) {
+    private Object convertValue(String raw, boolean quoted, String colName) {
+        if (sentinelMode) {
+            if (raw.isEmpty()) {
+                return quoted ? "" : null;
+            }
+        } else if (raw.isEmpty()) {
             return null;
         }
         Class<?> type = columnTypes.get(colName);

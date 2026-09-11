@@ -41,6 +41,7 @@ public class TsvRowReader implements DelimitedRowReader {
     private final BufferedReader reader;
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
+    private final boolean sentinelMode;
     private String nextLine;
     private boolean finished;
     private int[] columnMapping;
@@ -55,6 +56,7 @@ public class TsvRowReader implements DelimitedRowReader {
         this.reader = reader;
         this.columns = columns;
         this.columnTypes = columnTypes;
+        this.sentinelMode = TsvRowWriter.isSentinelMode();
         this.finished = false;
         this.nextLine = null;
         this.headerRead = false;
@@ -190,7 +192,14 @@ public class TsvRowReader implements DelimitedRowReader {
     }
 
     private Object convertValue(String raw, String colName) {
-        if (raw.isEmpty()) {
+        if (sentinelMode) {
+            if ("\\N".equals(raw)) {
+                return null;
+            }
+            if (raw.isEmpty()) {
+                return "";
+            }
+        } else if (raw.isEmpty()) {
             return null;
         }
         String unescaped = unescape(raw);

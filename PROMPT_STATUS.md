@@ -1,6 +1,6 @@
 ﻿# Prompt Status Tracker
 
-> Latest: **Prompt 25 (Section 1a) DONE (2026-09-11)** — Stable row-id instead of positional indexes in DelimitedIndexManager: key->rowId indexes + rowId->position map, insertAt shifts only positions (no rebuild), deleteRow uses tombstones with 25% compaction threshold. Gate: quick 138/0/0, full suite 138/0/0 green.
+> Latest: **Prompt 26 (Section 1a) DONE (2026-09-11)** — Distinguish NULL from empty string in CSV/TSV via storage.null.representation=legacy|sentinel: TSV writes null as \N (literal \N data escaped to \\N), CSV writes "" as quoted field and null as unquoted empty; readers decode both directions losslessly. Default legacy = old round-trip semantics. Gate: quick 138/0/0, full suite 138/0/0 green.
 
 ## Priority Queue (Pareto 20% - Critical First)
 
@@ -84,6 +84,7 @@
 |---|--------|-------------|
 | 24 | ✅ DONE (2026-09-11) | CSV/TSV header column mapping — readHeader() parses file header, strips BOM, builds column mapping by name (case-insensitive), validates against schema. Configurable mismatch mode (fail|warn). Quick 133/0/0. |
 | 25 | ✅ DONE (2026-09-11) | Stable row-id instead of positional indexes in DelimitedIndexManager — key→rowId indexes + rowId→position map, insertAt shifts only positions (no rebuild), deleteRow uses tombstones with 25% compaction threshold; cluster insert / search correctness regression tests. Quick 138/0/0, full suite 138/0/0. |
+| 26 | ✅ DONE (2026-09-11) | Distinguish NULL from empty string in CSV/TSV (sentinel \N) — new storage.null.representation=legacy\|sentinel config; sentinel mode: TSV null→\N (literal \N escaped to \\N), CSV ""→quoted field / null→unquoted empty; readers decode losslessly; legacy keeps old semantics. New NullSentinelTest (10 tests). Quick 138/0/0, full suite 138/0/0 green. |
 
 ### Section 2: Sonar Top-10 Pareto (41-50)
 

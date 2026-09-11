@@ -1,20 +1,27 @@
 package diesel.storage;
 
 import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
+import java.util.logging.Logger;
 
 /**
  * Writes rows to a TSV (Tab-Separated Values) file. Values are
  * backslash-escaped: {@code \t} for tab, {@code \n} for newline,
- * {@code \\} for a literal backslash. Nulls are written as empty fields.
+ * {@code \\} for a literal backslash. Nulls are written as empty fields
+ * in legacy mode, or as {@code \N} sentinel in sentinel mode.
  */
 public class TsvRowWriter implements AutoCloseable {
+
+    private static final Logger LOGGER = Logger.getLogger(TsvRowWriter.class.getName());
 
     private final BufferedWriter writer;
     private final List<String> columns;
@@ -40,12 +47,13 @@ public class TsvRowWriter implements AutoCloseable {
      * @param row the column-to-value map
      */
     public void writeRow(Map<String, Object> row) throws IOException {
+        boolean sentinel = isSentinelMode();
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append('\t');
             }
-            sb.append(escapeValue(row.get(columns.get(i))));
+            sb.append(escapeValue(row.get(columns.get(i)), sentinel));
         }
         writer.write(sb.toString());
         writer.newLine();
@@ -62,12 +70,21 @@ public class TsvRowWriter implements AutoCloseable {
     }
 
     /**
-     * Escapes a single value for TSV output.
-     * Tab, newline and backslash are backslash-escaped.
+     * Escapes a single value for TSV output using the current
+     * {@code storage.null.representation} config setting.
      */
     public static String escapeValue(Object value) {
+        return escapeValue(value, isSentinelMode());
+    }
+
+    /**
+     * Escapes a single value for TSV output.
+     * Tab, newline and backslash are backslash-escaped.
+     * In sentinel mode, null is written as {@code \N}.
+     */
+    public static String escapeValue(Object value, boolean sentinelMode) {
         if (value == null) {
-            return "";
+            return sentinelMode ? "\\N" : "";
         }
         String raw;
         if (value instanceof BigDecimal bd) {
@@ -87,5 +104,23 @@ public class TsvRowWriter implements AutoCloseable {
             }
         }
         return sb.toString();
+    }
+
+    static boolean isSentinelMode() {
+        String mode = System.getProperty("storage.null.representation");
+        if (mode != null) return "sentinel".equalsIgnoreCase(mode);
+        try {
+            Properties props = new Properties();
+            File configFile = new File("config.properties");
+            if (configFile.exists()) {
+                try (FileInputStream fis = new FileInputStream(configFile)) {
+                    props.load(fis);
+                }
+            }
+            return "sentinel".equalsIgnoreCase(
+                    props.getProperty("storage.null.representation", "legacy"));
+        } catch (IOException e) {
+            return false;
+        }
     }
 }
