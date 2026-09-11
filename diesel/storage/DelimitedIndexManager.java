@@ -3,7 +3,6 @@ package diesel.storage;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -644,7 +643,7 @@ public abstract class DelimitedIndexManager {
         if (!file.exists() || !file.isFile()) {
             return List.of();
         }
-        try (BufferedReader bufferedReader = new BufferedReader(new FileReader(file));
+        try (BufferedReader bufferedReader = StorageConfig.newReader(file);
              DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
             reader.readHeader();
             return reader.readAll();
@@ -698,7 +697,7 @@ public abstract class DelimitedIndexManager {
     }
 
     private long countDataLines(File file) throws IOException {
-        try (BufferedReader bufferedReader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader bufferedReader = StorageConfig.newReader(file)) {
             if (bufferedReader.readLine() == null) {
                 return 0;
             }
@@ -827,7 +826,7 @@ public abstract class DelimitedIndexManager {
 
         @Override
         public List<Map<String, Object>> call() {
-            try (BufferedReader bufferedReader = new BufferedReader(new FileReader(file));
+            try (BufferedReader bufferedReader = StorageConfig.newReader(file);
                  DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
                 reader.readHeader();
                 for (long i = 0; i < range.start && reader.hasNext(); i++) {

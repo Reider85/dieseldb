@@ -40,7 +40,7 @@ public class CsvRowWriter implements AutoCloseable {
             sb.append(escapeValue(columns.get(i), sentinel));
         }
         writer.write(sb.toString());
-        writer.newLine();
+        writer.write('\n');
     }
 
     /** Writes a single data row.
@@ -57,7 +57,7 @@ public class CsvRowWriter implements AutoCloseable {
             sb.append(escapeValue(row.get(columns.get(i)), sentinel));
         }
         writer.write(sb.toString());
-        writer.newLine();
+        writer.write('\n');
     }
 
     /** Flushes buffered output. */

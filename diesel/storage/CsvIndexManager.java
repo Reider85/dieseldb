@@ -2,7 +2,6 @@ package diesel.storage;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +37,7 @@ public class CsvIndexManager extends DelimitedIndexManager {
 
     @Override
     protected boolean mayContainMultiLineRows(File file) throws IOException {
-        try (BufferedReader bufferedReader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader bufferedReader = StorageConfig.newReader(file)) {
             if (bufferedReader.readLine() == null) {
                 return false;
             }

@@ -46,7 +46,7 @@ public class TsvRowWriter implements AutoCloseable {
             sb.append(escapeValue(columns.get(i), sentinel));
         }
         writer.write(sb.toString());
-        writer.newLine();
+        writer.write('\n');
     }
 
     /**
@@ -64,7 +64,7 @@ public class TsvRowWriter implements AutoCloseable {
             sb.append(escapeValue(row.get(columns.get(i)), sentinel));
         }
         writer.write(sb.toString());
-        writer.newLine();
+        writer.write('\n');
     }
 
     /** Flushes buffered output. */

@@ -5,8 +5,6 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -118,7 +116,7 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     private void saveCsv(String tableName) {
         String fileName = resolveFilePath(".csv");
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter(fileName, false));
+        try (BufferedWriter bw = StorageConfig.newWriter(new File(fileName));
              CsvRowWriter csvWriter = new CsvRowWriter(bw, columns)) {
             csvWriter.writeHeader();
             for (Map<String, Object> row : rows) {
@@ -142,7 +140,7 @@ public class CsvRowStorage extends AbstractRowStorage {
             return;
         }
         List<Map<String, Object>> previous = new ArrayList<>(rows);
-        try (BufferedReader br = new BufferedReader(new FileReader(fileName));
+        try (BufferedReader br = StorageConfig.newReader(new File(fileName));
              CsvRowReader csvReader = new CsvRowReader(br, columns, columnTypes, fileName)) {
             csvReader.readHeader();
             List<Map<String, Object>> loaded = new ArrayList<>();

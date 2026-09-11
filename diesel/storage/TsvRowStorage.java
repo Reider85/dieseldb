@@ -5,8 +5,6 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -122,7 +120,7 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     private void saveTsv(String tableName) {
         String fileName = resolveFilePath(".tsv");
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter(fileName, false));
+        try (BufferedWriter bw = StorageConfig.newWriter(new File(fileName));
              TsvRowWriter tsvWriter = new TsvRowWriter(bw, columns)) {
             tsvWriter.writeHeader();
             for (Map<String, Object> row : rows) {
@@ -146,7 +144,7 @@ public class TsvRowStorage extends AbstractRowStorage {
             return;
         }
         List<Map<String, Object>> previous = new ArrayList<>(rows);
-        try (BufferedReader br = new BufferedReader(new FileReader(fileName));
+        try (BufferedReader br = StorageConfig.newReader(new File(fileName));
              TsvRowReader tsvReader = new TsvRowReader(br, columns, columnTypes, fileName)) {
             tsvReader.readHeader();
             List<Map<String, Object>> loaded = new ArrayList<>();

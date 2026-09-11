@@ -82,6 +82,7 @@
                         <include>**/CsvIndexManagerTest.java</include>
                         <include>**/CsvTsvHeaderMappingTest.java</include>
                         <include>**/LoadErrorHandlingTest.java</include>
+                        <include>**/CharsetEncodingTest.java</include>
                     </includes>
                     <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>

@@ -2534,3 +2534,16 @@ Changes:
 - diesel/storage/TsvRowWriter.java: writeHeader() now escapes each column name with escapeValue() (backslash-escaping of tab/newline/backslash) instead of a bare String.join("\t", columns)
 - diesel/storage/TsvRowReader.java: readHeader() now unescapes each parsed header name before building the column mapping, so escaped column names (e.g. "a\tb") re-match the schema column after load (pairs with Prompt 24 header mapping)
 - src/test/java/diesel/CsvTsvHeaderMappingTest.java: added csvEscapedHeaderRoundTrip and tsvEscapedHeaderRoundTrip covering columns "price, rub" and "a\tb"
+
+3.0.57 Prompt 29 - deterministic encoding and line endings (storage.charset, LF)
+
+Changes:
+- config.properties: added storage.charset (default UTF-8) used by all CSV/TSV readers/writers in the storage package
+- diesel/storage/StorageConfig.java (new): central charset resolution (system property override, then config.properties, default UTF-8) and newReader()/newWriter() helpers opening Files.newBufferedReader/newBufferedWriter with the configured charset; an invalid charset logs a WARNING and falls back to UTF-8
+- diesel/storage/CsvRowStorage.java / TsvRowStorage.java: saveCsv/saveTsv/loadCsv/loadTsv now open files via StorageConfig.newWriter/newReader (explicit charset) instead of new FileWriter/FileReader (platform-default charset)
+- diesel/storage/DelimitedIndexManager.java: loadFromFileSequential, countDataLines and ReadRangeTask read via StorageConfig.newReader instead of new FileReader
+- diesel/storage/CsvIndexManager.java: mayContainMultiLineRows pre-scan reads via StorageConfig.newReader
+- diesel/storage/CsvRowWriter.java / TsvRowWriter.java: replaced writer.newLine() (platform line separator, \r\n on Windows) with an explicit writer.write('\n') so files always use LF line endings deterministically across platforms
+- pom.xml: included CharsetEncodingTest in surefire filters (default profile)
+- src/test/java/diesel/CharsetEncodingTest.java (new): 5 tests - CSV and TSV round-trips preserve Cyrillic/umlaut/emoji values; byte-level checks that saved files are UTF-8 with no CR (0x0D) bytes (LF line endings); storage.charset system property is honoured (windows-1251 bytes on disk, reload still round-trips)
+- Verification: quick suite 155 run / 0 failures / 0 errors / 3 skipped BUILD SUCCESS; full suite (4GB heap, @LargeTest) 155 run / 0 failures / 0 errors / 0 skipped BUILD SUCCESS, PerformanceRegressionTest passed (10 key queries, no regression > 1.2x); compare-timing exit 0
