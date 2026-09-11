@@ -179,8 +179,31 @@ public class TsvRowReader implements DelimitedRowReader {
         }
     }
 
+    private static String[] splitTab(String line) {
+        int len = line.length();
+        if (len == 0) {
+            return new String[]{""};
+        }
+        int count = 1;
+        for (int i = 0; i < len; i++) {
+            if (line.charAt(i) == '\t') {
+                count++;
+            }
+        }
+        String[] result = new String[count];
+        int start = 0;
+        int idx = 0;
+        for (int i = 0; i <= len; i++) {
+            if (i == len || line.charAt(i) == '\t') {
+                result[idx++] = line.substring(start, i);
+                start = i + 1;
+            }
+        }
+        return result;
+    }
+
     private Map<String, Object> parseLine(String line) {
-        String[] raw = line.split("\t", -1);
+        String[] raw = splitTab(line);
         Map<String, Object> row = new HashMap<>();
         for (int i = 0; i < columns.size(); i++) {
             String colName = columns.get(i);
@@ -227,6 +250,9 @@ public class TsvRowReader implements DelimitedRowReader {
      * {@code \\} → backslash.
      */
     public static String unescape(String raw) {
+        if (raw.indexOf('\\') < 0) {
+            return raw;
+        }
         StringBuilder sb = new StringBuilder(raw.length());
         for (int i = 0; i < raw.length(); i++) {
             char c = raw.charAt(i);

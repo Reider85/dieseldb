@@ -92,6 +92,17 @@ public class TsvRowWriter implements AutoCloseable {
         } else {
             raw = value.toString();
         }
+        boolean needsEscape = false;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '\t' || c == '\n' || c == '\r' || c == '\\') {
+                needsEscape = true;
+                break;
+            }
+        }
+        if (!needsEscape) {
+            return raw;
+        }
         StringBuilder sb = new StringBuilder(raw.length());
         for (int i = 0; i < raw.length(); i++) {
             char c = raw.charAt(i);
@@ -106,21 +117,26 @@ public class TsvRowWriter implements AutoCloseable {
         return sb.toString();
     }
 
-    static boolean isSentinelMode() {
-        String mode = System.getProperty("storage.null.representation");
-        if (mode != null) return "sentinel".equalsIgnoreCase(mode);
+    private static final Properties ROOT_PROPS = loadRootProps();
+
+    private static Properties loadRootProps() {
+        Properties props = new Properties();
         try {
-            Properties props = new Properties();
             File configFile = new File("config.properties");
             if (configFile.exists()) {
                 try (FileInputStream fis = new FileInputStream(configFile)) {
                     props.load(fis);
                 }
             }
-            return "sentinel".equalsIgnoreCase(
-                    props.getProperty("storage.null.representation", "legacy"));
-        } catch (IOException e) {
-            return false;
+        } catch (IOException ignored) {
         }
+        return props;
+    }
+
+    static boolean isSentinelMode() {
+        String mode = System.getProperty("storage.null.representation");
+        if (mode != null) return "sentinel".equalsIgnoreCase(mode);
+        return "sentinel".equalsIgnoreCase(
+                ROOT_PROPS.getProperty("storage.null.representation", "legacy"));
     }
 }
