@@ -1,14 +1,14 @@
 package diesel.storage;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -120,13 +120,14 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     private void saveTsv(String tableName) {
         String fileName = resolveFilePath(".tsv");
-        try (BufferedWriter bw = StorageConfig.newWriter(new File(fileName));
-             TsvRowWriter tsvWriter = new TsvRowWriter(bw, columns)) {
+        try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
+             TsvRowWriter tsvWriter = new TsvRowWriter(afw.bufferedWriter(), columns)) {
             tsvWriter.writeHeader();
             for (Map<String, Object> row : rows) {
                 tsvWriter.writeRow(row);
             }
             tsvWriter.flush();
+            afw.commit();
             fileInitialized = true;
             LOGGER.log(Level.INFO, "TsvRowStorage {0} saved TSV to {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
@@ -140,6 +141,7 @@ public class TsvRowStorage extends AbstractRowStorage {
         String fileName = resolveFilePath(".tsv");
         File file = new File(fileName);
         if (!file.exists()) {
+            AtomicFileWriter.warnInterruptedWrite(file.toPath());
             LOGGER.log(Level.INFO, "TSV file {0} not found for storage {1}", new Object[]{fileName, tableName});
             return;
         }
@@ -175,9 +177,11 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     private void saveSerialized(String tableName) {
         String fileName = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
-        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
+            ObjectOutputStream oos = new ObjectOutputStream(afw.outputStream());
             oos.writeObject(new SerializableAdapter(columns, new ArrayList<>(rows)));
             oos.flush();
+            afw.commit();
             LOGGER.log(Level.INFO, "TsvRowStorage {0} saved serialised to {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
         } catch (IOException e) {
@@ -192,6 +196,7 @@ public class TsvRowStorage extends AbstractRowStorage {
         String fileName = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
         File file = new File(fileName);
         if (!file.exists()) {
+            AtomicFileWriter.warnInterruptedWrite(file.toPath());
             return;
         }
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
@@ -324,7 +329,9 @@ public class TsvRowStorage extends AbstractRowStorage {
      */
     public void loadFromFile(String tableName, boolean parallel) throws java.io.IOException {
         String fileName = resolveFilePath(".tsv");
-        if (!new File(fileName).exists()) {
+        Path file = new File(fileName).toPath();
+        if (!Files.exists(file)) {
+            AtomicFileWriter.warnInterruptedWrite(file);
             return;
         }
         DelimitedIndexManager manager = index();

@@ -1,14 +1,14 @@
 package diesel.storage;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -116,13 +116,14 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     private void saveCsv(String tableName) {
         String fileName = resolveFilePath(".csv");
-        try (BufferedWriter bw = StorageConfig.newWriter(new File(fileName));
-             CsvRowWriter csvWriter = new CsvRowWriter(bw, columns)) {
+        try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
+             CsvRowWriter csvWriter = new CsvRowWriter(afw.bufferedWriter(), columns)) {
             csvWriter.writeHeader();
             for (Map<String, Object> row : rows) {
                 csvWriter.writeRow(row);
             }
             csvWriter.flush();
+            afw.commit();
             fileInitialized = true;
             LOGGER.log(Level.INFO, "CsvRowStorage {0} saved CSV to {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
@@ -136,6 +137,7 @@ public class CsvRowStorage extends AbstractRowStorage {
         String fileName = resolveFilePath(".csv");
         File file = new File(fileName);
         if (!file.exists()) {
+            AtomicFileWriter.warnInterruptedWrite(file.toPath());
             LOGGER.log(Level.INFO, "CSV file {0} not found for storage {1}", new Object[]{fileName, tableName});
             return;
         }
@@ -171,9 +173,11 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     private void saveSerialized(String tableName) {
         String fileName = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
-        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
+            ObjectOutputStream oos = new ObjectOutputStream(afw.outputStream());
             oos.writeObject(new SerializableAdapter(columns, new ArrayList<>(rows)));
             oos.flush();
+            afw.commit();
             LOGGER.log(Level.INFO, "CsvRowStorage {0} saved serialised to {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
         } catch (IOException e) {
@@ -188,6 +192,7 @@ public class CsvRowStorage extends AbstractRowStorage {
         String fileName = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
         File file = new File(fileName);
         if (!file.exists()) {
+            AtomicFileWriter.warnInterruptedWrite(file.toPath());
             return;
         }
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
@@ -320,7 +325,9 @@ public class CsvRowStorage extends AbstractRowStorage {
      */
     public void loadFromFile(String tableName, boolean parallel) throws java.io.IOException {
         String fileName = resolveFilePath(".csv");
-        if (!new File(fileName).exists()) {
+        Path file = new File(fileName).toPath();
+        if (!Files.exists(file)) {
+            AtomicFileWriter.warnInterruptedWrite(file);
             return;
         }
         DelimitedIndexManager manager = index();

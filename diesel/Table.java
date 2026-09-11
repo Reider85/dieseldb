@@ -5,8 +5,6 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -49,6 +47,7 @@ import java.util.stream.IntStream;
 import diesel.storage.RowStorage;
 import diesel.storage.InMemoryRowStorage;
 import diesel.storage.AbstractRowStorage;
+import diesel.storage.AtomicFileWriter;
 import diesel.storage.StorageFactory;
 
 /**
@@ -2147,9 +2146,10 @@ class Table implements Serializable {
 
     private void writeLegacyCsv(String tableName) {
         String fileName = resolveFilePath(tableName, ".csv");
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, false))) {
+        try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName))) {
+            BufferedWriter writer = afw.bufferedWriter();
             writer.write(String.join(",", columns));
-            writer.newLine();
+            writer.write('\n');
 
             IntStream.range(0, rows.size())
                     .filter(i -> !isDeleted(i))
@@ -2164,7 +2164,7 @@ class Table implements Serializable {
                             }
                             try {
                                 writer.write(String.join(",", values));
-                                writer.newLine();
+                                writer.write('\n');
                             } catch (IOException e) {
                                 throw new RuntimeException(e);
                             }
@@ -2173,6 +2173,7 @@ class Table implements Serializable {
                         }
                     });
 
+            afw.commit();
             isFileInitialized = true;
             LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
@@ -2210,9 +2211,11 @@ class Table implements Serializable {
             compact();
         }
         String fileName = resolveFilePath(tableName, ErrorMessages.TABLE_EXTENSION);
-        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(fileName))) {
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
+            ObjectOutputStream oos = new ObjectOutputStream(afw.outputStream());
             oos.writeObject(this);
             oos.flush();
+            afw.commit();
             isFileInitialized = true;
             LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
@@ -2237,6 +2240,7 @@ class Table implements Serializable {
         String fileName = dir + File.separator + tableName + ErrorMessages.TABLE_EXTENSION;
         File file = new File(fileName);
         if (!file.exists()) {
+            AtomicFileWriter.warnInterruptedWrite(file.toPath());
             LOGGER.log(Level.INFO, "Serialized file {0} not found, creating new table {1} with base structure",
                     new Object[]{fileName, tableName});
             Table table = new Table(database, tableName, new ArrayList<>(), new HashMap<>(), null, new HashMap<String, Sequence>());
