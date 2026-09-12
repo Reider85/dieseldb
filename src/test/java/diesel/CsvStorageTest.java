@@ -257,7 +257,6 @@ class CsvStorageTest {
         storage.saveToFile("CSV_TEST");
 
         assertTrue(new File(tempDir.toString(), "CSV_TEST.csv").exists());
-        assertTrue(new File(tempDir.toString(), "CSV_TEST.table").exists());
 
         CsvRowStorage loaded = new CsvRowStorage("CSV_TEST", cols(), types());
         loaded.setDataDir(tempDir.toString());

@@ -246,7 +246,6 @@ class TsvStorageTest {
         storage.saveToFile("TSV_TEST");
 
         assertTrue(new File(tempDir.toString(), "TSV_TEST.tsv").exists());
-        assertTrue(new File(tempDir.toString(), "TSV_TEST.table").exists());
 
         TsvRowStorage loaded = new TsvRowStorage("TSV_TEST", cols(), types());
         loaded.setDataDir(tempDir.toString());

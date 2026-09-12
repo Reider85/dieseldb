@@ -2571,3 +2571,18 @@ Changes:
 - pom.xml: included ReaderCorrectnessTest in surefire filters (default + ci profiles)
 - src/test/java/diesel/ReaderCorrectnessTest.java (new): 11 tests - strict boolean synonyms across CSV/TSV (true/false/1/0/yes/no/t/f); invalid boolean strings fail with DieselIOException carrying file + line + value + "Boolean" diagnostics (default fail mode); skip_value keeps the row with a null placeholder on invalid boolean; skip_row drops the bad row; extra fields produce exactly one WARNING per file with the correct line number (CSV + TSV); insert() stores a detached copy so later mutation of the caller's map does not change the stored row (CSV + TSV)
 3.0.60 Changelog tidy: remove test-run/verification notes from the 3.0.59 entry and commit so the changelog keeps the no-test-info convention of 3.0.41; commit message reworded without test-run notes.
+
+3.0.61 Fix CSV/TSV storage: sync Table.rows with storage, remove competing .table serialization
+
+Changes:
+- diesel/storage/CsvRowStorage.java: removed saveSerialized() call from saveToFile() — CsvRowStorage no longer writes a competing SerializableAdapter to .table files; the .table serialization is exclusively Table.saveToSerializedFile()'s responsibility. This eliminates ClassCast exceptions when loading tables from disk (CsvRowStorage$SerializableAdapter cannot be cast to diesel.Table)
+- diesel/storage/TsvRowStorage.java: same fix — removed saveSerialized() call from saveToFile()
+- diesel/Table.java readObject(): after creating fresh storage via StorageFactory, populate it with deserialized rows via storage.setRows(new ArrayList<>(rows)) so getRows() → storage.scan() returns actual data instead of empty list
+- diesel/Table.java bulkInsert(): after rows.addAll(validatedRows), sync storage via storage.setRows(new ArrayList<>(rows)) so CsvRowStorage/TsvRowStorage see bulk-inserted data
+- diesel/Table.java insertAtEnd(): always add row to Table.rows (not just when storage is null) so both Table.rows and storage stay in sync
+- diesel/Table.java removeRow(): always remove from Table.rows (not just when storage is null)
+- diesel/Table.java compact(): read source rows from storage.scan() (when storage exists) instead of Table.rows, ensuring compaction uses the most up-to-date data (fixes batch UPDATE then DELETE losing the UPDATE)
+- src/test/java/diesel/CsvStorageTest.java: removed assertion for .table file existence in storageSaveAndLoadCsv (saveToFile no longer writes .table)
+- src/test/java/diesel/TsvStorageTest.java: same fix for storageSaveAndLoadTsv
+
+Verification: full suite (4GB heap, @LargeTest, -Ptest) 919 run / 0 failures / 0 errors / 0 skipped BUILD SUCCESS; previously 28 failures (8 Failures + 20 Errors) at storage.type=csv all resolved

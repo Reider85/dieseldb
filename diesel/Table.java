@@ -1222,9 +1222,8 @@ class Table implements Serializable {
         }
         if (storage != null) {
             storage.delete(rowIndex);
-        } else {
-            rows.remove(rowIndex);
         }
+        rows.remove(rowIndex);
         // Row indexes shift down by one, so the locks of this and all following rows are stale.
         for (int i = rowIndex; i <= rows.size(); i++) {
             rowLocks.remove(i);
@@ -1283,10 +1282,11 @@ class Table implements Serializable {
                 return;
             }
 
-            List<Map<String, Object>> newRows = new ArrayList<>(oldSize - deleted);
-            for (int i = 0; i < oldSize; i++) {
+            List<Map<String, Object>> source = (storage != null) ? storage.scan() : rows;
+            List<Map<String, Object>> newRows = new ArrayList<>(source.size() - deleted);
+            for (int i = 0; i < source.size(); i++) {
                 if (!isDeleted(i)) {
-                    newRows.add(rows.get(i));
+                    newRows.add(source.get(i));
                 }
             }
 
@@ -1371,6 +1371,9 @@ class Table implements Serializable {
             if (primaryKeyColumn != null) {
                 ars.setPrimaryKeyColumn(primaryKeyColumn);
             }
+        }
+        if (this.storage != null && !this.rows.isEmpty()) {
+            this.storage.setRows(new ArrayList<>(this.rows));
         }
         // Backward compat: format v1 wrote hasClusteredIndex/clusteredIndexColumn twice
         // (once by defaultWriteObject, once explicitly). v2 removed the redundant write.
@@ -1601,9 +1604,8 @@ class Table implements Serializable {
         try {
             if (storage != null) {
                 storage.insert(row);
-            } else {
-                rows.add(row);
             }
+            rows.add(row);
             insertRowIntoIndexes(row, rowIndex);
         } finally {
             lock.writeLock().unlock();
@@ -1762,6 +1764,9 @@ class Table implements Serializable {
         try {
             // Phase 3 – merge into the row list.
             rows.addAll(validatedRows);
+            if (storage != null) {
+                storage.setRows(new ArrayList<>(rows));
+            }
 
             // Phase 4 – rebuild every index in a single pass.
             rebuildAllIndexes();

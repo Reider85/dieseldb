@@ -105,7 +105,6 @@ public class CsvRowStorage extends AbstractRowStorage {
     @Override
     public void saveToFile(String tableName) {
         saveCsv(tableName);
-        saveSerialized(tableName);
     }
 
     @Override

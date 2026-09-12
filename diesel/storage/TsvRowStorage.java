@@ -109,7 +109,6 @@ public class TsvRowStorage extends AbstractRowStorage {
     @Override
     public void saveToFile(String tableName) {
         saveTsv(tableName);
-        saveSerialized(tableName);
     }
 
     @Override
