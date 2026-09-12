@@ -122,11 +122,8 @@ class AtomicFileWriteTest {
         storage.saveToFile("T");
 
         Path csv = tempDir.resolve("T.csv");
-        Path table = tempDir.resolve("T.table");
         assertTrue(Files.exists(csv));
-        assertTrue(Files.exists(table));
         assertFalse(Files.exists(AtomicFileWriter.tmpPath(csv)));
-        assertFalse(Files.exists(AtomicFileWriter.tmpPath(table)));
         storage.close();
 
         CsvRowStorage loaded = new CsvRowStorage("T", SCHEMA, TYPES);

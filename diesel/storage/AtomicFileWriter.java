@@ -57,6 +57,12 @@ public final class AtomicFileWriter implements Closeable {
 
     private static final Logger LOGGER = Logger.getLogger(AtomicFileWriter.class.getName());
 
+    /** How many times the final rename may be attempted before giving up. */
+    private static final int MAX_MOVE_ATTEMPTS = 5;
+
+    /** Exponent base (ms) of the backoff between rename attempts, doubled each time. */
+    private static final long MOVE_RETRY_BASE_DELAY_MS = 25;
+
     private final Path target;
     private final Path tmp;
     private final FileChannel channel;
@@ -134,6 +140,11 @@ public final class AtomicFileWriter implements Closeable {
      * and atomically renames the temporary file over the target. The target is
      * only replaced after the new content is durable, so a crash cannot truncate
      * it. A no-op when already committed.
+     *
+     * <p>Windows intermittently fails the rename-over of an existing target with
+     * {@link AccessDeniedException} when the same file is replaced repeatedly in
+     * quick succession (open handles held briefly by the OS or antivirus
+     * scanning). The move is therefore retried with a short backoff.
      */
     public void commit() throws IOException {
         if (committed) {
@@ -146,12 +157,46 @@ public final class AtomicFileWriter implements Closeable {
         }
         channel.force(true);
         closeChannel();
-        try {
-            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+        moveWithRetries();
         committed = true;
+    }
+
+    /**
+     * Renames the temporary file over the target, retrying transient failures.
+     * Falls back to a non-atomic move when the file system does not support
+     * atomic moves for this pair of paths.
+     *
+     * @throws IOException if the move keeps failing after all attempts
+     */
+    private void moveWithRetries() throws IOException {
+        IOException lastError = null;
+        for (int attempt = 1; attempt <= MAX_MOVE_ATTEMPTS; attempt++) {
+            try {
+                try {
+                    Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+                return;
+            } catch (IOException e) {
+                lastError = e;
+                if (attempt < MAX_MOVE_ATTEMPTS) {
+                    LOGGER.log(Level.WARNING,
+                            "Move {0} -> {1} failed on attempt {2} (\"{3}\"); retrying",
+                            new Object[]{tmp, target, attempt, e.getMessage()});
+                    sleepQuietly(MOVE_RETRY_BASE_DELAY_MS * (1L << (attempt - 1)));
+                }
+            }
+        }
+        throw lastError;
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
