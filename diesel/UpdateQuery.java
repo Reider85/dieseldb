@@ -142,6 +142,7 @@ class UpdateQuery implements Query<Void> {
                         row.put(column, convertedValue);
                     }
                 }
+                table.updateRowInPlace(rowIndex, row);
             }
         } finally {
             table.enableAndRebuildIndices();
@@ -172,6 +173,7 @@ class UpdateQuery implements Query<Void> {
                     row.put(column, convertedValue);
                 }
             }
+            table.updateRowInPlace(rowIndex, row);
         }
     }
 

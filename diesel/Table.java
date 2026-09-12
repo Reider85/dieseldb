@@ -954,6 +954,24 @@ class Table implements Serializable {
     }
 
     /**
+     * Writes a modified row back to the underlying storage so that
+     * CSV/TSV backends (which store rows as compact Object[] arrays)
+     * persist the changes. For in-memory storage this replaces the
+     * internal Map reference.
+     *
+     * @param rowIndex the zero-based position of the row
+     * @param row      the column-to-value map (caller must have already
+     *                 applied the mutations)
+     */
+    public void updateRowInPlace(int rowIndex, Map<String, Object> row) {
+        if (storage != null) {
+            storage.update(rowIndex, row);
+        } else {
+            rows.set(rowIndex, row);
+        }
+    }
+
+    /**
      * Synchronously recomputes the statistics (exact row count, measured
      * average row size and the last-analyzed timestamp) and returns them. This
      * is the forced recalculation behind the {@code ANALYZE TABLE} command and

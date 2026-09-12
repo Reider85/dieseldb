@@ -2658,3 +2658,10 @@ Changes:
 - src/test/java/diesel/StorageArrayRepresentationTest.java (new, 11 tests): CSV/TSV value round-trips incl. quoting/escaping, internal Object[] row shape + insert-map detachment (unknown keys dropped, no mutation of stored rows), index consistency across update/insertAt/delete via searchByPrimaryKey, parallel vs sequential load equality with matching index rowCount, auto_mtime serialized fast-path round-trip, reader nextArray() == next() (map equality), scan() builds fresh detached Maps
 - @LargeTest measurements (150k rows, 6 columns): retained heap 83.7MB (Maps) vs 32.2MB (Object[]) = 2.6x on realistic unique-string rows; 58.3MB vs 6.6MB = 8.8x on JVM-cached-value rows, meeting the >=3x per-row container-overhead acceptance criterion (documented); array-based storage load 297ms vs map-based reader load 198ms (within the 2x+500ms bound)
 - pom.xml: StorageArrayRepresentationTest added to default surefire includes and the ci profile
+
+3.0.70 Fix UPDATE not persisting changes to CsvRowStorage/TsvRowStorage after prompt-36 Object[] row representation
+
+Changes:
+- diesel/Table.java: added updateRowInPlace(int rowIndex, Map<String,Object> row) — writes a modified row back to the underlying storage (delegates to storage.update() for CSV/TSV backends that store rows as compact Object[] arrays, or replaces the internal Map for in-memory storage); called by UpdateQuery after each row is mutated so the changes survive the next scan()
+- diesel/UpdateQuery.java: applyPerRowUpdate() and applyBulkUpdate() now call table.updateRowInPlace(rowIndex, row) after modifying each row, so CSV/TSV storage (which creates fresh Map copies from Object[] arrays on every scan()) persists the mutations instead of losing them to throwaway Map objects
+- Quick 196/0/0/6, full suite (4GB, @LargeTest) 196/0/0/0 BUILD SUCCESS
