@@ -5,10 +5,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -20,18 +18,18 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import diesel.ErrorMessages;
 
 /**
- * Format-agnostic index management and cache layer for delimited storage
- * backends. Maintains a sorted primary-key index and optional per-column
- * secondary indexes, exposes an LRU block cache for frequently accessed row
- * ranges, and can read delimited files concurrently using a dedicated daemon
- * {@link ForkJoinPool}.
+ * Format-agnostic index management for delimited storage backends. Maintains
+ * a sorted primary-key index and optional per-column secondary indexes, can
+ * read delimited files concurrently using a dedicated daemon
+ * {@link ForkJoinPool}, and exposes (deprecated) block helpers that return
+ * on-demand slices of the in-memory rows.
  *
  * <p>The row format (CSV, TSV, or any future delimited reader) is supplied via
  * a {@link RowReaderFactory}; configuration keys are namespaced by
@@ -75,7 +73,6 @@ public abstract class DelimitedIndexManager {
             null, true);
 
     private static final int DEFAULT_BLOCK_SIZE = 1000;
-    private static final int DEFAULT_MAX_CACHE_BLOCKS = 64;
     private static final long DEFAULT_PARALLEL_READ_THRESHOLD = 10000;
 
     private static final java.util.Properties ROOT_CONFIG = loadRootConfig();
@@ -99,20 +96,17 @@ public abstract class DelimitedIndexManager {
     private static final double COMPACTION_THRESHOLD = 0.25;
 
     private final int blockSize;
-    private final int maxCacheBlocks;
     private final long parallelReadThreshold;
 
-    private final Map<Integer, Block> blockCache;
-    private final AtomicLong cacheHits = new AtomicLong();
-    private final AtomicLong cacheMisses = new AtomicLong();
+    private final AtomicBoolean deprecationLogged = new AtomicBoolean();
 
     /**
      * @param tableName       the table name
      * @param columns         the ordered column names of the underlying schema
      * @param columnTypes     column name to type mapping of the underlying schema
      * @param rowReaderFactory factory opening a row reader for the storage format
-     * @param configPrefix    namespace for {@code .block.size}, {@code .cache.max.blocks}
-     *                        and {@code .parallel.read.threshold} config keys
+     * @param configPrefix    namespace for {@code .block.size} and
+     *                        {@code .parallel.read.threshold} config keys
      * @param multiLineRows   whether a single logical row can span several physical
      *                        lines (requires a pre-scan before parallel reading)
      */
@@ -128,15 +122,7 @@ public abstract class DelimitedIndexManager {
         this.configPrefix = configPrefix == null ? "" : configPrefix;
         this.multiLineRows = multiLineRows;
         this.blockSize = Math.max(1, readIntSetting("block.size", DEFAULT_BLOCK_SIZE));
-        this.maxCacheBlocks = Math.max(1, readIntSetting("cache.max.blocks", DEFAULT_MAX_CACHE_BLOCKS));
         this.parallelReadThreshold = Math.max(1, readLongSetting("parallel.read.threshold", DEFAULT_PARALLEL_READ_THRESHOLD));
-        this.blockCache = Collections.synchronizedMap(
-                new LinkedHashMap<Integer, Block>(16, 0.75f, true) {
-                    @Override
-                    protected boolean removeEldestEntry(Map.Entry<Integer, Block> eldest) {
-                        return size() > DelimitedIndexManager.this.maxCacheBlocks;
-                    }
-                });
     }
 
     /** Returns the table name. */
@@ -166,9 +152,6 @@ public abstract class DelimitedIndexManager {
         this.rowIdToPosition.clear();
         this.deletedRowIds.clear();
         this.nextRowId = 0;
-        this.blockCache.clear();
-        this.cacheHits.set(0);
-        this.cacheMisses.set(0);
         reindex();
     }
 
@@ -485,7 +468,7 @@ public abstract class DelimitedIndexManager {
         return collectPositions(subRange(index, low, high));
     }
 
-    // ─── Block cache ─────────────────────────────────────────────────
+    // ─── Block slicing (deprecated cache API, prompt 33) ───────────────
 
     /** Returns the number of fixed-size blocks the current rows are split into. */
     public int getNumBlocks() {
@@ -507,80 +490,69 @@ public abstract class DelimitedIndexManager {
     }
 
     /**
-     * Returns the block with the given index, loading it (cache-through) if
-     * not already present.
+     * Deprecated stub (prompt 33): the LRU block cache layer was removed
+     * because rows are already fully in memory and the cache never performed
+     * real I/O. Returns a fresh on-demand slice of the in-memory rows without
+     * caching.
      *
      * @param blockIndex the zero-based block index
-     * @return the cached block
+     * @return a new block holding the rows of the given slice
      */
+    @Deprecated
     public Block getBlock(int blockIndex) {
         int numBlocks = getNumBlocks();
         if (blockIndex < 0 || blockIndex >= numBlocks) {
             throw new IndexOutOfBoundsException("Block index " + blockIndex + " out of range [0, " + numBlocks + ")");
         }
-        Block cached = blockCache.get(blockIndex);
-        if (cached != null) {
-            cacheHits.incrementAndGet();
-            return cached;
-        }
-        cacheMisses.incrementAndGet();
+        logDeprecated("getBlock(int)");
         int from = blockIndex * blockSize;
         int to = Math.min(from + blockSize, rows.size());
-        Block block = new Block(blockIndex, new ArrayList<>(rows.subList(from, to)));
-        blockCache.put(blockIndex, block);
-        return block;
+        return new Block(blockIndex, new ArrayList<>(rows.subList(from, to)));
     }
 
     /**
-     * Pro-actively loads every block into the cache. Uses the shared daemon pool
-     * when the block count is large enough, otherwise loads sequentially.
+     * Deprecated stub (prompt 33): assembles the blocks sequentially on demand.
      *
      * @return the blocks in ascending block order
      */
+    @Deprecated
     public List<Block> loadAllBlocksParallel() {
+        logDeprecated("loadAllBlocksParallel()");
         int numBlocks = getNumBlocks();
-        if (numBlocks <= 1) {
-            return numBlocks == 0 ? List.of() : List.of(getBlock(0));
-        }
-        if (numBlocks < parallelReadThreshold) {
-            List<Block> result = new ArrayList<>(numBlocks);
-            for (int i = 0; i < numBlocks; i++) {
-                result.add(getBlock(i));
-            }
-            return result;
-        }
-        List<Callable<Block>> tasks = new ArrayList<>(numBlocks);
-        for (int i = 0; i < numBlocks; i++) {
-            int block = i;
-            tasks.add(() -> getBlock(block));
-        }
         List<Block> result = new ArrayList<>(numBlocks);
-        try {
-            for (Future<Block> future : READ_POOL.invokeAll(tasks)) {
-                result.add(future.get());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CompletionException("Parallel block load interrupted", e);
-        } catch (ExecutionException e) {
-            throw new CompletionException("Parallel block load failed", e.getCause());
+        for (int i = 0; i < numBlocks; i++) {
+            result.add(getBlock(i));
         }
         return result;
     }
 
-    /** Returns the number of block-cache hits. */
+    /** Deprecated stub: the block cache no longer exists, so hits are always zero. */
+    @Deprecated
     public long getCacheHitCount() {
-        return cacheHits.get();
+        logDeprecated("getCacheHitCount()");
+        return 0;
     }
 
-    /** Returns the number of block-cache misses. */
+    /** Deprecated stub: the block cache no longer exists, so misses are always zero. */
+    @Deprecated
     public long getCacheMissCount() {
-        return cacheMisses.get();
+        logDeprecated("getCacheMissCount()");
+        return 0;
     }
 
-    /** Discards all cached blocks. */
+    /** Deprecated no-op stub: there is no cache to invalidate. */
+    @Deprecated
     public void invalidateCache() {
-        blockCache.clear();
+        logDeprecated("invalidateCache()");
+    }
+
+    /** Logs a deprecation warning once per manager instance. */
+    private void logDeprecated(String method) {
+        if (deprecationLogged.compareAndSet(false, true)) {
+            LOGGER.log(Level.WARNING, "DEPRECATED: {0}.{1} is a stub — the LRU block cache layer was removed "
+                            + "in prompt 33 because rows are already fully in memory; blocks are sliced on demand",
+                    new Object[]{getClass().getSimpleName(), method});
+        }
     }
 
     // ─── Parallel file reading ───────────────────────────────────────
@@ -847,8 +819,8 @@ public abstract class DelimitedIndexManager {
     }
 
     /**
-     * A cached block of rows. Holds the block index and the rows within the
-     * block, in ascending row order.
+     * A slice of rows produced by the deprecated block API. Holds the block
+     * index and the rows within the block, in ascending row order.
      */
     public static final class Block {
         private final int blockIndex;

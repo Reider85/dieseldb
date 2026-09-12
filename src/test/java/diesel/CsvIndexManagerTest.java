@@ -159,8 +159,7 @@ class CsvIndexManagerTest {
     // ─── Block cache ─────────────────────────────────────────────────
 
     @Test
-    void blockCacheSlicesRowsAndCountsHits() {
-        CsvIndexManager m = manager(sampleRows(), "ID");
+    void blockSlicingStillWorks() {
         // Force a small block size via system property so 5 rows => 3 blocks of 2.
         try {
             setCsvConfig("2", "10000");
@@ -171,14 +170,11 @@ class CsvIndexManagerTest {
             assertEquals(1, cm.getBlock(2).getRows().size());
             assertEquals("Alice", cm.getBlock(0).getRows().get(0).get("NAME"));
             assertThrows(IndexOutOfBoundsException.class, () -> cm.getBlock(3));
-            assertEquals(2, cm.getCacheMissCount());
-
+            // Deprecation stubs (prompt 33): blocks slice rows on demand, no LRU cache.
+            assertEquals(0, cm.getCacheMissCount());
             cm.getBlock(0);
             cm.getBlock(0);
-            assertEquals(3, cm.getCacheHitCount());
-            cm.invalidateCache();
-            cm.getBlock(0);
-            assertEquals(3, cm.getCacheMissCount());
+            assertEquals(0, cm.getCacheHitCount());
         } finally {
             clearCsvConfig();
         }

@@ -305,35 +305,40 @@ public class TsvRowStorage extends AbstractRowStorage {
     }
 
     /**
-     * Returns the block with the given index, loading it into the LRU cache if
-     * not already present.
+     * Deprecated (prompt 33): the block cache layer was removed; returns a
+     * fresh on-demand slice of the in-memory rows.
      *
      * @param blockIndex the zero-based block index
-     * @return the cached block
+     * @return the sliced block
      */
+    @Deprecated
     public DelimitedIndexManager.Block getBlock(int blockIndex) {
         return index().getBlock(blockIndex);
     }
 
-    /** Pro-actively loads every block into the cache (parallel when large). */
+    /** Deprecated (prompt 33): assembles the blocks sequentially on demand. */
+    @Deprecated
     public List<DelimitedIndexManager.Block> loadAllBlocksParallel() {
         DelimitedIndexManager manager = index();
         return manager == null ? List.of() : manager.loadAllBlocksParallel();
     }
 
-    /** Returns the number of block-cache hits. */
+    /** Deprecated (prompt 33): the block cache no longer exists. */
+    @Deprecated
     public long getCacheHitCount() {
         DelimitedIndexManager manager = index();
         return manager == null ? 0 : manager.getCacheHitCount();
     }
 
-    /** Returns the number of block-cache misses. */
+    /** Deprecated (prompt 33): the block cache no longer exists. */
+    @Deprecated
     public long getCacheMissCount() {
         DelimitedIndexManager manager = index();
         return manager == null ? 0 : manager.getCacheMissCount();
     }
 
-    /** Discards all cached blocks. */
+    /** Deprecated no-op (prompt 33): there is no cache to invalidate. */
+    @Deprecated
     public void invalidateCache() {
         DelimitedIndexManager manager = index();
         if (manager != null) {
