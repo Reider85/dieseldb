@@ -167,6 +167,23 @@ public class CsvRowReader implements DelimitedRowReader {
 
     @Override
     public Map<String, Object> next() {
+        Object[] values = nextArray();
+        if (values == null) {
+            return null;
+        }
+        Map<String, Object> row = new HashMap<>();
+        for (int i = 0; i < columns.size(); i++) {
+            row.put(columns.get(i), values[i]);
+        }
+        return row;
+    }
+
+    /**
+     * Reads the next row into a compact Object[] whose slot {@code i} holds the
+     * value of schema column {@code i} (prompt 36). Returns {@code null} when
+     * the whole row was skipped by the {@code storage.load.error.mode} policy.
+     */
+    public Object[] nextArray() {
         if (finished) {
             throw new NoSuchElementException("No more rows in CSV file");
         }
@@ -176,9 +193,9 @@ public class CsvRowReader implements DelimitedRowReader {
         if (unterminatedRow) {
             unterminatedRow = false;
             lastRowLine = currentRowLine;
-            return handleTruncatedRow();
+            return handleTruncatedRowArray();
         }
-        Map<String, Object> row = parseDataLine(nextLine);
+        Object[] row = parseDataLineArray(nextLine);
         lastRowLine = currentRowLine;
         prefetch();
         return row;
@@ -269,7 +286,7 @@ public class CsvRowReader implements DelimitedRowReader {
         return inQuotes;
     }
 
-    private Map<String, Object> parseDataLine(String line) {
+    private Object[] parseDataLineArray(String line) {
         List<ParsedCsvField> raw = parseDataFields(line);
         if (raw.size() > columns.size() && !extraFieldsWarned) {
             extraFieldsWarned = true;
@@ -277,19 +294,18 @@ public class CsvRowReader implements DelimitedRowReader {
                     + ": row has " + raw.size() + " fields but schema expects " + columns.size()
                     + " - ignoring extra fields");
         }
-        Map<String, Object> row = new HashMap<>();
+        Object[] values = new Object[columns.size()];
         for (int i = 0; i < columns.size(); i++) {
-            String colName = columns.get(i);
             int fileIdx = columnMapping[i];
             ParsedCsvField field = (fileIdx >= 0 && fileIdx < raw.size())
                     ? raw.get(fileIdx) : new ParsedCsvField("", false);
-            row.put(colName, convertValue(field.value(), field.quoted(), colName));
+            values[i] = convertValue(field.value(), field.quoted(), columns.get(i));
         }
         if (rowSkipped) {
             rowSkipped = false;
             return null;
         }
-        return row;
+        return values;
     }
 
     /**
@@ -395,7 +411,7 @@ public class CsvRowReader implements DelimitedRowReader {
     }
 
     /** Applies the load-error policy to a row terminated by an unterminated quoted field. */
-    private Map<String, Object> handleTruncatedRow() {
+    private Object[] handleTruncatedRowArray() {
         String msg = contextPrefix() + "line " + currentRowLine
                 + ": unterminated quoted field (truncated or malformed row)";
         String mode = readLoadErrorMode();
@@ -406,7 +422,7 @@ public class CsvRowReader implements DelimitedRowReader {
         }
         if ("skip_value".equalsIgnoreCase(mode)) {
             LOGGER.log(Level.WARNING, msg);
-            Map<String, Object> row = parseDataLine(nextLine);
+            Object[] row = parseDataLineArray(nextLine);
             prefetch();
             return row;
         }

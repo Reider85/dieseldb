@@ -169,13 +169,30 @@ public class TsvRowReader implements DelimitedRowReader {
 
     @Override
     public Map<String, Object> next() {
+        Object[] values = nextArray();
+        if (values == null) {
+            return null;
+        }
+        Map<String, Object> row = new HashMap<>();
+        for (int i = 0; i < columns.size(); i++) {
+            row.put(columns.get(i), values[i]);
+        }
+        return row;
+    }
+
+    /**
+     * Reads the next row into a compact Object[] whose slot {@code i} holds the
+     * value of schema column {@code i} (prompt 36). Returns {@code null} when
+     * the whole row was skipped by the {@code storage.load.error.mode} policy.
+     */
+    public Object[] nextArray() {
         if (finished) {
             throw new NoSuchElementException("No more rows in TSV file");
         }
         if (nextLine == null) {
             prefetch();
         }
-        Map<String, Object> row = parseLine(nextLine);
+        Object[] row = parseLineArray(nextLine);
         lastRowLine = currentRowLine;
         prefetch();
         return row;
@@ -257,7 +274,7 @@ public class TsvRowReader implements DelimitedRowReader {
         return result;
     }
 
-    private Map<String, Object> parseLine(String line) {
+    private Object[] parseLineArray(String line) {
         String[] raw = splitTab(line);
         if (raw.length > columns.size() && !extraFieldsWarned) {
             extraFieldsWarned = true;
@@ -265,18 +282,17 @@ public class TsvRowReader implements DelimitedRowReader {
                     + ": row has " + raw.length + " fields but schema expects " + columns.size()
                     + " - ignoring extra fields");
         }
-        Map<String, Object> row = new HashMap<>();
+        Object[] values = new Object[columns.size()];
         for (int i = 0; i < columns.size(); i++) {
-            String colName = columns.get(i);
             int fileIdx = columnMapping[i];
             String rawValue = (fileIdx >= 0 && fileIdx < raw.length) ? raw[fileIdx] : "";
-            row.put(colName, convertValue(rawValue, colName));
+            values[i] = convertValue(rawValue, columns.get(i));
         }
         if (rowSkipped) {
             rowSkipped = false;
             return null;
         }
-        return row;
+        return values;
     }
 
     private Object convertValue(String raw, String colName) {

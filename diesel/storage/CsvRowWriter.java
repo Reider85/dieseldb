@@ -60,6 +60,26 @@ public class CsvRowWriter implements AutoCloseable {
         writer.write('\n');
     }
 
+    /**
+     * Writes a single data row given as a compact Object[] array, where slot
+     * {@code i} holds the value of schema column {@code i} (prompt 36). Avoids
+     * materialising a per-row Map at save time.
+     *
+     * @param row the ordered values aligned with the columns
+     */
+    public void writeRow(Object[] row) throws IOException {
+        boolean sentinel = TsvRowWriter.isSentinelMode();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(escapeValue(row == null || i >= row.length ? null : row[i], sentinel));
+        }
+        writer.write(sb.toString());
+        writer.write('\n');
+    }
+
     /** Flushes buffered output. */
     public void flush() throws IOException {
         writer.flush();

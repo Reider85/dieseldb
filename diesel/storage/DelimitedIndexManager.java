@@ -88,8 +88,12 @@ public abstract class DelimitedIndexManager {
     private final RowReaderFactory rowReaderFactory;
     private final String configPrefix;
     private final boolean multiLineRows;
+    private final RowArrays rowColumns;
 
-    private List<Map<String, Object>> rows = new ArrayList<>();
+    /** Rows are kept as compact Object[] arrays (prompt 36) so the index manager
+     * shares the very same row objects as the storage instead of a second set of
+     * per-row HashMaps. Value lookups go through {@link #rowColumns}. */
+    private List<Object[]> rows = new ArrayList<>();
     private String primaryKeyColumn;
     private final NavigableMap<Object, Long> primaryKeyIndex = new TreeMap<>(KEY_ORDER);
     private final Map<String, NavigableMap<Object, List<Long>>> secondaryIndexes =
@@ -136,6 +140,7 @@ public abstract class DelimitedIndexManager {
         this.rowReaderFactory = rowReaderFactory;
         this.configPrefix = configPrefix == null ? "" : configPrefix;
         this.multiLineRows = multiLineRows;
+        this.rowColumns = new RowArrays(this.columns);
         this.blockSize = Math.max(1, readIntSetting("block.size", DEFAULT_BLOCK_SIZE));
         this.parallelReadThreshold = Math.max(1, readLongSetting("parallel.read.threshold", DEFAULT_PARALLEL_READ_THRESHOLD));
     }
@@ -153,13 +158,29 @@ public abstract class DelimitedIndexManager {
     // ─── Index construction ─────────────────────────────────────────
 
     /**
-     * Adopts the given rows and builds the primary-key index. Any previously
-     * configured indexes and cached blocks are discarded.
+     * Adopts the given rows (as column-to-value maps, converted to compact
+     * Object[] arrays internally) and builds the primary-key index. Any
+     * previously configured indexes and cached blocks are discarded.
      *
      * @param data             the rows to index, or {@code null} for an empty table
      * @param primaryKeyColumn the primary-key column name, or {@code null} for none
      */
     public void buildIndexes(List<Map<String, Object>> data, String primaryKeyColumn) {
+        List<Object[]> arrays = new ArrayList<>();
+        if (data != null) {
+            for (Map<String, Object> row : data) {
+                arrays.add(rowColumns.fromMap(row));
+            }
+        }
+        buildIndexesFromArrays(arrays, primaryKeyColumn);
+    }
+
+    /**
+     * Adopts compact Object[] rows directly, sharing the row objects with the
+     * storage instead of copying them into Map form. See
+     * {@link #buildIndexes(List, String)}.
+     */
+    private void buildIndexesFromArrays(List<Object[]> data, String primaryKeyColumn) {
         this.rows = data != null ? new ArrayList<>(data) : new ArrayList<>();
         this.primaryKeyColumn = resolveColumn(primaryKeyColumn);
         this.primaryKeyIndex.clear();
@@ -194,7 +215,7 @@ public abstract class DelimitedIndexManager {
             if (rid == null) {
                 continue;
             }
-            Object key = rows.get(i).get(canonical);
+            Object key = rowColumns.get(rows.get(i), canonical);
             if (key != null) {
                 index.computeIfAbsent(key, k -> new ArrayList<>()).add(rid);
             }
@@ -222,18 +243,18 @@ public abstract class DelimitedIndexManager {
     /**
      * Injects a new row into all maintained indexes.
      *
-     * @param row  the row map
+     * @param row  the compact array row
      * @param rowId the stable row identifier
      */
-    public void insertIndexedRow(Map<String, Object> row, long rowId) {
+    public void insertIndexedRow(Object[] row, long rowId) {
         if (primaryKeyColumn != null) {
-            Object key = row.get(primaryKeyColumn);
+            Object key = rowColumns.get(row, primaryKeyColumn);
             if (key != null) {
                 primaryKeyIndex.put(key, rowId);
             }
         }
         for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
-            Object key = row.get(entry.getKey());
+            Object key = rowColumns.get(row, entry.getKey());
             if (key != null) {
                 entry.getValue().computeIfAbsent(key, k -> new ArrayList<>()).add(rowId);
             }
@@ -244,10 +265,18 @@ public abstract class DelimitedIndexManager {
      * Appends a row at the given position (end of storage). Assigns a new
      * rowId and registers it in the position map. No position shifting.
      *
-     * @param row      the row data
+     * @param row      the row data as a column-to-value map
      * @param rowIndex the position (should be at the end)
      */
     public void appendIndexedRow(Map<String, Object> row, int rowIndex) {
+        appendIndexedRowShared(rowColumns.fromMap(row), rowIndex);
+    }
+
+    /**
+     * Appends a compact Object[] row, keeping the very same array object so the
+     * storage and this manager observe one shared representation per row.
+     */
+    void appendIndexedRowShared(Object[] row, int rowIndex) {
         long rid = nextRowId++;
         rowIdToPosition.put(rid, rowIndex);
         if (rowIndex >= rows.size()) {
@@ -261,18 +290,18 @@ public abstract class DelimitedIndexManager {
     /**
      * Removes a row from all maintained indexes.
      *
-     * @param row  the row map
+     * @param row  the compact array row
      * @param rowId the stable row identifier to disassociate
      */
-    public void removeIndexedRow(Map<String, Object> row, long rowId) {
+    public void removeIndexedRow(Object[] row, long rowId) {
         if (primaryKeyColumn != null) {
-            Object key = row.get(primaryKeyColumn);
+            Object key = rowColumns.get(row, primaryKeyColumn);
             if (key != null && rowId == primaryKeyIndex.getOrDefault(key, -1L)) {
                 primaryKeyIndex.remove(key);
             }
         }
         for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
-            Object key = row.get(entry.getKey());
+            Object key = rowColumns.get(row, entry.getKey());
             if (key == null) {
                 continue;
             }
@@ -288,13 +317,13 @@ public abstract class DelimitedIndexManager {
 
     /**
      * Updates a row in all maintained indexes at the given physical position.
-     * The rowId stays the same; only the key→rowId mappings are refreshed.
+     * The rowId stays the same; only the key-to-rowId mappings are refreshed.
      *
-     * @param oldRow  the previous row data
+     * @param oldRow  the previous compact array row
      * @param rowIndex the physical position
-     * @param newRow  the new row data
+     * @param newRow  the new compact array row
      */
-    public void updateRow(Map<String, Object> oldRow, int rowIndex, Map<String, Object> newRow) {
+    public void updateRow(Object[] oldRow, int rowIndex, Object[] newRow) {
         Long rid = positionToRowId(rowIndex);
         if (rid == null) {
             return;
@@ -319,9 +348,18 @@ public abstract class DelimitedIndexManager {
      * undefined.
      *
      * @param rowIndex the zero-based position at which to insert
-     * @param row      the row data
+     * @param row      the row data as a column-to-value map
      */
     public void insertAt(int rowIndex, Map<String, Object> row) {
+        insertAtShared(rowIndex, rowColumns.fromMap(row));
+    }
+
+    /**
+     * Inserts a compact Object[] row, keeping the very same array object as the
+     * storage so both share one row representation. See
+     * {@link #insertAt(int, Map)} for the semantics.
+     */
+    void insertAtShared(int rowIndex, Object[] row) {
         if (bulkMode) {
             rows.add(rowIndex, row);
             bulkDirty = true;
@@ -368,7 +406,7 @@ public abstract class DelimitedIndexManager {
         if (rid == null) {
             return;
         }
-        Map<String, Object> row = rows.remove(rowIndex);
+        Object[] row = rows.remove(rowIndex);
         removeIndexedRow(row, rid);
         rowIdToPosition.remove(rid);
         deletedRowIds.add(rid);
@@ -442,6 +480,26 @@ public abstract class DelimitedIndexManager {
     public void markIndexDirty(List<Map<String, Object>> data, String primaryKeyColumn) {
         if (!bulkMode) {
             buildIndexes(data, primaryKeyColumn);
+            return;
+        }
+        List<Object[]> arrays = new ArrayList<>();
+        if (data != null) {
+            for (Map<String, Object> row : data) {
+                arrays.add(rowColumns.fromMap(row));
+            }
+        }
+        markIndexDirtyFromArrays(arrays, primaryKeyColumn);
+    }
+
+    /**
+     * Adopts a wholesale replacement of compact Object[] rows. Outside a
+     * bulk-update window this is a full immediate rebuild; inside one the new
+     * rows are snapped into the mirror list (sharing the storage's arrays) and
+     * the indexes are rebuilt once at {@link #endBulkUpdate()}.
+     */
+    void markIndexDirtyFromArrays(List<Object[]> data, String primaryKeyColumn) {
+        if (!bulkMode) {
+            buildIndexesFromArrays(data, primaryKeyColumn);
             return;
         }
         this.rows = data != null ? new ArrayList<>(data) : new ArrayList<>();
@@ -600,7 +658,12 @@ public abstract class DelimitedIndexManager {
         logDeprecated("getBlock(int)");
         int from = blockIndex * blockSize;
         int to = Math.min(from + blockSize, rows.size());
-        return new Block(blockIndex, new ArrayList<>(rows.subList(from, to)));
+        List<Map<String, Object>> blockRows = new ArrayList<>();
+        List<Object[]> slice = rows.subList(from, Math.max(from, to));
+        for (Object[] row : slice) {
+            blockRows.add(rowColumns.toMap(row));
+        }
+        return new Block(blockIndex, blockRows);
     }
 
     /**

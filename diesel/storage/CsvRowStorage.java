@@ -7,7 +7,6 @@ import java.io.ObjectOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
@@ -27,16 +26,23 @@ import diesel.ErrorMessages;
  * doubled ({@code ""}).
  *
  * <p>Null values are written as an empty field and read back as {@code null}.
+ *
+ * <p>Rows are kept internally as compact Object[] arrays (one per row, slot
+ * {@code i} = value of schema column {@code i}) instead of per-row Maps
+ * (prompt 36). Column-to-value Maps are built only at the Map-based API
+ * boundary ({@link #scan()}, {@link #insert(Map)}, {@link #update(int, Map)}).
  */
 public class CsvRowStorage extends AbstractRowStorage {
 
     private static final Logger LOGGER = Logger.getLogger(CsvRowStorage.class.getName());
 
-    protected final List<Map<String, Object>> rows = new ArrayList<>();
+    protected final List<Object[]> rows = new ArrayList<>();
+    private final RowArrays rowColumns;
     private boolean fileInitialized;
 
     public CsvRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         super(tableName, columns, columnTypes);
+        this.rowColumns = new RowArrays(columns);
     }
 
     @Override
@@ -68,27 +74,33 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     @Override
     public List<Map<String, Object>> scan() {
-        return new ArrayList<>(rows);
+        List<Map<String, Object>> result = new ArrayList<>(rows.size());
+        for (Object[] row : rows) {
+            result.add(rowColumns.toMap(row));
+        }
+        return result;
     }
 
     @Override
     public void insert(Map<String, Object> row) {
-        Map<String, Object> copy = new HashMap<>(row);
-        rows.add(copy);
-        syncIndexAppend(copy, rows.size() - 1);
+        Object[] arr = rowColumns.fromMap(row);
+        rows.add(arr);
+        syncIndexAppend(arr, rows.size() - 1);
     }
 
     @Override
     public void insertAt(int rowIndex, Map<String, Object> row) {
-        rows.add(rowIndex, new HashMap<>(row));
-        syncIndexInsert(rows.get(rowIndex), rowIndex);
+        Object[] arr = rowColumns.fromMap(row);
+        rows.add(rowIndex, arr);
+        syncIndexInsert(arr, rowIndex);
     }
 
     @Override
     public void update(int rowIndex, Map<String, Object> row) {
-        Map<String, Object> oldRow = rows.get(rowIndex);
-        rows.set(rowIndex, new HashMap<>(row));
-        syncIndexUpdate(oldRow, rowIndex, rows.get(rowIndex));
+        Object[] oldRow = rows.get(rowIndex);
+        Object[] newRow = rowColumns.fromMap(row);
+        rows.set(rowIndex, newRow);
+        syncIndexUpdate(oldRow, rowIndex, newRow);
     }
 
     @Override
@@ -118,11 +130,11 @@ public class CsvRowStorage extends AbstractRowStorage {
                 List<String> problems = checkSerializedConsistency(data);
                 if (problems.isEmpty() && delimitedHeaderConsistent(csvFile)) {
                     rows.clear();
-                    rows.addAll(data.rows);
+                    rows.addAll(convertSerializedRows(data));
                     fileInitialized = true;
                     LOGGER.log(Level.INFO, "CsvRowStorage {0} loaded serialised from {1} with {2} rows",
                             new Object[]{tableName, tableFile, rows.size()});
-                    syncIndexBulk();
+                    syncIndexBulkFromArrays(rows);
                     return;
                 }
                 LOGGER.log(Level.WARNING,
@@ -140,7 +152,7 @@ public class CsvRowStorage extends AbstractRowStorage {
         try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
              CsvRowWriter csvWriter = new CsvRowWriter(afw.bufferedWriter(), columns)) {
             csvWriter.writeHeader();
-            for (Map<String, Object> row : rows) {
+            for (Object[] row : rows) {
                 csvWriter.writeRow(row);
             }
             csvWriter.flush();
@@ -162,13 +174,13 @@ public class CsvRowStorage extends AbstractRowStorage {
             LOGGER.log(Level.INFO, "CSV file {0} not found for storage {1}", new Object[]{fileName, tableName});
             return;
         }
-        List<Map<String, Object>> previous = new ArrayList<>(rows);
+        List<Object[]> previous = new ArrayList<>(rows);
         try (BufferedReader br = StorageConfig.newReader(new File(fileName));
              CsvRowReader csvReader = new CsvRowReader(br, columns, columnTypes, fileName)) {
             csvReader.readHeader();
-            List<Map<String, Object>> loaded = new ArrayList<>();
+            List<Object[]> loaded = new ArrayList<>();
             while (csvReader.hasNext()) {
-                Map<String, Object> row = csvReader.next();
+                Object[] row = csvReader.nextArray();
                 if (row != null) {
                     loaded.add(row);
                 }
@@ -178,7 +190,7 @@ public class CsvRowStorage extends AbstractRowStorage {
             fileInitialized = true;
             LOGGER.log(Level.INFO, "CsvRowStorage {0} loaded CSV from {1} with {2} rows",
                     new Object[]{tableName, fileName, rows.size()});
-            syncIndexBulk();
+            syncIndexBulkFromArrays(rows);
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
@@ -230,18 +242,42 @@ public class CsvRowStorage extends AbstractRowStorage {
         }
     }
 
+    /**
+     * Converts the rows of a deserialised {@link SerializedTableData} snapshot
+     * into compact Object[] arrays. Snapshots written after the prompt-36
+     * switch already hold arrays (kept as-is and shared with the row buffer);
+     * older snapshots holding Map rows are converted and detached.
+     */
+    private List<Object[]> convertSerializedRows(SerializedTableData data) {
+        List<Object[]> converted = new ArrayList<>(data.rowCount);
+        for (Object element : data.rows) {
+            if (element instanceof Object[] arr) {
+                converted.add(arr);
+            } else if (element == null) {
+                converted.add(new Object[columns.size()]);
+            } else {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> map = (Map<String, Object>) element;
+                converted.add(rowColumns.fromMap(map));
+            }
+        }
+        return converted;
+    }
+
     // ─── Internal helpers ───────────────────────────────────────────
 
     /** Returns the internal row list directly (no copy). */
-    public List<Map<String, Object>> getInternalRows() {
+    public List<Object[]> getInternalRows() {
         return rows;
     }
 
     /** Replaces the internal row list. */
     public void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
-        rows.addAll(newRows);
-        syncIndexBulk();
+        for (Map<String, Object> row : newRows) {
+            rows.add(rowColumns.fromMap(row));
+        }
+        syncIndexBulkFromArrays(rows);
     }
 
     // ─── Index / cache accessors (prompt 23) ──────────────────────
@@ -362,8 +398,10 @@ public class CsvRowStorage extends AbstractRowStorage {
                 ? manager.loadFromFileParallel(fileName)
                 : manager.loadFromFileSequential(fileName);
         rows.clear();
-        rows.addAll(loaded);
+        for (Map<String, Object> row : loaded) {
+            rows.add(rowColumns.fromMap(row));
+        }
         fileInitialized = true;
-        manager.buildIndexes(rows, getPrimaryKeyColumn());
+        syncIndexBulkFromArrays(rows);
     }
 }

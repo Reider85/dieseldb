@@ -163,11 +163,13 @@ public abstract class AbstractRowStorage implements RowStorage {
      * Mirrors a position-shifted insert into the index manager. The row at
      * {@code rowIndex} was just physically inserted, shifting all later rows.
      * The index manager updates its position map without rebuilding indexes.
+     * The compact Object[] row is shared with the manager, keeping a single
+     * representation per row (prompt 36).
      */
-    protected void syncIndexInsert(Map<String, Object> row, int rowIndex) {
+    protected void syncIndexInsert(Object[] row, int rowIndex) {
         DelimitedIndexManager manager = index();
         if (manager != null) {
-            manager.insertAt(rowIndex, row);
+            manager.insertAtShared(rowIndex, row);
         }
     }
 
@@ -175,17 +177,17 @@ public abstract class AbstractRowStorage implements RowStorage {
      * Mirrors an append-only insert into the index manager. The row was
      * added at the end of the storage — no position shifting needed.
      */
-    protected void syncIndexAppend(Map<String, Object> row, int rowIndex) {
+    protected void syncIndexAppend(Object[] row, int rowIndex) {
         DelimitedIndexManager manager = index();
         if (manager != null) {
-            manager.appendIndexedRow(row, rowIndex);
+            manager.appendIndexedRowShared(row, rowIndex);
         }
     }
 
     /**
      * Mirrors an index-stable update (same row index) into the index manager.
      */
-    protected void syncIndexUpdate(Map<String, Object> oldRow, int rowIndex, Map<String, Object> newRow) {
+    protected void syncIndexUpdate(Object[] oldRow, int rowIndex, Object[] newRow) {
         DelimitedIndexManager manager = index();
         if (manager != null) {
             manager.updateRow(oldRow, rowIndex, newRow);
@@ -214,6 +216,18 @@ public abstract class AbstractRowStorage implements RowStorage {
         DelimitedIndexManager manager = index();
         if (manager != null) {
             manager.markIndexDirty(scan(), primaryKeyColumn);
+        }
+    }
+
+    /**
+     * Same as {@link #syncIndexBulk()} but takes the storage's compact Object[]
+     * rows directly, so the index manager shares the exact row arrays instead of
+     * converting through a temporary Map pass (prompt 36).
+     */
+    protected void syncIndexBulkFromArrays(List<Object[]> rows) {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.markIndexDirtyFromArrays(new ArrayList<>(rows), primaryKeyColumn);
         }
     }
 
@@ -374,6 +388,10 @@ public abstract class AbstractRowStorage implements RowStorage {
     /**
      * Lightweight serialisable snapshot of a delimited storage written to the
      * secondary .table file. Used by the {@code auto_mtime} fast load path.
+     * Rows are written as compact Object[] arrays (prompt 36); {@code List} is
+     * declared as the element type so snapshots produced before the switch to
+     * array rows (format version 1 with Map elements) still deserialise and can
+     * be converted by the storages on load.
      */
     protected static final class SerializedTableData implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -381,10 +399,10 @@ public abstract class AbstractRowStorage implements RowStorage {
         final List<String> columns;
         final Map<String, Class<?>> columnTypes;
         final int rowCount;
-        final List<Map<String, Object>> rows;
+        final List<?> rows;
 
         SerializedTableData(int formatVersion, List<String> columns, Map<String, Class<?>> columnTypes,
-                            List<Map<String, Object>> rows) {
+                            List<Object[]> rows) {
             this.formatVersion = formatVersion;
             this.columns = columns;
             this.columnTypes = columnTypes;
