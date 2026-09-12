@@ -295,7 +295,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         void sample(long rows) {
             rowCount = rows;
             long usedBytes = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-            if (usedBytes > peakBytes) {
+            // Ignore row-0 observations: the heap at query/pipeline start reflects
+            // pre-query state (e.g. uncollected garbage from file-persisted inserts),
+            // so treating it as the peak would freeze rowsAtPeak at 0.
+            if (rows > 0 && usedBytes > peakBytes) {
                 peakBytes = usedBytes;
                 rowsAtPeak = rows;
             }

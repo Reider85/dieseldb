@@ -2630,3 +2630,10 @@ Changes:
 - diesel/storage/CsvIndexManager.java: the mayContainMultiLineRows(File) full-file probe is replaced by the lineEndsInsideMultilineRow(String) hook (delegating to CsvRowReader.endsInsideQuotes), so multi-line detection happens inside the single pre-scan pass instead of a separate full-file read; docs updated
 - diesel/storage/TsvIndexManager.java: javadoc updated to describe the byte-offset pre-scan partitioning and drop the stale LRU-cache wording
 - Tests: intentionally skipped for this prompt per instruction; compile-only check via mvn -DskipTests package BUILD SUCCESS
+
+3.0.67 Fix rows-at-peak OOM metric staying 0 under CSV/TSV storage (ignore row-0 samples)
+
+Changes:
+- diesel/SelectQuery.java: QueryMemoryTracker.sample() now only updates peakBytes/rowsAtPeak when rows > 0, so the row-0 sample taken at query start (and at the start of each pipeline stage via checkResultRowLimit) no longer freezes rowsAtPeak at 0 when the heap snapshot at that moment happens to be inflated by garbage from INSERT auto-commit file writes (CsvRowStorage.saveToFile / TsvRowStorage.saveToFile -> AtomicFileWriter) - under CSV/TSV storage every INSERT auto-commits and the tmp->target rename can leave short-lived garbage in young gen, inflating the heap at rows=0; a subsequent minor GC during the JOIN phase lowers the heap for positive-row samples (4096, 8192, 10000), leaving rowsAtPeak stuck at 0
+
+Verification: quick suite (default profile) 185 run / 0 failures / 0 errors / 3 skipped BUILD SUCCESS; OomHandlingTest isolated 5 run / 0 failures / 0 errors under both csv and tsv storage; full suite targeted 3/3 csv + 3/3 tsv green
