@@ -10,8 +10,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Base implementation of {@link RowStorage} that stores the schema metadata
@@ -26,7 +26,7 @@ import java.util.logging.Logger;
  */
 public abstract class AbstractRowStorage implements RowStorage {
 
-    private static final Logger LOGGER = Logger.getLogger(AbstractRowStorage.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AbstractRowStorage.class);
 
     /** Current format version written into {@link SerializedTableData} files. */
     protected static final int CURRENT_STORAGE_FORMAT_VERSION = 1;
@@ -286,8 +286,7 @@ public abstract class AbstractRowStorage implements RowStorage {
         if (LOAD_MODE_AUTO_MTIME.equals(mode)) {
             return LOAD_MODE_AUTO_MTIME;
         }
-        LOGGER.log(Level.WARNING, "Unsupported {0} value ''{1}'', falling back to {2}",
-                new Object[]{configKey, raw, LOAD_MODE_FILE});
+        LOGGER.warn("Unsupported {} value '{}', falling back to {}", configKey, raw, LOAD_MODE_FILE);
         return LOAD_MODE_FILE;
     }
 
@@ -327,8 +326,7 @@ public abstract class AbstractRowStorage implements RowStorage {
              ObjectInputStream ois = new ObjectInputStream(fis)) {
             return (SerializedTableData) ois.readObject();
         } catch (IOException | ClassNotFoundException e) {
-            LOGGER.log(Level.WARNING, "Failed to read serialised table {0}: {1}",
-                    new Object[]{fileName, e.getMessage()});
+            LOGGER.warn("Failed to read serialised table {}: {}", fileName, e.getMessage());
             return null;
         }
     }

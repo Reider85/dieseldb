@@ -1,5 +1,7 @@
 package diesel;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import diesel.storage.CsvRowReader;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowReader;
@@ -18,10 +20,6 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -229,25 +227,17 @@ class ReaderCorrectnessTest {
             bw.write("ID,NAME\n1,Alice,extra1\n2,Bob\n3,Carla,extra3,extra4\n");
         }
 
-        Logger logger = Logger.getLogger(CsvRowReader.class.getName());
-        List<LogRecord> records = new java.util.ArrayList<>();
-        Handler handler = captureHandler(records);
-        logger.addHandler(handler);
-        try {
+        try (Slf4jLogCapture capture = new Slf4jLogCapture("diesel.storage.CsvRowReader")) {
             List<Map<String, Object>> rows = readAllCsv(csv, cols, types);
             assertEquals(3, rows.size(), "all rows parsed");
             assertEquals("Alice", rows.get(0).get("NAME"));
             assertEquals("Bob", rows.get(1).get("NAME"));
             assertEquals("Carla", rows.get(2).get("NAME"));
 
-            List<LogRecord> warnings = records.stream()
-                    .filter(r -> r.getLevel() == Level.WARNING && r.getMessage().contains("extra fields"))
-                    .toList();
+            List<ILoggingEvent> warnings = capture.eventsMatching(Level.WARN, "extra fields");
             assertEquals(1, warnings.size(), "exactly one WARNING per file, got: " + warnings);
-            assertTrue(warnings.get(0).getMessage().contains("line 2"),
-                    "warning should mention the first offending line: " + warnings.get(0).getMessage());
-        } finally {
-            logger.removeHandler(handler);
+            assertTrue(warnings.get(0).getFormattedMessage().contains("line 2"),
+                    "warning should mention the first offending line: " + warnings.get(0).getFormattedMessage());
         }
     }
 
@@ -261,25 +251,17 @@ class ReaderCorrectnessTest {
             bw.write("ID\tNAME\n1\tAlice\textra1\n2\tBob\n3\tCarla\textra3\textra4\n");
         }
 
-        Logger logger = Logger.getLogger(TsvRowReader.class.getName());
-        List<LogRecord> records = new java.util.ArrayList<>();
-        Handler handler = captureHandler(records);
-        logger.addHandler(handler);
-        try {
+        try (Slf4jLogCapture capture = new Slf4jLogCapture("diesel.storage.TsvRowReader")) {
             List<Map<String, Object>> rows = readAllTsv(tsv, cols, types);
             assertEquals(3, rows.size(), "all rows parsed");
             assertEquals("Alice", rows.get(0).get("NAME"));
             assertEquals("Bob", rows.get(1).get("NAME"));
             assertEquals("Carla", rows.get(2).get("NAME"));
 
-            List<LogRecord> warnings = records.stream()
-                    .filter(r -> r.getLevel() == Level.WARNING && r.getMessage().contains("extra fields"))
-                    .toList();
+            List<ILoggingEvent> warnings = capture.eventsMatching(Level.WARN, "extra fields");
             assertEquals(1, warnings.size(), "exactly one WARNING per file, got: " + warnings);
-            assertTrue(warnings.get(0).getMessage().contains("line 2"),
-                    "warning should mention the first offending line: " + warnings.get(0).getMessage());
-        } finally {
-            logger.removeHandler(handler);
+            assertTrue(warnings.get(0).getFormattedMessage().contains("line 2"),
+                    "warning should mention the first offending line: " + warnings.get(0).getFormattedMessage());
         }
     }
 
@@ -319,22 +301,5 @@ class ReaderCorrectnessTest {
         assertEquals("Alice", storage.scan().get(0).get("NAME"), "stored row must be a detached copy");
         assertNull(storage.scan().get(0).get("EXTRA"));
         storage.close();
-    }
-
-    private Handler captureHandler(List<LogRecord> records) {
-        return new Handler() {
-            @Override
-            public void publish(LogRecord record) {
-                records.add(record);
-            }
-
-            @Override
-            public void flush() {
-            }
-
-            @Override
-            public void close() {
-            }
-        };
     }
 }

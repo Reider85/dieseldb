@@ -9,8 +9,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Properties;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import diesel.ErrorMessages;
 
@@ -29,7 +29,7 @@ import diesel.ErrorMessages;
  */
 final class StorageConfig {
 
-    private static final Logger LOGGER = Logger.getLogger(StorageConfig.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(StorageConfig.class);
 
     private static final String CHARSET_KEY = "storage.charset";
     private static final String DEFAULT_CHARSET = StandardCharsets.UTF_8.name();
@@ -61,8 +61,7 @@ final class StorageConfig {
         try {
             return Charset.forName(name.trim());
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Unsupported storage.charset ''{0}'', falling back to UTF-8: {1}",
-                    new Object[]{name, e.getMessage()});
+            LOGGER.warn("Unsupported storage.charset '{}', falling back to UTF-8: {}", name, e.getMessage());
             return StandardCharsets.UTF_8;
         }
     }
@@ -97,7 +96,7 @@ final class StorageConfig {
                 }
             }
         } catch (IOException ignored) {
-            LOGGER.log(Level.FINE, "Config error, using defaults: {0}", ignored.getMessage());
+            LOGGER.debug("Config error, using defaults: {}", ignored.getMessage());
         }
         return props;
     }

@@ -9,8 +9,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
 import diesel.ErrorMessages;
@@ -34,7 +34,7 @@ import diesel.ErrorMessages;
  */
 public class CsvRowStorage extends AbstractRowStorage {
 
-    private static final Logger LOGGER = Logger.getLogger(CsvRowStorage.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(CsvRowStorage.class);
 
     protected final List<Object[]> rows = new ArrayList<>();
     private final RowArrays rowColumns;
@@ -132,14 +132,13 @@ public class CsvRowStorage extends AbstractRowStorage {
                     rows.clear();
                     rows.addAll(convertSerializedRows(data));
                     fileInitialized = true;
-                    LOGGER.log(Level.INFO, "CsvRowStorage {0} loaded serialised from {1} with {2} rows",
-                            new Object[]{tableName, tableFile, rows.size()});
+                    LOGGER.info("CsvRowStorage {} loaded serialised from {} with {} rows",
+                            tableName, tableFile, rows.size());
                     syncIndexBulkFromArrays(rows);
                     return;
                 }
-                LOGGER.log(Level.WARNING,
-                        "CsvRowStorage {0} serialised fast path rejected ({1}), falling back to delimited file {2}",
-                        new Object[]{tableName, String.join("; ", problems), csvFile});
+                LOGGER.warn("CsvRowStorage {} serialised fast path rejected ({}), falling back to delimited file {}",
+                        tableName, String.join("; ", problems), csvFile);
             }
         }
         loadCsv(tableName);
@@ -158,10 +157,10 @@ public class CsvRowStorage extends AbstractRowStorage {
             csvWriter.flush();
             afw.commit();
             fileInitialized = true;
-            LOGGER.log(Level.INFO, "CsvRowStorage {0} saved CSV to {1} with {2} rows",
-                    new Object[]{tableName, fileName, rows.size()});
+            LOGGER.info("CsvRowStorage {} saved CSV to {} with {} rows",
+                    tableName, fileName, rows.size());
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to save CSV for {0}: {1}", new Object[]{tableName, fileName});
+            LOGGER.error("Failed to save CSV for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to CSV file: " + fileName, e);
         }
     }
@@ -171,7 +170,7 @@ public class CsvRowStorage extends AbstractRowStorage {
         File file = new File(fileName);
         if (!file.exists()) {
             AtomicFileWriter.warnInterruptedWrite(file.toPath());
-            LOGGER.log(Level.INFO, "CSV file {0} not found for storage {1}", new Object[]{fileName, tableName});
+            LOGGER.info("CSV file {} not found for storage {}", fileName, tableName);
             return;
         }
         List<Object[]> previous = new ArrayList<>(rows);
@@ -188,8 +187,8 @@ public class CsvRowStorage extends AbstractRowStorage {
             rows.clear();
             rows.addAll(loaded);
             fileInitialized = true;
-            LOGGER.log(Level.INFO, "CsvRowStorage {0} loaded CSV from {1} with {2} rows",
-                    new Object[]{tableName, fileName, rows.size()});
+            LOGGER.info("CsvRowStorage {} loaded CSV from {} with {} rows",
+                    tableName, fileName, rows.size());
             syncIndexBulkFromArrays(rows);
         } catch (DieselIOException e) {
             rows.clear();
@@ -212,11 +211,10 @@ public class CsvRowStorage extends AbstractRowStorage {
                     new ArrayList<>(rows)));
             oos.flush();
             afw.commit();
-            LOGGER.log(Level.INFO, "CsvRowStorage {0} saved serialised to {1} with {2} rows",
-                    new Object[]{tableName, fileName, rows.size()});
+            LOGGER.info("CsvRowStorage {} saved serialised to {} with {} rows",
+                    tableName, fileName, rows.size());
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to save serialised file for {0}: {1}",
-                    new Object[]{tableName, fileName});
+            LOGGER.error("Failed to save serialised file for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to file: " + fileName, e);
         }
     }
@@ -236,8 +234,8 @@ public class CsvRowStorage extends AbstractRowStorage {
             new CsvRowReader(br, columns, columnTypes, csvFile).readHeader();
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "CsvRowStorage header consistency check failed for {0}: {1}",
-                    new Object[]{csvFile, e.getMessage()});
+            LOGGER.warn("CsvRowStorage header consistency check failed for {}: {}",
+                    csvFile, e.getMessage());
             return false;
         }
     }

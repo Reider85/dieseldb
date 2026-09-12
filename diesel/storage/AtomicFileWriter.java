@@ -13,8 +13,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Crash-safe file writer using the temp + fsync + atomic-rename pattern
@@ -55,7 +55,7 @@ import java.util.logging.Logger;
  */
 public final class AtomicFileWriter implements Closeable {
 
-    private static final Logger LOGGER = Logger.getLogger(AtomicFileWriter.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AtomicFileWriter.class);
 
     /** How many times the final rename may be attempted before giving up. */
     private static final int MAX_MOVE_ATTEMPTS = 5;
@@ -128,10 +128,9 @@ public final class AtomicFileWriter implements Closeable {
     public static void warnInterruptedWrite(Path target) {
         Path tmp = tmpPath(target);
         if (!Files.exists(target) && Files.exists(tmp)) {
-            LOGGER.log(Level.WARNING,
-                    "Interrupted write detected: target {0} is missing but temp file {1} exists; "
+            LOGGER.warn("Interrupted write detected: target {} is missing but temp file {} exists; "
                             + "the previous version may have been lost",
-                    new Object[]{target, tmp});
+                    target, tmp);
         }
     }
 
@@ -181,9 +180,8 @@ public final class AtomicFileWriter implements Closeable {
             } catch (IOException e) {
                 lastError = e;
                 if (attempt < MAX_MOVE_ATTEMPTS) {
-                    LOGGER.log(Level.WARNING,
-                            "Move {0} -> {1} failed on attempt {2} (\"{3}\"); retrying",
-                            new Object[]{tmp, target, attempt, e.getMessage()});
+                    LOGGER.warn("Move {} -> {} failed on attempt {} (\"{}\"); retrying",
+                            tmp, target, attempt, e.getMessage());
                     sleepQuietly(MOVE_RETRY_BASE_DELAY_MS * (1L << (attempt - 1)));
                 }
             }
@@ -212,7 +210,7 @@ public final class AtomicFileWriter implements Closeable {
         }
         closeChannel();
         Files.deleteIfExists(tmp);
-        LOGGER.log(Level.FINE, "Discarded uncommitted temp file {0}", tmp);
+        LOGGER.debug("Discarded uncommitted temp file {}", tmp);
     }
 
     /**

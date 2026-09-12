@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.logging.Logger;
 
 /**
  * Writes rows to a TSV (Tab-Separated Values) file. Values are
@@ -20,8 +19,6 @@ import java.util.logging.Logger;
  * in legacy mode, or as {@code \N} sentinel in sentinel mode.
  */
 public class TsvRowWriter implements AutoCloseable {
-
-    private static final Logger LOGGER = Logger.getLogger(TsvRowWriter.class.getName());
 
     private final BufferedWriter writer;
     private final List<String> columns;

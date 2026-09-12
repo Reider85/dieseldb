@@ -14,8 +14,8 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
 import java.util.UUID;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
 
@@ -37,7 +37,7 @@ import diesel.DieselIOException;
  */
 public class CsvRowReader implements DelimitedRowReader {
 
-    private static final Logger LOGGER = Logger.getLogger(CsvRowReader.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(CsvRowReader.class);
     private static final String BOM = "\uFEFF";
 
     private final BufferedReader reader;
@@ -133,7 +133,7 @@ public class CsvRowReader implements DelimitedRowReader {
             if ("fail".equalsIgnoreCase(mode)) {
                 throw new IOException(msg);
             } else {
-                LOGGER.log(Level.WARNING, msg);
+LOGGER.warn(msg);
             }
         }
     }
@@ -290,7 +290,7 @@ public class CsvRowReader implements DelimitedRowReader {
         List<ParsedCsvField> raw = parseDataFields(line);
         if (raw.size() > columns.size() && !extraFieldsWarned) {
             extraFieldsWarned = true;
-            LOGGER.log(Level.WARNING, contextPrefix() + "line " + currentRowLine
+            LOGGER.warn(contextPrefix() + "line " + currentRowLine
                     + ": row has " + raw.size() + " fields but schema expects " + columns.size()
                     + " - ignoring extra fields");
         }
@@ -399,11 +399,11 @@ public class CsvRowReader implements DelimitedRowReader {
                 + "': cannot parse \"" + raw + "\" as " + typeName;
         String mode = readLoadErrorMode();
         if ("skip_value".equalsIgnoreCase(mode)) {
-            LOGGER.log(Level.WARNING, msg);
+            LOGGER.warn(msg);
             return null;
         }
         if ("skip_row".equalsIgnoreCase(mode)) {
-            LOGGER.log(Level.WARNING, msg);
+            LOGGER.warn(msg);
             rowSkipped = true;
             return null;
         }
@@ -416,12 +416,12 @@ public class CsvRowReader implements DelimitedRowReader {
                 + ": unterminated quoted field (truncated or malformed row)";
         String mode = readLoadErrorMode();
         if ("skip_row".equalsIgnoreCase(mode)) {
-            LOGGER.log(Level.WARNING, msg);
+            LOGGER.warn(msg);
             prefetch();
             return null;
         }
         if ("skip_value".equalsIgnoreCase(mode)) {
-            LOGGER.log(Level.WARNING, msg);
+            LOGGER.warn(msg);
             Object[] row = parseDataLineArray(nextLine);
             prefetch();
             return row;

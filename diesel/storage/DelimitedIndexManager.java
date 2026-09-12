@@ -24,8 +24,8 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import diesel.ErrorMessages;
 
@@ -45,10 +45,28 @@ import diesel.ErrorMessages;
  * primary-key lookups and range searches run in {@code O(log n)}. All index
  * structures are self-contained within the storage package and do not depend
  * on the engine's package-private B-tree classes.
+ *
+ * <p><b>Thread safety:</b> this manager is <i>not</i> internally synchronized.
+ * All mutable state (the adopted {@link #rows} buffer visible to subclasses,
+ * the primary-key tree, the per-column secondary index trees, the
+ * rowId-to-position map, the set of deleted row ids, the row-id counter, and
+ * the bulk-mode window flags) is guarded by the owning table's
+ * {@link diesel.Table} {@code tableLock}:
+ * <ul>
+ *   <li>mutations ({@link #buildIndexes(List, String)}, row insert/update/delete
+ *       helpers, {@link #endBulkUpdate()}, index rebuilds) must run under the
+ *       table <em>write</em> lock;</li>
+ *   <li>lookups and read-only helpers may run under the table <em>read</em>
+ *       lock (or the write lock).</li>
+ * </ul>
+ * The concurrent file-read pool touches only thread-confined buffers while the
+ * caller holds the lock, and never races the in-memory index structures. The
+ * single thread-safe exception is {@link #lineIndexCache}, which is volatile
+ * and copy-on-write, so parallel readers observe a consistent snapshot.
  */
 public abstract class DelimitedIndexManager {
 
-    private static final Logger LOGGER = Logger.getLogger(DelimitedIndexManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DelimitedIndexManager.class);
 
     private static final Comparator<Object> KEY_ORDER = (a, b) -> {
         if (a != null && b != null && a instanceof Comparable && b instanceof Comparable) {
@@ -705,9 +723,9 @@ public abstract class DelimitedIndexManager {
     /** Logs a deprecation warning once per manager instance. */
     private void logDeprecated(String method) {
         if (deprecationLogged.compareAndSet(false, true)) {
-            LOGGER.log(Level.WARNING, "DEPRECATED: {0}.{1} is a stub — the LRU block cache layer was removed "
+            LOGGER.warn("DEPRECATED: {}.{} is a stub — the LRU block cache layer was removed "
                             + "in prompt 33 because rows are already fully in memory; blocks are sliced on demand",
-                    new Object[]{getClass().getSimpleName(), method});
+                    getClass().getSimpleName(), method);
         }
     }
 
@@ -993,7 +1011,7 @@ public abstract class DelimitedIndexManager {
                 }
             }
         } catch (Exception ignored) {
-            LOGGER.log(Level.FINE, "Config error for index manager, using defaults: {0}", ignored.getMessage());
+            LOGGER.debug("Config error for index manager, using defaults: {}", ignored.getMessage());
         }
         return props;
     }

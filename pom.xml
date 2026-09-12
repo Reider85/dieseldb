@@ -87,6 +87,7 @@
                         <include>**/ReaderCorrectnessTest.java</include>
                         <include>**/StorageLoadModeTest.java</include>
                         <include>**/StorageArrayRepresentationTest.java</include>
+                        <include>**/ConcurrentSaveTest.java</include>
                     </includes>
                     <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
@@ -153,6 +154,7 @@
                                 <include>**/ReaderCorrectnessTest.java</include>
                                 <include>**/StorageLoadModeTest.java</include>
                                 <include>**/StorageArrayRepresentationTest.java</include>
+                                <include>**/ConcurrentSaveTest.java</include>
                             </includes>
                             <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>

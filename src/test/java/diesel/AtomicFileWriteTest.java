@@ -1,5 +1,7 @@
 package diesel;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import diesel.storage.AtomicFileWriter;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
@@ -11,10 +13,6 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -191,36 +189,17 @@ class AtomicFileWriteTest {
         Path csv = tempDir.resolve("T.csv");
         Files.createFile(AtomicFileWriter.tmpPath(csv));
 
-        Logger logger = Logger.getLogger("diesel.storage.AtomicFileWriter");
-        List<LogRecord> records = new java.util.ArrayList<>();
-        Handler handler = new Handler() {
-            @Override
-            public void publish(LogRecord record) {
-                records.add(record);
-            }
-
-            @Override
-            public void flush() {
-            }
-
-            @Override
-            public void close() {
-            }
-        };
-        logger.addHandler(handler);
-        try {
+        try (Slf4jLogCapture capture = new Slf4jLogCapture("diesel.storage.AtomicFileWriter")) {
             CsvRowStorage storage = new CsvRowStorage("T", SCHEMA, TYPES);
             storage.setDataDir(tempDir.toString());
             storage.open();
             storage.loadFromFile("T"); // target missing -> must not throw
             assertTrue(storage.scan().isEmpty());
             storage.close();
-        } finally {
-            logger.removeHandler(handler);
-        }
 
-        boolean warned = records.stream()
-                .anyMatch(r -> r.getLevel() == Level.WARNING && r.getMessage().contains("Interrupted write"));
-        assertTrue(warned, "expected a WARNING about the orphaned temp file, got: " + records);
+            List<ILoggingEvent> warnings = capture.eventsMatching(Level.WARN, "Interrupted write");
+            assertFalse(warnings.isEmpty(),
+                    "expected a WARNING about the orphaned temp file, got: " + capture.events());
+        }
     }
 }

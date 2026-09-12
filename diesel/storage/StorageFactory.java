@@ -2,8 +2,8 @@ package diesel.storage;
 
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating {@link RowStorage} implementations by type name.
@@ -18,7 +18,7 @@ import java.util.logging.Logger;
  */
 public final class StorageFactory {
 
-    private static final Logger LOGGER = Logger.getLogger(StorageFactory.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(StorageFactory.class);
 
     private StorageFactory() {
         // Utility class.
@@ -40,15 +40,15 @@ public final class StorageFactory {
         String resolved = (type != null && !type.isBlank()) ? type.trim().toLowerCase() : "in_memory";
         return switch (resolved) {
             case "csv" -> {
-                LOGGER.log(Level.FINE, "Creating CsvRowStorage for table {0}", tableName);
+                LOGGER.debug("Creating CsvRowStorage for table {}", tableName);
                 yield new CsvRowStorage(tableName, columns, columnTypes);
             }
             case "tsv" -> {
-                LOGGER.log(Level.FINE, "Creating TsvRowStorage for table {0}", tableName);
+                LOGGER.debug("Creating TsvRowStorage for table {}", tableName);
                 yield new TsvRowStorage(tableName, columns, columnTypes);
             }
             default -> {
-                LOGGER.log(Level.FINE, "Creating InMemoryRowStorage for table {0}", tableName);
+                LOGGER.debug("Creating InMemoryRowStorage for table {}", tableName);
                 yield new InMemoryRowStorage(tableName, columns, columnTypes);
             }
         };

@@ -2177,11 +2177,16 @@ class Table implements Serializable {
      * Writes the table contents (header plus rows) to a CSV file in the data
      * directory. Each row is read under its lock while writing.
      *
+     * <p>The save holds the table <em>write</em> lock (prompt 37): two
+     * parallel {@code saveToFile} calls on the same table are serialised so
+     * they can never interleave writes to the same file (paired with the
+     * atomic {@link diesel.storage.AtomicFileWriter} temp+rename pattern).
+     *
      * @param tableName the table name, used as the file base name
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
-        tableLock.readLock().lock();
+        tableLock.writeLock().lock();
         try {
             if (storage != null && !(storage instanceof InMemoryRowStorage)) {
                 storage.saveToFile(tableName);
@@ -2191,7 +2196,7 @@ class Table implements Serializable {
                 writeLegacyCsv(tableName);
             }
         } finally {
-            tableLock.readLock().unlock();
+            tableLock.writeLock().unlock();
         }
     }
 
@@ -2264,25 +2269,33 @@ class Table implements Serializable {
      * Serializes the whole table (schema, rows, index definitions, sequences)
      * to a {@code .table} file in the data directory.
      *
+     * <p>The save holds the table <em>write</em> lock (prompt 37) so parallel
+     * serialization calls on the same table cannot interleave file writes.
+     *
      * @param tableName the table name, used as the file base name
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToSerializedFile(String tableName) {
-        if (getDeletedCount() > 0) {
-            compact();
-        }
-        String fileName = resolveFilePath(tableName, ErrorMessages.TABLE_EXTENSION);
-        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
-            ObjectOutputStream oos = new ObjectOutputStream(afw.outputStream());
-            oos.writeObject(this);
-            oos.flush();
-            afw.commit();
-            isFileInitialized = true;
-            LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
-                    new Object[]{tableName, fileName, rows.size()});
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
-            throw new DieselIOException("Failed to save table to file: " + fileName, e);
+        tableLock.writeLock().lock();
+        try {
+            if (getDeletedCount() > 0) {
+                compact();
+            }
+            String fileName = resolveFilePath(tableName, ErrorMessages.TABLE_EXTENSION);
+            try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
+                ObjectOutputStream oos = new ObjectOutputStream(afw.outputStream());
+                oos.writeObject(this);
+                oos.flush();
+                afw.commit();
+                isFileInitialized = true;
+                LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
+                        new Object[]{tableName, fileName, rows.size()});
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
+                throw new DieselIOException("Failed to save table to file: " + fileName, e);
+            }
+        } finally {
+            tableLock.writeLock().unlock();
         }
     }
 

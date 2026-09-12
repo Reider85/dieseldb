@@ -14,8 +14,8 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
 import java.util.UUID;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
 
@@ -37,7 +37,7 @@ import diesel.DieselIOException;
  */
 public class TsvRowReader implements DelimitedRowReader {
 
-    private static final Logger LOGGER = Logger.getLogger(TsvRowReader.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(TsvRowReader.class);
     private static final String BOM = "\uFEFF";
 
     private final BufferedReader reader;
@@ -135,7 +135,7 @@ public class TsvRowReader implements DelimitedRowReader {
             if ("fail".equalsIgnoreCase(mode)) {
                 throw new IOException(msg);
             } else {
-                LOGGER.log(Level.WARNING, msg);
+LOGGER.warn(msg);
             }
         }
     }
@@ -278,7 +278,7 @@ public class TsvRowReader implements DelimitedRowReader {
         String[] raw = splitTab(line);
         if (raw.length > columns.size() && !extraFieldsWarned) {
             extraFieldsWarned = true;
-            LOGGER.log(Level.WARNING, contextPrefix() + "line " + currentRowLine
+            LOGGER.warn(contextPrefix() + "line " + currentRowLine
                     + ": row has " + raw.length + " fields but schema expects " + columns.size()
                     + " - ignoring extra fields");
         }
@@ -341,11 +341,11 @@ public class TsvRowReader implements DelimitedRowReader {
                 + "': cannot parse \"" + shown + "\" as " + typeName;
         String mode = readLoadErrorMode();
         if ("skip_value".equalsIgnoreCase(mode)) {
-            LOGGER.log(Level.WARNING, msg);
+            LOGGER.warn(msg);
             return null;
         }
         if ("skip_row".equalsIgnoreCase(mode)) {
-            LOGGER.log(Level.WARNING, msg);
+            LOGGER.warn(msg);
             rowSkipped = true;
             return null;
         }
