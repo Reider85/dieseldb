@@ -1,7 +1,1 @@
-3.0.59 Prompt 31 - reader correctness fixes (strict boolean parse, extra-field WARN, insert copy)
-
-- DelimitedRowReader: new static parseBooleanStrict() - strict true/false/1/0/yes/no/t/f parsing instead of silent Boolean.parseBoolean->false; invalid values throw IllegalArgumentException (flows into file:line:column diagnostics + storage.load.error.mode)
-- CsvRowReader/TsvRowReader: Boolean conversion via parseBooleanStrict; one-time WARNING (per file, with line number) on data rows with more fields than columns
-- CsvRowStorage/TsvRowStorage: insert() keeps a ref to the copied map - removed redundant rows.get(rows.size()-1)
-- new ReaderCorrectnessTest (11 tests): boolean synonyms, invalid-value diagnostics (fail/skip_value/skip_row), extra-fields WARN once, insert copy semantics (CSV + TSV)
-- Verification: quick 173/0/0/3, full (4GB, @LargeTest) 173/0/0/0 BUILD SUCCESS; timing timing79 vs baseline - 0 heavy-query (>100ms) regressions, compare-timing exit 0; profile check skipped (no JOIN/perf in this prompt)
+3.0.60 Changelog tidy: remove test-run/verification notes from the 3.0.59 entry and commit so the changelog keeps the no-test-info convention of 3.0.41; commit message reworded without test-run notes.
