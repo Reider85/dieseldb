@@ -53,6 +53,7 @@ public class TsvRowReader implements DelimitedRowReader {
     private long currentRowLine;
     private long lastRowLine;
     private boolean rowSkipped;
+    private boolean extraFieldsWarned;
 
     /**
      * @param reader      the underlying character-input stream
@@ -83,6 +84,7 @@ public class TsvRowReader implements DelimitedRowReader {
         this.currentRowLine = 0;
         this.lastRowLine = 0;
         this.rowSkipped = false;
+        this.extraFieldsWarned = false;
     }
 
     /** Reads and validates the header line. Returns parsed file header columns. */
@@ -244,6 +246,12 @@ public class TsvRowReader implements DelimitedRowReader {
 
     private Map<String, Object> parseLine(String line) {
         String[] raw = splitTab(line);
+        if (raw.length > columns.size() && !extraFieldsWarned) {
+            extraFieldsWarned = true;
+            LOGGER.log(Level.WARNING, contextPrefix() + "line " + currentRowLine
+                    + ": row has " + raw.length + " fields but schema expects " + columns.size()
+                    + " - ignoring extra fields");
+        }
         Map<String, Object> row = new HashMap<>();
         for (int i = 0; i < columns.size(); i++) {
             String colName = columns.get(i);
@@ -281,7 +289,7 @@ public class TsvRowReader implements DelimitedRowReader {
                 case "Double" -> Double.parseDouble(unescaped);
                 case "Float" -> Float.parseFloat(unescaped);
                 case "BigDecimal" -> new BigDecimal(unescaped);
-                case "Boolean" -> Boolean.parseBoolean(unescaped);
+                case "Boolean" -> DelimitedRowReader.parseBooleanStrict(unescaped);
                 case "LocalDate" -> LocalDate.parse(unescaped);
                 case "LocalDateTime" -> LocalDateTime.parse(unescaped);
                 case "UUID" -> UUID.fromString(unescaped);

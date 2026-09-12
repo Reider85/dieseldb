@@ -54,6 +54,7 @@ public class CsvRowReader implements DelimitedRowReader {
     private long lastRowLine;
     private boolean rowSkipped;
     private boolean unterminatedRow;
+    private boolean extraFieldsWarned;
 
     /**
      * @param reader      the underlying character-input stream
@@ -85,6 +86,7 @@ public class CsvRowReader implements DelimitedRowReader {
         this.lastRowLine = 0;
         this.rowSkipped = false;
         this.unterminatedRow = false;
+        this.extraFieldsWarned = false;
     }
 
     /** Reads and validates the header line. Returns parsed file header columns. */
@@ -256,6 +258,12 @@ public class CsvRowReader implements DelimitedRowReader {
 
     private Map<String, Object> parseDataLine(String line) {
         List<ParsedCsvField> raw = parseDataFields(line);
+        if (raw.size() > columns.size() && !extraFieldsWarned) {
+            extraFieldsWarned = true;
+            LOGGER.log(Level.WARNING, contextPrefix() + "line " + currentRowLine
+                    + ": row has " + raw.size() + " fields but schema expects " + columns.size()
+                    + " - ignoring extra fields");
+        }
         Map<String, Object> row = new HashMap<>();
         for (int i = 0; i < columns.size(); i++) {
             String colName = columns.get(i);
@@ -340,7 +348,7 @@ public class CsvRowReader implements DelimitedRowReader {
                 case "Double" -> Double.parseDouble(raw);
                 case "Float" -> Float.parseFloat(raw);
                 case "BigDecimal" -> new BigDecimal(raw);
-                case "Boolean" -> Boolean.parseBoolean(raw);
+                case "Boolean" -> DelimitedRowReader.parseBooleanStrict(raw);
                 case "LocalDate" -> LocalDate.parse(raw);
                 case "LocalDateTime" -> LocalDateTime.parse(raw);
                 case "UUID" -> UUID.fromString(raw);

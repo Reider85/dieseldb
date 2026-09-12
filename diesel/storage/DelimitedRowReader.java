@@ -43,4 +43,26 @@ public interface DelimitedRowReader extends Iterator<Map<String, Object>>, AutoC
 
     @Override
     void close() throws IOException;
+
+    /**
+     * Strictly parses a boolean token from a delimited field, accepting the
+     * synonyms {@code true/false}, {@code 1/0}, {@code yes/no} and {@code t/f}
+     * (case-insensitive, surrounding whitespace ignored). Unlike
+     * {@link Boolean#parseBoolean(String)} this never silently treats an
+     * arbitrary string as {@code false}.
+     *
+     * @param raw the raw field value
+     * @return the parsed boolean
+     * @throws IllegalArgumentException when the value is not a boolean synonym
+     */
+    static boolean parseBooleanStrict(String raw) {
+        if (raw == null) {
+            throw new IllegalArgumentException("Invalid boolean value: null");
+        }
+        return switch (raw.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "true", "1", "yes", "t" -> true;
+            case "false", "0", "no", "f" -> false;
+            default -> throw new IllegalArgumentException("Invalid boolean value: '" + raw + "'");
+        };
+    }
 }

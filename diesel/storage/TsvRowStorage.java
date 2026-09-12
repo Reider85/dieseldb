@@ -80,8 +80,9 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     @Override
     public void insert(Map<String, Object> row) {
-        rows.add(new HashMap<>(row));
-        syncIndexAppend(rows.get(rows.size() - 1), rows.size() - 1);
+        Map<String, Object> copy = new HashMap<>(row);
+        rows.add(copy);
+        syncIndexAppend(copy, rows.size() - 1);
     }
 
     @Override
