@@ -360,10 +360,17 @@ class Table implements Serializable {
         for (Map<String, Object> row : this.rows) {
             copy.rows.add(new HashMap<>(row));
         }
-        // Mirror the copied rows into the copy's (fresh) storage, keeping the
-        // storage/rows alignment the main table relies on for queries.
-        for (int i = 0; i < copy.rows.size(); i++) {
-            copy.storage.insertAt(i, copy.rows.get(i));
+        // Mirror the copied rows into the copy's (fresh) storage with a single
+        // wholesale replacement instead of per-row insertAt mirroring, so the
+        // copy cost stays O(n) and the storage mirror aligns with copy.rows.
+        // The copy's storage is a plain in-memory backend without a
+        // DelimitedIndexManager, so the bulk window is a no-op there; the
+        // engine-level indexes are rebuilt once below via rebuildAllIndexes().
+        copy.storage.beginBulkUpdate();
+        try {
+            copy.storage.setRows(copy.rows);
+        } finally {
+            copy.storage.endBulkUpdate();
         }
 
         // Deep-copy deletedRows BitSet.
@@ -1210,6 +1217,30 @@ class Table implements Serializable {
     }
 
     /**
+     * Enters a deferred bulk-update window on this table's storage (prompt 35).
+     * Index-aware backends skip per-operation index rebuilds and position
+     * shifting until {@link #endBulkUpdate()} runs the single rebuild. A
+     * no-op for in-memory or otherwise non-indexed storages. Intended for
+     * mass-change paths such as DELETE WHERE; not thread-safe.
+     */
+    public void beginBulkUpdate() {
+        if (storage != null) {
+            storage.beginBulkUpdate();
+        }
+    }
+
+    /**
+     * Leaves a deferred bulk-update window on this table's storage, performing
+     * the single index rebuild accumulated while dirty. Must be paired with
+     * {@link #beginBulkUpdate()}, even on exceptional paths.
+     */
+    public void endBulkUpdate() {
+        if (storage != null) {
+            storage.endBulkUpdate();
+        }
+    }
+
+    /**
      * Removes the row at the given index and invalidates the locks of this
      * and all following rows, whose indexes shift down by one.
      *
@@ -1293,7 +1324,14 @@ class Table implements Serializable {
             rows.clear();
             rows.addAll(newRows);
             if (storage != null) {
-                storage.setRows(newRows);
+                // The storage mirror is rebuilt inside a deferred bulk window:
+                // one index rebuild total, run by endBulkUpdate().
+                storage.beginBulkUpdate();
+                try {
+                    storage.setRows(newRows);
+                } finally {
+                    storage.endBulkUpdate();
+                }
             }
 
             deletedRows = new BitSet();

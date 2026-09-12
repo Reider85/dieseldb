@@ -205,12 +205,40 @@ public abstract class AbstractRowStorage implements RowStorage {
 
     /**
      * Rebuilds the index structures from the current rows, used after a bulk
-     * load ({@code loadFromFile}) or a wholesale row replacement.
+     * load ({@code loadFromFile}) or a wholesale row replacement. Outside a
+     * bulk-update window this runs the full rebuild immediately; inside one
+     * (see {@link #beginBulkUpdate()}) it only marks the index state dirty and
+     * defers the single rebuild to {@link #endBulkUpdate()}.
      */
     protected void syncIndexBulk() {
         DelimitedIndexManager manager = index();
         if (manager != null) {
-            manager.buildIndexes(scan(), primaryKeyColumn);
+            manager.markIndexDirty(scan(), primaryKeyColumn);
+        }
+    }
+
+    /**
+     * Enters a deferred bulk-update window: per-operation index rebuilds and
+     * position shifting are skipped and a single rebuild runs at
+     * {@link #endBulkUpdate()}. A no-op for storages without an index manager.
+     */
+    @Override
+    public void beginBulkUpdate() {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.beginBulkUpdate();
+        }
+    }
+
+    /**
+     * Leaves a deferred bulk-update window, performing the single index rebuild
+     * accumulated while dirty. A no-op for storages without an index manager.
+     */
+    @Override
+    public void endBulkUpdate() {
+        DelimitedIndexManager manager = index();
+        if (manager != null) {
+            manager.endBulkUpdate();
         }
     }
 

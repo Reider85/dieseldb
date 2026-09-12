@@ -61,12 +61,14 @@ class DeleteQuery implements Query<Void> {
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         List<Integer> rowsToDelete = prepareDelete(table, rows, columnTypes);
         List<ReentrantReadWriteLock> locks = acquireLock(table, rows, rowsToDelete);
+        table.beginBulkUpdate();
         try {
             performDelete(table, rows, rowsToDelete);
+            updateIndexes(table, rowsToDelete.size());
         } finally {
+            table.endBulkUpdate();
             releaseLock(locks);
         }
-        updateIndexes(table, rowsToDelete.size());
         LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
         lastAffectedRows = rowsToDelete.size();
         return null;

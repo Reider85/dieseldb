@@ -100,6 +100,14 @@ public abstract class DelimitedIndexManager {
     private final Set<Long> deletedRowIds = new HashSet<>();
     private static final double COMPACTION_THRESHOLD = 0.25;
 
+    /** Whether a deferred bulk-update window is open (prompt 35). Inside the
+     * window per-operation index mutations are replaced by a single rebuild on
+     * {@link #endBulkUpdate()}. Not thread-safe: bulk mode must be driven by a
+     * single writer context (e.g. under the table write lock). */
+    private boolean bulkMode;
+    /** Whether the index state is stale since the bulk window opened. */
+    private boolean bulkDirty;
+
     private final int blockSize;
     private final long parallelReadThreshold;
 
@@ -304,10 +312,21 @@ public abstract class DelimitedIndexManager {
      * position map is updated. O(n) in the number of rows after the
      * insertion point.
      *
+     * <p>Inside a bulk-update window (see {@link #beginBulkUpdate()}) the row
+     * is added to the mirror list and the whole index state is deferred to the
+     * single rebuild at {@link #endBulkUpdate()} — no position shifting and no
+     * per-row index mutation. Querying the index before the window closes is
+     * undefined.
+     *
      * @param rowIndex the zero-based position at which to insert
      * @param row      the row data
      */
     public void insertAt(int rowIndex, Map<String, Object> row) {
+        if (bulkMode) {
+            rows.add(rowIndex, row);
+            bulkDirty = true;
+            return;
+        }
         long rid = nextRowId++;
         rowIdToPosition.put(rid, rowIndex);
         if (rowIndex >= rows.size()) {
@@ -328,9 +347,23 @@ public abstract class DelimitedIndexManager {
      * Shifts all later positions down by one. Triggers a compaction when
      * the fraction of deleted rowIds exceeds {@link #COMPACTION_THRESHOLD}.
      *
+     * <p>Inside a bulk-update window (see {@link #beginBulkUpdate()}) the row
+     * is removed from the mirror list and the whole index state is deferred to
+     * the single rebuild at {@link #endBulkUpdate()} — no position shifting
+     * and no tombstone compaction. Querying the index before the window closes
+     * is undefined.
+     *
      * @param rowIndex the zero-based position of the row to delete
      */
     public void deleteRow(int rowIndex) {
+        if (bulkMode) {
+            if (rowIndex < 0 || rowIndex >= rows.size()) {
+                return;
+            }
+            rows.remove(rowIndex);
+            bulkDirty = true;
+            return;
+        }
         Long rid = positionToRowId(rowIndex);
         if (rid == null) {
             return;
@@ -361,6 +394,59 @@ public abstract class DelimitedIndexManager {
     /** Returns the number of tombstoned (deleted) rowIds pending compaction. */
     public int getDeletedCount() {
         return deletedRowIds.size();
+    }
+
+    // ─── Deferred bulk updates (prompt 35) ─────────────────────────
+
+    /**
+     * Enters a deferred bulk-update window. Until {@link #endBulkUpdate()} is
+     * called, {@link #insertAt(int, Map)} and {@link #deleteRow(int)} only
+     * mutate the mirror row list and mark the index state dirty, deferring all
+     * position shifting and rebuilds to the single rebuild that closes the
+     * window. Index state is not query-consistent while the window is open.
+     */
+    public void beginBulkUpdate() {
+        bulkMode = true;
+    }
+
+    /**
+     * Leaves a deferred bulk-update window and performs the single index
+     * rebuild accumulated while dirty, restoring a query-consistent state
+     * (rowIds reassigned, positions and tombstones recomputed, every index
+     * rebuilt). Must be paired with {@link #beginBulkUpdate()}, even on
+     * exceptional paths.
+     */
+    public void endBulkUpdate() {
+        bulkMode = false;
+        if (bulkDirty) {
+            bulkDirty = false;
+            reindex();
+        }
+    }
+
+    /** Returns whether a deferred bulk-update window is currently open. */
+    public boolean isBulkUpdating() {
+        return bulkMode;
+    }
+
+    /**
+     * Adopts a wholesale row replacement for indexing. Outside a bulk-update
+     * window this is a full immediate rebuild (the behaviour of
+     * {@link #buildIndexes(List, String)}). Inside one the new rows are snapped
+     * into the mirror list without rebuilding the indexes, which happens once
+     * at {@link #endBulkUpdate()}.
+     *
+     * @param data             the rows to index, or {@code null} for an empty table
+     * @param primaryKeyColumn the primary-key column name, or {@code null} for none
+     */
+    public void markIndexDirty(List<Map<String, Object>> data, String primaryKeyColumn) {
+        if (!bulkMode) {
+            buildIndexes(data, primaryKeyColumn);
+            return;
+        }
+        this.rows = data != null ? new ArrayList<>(data) : new ArrayList<>();
+        this.primaryKeyColumn = resolveColumn(primaryKeyColumn);
+        bulkDirty = true;
     }
 
     // ─── Internal row-id helpers ────────────────────────────────────

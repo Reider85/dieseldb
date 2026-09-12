@@ -105,4 +105,27 @@ public interface RowStorage {
     default void setPrimaryKeyColumn(String primaryKeyColumn) {
         // No-op for storages without a dedicated index manager.
     }
+
+    /**
+     * Enters a deferred bulk-update window (prompt 35). Inside the window,
+     * index-aware backends skip per-operation index rebuilds and position
+     * shifting, marking their index state dirty instead. Queries of the index
+     * structures must not be run until {@link #endBulkUpdate()} has performed
+     * the single deferred rebuild. The default implementation is a no-op for
+     * storages that do not maintain indexes.
+     */
+    default void beginBulkUpdate() {
+        // No-op for storages without a dedicated index manager.
+    }
+
+    /**
+     * Leaves a deferred bulk-update window. Index-aware backends perform the
+     * single index rebuild accumulated while dirty, so the index state is
+     * consistent afterwards. Must be paired with {@link #beginBulkUpdate()},
+     * even on exceptional paths. The default implementation is a no-op for
+     * storages that do not maintain indexes.
+     */
+    default void endBulkUpdate() {
+        // No-op for storages without a dedicated index manager.
+    }
 }
