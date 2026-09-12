@@ -106,6 +106,15 @@ class AtomicFileWriteTest {
 
     @Test
     void successfulSaveLeavesNoTempFilesAndRoundTrips() throws Exception {
+        System.setProperty("csv.table.mirror", "on");
+        try {
+            successfulSaveLeavesNoTempFilesAndRoundTripsInner();
+        } finally {
+            System.clearProperty("csv.table.mirror");
+        }
+    }
+
+    private void successfulSaveLeavesNoTempFilesAndRoundTripsInner() throws Exception {
         CsvRowStorage storage = new CsvRowStorage("T", SCHEMA, TYPES);
         storage.setDataDir(tempDir.toString());
         storage.open();

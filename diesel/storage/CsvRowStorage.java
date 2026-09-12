@@ -2,11 +2,8 @@ package diesel.storage;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.io.Serializable;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -105,10 +102,34 @@ public class CsvRowStorage extends AbstractRowStorage {
     @Override
     public void saveToFile(String tableName) {
         saveCsv(tableName);
+        if (isTableMirrorEnabled("csv.table.mirror")) {
+            saveSerialized(tableName);
+        }
     }
 
     @Override
     public void loadFromFile(String tableName) {
+        String csvFile = resolveFilePath(".csv");
+        String tableFile = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
+        String loadMode = resolveLoadMode("csv.load.mode");
+        if (resolveLoadSource(csvFile, tableFile, loadMode) == LoadSource.SERIALIZED) {
+            SerializedTableData data = readSerializedTable(tableFile);
+            if (data != null) {
+                List<String> problems = checkSerializedConsistency(data);
+                if (problems.isEmpty() && delimitedHeaderConsistent(csvFile)) {
+                    rows.clear();
+                    rows.addAll(data.rows);
+                    fileInitialized = true;
+                    LOGGER.log(Level.INFO, "CsvRowStorage {0} loaded serialised from {1} with {2} rows",
+                            new Object[]{tableName, tableFile, rows.size()});
+                    syncIndexBulk();
+                    return;
+                }
+                LOGGER.log(Level.WARNING,
+                        "CsvRowStorage {0} serialised fast path rejected ({1}), falling back to delimited file {2}",
+                        new Object[]{tableName, String.join("; ", problems), csvFile});
+            }
+        }
         loadCsv(tableName);
     }
 
@@ -175,7 +196,8 @@ public class CsvRowStorage extends AbstractRowStorage {
         String fileName = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
         try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
             ObjectOutputStream oos = new ObjectOutputStream(afw.outputStream());
-            oos.writeObject(new SerializableAdapter(columns, new ArrayList<>(rows)));
+            oos.writeObject(new SerializedTableData(CURRENT_STORAGE_FORMAT_VERSION, columns, columnTypes,
+                    new ArrayList<>(rows)));
             oos.flush();
             afw.commit();
             LOGGER.log(Level.INFO, "CsvRowStorage {0} saved serialised to {1} with {2} rows",
@@ -187,24 +209,24 @@ public class CsvRowStorage extends AbstractRowStorage {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void loadSerialized(String tableName) {
-        String fileName = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
-        File file = new File(fileName);
+    /**
+     * Validates that the delimited file header matches the schema (names must
+     * all be present, per prompt-24 semantics). Used as one of the consistency
+     * gates for the serialised fast load path. A missing delimited file is
+     * tolerated (the .table is then the only source).
+     */
+    private boolean delimitedHeaderConsistent(String csvFile) {
+        File file = new File(csvFile);
         if (!file.exists()) {
-            AtomicFileWriter.warnInterruptedWrite(file.toPath());
-            return;
+            return true;
         }
-        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
-            SerializableAdapter adapter = (SerializableAdapter) ois.readObject();
-            rows.clear();
-            rows.addAll(adapter.rows);
-            fileInitialized = true;
-            LOGGER.log(Level.INFO, "CsvRowStorage {0} loaded serialised from {1} with {2} rows",
-                    new Object[]{tableName, fileName, rows.size()});
-        } catch (IOException | ClassNotFoundException e) {
-            LOGGER.log(Level.WARNING, "Failed to load serialised file for {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
+        try (BufferedReader br = StorageConfig.newReader(file)) {
+            new CsvRowReader(br, columns, columnTypes, csvFile).readHeader();
+            return true;
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "CsvRowStorage header consistency check failed for {0}: {1}",
+                    new Object[]{csvFile, e.getMessage()});
+            return false;
         }
     }
 
@@ -338,19 +360,5 @@ public class CsvRowStorage extends AbstractRowStorage {
         rows.addAll(loaded);
         fileInitialized = true;
         manager.buildIndexes(rows, getPrimaryKeyColumn());
-    }
-
-    /**
-     * Lightweight serialisation adapter for CSV storage persistence.
-     */
-    static class SerializableAdapter implements Serializable {
-        private static final long serialVersionUID = 1L;
-        final List<String> columns;
-        final List<Map<String, Object>> rows;
-
-        SerializableAdapter(List<String> columns, List<Map<String, Object>> rows) {
-            this.columns = columns;
-            this.rows = rows;
-        }
     }
 }

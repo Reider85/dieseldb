@@ -40,6 +40,18 @@ final class StorageConfig {
         throw new AssertionError("No instances");
     }
 
+    /**
+     * Returns a raw configuration value. A system property override wins,
+     * then the root {@code config.properties}, then the default.
+     */
+    static String getString(String key, String defaultValue) {
+        String systemValue = System.getProperty(key);
+        if (systemValue != null) {
+            return systemValue;
+        }
+        return ROOT_PROPS.getProperty(key, defaultValue);
+    }
+
     /** Returns the configured charset (default UTF-8). */
     static Charset getCharset() {
         String name = System.getProperty(CHARSET_KEY);

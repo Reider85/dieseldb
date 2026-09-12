@@ -1,17 +1,49 @@
 package diesel.storage;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Base implementation of {@link RowStorage} that stores the schema metadata
  * (columns, column types, table name) and provides a path-resolution utility.
  * Concrete subclasses supply the actual row storage and persistence logic.
+ *
+ * <p>This class also provides the shared delimited-versus-serialised load
+ * resolution (prompt 32): each subclass picks its source via
+ * {@link #resolveLoadSource(String, String, String)} based on its configured
+ * load mode ({@code file} or {@code auto_mtime}) and validates a serialised
+ * fast-path result with {@link #checkSerializedConsistency(SerializedTableData)}.
  */
 public abstract class AbstractRowStorage implements RowStorage {
+
+    private static final Logger LOGGER = Logger.getLogger(AbstractRowStorage.class.getName());
+
+    /** Current format version written into {@link SerializedTableData} files. */
+    protected static final int CURRENT_STORAGE_FORMAT_VERSION = 1;
+
+    /** Load mode that always reads the delimited file. */
+    protected static final String LOAD_MODE_FILE = "file";
+
+    /** Load mode that prefers the fresher of the .table and delimited files. */
+    protected static final String LOAD_MODE_AUTO_MTIME = "auto_mtime";
+
+    /** The persistence source chosen for a load operation. */
+    protected enum LoadSource {
+        /** The delimited file (.csv / .tsv). */
+        DELIMITED,
+        /** The Java-serialised .table file. */
+        SERIALIZED
+    }
 
     protected final List<String> columns;
     protected final Map<String, Class<?>> columnTypes;
@@ -179,6 +211,157 @@ public abstract class AbstractRowStorage implements RowStorage {
         DelimitedIndexManager manager = index();
         if (manager != null) {
             manager.buildIndexes(scan(), primaryKeyColumn);
+        }
+    }
+
+    // ─── Load mode resolution (prompt 32) ─────────────────────────────
+
+    /**
+     * Whether the storage's secondary .table mirror should be written on save.
+     * Default {@code off}: since 3.0.61 {@code Table.saveToSerializedFile()} is
+     * the sole default writer of .table files (a storage-written mirror in a
+     * different serialization format would break {@code Table.loadFromFile()}'s
+     * cast). Enable {@code csv.table.mirror} / {@code tsv.table.mirror} = on to
+     * opt into the storage-level fast-load path.
+     */
+    protected static boolean isTableMirrorEnabled(String configKey) {
+        String raw = StorageConfig.getString(configKey, "off");
+        return !"off".equalsIgnoreCase(raw.trim());
+    }
+
+    /**
+     * Resolves and normalises a load mode config key ({@code csv.load.mode} /
+     * {@code tsv.load.mode}). The synonyms {@code csv}/{@code tsv} map to
+     * {@link #LOAD_MODE_FILE}; unsupported values fall back to it with a
+     * WARNING.
+     */
+    protected static String resolveLoadMode(String configKey) {
+        String raw = StorageConfig.getString(configKey, LOAD_MODE_FILE);
+        String mode = raw.trim().toLowerCase(Locale.ROOT);
+        if (LOAD_MODE_FILE.equals(mode) || "csv".equals(mode) || "tsv".equals(mode)) {
+            return LOAD_MODE_FILE;
+        }
+        if (LOAD_MODE_AUTO_MTIME.equals(mode)) {
+            return LOAD_MODE_AUTO_MTIME;
+        }
+        LOGGER.log(Level.WARNING, "Unsupported {0} value ''{1}'', falling back to {2}",
+                new Object[]{configKey, raw, LOAD_MODE_FILE});
+        return LOAD_MODE_FILE;
+    }
+
+    /**
+     * Chooses the persistence source for a load operation. In {@code file}
+     * mode the delimited file is always used. In {@code auto_mtime} mode the
+     * serialised .table file is preferred only when it exists and is strictly
+     * fresher than the delimited file; on equal mtimes the delimited file wins.
+     *
+     * @param delimitedFileName   the delimited file (.csv / .tsv)
+     * @param serializedFileName  the Java-serialised .table file
+     * @param loadMode            a mode returned by {@link #resolveLoadMode}
+     * @return the chosen source
+     */
+    protected LoadSource resolveLoadSource(String delimitedFileName, String serializedFileName, String loadMode) {
+        if (!LOAD_MODE_AUTO_MTIME.equalsIgnoreCase(loadMode)) {
+            return LoadSource.DELIMITED;
+        }
+        File serialized = new File(serializedFileName);
+        File delimited = new File(delimitedFileName);
+        if (serialized.exists() && serialized.lastModified() > delimited.lastModified()) {
+            return LoadSource.SERIALIZED;
+        }
+        return LoadSource.DELIMITED;
+    }
+
+    /**
+     * Reads a {@link SerializedTableData} from disk, or returns {@code null}
+     * when the file is missing or cannot be read.
+     */
+    protected SerializedTableData readSerializedTable(String fileName) {
+        File file = new File(fileName);
+        if (!file.exists()) {
+            return null;
+        }
+        try (FileInputStream fis = new FileInputStream(fileName);
+             ObjectInputStream ois = new ObjectInputStream(fis)) {
+            return (SerializedTableData) ois.readObject();
+        } catch (IOException | ClassNotFoundException e) {
+            LOGGER.log(Level.WARNING, "Failed to read serialised table {0}: {1}",
+                    new Object[]{fileName, e.getMessage()});
+            return null;
+        }
+    }
+
+    /**
+     * Checks the internal consistency of data loaded from a .table file:
+     * format version, recorded row count versus actual rows, and the stored
+     * columns/types against the current schema. Returns an empty list when the
+     * fast-path result can be trusted.
+     */
+    protected List<String> checkSerializedConsistency(SerializedTableData data) {
+        List<String> problems = new ArrayList<>();
+        if (data.formatVersion > CURRENT_STORAGE_FORMAT_VERSION) {
+            problems.add("format version " + data.formatVersion + " exceeds supported "
+                    + CURRENT_STORAGE_FORMAT_VERSION);
+        }
+        if (data.rowCount != data.rows.size()) {
+            problems.add("recorded row count " + data.rowCount
+                    + " does not match loaded rows " + data.rows.size());
+        }
+        if (!columnsMatch(this.columns, data.columns)) {
+            problems.add("stored columns " + data.columns + " do not match schema " + this.columns);
+        }
+        if (!typesMatch(this.columnTypes, data.columnTypes)) {
+            problems.add("stored column types do not match schema");
+        }
+        return problems;
+    }
+
+    private static boolean columnsMatch(List<String> expected, List<String> stored) {
+        if (stored == null || stored.size() != expected.size()) {
+            return false;
+        }
+        for (int i = 0; i < expected.size(); i++) {
+            if (!stored.get(i).equalsIgnoreCase(expected.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean typesMatch(Map<String, Class<?>> expected, Map<String, Class<?>> stored) {
+        if (stored == null || stored.size() != expected.size()) {
+            return false;
+        }
+        Map<String, Class<?>> lookup = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        lookup.putAll(stored);
+        for (Map.Entry<String, Class<?>> entry : expected.entrySet()) {
+            Class<?> actual = lookup.get(entry.getKey());
+            if (actual == null || !actual.equals(entry.getValue())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Lightweight serialisable snapshot of a delimited storage written to the
+     * secondary .table file. Used by the {@code auto_mtime} fast load path.
+     */
+    protected static final class SerializedTableData implements Serializable {
+        private static final long serialVersionUID = 1L;
+        final int formatVersion;
+        final List<String> columns;
+        final Map<String, Class<?>> columnTypes;
+        final int rowCount;
+        final List<Map<String, Object>> rows;
+
+        SerializedTableData(int formatVersion, List<String> columns, Map<String, Class<?>> columnTypes,
+                            List<Map<String, Object>> rows) {
+            this.formatVersion = formatVersion;
+            this.columns = columns;
+            this.columnTypes = columnTypes;
+            this.rowCount = rows.size();
+            this.rows = rows;
         }
     }
 }
