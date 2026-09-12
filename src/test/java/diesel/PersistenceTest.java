@@ -40,9 +40,26 @@ public class PersistenceTest {
 
     private void cleanup() {
         new File(TABLE + ".csv").delete();
+        new File(TABLE + ".tsv").delete();
         new File(TABLE + ".table").delete();
         new File(TABLE + "2.csv").delete();
+        new File(TABLE + "2.tsv").delete();
         new File(TABLE + "2.table").delete();
+    }
+
+    /**
+     * Returns the delimited file extension persistence writes for the given
+     * table, or null when the storage keeps no delimited mirror (embedded
+     * in-memory tables only persist their serialized .table file).
+     */
+    private static String delimitedExtension(Table table) {
+        if (table.getStorage() instanceof diesel.storage.TsvRowStorage) {
+            return ".tsv";
+        }
+        if (table.getStorage() instanceof diesel.storage.CsvRowStorage) {
+            return ".csv";
+        }
+        return null;
     }
 
     @Test
@@ -55,7 +72,10 @@ public class PersistenceTest {
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
         assertTrue(new File(TABLE + ".table").exists(), "Serialized .table file created on disk");
-        assertTrue(new File(TABLE + ".csv").exists(), "CSV file created on disk");
+        String delimited = delimitedExtension(db.getTable(TABLE));
+        if (delimited != null) {
+            assertTrue(new File(TABLE + delimited).exists(), "Delimited file created on disk");
+        }
         assertTrue(db.getTable(TABLE).isFileInitialized(), "Table marked as initialized after save");
 
         Database reloaded = new Database(".");
@@ -286,10 +306,14 @@ public class PersistenceTest {
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME) VALUES ('X1', 'Xray')", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
         assertTrue(new File(TABLE + ".table").exists(), "Serialized file exists before drop");
-        assertTrue(new File(TABLE + ".csv").exists(), "CSV file exists before drop");
+        String delimited = delimitedExtension(db.getTable(TABLE));
+        if (delimited != null) {
+            assertTrue(new File(TABLE + delimited).exists(), "Delimited file exists before drop");
+        }
         db.dropTable(TABLE);
         assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
         assertTrue(!new File(TABLE + ".csv").exists(), "CSV file deleted after drop");
+        assertTrue(!new File(TABLE + ".tsv").exists(), "TSV file deleted after drop");
         LOGGER.log(Level.INFO, "Test testDropTableDeletesFiles: DONE");
     }
 

@@ -1219,17 +1219,13 @@ class Database {
     }
 
     private void deleteTableFiles(String tableName) {
-        try {
-            Files.deleteIfExists(Path.of(dataDir, tableName + ".csv"));
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to delete CSV file for table {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
-        }
-        try {
-            Files.deleteIfExists(Path.of(dataDir, tableName + ErrorMessages.TABLE_EXTENSION));
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to delete serialized file for table {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
+        for (String extension : new String[]{".csv", ".tsv", ErrorMessages.TABLE_EXTENSION}) {
+            try {
+                Files.deleteIfExists(Path.of(dataDir, tableName + extension));
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to delete {0} file for table {1}: {2}",
+                        new Object[]{extension, tableName, e.getMessage()});
+            }
         }
     }
 
