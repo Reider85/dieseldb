@@ -1,8 +1,5 @@
 package diesel.storage;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -13,14 +10,14 @@ import java.util.Map;
  * config keys.
  *
  * <p>Unlike TSV, CSV fields enclosed in double quotes may span multiple
- * physical lines. A cheap pre-scan detects such files via
- * {@link CsvRowReader#endsInsideQuotes}, so the parallel line-range path is
- * only taken when every physical line maps to exactly one row.
+ * physical lines. The byte pre-scan of prompt 34 probes every physical line
+ * via {@link #lineEndsInsideMultilineRow(String)}, so the parallel
+ * byte-offset path is only taken when every physical line maps to exactly one
+ * row.
  *
  * <p>Config keys (from {@code config.properties} or {@code -Dcsv.*}):
  * <ul>
- *   <li>{@code csv.block.size} &mdash; rows per cache block (default 1000)</li>
- *   <li>{@code csv.cache.max.blocks} &mdash; LRU cache capacity in blocks (default 64)</li>
+ *   <li>{@code csv.block.size} &mdash; rows per block (default 1000)</li>
  *   <li>{@code csv.parallel.read.threshold} &mdash; min rows to enable parallel reads (default 10000)</li>
  * </ul>
  */
@@ -36,18 +33,7 @@ public class CsvIndexManager extends DelimitedIndexManager {
     }
 
     @Override
-    protected boolean mayContainMultiLineRows(File file) throws IOException {
-        try (BufferedReader bufferedReader = StorageConfig.newReader(file)) {
-            if (bufferedReader.readLine() == null) {
-                return false;
-            }
-            String line;
-            while ((line = bufferedReader.readLine()) != null) {
-                if (CsvRowReader.endsInsideQuotes(line)) {
-                    return true;
-                }
-            }
-            return false;
-        }
+    protected boolean lineEndsInsideMultilineRow(String physicalLine) {
+        return CsvRowReader.endsInsideQuotes(physicalLine);
     }
 }

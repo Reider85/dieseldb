@@ -200,6 +200,19 @@ public class TsvRowReader implements DelimitedRowReader {
     }
 
     @Override
+    public int[] columnMapping() {
+        return columnMapping;
+    }
+
+    @Override
+    public void initPartition(int[] mapping, long firstDataLine) {
+        this.columnMapping = java.util.Arrays.copyOf(mapping, mapping.length);
+        this.headerRead = true;
+        this.lineNumber = firstDataLine - 1;
+        this.currentRowLine = firstDataLine - 1;
+    }
+
+    @Override
     public void close() throws IOException {
         reader.close();
     }

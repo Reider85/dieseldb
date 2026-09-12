@@ -45,6 +45,29 @@ public interface DelimitedRowReader extends Iterator<Map<String, Object>>, AutoC
     void close() throws IOException;
 
     /**
+     * Returns the header-to-schema column mapping built by
+     * {@link #readHeader()}: {@code columnMapping[i]} is the index of the file
+     * column feeding schema column {@code i}, or {@code -1} when the schema
+     * column is absent from the file. Returns {@code null} before the header
+     * has been consumed.
+     *
+     * @return the mapping array, or {@code null}
+     */
+    int[] columnMapping();
+
+    /**
+     * Prepares this reader to decode data rows directly from a partition that
+     * starts at a data-line boundary (byte-offset parallel read, prompt 34).
+     * The column mapping must already be known (parsed once from the header);
+     * no header line is consumed and line numbering starts at
+     * {@code firstDataLine} so error diagnostics keep absolute file positions.
+     *
+     * @param columnMapping the header-to-schema mapping from {@link #columnMapping()}
+     * @param firstDataLine the 1-based physical line of the partition's first row
+     */
+    void initPartition(int[] columnMapping, long firstDataLine);
+
+    /**
      * Strictly parses a boolean token from a delimited field, accepting the
      * synonyms {@code true/false}, {@code 1/0}, {@code yes/no} and {@code t/f}
      * (case-insensitive, surrounding whitespace ignored). Unlike

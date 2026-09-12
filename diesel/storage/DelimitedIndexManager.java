@@ -1,9 +1,14 @@
 package diesel.storage;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -99,6 +104,8 @@ public abstract class DelimitedIndexManager {
     private final long parallelReadThreshold;
 
     private final AtomicBoolean deprecationLogged = new AtomicBoolean();
+
+    private volatile LineIndexCache lineIndexCache;
 
     /**
      * @param tableName       the table name
@@ -562,6 +569,14 @@ public abstract class DelimitedIndexManager {
      * daemon pool when the file is large enough, otherwise falls back to a single
      * sequential pass.
      *
+     * <p>The parallel path (prompt 34) is driven by a single byte-level
+     * pre-scan ({@link #preScan(File)}) that records the file offset of every
+     * data line and detects physical lines that continue an unterminated
+     * multi-line logical row. Data lines are then partitioned by offset ranges
+     * instead of line counts: each task reads only the bytes of its own range
+     * once, so the total I/O stays close to the file size and rows are never
+     * re-read from the beginning per partition.
+     *
      * @param filePath the path to the delimited file
      * @return the decoded rows in file order
      * @throws IOException on I/O errors
@@ -571,29 +586,35 @@ public abstract class DelimitedIndexManager {
         if (!file.exists() || !file.isFile()) {
             return List.of();
         }
-        long totalRows = countDataLines(file);
+        LineIndex lineIndex = preScan(file);
+        long totalRows = lineIndex.dataLineCount();
         if (totalRows == 0) {
             return List.of();
         }
         if (totalRows < parallelReadThreshold) {
             return loadFromFileSequential(filePath);
         }
-        if (multiLineRows && mayContainMultiLineRows(file)) {
+        if (lineIndex.hasMultiLineRows) {
             return loadFromFileSequential(filePath);
         }
+        if (totalRows > Integer.MAX_VALUE) {
+            return loadFromFileSequential(filePath);
+        }
+        int[] columnMapping = readHeaderMapping(file);
+        long[] offsets = lineIndex.dataLineOffsets;
         int partitions = Math.min(READ_POOL.getParallelism(),
                 (int) Math.min((totalRows + blockSize - 1) / blockSize, Integer.MAX_VALUE));
-        List<LineRange> ranges = new ArrayList<>(partitions);
-        long linesPerPartition = (totalRows + partitions - 1) / partitions;
-        long start = 0;
-        for (int i = 0; i < partitions && start < totalRows; i++) {
-            long end = Math.min(totalRows, start + linesPerPartition);
-            ranges.add(new LineRange(start, end));
-            start = end;
-        }
-        List<Callable<List<Map<String, Object>>>> tasks = new ArrayList<>(ranges.size());
-        for (LineRange range : ranges) {
-            tasks.add(new ReadRangeTask(range, file));
+        List<Callable<List<Map<String, Object>>>> tasks = new ArrayList<>(partitions);
+        for (int p = 0; p < partitions; p++) {
+            long startLine = (totalRows * p) / partitions;
+            long endLine = (totalRows * (p + 1)) / partitions;
+            if (endLine <= startLine) {
+                continue;
+            }
+            long byteStart = offsets[(int) startLine];
+            long byteEnd = endLine < totalRows ? offsets[(int) endLine] : file.length();
+            long firstDataLine = startLine + 2;
+            tasks.add(new ByteRangeTask(file, byteStart, byteEnd, firstDataLine, columnMapping));
         }
         List<Map<String, Object>> result = new ArrayList<>((int) Math.min(totalRows, Integer.MAX_VALUE));
         try {
@@ -641,16 +662,123 @@ public abstract class DelimitedIndexManager {
         return loaded;
     }
 
+    // ─── Byte-offset pre-scan (prompt 34) ────────────────────────────
+
     /**
-     * Detects whether the file contains rows spanning multiple physical lines.
-     * The default implementation assumes single-line rows; backends whose format
-     * can embed line breaks within one logical row override this.
+     * Returns the cached {@link LineIndex} for the file, re-scanning only when
+     * the file's mtime or size no longer matches the cached snapshot. The scan
+     * reads the file bytes once, records the byte offset of every data line and
+     * detects multi-line physical rows, so it replaces the former two full-line
+     * scans ({@code countDataLines} + the multi-line probe).
      *
      * @param file the delimited file
-     * @return {@code true} when the file must be read sequentially
+     * @return the line index of the file
      * @throws IOException on I/O errors
      */
-    protected boolean mayContainMultiLineRows(File file) throws IOException {
+    private LineIndex preScan(File file) throws IOException {
+        LineIndexCache cached = lineIndexCache;
+        if (cached != null && cached.matches(file)) {
+            return cached.index;
+        }
+        LineIndex index = scanLines(file);
+        try {
+            lineIndexCache = new LineIndexCache(file.getAbsolutePath(), file.lastModified(), file.length(), index);
+        } catch (SecurityException ignored) {
+        }
+        return index;
+    }
+
+    /**
+     * Single byte-level pass over the file: splits physical lines exactly like
+     * {@link BufferedReader#readLine()} ({@code \n}, {@code \r\n} and lone
+     * {@code \r} terminators) and records the byte offset of each data line
+     * start (the header is the first physical line and is skipped). When the
+     * format can embed line breaks inside a logical row, every data line is
+     * also probed via {@link #lineEndsInsideMultilineRow(String)}.
+     */
+    private LineIndex scanLines(File file) throws IOException {
+        byte[] bytes;
+        try (InputStream in = new java.io.BufferedInputStream(new FileInputStream(file))) {
+            bytes = in.readAllBytes();
+        }
+        java.nio.charset.Charset charset = StorageConfig.getCharset();
+        long[] offsets = new long[1024];
+        int count = 0;
+        boolean hasMultiLine = false;
+        int lineStart = 0;
+        int i = 0;
+        while (i < bytes.length) {
+            byte b = bytes[i];
+            if (b == (byte) '\r' || b == (byte) '\n') {
+                if (lineStart > 0) {
+                    if (count == offsets.length) {
+                        offsets = grow(offsets);
+                    }
+                    offsets[count++] = lineStart;
+                    if (multiLineRows) {
+                        String text = new String(bytes, lineStart, i - lineStart, charset);
+                        if (lineEndsInsideMultilineRow(text)) {
+                            hasMultiLine = true;
+                        }
+                    }
+                }
+                if (b == (byte) '\r' && i + 1 < bytes.length && bytes[i + 1] == (byte) '\n') {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                lineStart = i;
+            } else {
+                i += 1;
+            }
+        }
+        if (lineStart > 0 && lineStart < bytes.length) {
+            if (count == offsets.length) {
+                offsets = grow(offsets);
+            }
+            offsets[count++] = lineStart;
+            if (multiLineRows) {
+                String text = new String(bytes, lineStart, bytes.length - lineStart, charset);
+                if (lineEndsInsideMultilineRow(text)) {
+                    hasMultiLine = true;
+                }
+            }
+        }
+        long[] trimmed = count == offsets.length ? offsets : java.util.Arrays.copyOf(offsets, count);
+        return new LineIndex(trimmed, hasMultiLine);
+    }
+
+    private static long[] grow(long[] array) {
+        return java.util.Arrays.copyOf(array, array.length * 2);
+    }
+
+    /**
+     * Parses the file header once and returns the header-to-schema column
+     * mapping shared by every partition reader. Consumes only the first
+     * physical line; the header is not re-read per partition.
+     */
+    private int[] readHeaderMapping(File file) throws IOException {
+        try (BufferedReader bufferedReader = StorageConfig.newReader(file);
+             DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
+            reader.readHeader();
+            int[] mapping = reader.columnMapping();
+            if (mapping == null) {
+                throw new IOException("Header was not parsed for parallel read");
+            }
+            return mapping;
+        }
+    }
+
+    /**
+     * Format-specific hook consulted by the byte pre-scan: returns whether the
+     * given physical line text ends inside a logical row that continues on the
+     * next physical line (e.g. an unterminated CSV quoted field). The default
+     * assumes every physical line is a complete row.
+     *
+     * @param physicalLine the decoded text of one physical line
+     * @return {@code true} when the line must not be treated as a row boundary
+     */
+    protected boolean lineEndsInsideMultilineRow(String physicalLine) {
         return false;
     }
 
@@ -666,20 +794,6 @@ public abstract class DelimitedIndexManager {
             }
         }
         return column;
-    }
-
-    private long countDataLines(File file) throws IOException {
-        try (BufferedReader bufferedReader = StorageConfig.newReader(file)) {
-            if (bufferedReader.readLine() == null) {
-                return 0;
-            }
-            long lines = 0;
-            String line;
-            while ((line = bufferedReader.readLine()) != null) {
-                lines++;
-            }
-            return lines;
-        }
     }
 
     private static Map<Object, ?> subRange(NavigableMap<Object, ?> map, Object low, Object high) {
@@ -771,55 +885,102 @@ public abstract class DelimitedIndexManager {
         return defaultValue;
     }
 
-    /** A contiguous range of data lines (header excluded) within a delimited file. */
-    private static final class LineRange {
-        final long start;
-        final long end;
+    /** The result of the byte-offset pre-scan: the file offset of every data
+     * line start plus a flag for multi-line logical rows. */
+    private static final class LineIndex {
+        final long[] dataLineOffsets;
+        final boolean hasMultiLineRows;
 
-        LineRange(long start, long end) {
-            this.start = start;
-            this.end = end;
+        LineIndex(long[] dataLineOffsets, boolean hasMultiLineRows) {
+            this.dataLineOffsets = dataLineOffsets;
+            this.hasMultiLineRows = hasMultiLineRows;
         }
 
-        long size() {
-            return end - start;
+        int dataLineCount() {
+            return dataLineOffsets.length;
         }
     }
 
-    /** Reads a line range from a delimited file by re-opening the file and skipping rows. */
-    private final class ReadRangeTask implements Callable<List<Map<String, Object>>> {
-        private final LineRange range;
-        private final File file;
+    /** Cached pre-scan keyed by the file identity, mtime and size. */
+    private static final class LineIndexCache {
+        final String path;
+        final long lastModified;
+        final long length;
+        final LineIndex index;
 
-        ReadRangeTask(LineRange range, File file) {
-            this.range = range;
-            this.file = file;
+        LineIndexCache(String path, long lastModified, long length, LineIndex index) {
+            this.path = path;
+            this.lastModified = lastModified;
+            this.length = length;
+            this.index = index;
         }
 
-        @Override
-        public List<Map<String, Object>> call() {
-            try (BufferedReader bufferedReader = StorageConfig.newReader(file);
-                 DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
-                reader.readHeader();
-                for (long i = 0; i < range.start && reader.hasNext(); i++) {
-                    reader.next();
-                }
-                List<Map<String, Object>> blockRows = new ArrayList<>((int) range.size());
-                for (long i = range.start; i < range.end && reader.hasNext(); i++) {
-                    Map<String, Object> row = reader.next();
-                    if (row != null) {
-                        blockRows.add(row);
-                    }
-                }
-                return blockRows;
-            } catch (IOException e) {
-                throw new CompletionException("Failed to read delimited range " + range.start + ".." + range.end, e);
-            }
+        boolean matches(File file) {
+            return path.equals(file.getAbsolutePath())
+                    && lastModified == file.lastModified()
+                    && length == file.length();
         }
     }
 
     /**
-     * A slice of rows produced by the deprecated block API. Holds the block
+     * Reads one byte-offset partition of a delimited file. Positions a
+     * {@link FileChannel} at the byte offset of the partition's first data line
+     * and reads exactly the bytes up to the next line boundary (or EOF), so no
+     * line is ever re-read from the file start. The header-to-schema column
+     * mapping is parsed once by the main thread and shared by all partitions.
+     */
+    private final class ByteRangeTask implements Callable<List<Map<String, Object>>> {
+        private final File file;
+        private final long byteStart;
+        private final long byteEnd;
+        private final long firstDataLine;
+        private final int[] columnMapping;
+
+        ByteRangeTask(File file, long byteStart, long byteEnd, long firstDataLine, int[] columnMapping) {
+            this.file = file;
+            this.byteStart = byteStart;
+            this.byteEnd = byteEnd;
+            this.firstDataLine = firstDataLine;
+            this.columnMapping = columnMapping;
+        }
+
+        @Override
+        public List<Map<String, Object>> call() {
+            try (FileChannel channel = FileChannel.open(file.toPath())) {
+                long span = byteEnd - byteStart;
+                if (span > Integer.MAX_VALUE) {
+                    throw new IOException("Read partition too large: " + span + " bytes");
+                }
+                byte[] chunk = new byte[(int) span];
+                ByteBuffer buffer = ByteBuffer.wrap(chunk);
+                int position = 0;
+                while (buffer.hasRemaining()) {
+                    int n = channel.read(buffer, byteStart + position);
+                    if (n < 0) {
+                        break;
+                    }
+                    position += n;
+                }
+                try (BufferedReader bufferedReader = new BufferedReader(
+                        new InputStreamReader(new ByteArrayInputStream(chunk, 0, position), StorageConfig.getCharset()));
+                     DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
+                    reader.initPartition(columnMapping, firstDataLine);
+                    List<Map<String, Object>> blockRows = new ArrayList<>();
+                    while (reader.hasNext()) {
+                        Map<String, Object> row = reader.next();
+                        if (row != null) {
+                            blockRows.add(row);
+                        }
+                    }
+                    return blockRows;
+                }
+            } catch (IOException e) {
+                throw new CompletionException("Failed to read delimited byte range " + byteStart + ".." + byteEnd, e);
+            }
+        }
+    }
+
+    /** A slice of rows produced by the deprecated block API. Holds the block
      * index and the rows within the block, in ascending row order.
      */
     public static final class Block {
