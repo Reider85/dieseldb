@@ -3,6 +3,7 @@ package diesel;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,8 +32,21 @@ class StorageLoadModeTest {
     @TempDir
     Path tempDir;
 
+    private String prevCsvCodec;
+
+    @BeforeEach
+    void pinPlainCodec() {
+        prevCsvCodec = System.getProperty("csv.compression.codec");
+        System.setProperty("csv.compression.codec", "none");
+    }
+
     @AfterEach
     void clearProperties() {
+        if (prevCsvCodec == null) {
+            System.clearProperty("csv.compression.codec");
+        } else {
+            System.setProperty("csv.compression.codec", prevCsvCodec);
+        }
         System.clearProperty("csv.load.mode");
         System.clearProperty("tsv.load.mode");
         System.clearProperty("csv.table.mirror");

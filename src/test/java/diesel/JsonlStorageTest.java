@@ -418,8 +418,11 @@ class JsonlStorageTest {
                 Map.of("ID", Long.class, "DATA", String.class));
         storage.setDataDir(tempDir.toString());
         storage.open();
+        Map<String, Object> user = new LinkedHashMap<>();
+        user.put("name", "Alice");
+        user.put("age", 30);
         Map<String, Object> nested = new LinkedHashMap<>();
-        nested.put("user", new LinkedHashMap<>(Map.of("name", "Alice", "age", 30)));
+        nested.put("user", user);
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ID", 1L);
         r.put("DATA", nested);

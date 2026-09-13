@@ -28,17 +28,21 @@ class LoadErrorHandlingTest {
 
     private String prevLoadErrorMode;
     private String prevNullRepresentation;
+    private String prevCsvCodec;
 
     @BeforeEach
     void saveConfig() {
         prevLoadErrorMode = System.getProperty("storage.load.error.mode");
         prevNullRepresentation = System.getProperty("storage.null.representation");
+        prevCsvCodec = System.getProperty("csv.compression.codec");
+        System.setProperty("csv.compression.codec", "none");
     }
 
     @AfterEach
     void restoreConfig() {
         restoreProperty("storage.load.error.mode", prevLoadErrorMode);
         restoreProperty("storage.null.representation", prevNullRepresentation);
+        restoreProperty("csv.compression.codec", prevCsvCodec);
     }
 
     private void restoreProperty(String key, String prev) {

@@ -42,6 +42,7 @@ class CsvStorageAdvancedTest {
             "csv.load.mode",
             "csv.table.mirror",
             "csv.parallel.read.threshold",
+            "csv.compression.codec",
             "tsv.load.mode",
             "tsv.table.mirror",
             "tsv.parallel.read.threshold",
@@ -55,6 +56,7 @@ class CsvStorageAdvancedTest {
         for (String key : PROP_KEYS) {
             prevProps.put(key, System.getProperty(key));
         }
+        System.setProperty("csv.compression.codec", "none");
     }
 
     @AfterEach

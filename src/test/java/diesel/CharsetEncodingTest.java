@@ -2,6 +2,8 @@ package diesel;
 
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -25,6 +27,8 @@ class CharsetEncodingTest {
     @TempDir
     Path tempDir;
 
+    private String prevCsvCodec;
+
     private static final List<String> SCHEMA = List.of("NAME", "AGE", "CITY");
     private static final Map<String, Class<?>> TYPES;
 
@@ -34,6 +38,21 @@ class CharsetEncodingTest {
         t.put("AGE", Integer.class);
         t.put("CITY", String.class);
         TYPES = Map.copyOf(t);
+    }
+
+    @BeforeEach
+    void saveCodec() {
+        prevCsvCodec = System.getProperty("csv.compression.codec");
+        System.setProperty("csv.compression.codec", "none");
+    }
+
+    @AfterEach
+    void restoreCodec() {
+        if (prevCsvCodec == null) {
+            System.clearProperty("csv.compression.codec");
+        } else {
+            System.setProperty("csv.compression.codec", prevCsvCodec);
+        }
     }
 
     private static Map<String, Object> unicodeRow() {

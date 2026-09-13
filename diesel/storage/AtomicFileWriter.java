@@ -13,6 +13,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,6 +54,10 @@ import org.slf4j.LoggerFactory;
  *
  * <p>If {@link #commit()} is never invoked, {@link #close()} discards the
  * temporary file and leaves the previous target version untouched.
+ *
+ * <p>Writers that target the same file are serialised per JVM (the temp path
+ * is deterministic, so concurrent commits to one target could otherwise steal
+ * each other's in-flight {@code .tmp}).
  */
 public final class AtomicFileWriter implements Closeable {
 
@@ -63,9 +69,20 @@ public final class AtomicFileWriter implements Closeable {
     /** Exponent base (ms) of the backoff between rename attempts, doubled each time. */
     private static final long MOVE_RETRY_BASE_DELAY_MS = 25;
 
+    /**
+     * Serialises same-target writers within the JVM. The temp path is the
+     * deterministic {@code <target>.tmp}, so two concurrent commits to the same
+     * target would otherwise open/truncate the very same sibling and the first
+     * rename would abduct the other writer's in-flight temp file (leaving a
+     * spurious {@link java.nio.file.NoSuchFileException}). Keyed by the
+     * normalised absolute target path.
+     */
+    private static final ConcurrentHashMap<Path, ReentrantLock> TARGET_LOCKS = new ConcurrentHashMap<>();
+
     private final Path target;
     private final Path tmp;
     private final FileChannel channel;
+    private final ReentrantLock targetLock;
     private BufferedWriter bufferedWriter;
     private OutputStream outputStream;
     private boolean committed;
@@ -73,13 +90,20 @@ public final class AtomicFileWriter implements Closeable {
     private AtomicFileWriter(Path target, boolean text) throws IOException {
         this.target = target;
         this.tmp = tmpPath(target);
-        this.channel = FileChannel.open(tmp,
-                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
-        if (text) {
-            this.bufferedWriter = new BufferedWriter(
-                    new OutputStreamWriter(Channels.newOutputStream(channel), StorageConfig.getCharset()));
-        } else {
-            this.outputStream = Channels.newOutputStream(channel);
+        this.targetLock = TARGET_LOCKS.computeIfAbsent(target.toAbsolutePath().normalize(), p -> new ReentrantLock());
+        targetLock.lock();
+        try {
+            this.channel = FileChannel.open(tmp,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+            if (text) {
+                this.bufferedWriter = new BufferedWriter(
+                        new OutputStreamWriter(Channels.newOutputStream(channel), StorageConfig.getCharset()));
+            } else {
+                this.outputStream = Channels.newOutputStream(channel);
+            }
+        } catch (IOException | RuntimeException e) {
+            targetLock.unlock();
+            throw e;
         }
     }
 
@@ -165,6 +189,13 @@ public final class AtomicFileWriter implements Closeable {
      * Falls back to a non-atomic move when the file system does not support
      * atomic moves for this pair of paths.
      *
+     * <p>If the temporary file vanishes but the target exists, another writer
+     * (this JVM's serialisation is per-target, so typically an external
+     * process sharing the data directory) already committed a complete
+     * snapshot for this target - the "last writer wins" race was lost and the
+     * existing target is kept. A vanished temp file without a target is a
+     * genuine data-loss anomaly and is rethrown.
+     *
      * @throws IOException if the move keeps failing after all attempts
      */
     private void moveWithRetries() throws IOException {
@@ -178,6 +209,14 @@ public final class AtomicFileWriter implements Closeable {
                 }
                 return;
             } catch (IOException e) {
+                if (!Files.exists(tmp)) {
+                    if (Files.exists(target)) {
+                        LOGGER.warn("Move {} -> {} lost to a concurrent sibling commit; keeping the existing target",
+                                tmp, target);
+                        return;
+                    }
+                    throw lastError != null ? lastError : e;
+                }
                 lastError = e;
                 if (attempt < MAX_MOVE_ATTEMPTS) {
                     LOGGER.warn("Move {} -> {} failed on attempt {} (\"{}\"); retrying",
@@ -202,15 +241,22 @@ public final class AtomicFileWriter implements Closeable {
      *
      * <p>When {@link #commit()} has been called this is a no-op; otherwise the
      * temporary file is discarded and the previous target version is left intact.
+     * Always releases the per-target writer lock.
      */
     @Override
     public void close() throws IOException {
-        if (committed) {
-            return;
+        try {
+            if (committed) {
+                return;
+            }
+            closeChannel();
+            Files.deleteIfExists(tmp);
+            LOGGER.debug("Discarded uncommitted temp file {}", tmp);
+        } finally {
+            if (targetLock.isHeldByCurrentThread()) {
+                targetLock.unlock();
+            }
         }
-        closeChannel();
-        Files.deleteIfExists(tmp);
-        LOGGER.debug("Discarded uncommitted temp file {}", tmp);
     }
 
     /**

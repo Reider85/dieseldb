@@ -5,14 +5,20 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import diesel.storage.AtomicFileWriter;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,6 +32,23 @@ class AtomicFileWriteTest {
 
     @TempDir
     Path tempDir;
+
+    private String prevCsvCodec;
+
+    @BeforeEach
+    void saveCodec() {
+        prevCsvCodec = System.getProperty("csv.compression.codec");
+        System.setProperty("csv.compression.codec", "none");
+    }
+
+    @AfterEach
+    void restoreCodec() {
+        if (prevCsvCodec == null) {
+            System.clearProperty("csv.compression.codec");
+        } else {
+            System.setProperty("csv.compression.codec", prevCsvCodec);
+        }
+    }
 
     private static final List<String> SCHEMA = List.of("NAME", "AGE", "CITY");
     private static final Map<String, Class<?>> TYPES;
@@ -180,6 +203,51 @@ class AtomicFileWriteTest {
         }
         assertArrayEquals("committed".getBytes(java.nio.charset.StandardCharsets.UTF_8), Files.readAllBytes(target));
         assertFalse(Files.exists(AtomicFileWriter.tmpPath(target)));
+    }
+
+    // ─── Concurrent commits to one target ───────────────────────────
+
+    @Test
+    void concurrentCommitsToSameTargetNeverLoseTheTempFile() throws Exception {
+        Path target = tempDir.resolve("shared.bin");
+        byte[] payload = new byte[4096];
+        new java.util.Random(42).nextBytes(payload);
+
+        int workers = 4;
+        int rounds = 150;
+        CountDownLatch ready = new CountDownLatch(workers);
+        CountDownLatch go = new CountDownLatch(1);
+        List<Thread> threads = new ArrayList<>();
+        List<Throwable> errors = Collections.synchronizedList(new ArrayList<>());
+        for (int w = 0; w < workers; w++) {
+            Thread t = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await(10, TimeUnit.SECONDS);
+                    for (int r = 0; r < rounds; r++) {
+                        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(target)) {
+                            afw.outputStream().write(payload);
+                            afw.outputStream().flush();
+                            afw.commit();
+                        }
+                    }
+                } catch (Throwable e) {
+                    errors.add(e);
+                }
+            }, "atomic-commit-writer-" + w);
+            threads.add(t);
+            t.start();
+        }
+        ready.await(10, TimeUnit.SECONDS);
+        go.countDown();
+        for (Thread t : threads) {
+            t.join(120_000);
+        }
+
+        assertTrue(errors.isEmpty(),
+                "no concurrent commit may fail with the shared .tmp abducted: " + errors);
+        assertFalse(Files.exists(AtomicFileWriter.tmpPath(target)));
+        assertArrayEquals(payload, Files.readAllBytes(target));
     }
 
     // ─── Orphan temp detection on load ──────────────────────────────

@@ -27,23 +27,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class PersistenceTest {
     private static final Logger LOGGER = Logger.getLogger(PersistenceTest.class.getName());
     private static final String TABLE = "PERSIST_TEST";
+    private String prevCsvCodec;
+    private String prevTsvCodec;
 
     @BeforeEach
     void setUp() {
         cleanup();
+        prevCsvCodec = System.getProperty("csv.compression.codec");
+        prevTsvCodec = System.getProperty("tsv.compression.codec");
+        System.setProperty("csv.compression.codec", "none");
+        System.setProperty("tsv.compression.codec", "none");
     }
 
     @AfterEach
     void tearDown() {
         cleanup();
+        if (prevCsvCodec == null) {
+            System.clearProperty("csv.compression.codec");
+        } else {
+            System.setProperty("csv.compression.codec", prevCsvCodec);
+        }
+        if (prevTsvCodec == null) {
+            System.clearProperty("tsv.compression.codec");
+        } else {
+            System.setProperty("tsv.compression.codec", prevTsvCodec);
+        }
     }
 
     private void cleanup() {
-        new File(TABLE + ".csv").delete();
-        new File(TABLE + ".tsv").delete();
+        for (String suffix : new String[]{"", ".zst", ".lz4", ".snappy"}) {
+            new File(TABLE + suffix).delete();
+            new File(TABLE + "2" + suffix).delete();
+            new File(TABLE + ".csv" + suffix).delete();
+            new File(TABLE + "2.csv" + suffix).delete();
+            new File(TABLE + ".tsv" + suffix).delete();
+            new File(TABLE + "2.tsv" + suffix).delete();
+        }
         new File(TABLE + ".table").delete();
-        new File(TABLE + "2.csv").delete();
-        new File(TABLE + "2.tsv").delete();
         new File(TABLE + "2.table").delete();
     }
 
@@ -315,6 +335,30 @@ public class PersistenceTest {
         assertTrue(!new File(TABLE + ".csv").exists(), "CSV file deleted after drop");
         assertTrue(!new File(TABLE + ".tsv").exists(), "TSV file deleted after drop");
         LOGGER.log(Level.INFO, "Test testDropTableDeletesFiles: DONE");
+    }
+
+    @Test
+    void testDropTableDeletesCompressedDelimitedFiles() {
+        LOGGER.log(Level.INFO, "Starting test: testDropTableDeletesCompressedDelimitedFiles");
+        String prev = System.getProperty("csv.compression.codec");
+        try {
+            System.setProperty("csv.compression.codec", "zstd");
+            Database db = new Database(".");
+            db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING)", null);
+            db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME) VALUES ('X1', 'Xray')", null);
+            db.getTable(TABLE).saveToSerializedFile(TABLE);
+            assertTrue(new File(TABLE + ".csv.zst").exists(), "zstd compressed delimited file exists before drop");
+            db.dropTable(TABLE);
+            assertTrue(!new File(TABLE + ".csv.zst").exists(), "zstd compressed delimited file deleted after drop");
+        } finally {
+            if (prev == null) {
+                System.clearProperty("csv.compression.codec");
+            } else {
+                System.setProperty("csv.compression.codec", prev);
+            }
+            cleanup();
+        }
+        LOGGER.log(Level.INFO, "Test testDropTableDeletesCompressedDelimitedFiles: DONE");
     }
 
     // --- Prompt 59: Serialized index state tests ---

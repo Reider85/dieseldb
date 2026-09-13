@@ -1219,7 +1219,12 @@ class Database {
     }
 
     private void deleteTableFiles(String tableName) {
-        for (String extension : new String[]{".csv", ".tsv", ErrorMessages.TABLE_EXTENSION}) {
+        String[] suffixes = {
+                ".csv", ".csv.zst", ".csv.lz4", ".csv.snappy",
+                ".tsv", ".tsv.zst", ".tsv.lz4", ".tsv.snappy",
+                ErrorMessages.TABLE_EXTENSION
+        };
+        for (String extension : suffixes) {
             try {
                 Files.deleteIfExists(Path.of(dataDir, tableName + extension));
             } catch (IOException e) {

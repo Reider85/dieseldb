@@ -8,6 +8,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -412,8 +415,10 @@ class CompressionTest {
         CsvRowStorage base = csvStorage(table + "_BASE");
         base.insert(map("ID", 1L, "NAME", "base", "AGE", 1));
         base.saveToFile(base.getTableName());
-        assertTrue(Files.exists(tempDir.resolve(base.getTableName() + ".csv")),
-                "config.properties csv.compression.codec=none must produce a plain .csv");
+        String configCodec = configuredCsvCodec();
+        String configSuffix = suffixFor(configCodec);
+        assertTrue(Files.exists(tempDir.resolve(base.getTableName() + ".csv" + configSuffix)),
+                "config.properties csv.compression.codec=" + configCodec + " must produce a .csv" + configSuffix);
 
         String overridden = table + "_LZ4";
         System.setProperty("csv.compression.codec", "lz4");
@@ -421,7 +426,29 @@ class CompressionTest {
         storage.insert(map("ID", 1L, "NAME", "lz4", "AGE", 1));
         storage.saveToFile(overridden);
         assertTrue(Files.exists(tempDir.resolve(overridden + ".csv.lz4")),
-                "a system property override must beat the config.properties none");
+                "a system property override must beat the config.properties " + configCodec);
+    }
+
+    /** Reads the CSV codec from the root config.properties (matches StorageConfig's source of truth). */
+    private static String configuredCsvCodec() throws Exception {
+        File configFile = new File("config.properties");
+        Properties props = new Properties();
+        if (configFile.exists()) {
+            try (FileInputStream fis = new FileInputStream(configFile)) {
+                props.load(fis);
+            }
+        }
+        String codec = props.getProperty("csv.compression.codec");
+        return codec == null || codec.isBlank() ? "zstd" : codec.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static String suffixFor(String codec) {
+        return switch (codec) {
+            case "zstd" -> ".zst";
+            case "lz4" -> ".lz4";
+            case "snappy" -> ".snappy";
+            default -> "";
+        };
     }
 
     // ─── size reduction ─────────────────────────────────────────────

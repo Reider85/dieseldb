@@ -305,7 +305,21 @@ class CsvIndexManagerTest {
     }
 
     @Test
-    void storageSaveLoadRebuildsIndex() {
+    void storageSaveLoadRebuildsIndex() throws Exception {
+        String prevCodec = System.getProperty("csv.compression.codec");
+        try {
+            System.setProperty("csv.compression.codec", "none");
+            storageSaveLoadRebuildsIndexInner();
+        } finally {
+            if (prevCodec == null) {
+                System.clearProperty("csv.compression.codec");
+            } else {
+                System.setProperty("csv.compression.codec", prevCodec);
+            }
+        }
+    }
+
+    private void storageSaveLoadRebuildsIndexInner() {
         CsvRowStorage s = new CsvRowStorage("T", COLS, types());
         s.setDataDir(tempDir.toString());
         s.open();

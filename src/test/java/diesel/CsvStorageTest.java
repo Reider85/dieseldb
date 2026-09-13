@@ -4,6 +4,8 @@ import diesel.storage.CsvRowReader;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.CsvRowWriter;
 import diesel.storage.StorageFactory;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -28,6 +30,23 @@ class CsvStorageTest {
 
     @TempDir
     Path tempDir;
+
+    private String prevCsvCodec;
+
+    @BeforeEach
+    void saveCodec() {
+        prevCsvCodec = System.getProperty("csv.compression.codec");
+        System.setProperty("csv.compression.codec", "none");
+    }
+
+    @AfterEach
+    void restoreCodec() {
+        if (prevCsvCodec == null) {
+            System.clearProperty("csv.compression.codec");
+        } else {
+            System.setProperty("csv.compression.codec", prevCsvCodec);
+        }
+    }
 
     private static List<String> cols() {
         return List.of("ID", "NAME", "AGE", "BALANCE", "BIRTHDATE", "LAST_LOGIN", "SESSION_ID", "ACTIVE");
