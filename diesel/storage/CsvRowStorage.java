@@ -1,11 +1,13 @@
 package diesel.storage;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +37,9 @@ import diesel.ErrorMessages;
 public class CsvRowStorage extends AbstractRowStorage {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(CsvRowStorage.class);
+
+    private static final String COMPRESSION_CODEC_KEY = "csv.compression.codec";
+    private static final String COMPRESSION_LEVEL_KEY = "csv.compression.level";
 
     protected final List<Object[]> rows = new ArrayList<>();
     private final RowArrays rowColumns;
@@ -121,14 +126,15 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     @Override
     public void loadFromFile(String tableName) {
-        String csvFile = resolveFilePath(".csv");
+        CompressionFactory.ResolvedDelimitedFile actual = resolveDelimitedFile();
+        String csvFile = actual.file().getPath();
         String tableFile = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
         String loadMode = resolveLoadMode("csv.load.mode");
         if (resolveLoadSource(csvFile, tableFile, loadMode) == LoadSource.SERIALIZED) {
             SerializedTableData data = readSerializedTable(tableFile);
             if (data != null) {
                 List<String> problems = checkSerializedConsistency(data);
-                if (problems.isEmpty() && delimitedHeaderConsistent(csvFile)) {
+                if (problems.isEmpty() && delimitedHeaderConsistent(actual)) {
                     rows.clear();
                     rows.addAll(convertSerializedRows(data));
                     fileInitialized = true;
@@ -147,15 +153,15 @@ public class CsvRowStorage extends AbstractRowStorage {
     // ─── CSV persistence ────────────────────────────────────────────
 
     private void saveCsv(String tableName) {
-        String fileName = resolveFilePath(".csv");
-        try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
-             CsvRowWriter csvWriter = new CsvRowWriter(afw.bufferedWriter(), columns)) {
-            csvWriter.writeHeader();
-            for (Object[] row : rows) {
-                csvWriter.writeRow(row);
+        CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
+        File base = new File(resolveFilePath(".csv"));
+        String fileName = CompressionFactory.delimitedWriteTarget(base, codec).getPath();
+        try {
+            if (codec.isNone()) {
+                saveCsvPlain(fileName);
+            } else {
+                saveCsvCompressed(fileName, codec);
             }
-            csvWriter.flush();
-            afw.commit();
             fileInitialized = true;
             LOGGER.info("CsvRowStorage {} saved CSV to {} with {} rows",
                     tableName, fileName, rows.size());
@@ -165,17 +171,51 @@ public class CsvRowStorage extends AbstractRowStorage {
         }
     }
 
+    /** Writes the plain (uncompressed) CSV file - the pre-prompt-39 format. */
+    private void saveCsvPlain(String fileName) throws IOException {
+        try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
+             CsvRowWriter csvWriter = new CsvRowWriter(afw.bufferedWriter(), columns)) {
+            csvWriter.writeHeader();
+            for (Object[] row : rows) {
+                csvWriter.writeRow(row);
+            }
+            csvWriter.flush();
+            afw.commit();
+        }
+    }
+
+    /**
+     * Writes the CSV file through the configured compressor. The compressor
+     * finishes its frame (and is closed) before {@link AtomicFileWriter#commit()}
+     * so the fsync'd file is complete and self-contained.
+     */
+    private void saveCsvCompressed(String fileName, CompressionCodec codec) throws IOException {
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
+            OutputStream compressed = codec.wrapOutputStream(CompressionFactory.nonClosing(afw.outputStream()));
+            try (BufferedWriter writer = new BufferedWriter(
+                    new OutputStreamWriter(compressed, StorageConfig.getCharset()));
+                 CsvRowWriter csvWriter = new CsvRowWriter(writer, columns)) {
+                csvWriter.writeHeader();
+                for (Object[] row : rows) {
+                    csvWriter.writeRow(row);
+                }
+                csvWriter.flush();
+            }
+            afw.commit();
+        }
+    }
+
     private void loadCsv(String tableName) {
-        String fileName = resolveFilePath(".csv");
-        File file = new File(fileName);
+        CompressionFactory.ResolvedDelimitedFile ref = resolveDelimitedFile();
+        File file = ref.file();
         if (!file.exists()) {
             AtomicFileWriter.warnInterruptedWrite(file.toPath());
-            LOGGER.info("CSV file {} not found for storage {}", fileName, tableName);
+            LOGGER.info("CSV file {} not found for storage {}", file.getPath(), tableName);
             return;
         }
         List<Object[]> previous = new ArrayList<>(rows);
-        try (BufferedReader br = StorageConfig.newReader(new File(fileName));
-             CsvRowReader csvReader = new CsvRowReader(br, columns, columnTypes, fileName)) {
+        try (BufferedReader br = CompressionFactory.openDelimitedReader(file, ref.codec(), StorageConfig.getCharset());
+             CsvRowReader csvReader = new CsvRowReader(br, columns, columnTypes, file.getPath())) {
             csvReader.readHeader();
             List<Object[]> loaded = new ArrayList<>();
             while (csvReader.hasNext()) {
@@ -188,7 +228,7 @@ public class CsvRowStorage extends AbstractRowStorage {
             rows.addAll(loaded);
             fileInitialized = true;
             LOGGER.info("CsvRowStorage {} loaded CSV from {} with {} rows",
-                    tableName, fileName, rows.size());
+                    tableName, file.getPath(), rows.size());
             syncIndexBulkFromArrays(rows);
         } catch (DieselIOException e) {
             rows.clear();
@@ -197,7 +237,7 @@ public class CsvRowStorage extends AbstractRowStorage {
         } catch (IOException e) {
             rows.clear();
             rows.addAll(previous);
-            throw new DieselIOException("Failed to load table from CSV file: " + fileName, e);
+            throw new DieselIOException("Failed to load table from CSV file: " + file.getPath(), e);
         }
     }
 
@@ -225,17 +265,17 @@ public class CsvRowStorage extends AbstractRowStorage {
      * gates for the serialised fast load path. A missing delimited file is
      * tolerated (the .table is then the only source).
      */
-    private boolean delimitedHeaderConsistent(String csvFile) {
-        File file = new File(csvFile);
+    private boolean delimitedHeaderConsistent(CompressionFactory.ResolvedDelimitedFile ref) {
+        File file = ref.file();
         if (!file.exists()) {
             return true;
         }
-        try (BufferedReader br = StorageConfig.newReader(file)) {
-            new CsvRowReader(br, columns, columnTypes, csvFile).readHeader();
+        try (BufferedReader br = CompressionFactory.openDelimitedReader(file, ref.codec(), StorageConfig.getCharset())) {
+            new CsvRowReader(br, columns, columnTypes, file.getPath()).readHeader();
             return true;
         } catch (IOException e) {
             LOGGER.warn("CsvRowStorage header consistency check failed for {}: {}",
-                    csvFile, e.getMessage());
+                    file.getPath(), e.getMessage());
             return false;
         }
     }
@@ -263,6 +303,11 @@ public class CsvRowStorage extends AbstractRowStorage {
     }
 
     // ─── Internal helpers ───────────────────────────────────────────
+
+    /** Resolves the physical delimited file, transparent to the configured codec. */
+    private CompressionFactory.ResolvedDelimitedFile resolveDelimitedFile() {
+        return CompressionFactory.resolveActual(new File(resolveFilePath(".csv")), COMPRESSION_CODEC_KEY);
+    }
 
     /** Returns the internal row list directly (no copy). */
     public List<Object[]> getInternalRows() {
@@ -385,16 +430,17 @@ public class CsvRowStorage extends AbstractRowStorage {
      * @throws java.io.IOException on I/O errors
      */
     public void loadFromFile(String tableName, boolean parallel) throws java.io.IOException {
-        String fileName = resolveFilePath(".csv");
-        Path file = new File(fileName).toPath();
-        if (!Files.exists(file)) {
-            AtomicFileWriter.warnInterruptedWrite(file);
+        CompressionFactory.ResolvedDelimitedFile ref = resolveDelimitedFile();
+        File file = ref.file();
+        if (!Files.exists(file.toPath())) {
+            AtomicFileWriter.warnInterruptedWrite(file.toPath());
             return;
         }
+        boolean useParallel = parallel && !ref.compressed();
         DelimitedIndexManager manager = index();
-        List<Map<String, Object>> loaded = parallel
-                ? manager.loadFromFileParallel(fileName)
-                : manager.loadFromFileSequential(fileName);
+        List<Map<String, Object>> loaded = useParallel
+                ? manager.loadFromFileParallel(file.getPath())
+                : manager.loadFromFileSequential(file.getPath());
         rows.clear();
         for (Map<String, Object> row : loaded) {
             rows.add(rowColumns.fromMap(row));

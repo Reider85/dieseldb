@@ -1,3 +1,11 @@
-3.0.73 Changelog tidy: remove test-run/verification notes from the 3.0.72 entry and commit so the changelog keeps the no-test-info convention of 3.0.41; commit message reworded without test-run notes.
+3.0.74 Prompt 39 - CSV/TSV file compression (CompressionCodec/CompressionFactory, ZSTD/LZ4/Snappy)
 
-Also fixes a typo in the PROMPT_STATUS.md Prompt 38 Latest entry (ignorar -> ignored).
+Changes:
+- diesel/storage/CompressionCodec.java (new) + diesel/storage/CompressionFactory.java (new, public): codec abstraction and resolver - forName(none|zstd|lz4|snappy), ZSTD level clamp 1-22 (default 3), transparent read by suffix detection (.csv.zst/.csv.lz4/.csv.snappy) with an idempotent re-resolution fix, openDelimitedReader uses a REPORT CharsetDecoder (same strictness as Files.newBufferedReader), nonClosing pass-through so the compressor finishes its frame before AtomicFileWriter.commit()
+- diesel/storage/CsvRowStorage.java / TsvRowStorage.java: save branches - plain none path byte-identical to pre-39, compressed path writes <table>.<csv|tsv>.<suffix> through AtomicFileWriter.openBinary; loads resolve the physical file via CompressionFactory; the parallel read flag downgrades to sequential when the resolved file is compressed (byte-offset pre-scan cannot address compressed bytes)
+- diesel/storage/DelimitedIndexManager.java: sequential and parallel loaders codec-aware via configPrefix + ".compression.codec"; parallel falls back to sequential for compressed files
+- config.properties: csv/tsv.compression.codec = none, csv/tsv.compression.level = 3 (user default none keeps existing files' plain format; code-level default stays zstd)
+- pom.xml: zstd-jni 1.5.6-6, lz4-java 1.8.0, snappy-java 1.1.10.5; CompressionTest in default + ci surefire includes
+- src/test/java/diesel/CompressionTest.java (new, 15 tests): all-codec round-trips, none byte-exactness, transparent reads both directions, suffix-wins over stale plain / earlier codec segments, csv/tsv independence, special chars / multi-line / \N sentinel through compression, parallel-to-sequential fallback, unknown codec rejection, level clamping, sysprop override, >=3x size + timing measurement
+- Measurements (README): 3000 repetitive rows - zstd 19.28x, lz4 6.40x, snappy 6.46x (all >= 3x); 20k rows - none write 73.8ms/read 127.9ms vs zstd write 188.7ms/read 62.5ms (compressed read ~2x faster)
+- Tests: Quick 248/0/0/6, full suite (4GB, @LargeTest) 248/0/0/0 BUILD SUCCESS, timing heavy (>=100ms) queries stable (SubqueriesTest 194.3->210.2ms +8%, JoinTest below baseline; only 11-19ms micro-query deltas, machine noise)

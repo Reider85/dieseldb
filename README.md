@@ -91,3 +91,30 @@ mvn package
 ```
 mvn install
 ```
+
+## CSV/TSV compression (Prompt 39)
+
+CSV and TSV files can be compressed with ZSTD (default), LZ4 or Snappy via the
+`csv.compression.codec` / `tsv.compression.codec` config keys
+(`none | zstd | lz4 | snappy`; resolution: system property → `config.properties` →
+code default `zstd`). `csv.compression.level` / `tsv.compression.level` set the
+ZSTD level (valid 1–22, default 3, clamped; LZ4/Snappy ignore the level). The
+compression applies only to newly written files: `none` keeps the previous
+plain format byte-identical, and readers transparently detect the actual format
+of existing files by suffix (`.csv.zst`, `.csv.lz4`, `.csv.snappy`, …), so
+files written under an earlier codec stay readable after a codec change.
+Compressed files are read sequentially (the byte-offset parallel pre-scan
+cannot address compressed bytes).
+
+Measured on 3000 repetitive rows (plain file 166,552 bytes; size ratio = ≥3x is
+the acceptance criterion):
+
+| Codec | Size (bytes) | Ratio | Write (20k rows) | Read (20k rows) |
+|-------|-------------|-------|------------------|-----------------|
+| none (plain) | 166,552 | 1.00x | 73.8 ms | 127.9 ms |
+| zstd | 8,638 | 19.28x | 188.7 ms | 62.5 ms |
+| lz4 | 26,016 | 6.40x | — | — |
+| snappy | 25,785 | 6.46x | — | — |
+
+Compressed sequential reads are ~2× faster than plain (I/O-bound scenario
+accelerates as expected); writes are ~2.5× slower because of compression CPU.

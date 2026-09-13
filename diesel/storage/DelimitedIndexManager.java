@@ -753,6 +753,12 @@ public abstract class DelimitedIndexManager {
         if (!file.exists() || !file.isFile()) {
             return List.of();
         }
+        CompressionFactory.ResolvedDelimitedFile ref =
+                CompressionFactory.resolveActual(file, configPrefix + ".compression.codec");
+        if (ref.compressed()) {
+            return loadFromFileSequential(ref.file().getPath());
+        }
+        file = ref.file();
         LineIndex lineIndex = preScan(file);
         long totalRows = lineIndex.dataLineCount();
         if (totalRows == 0) {
@@ -803,7 +809,10 @@ public abstract class DelimitedIndexManager {
         if (!file.exists() || !file.isFile()) {
             return List.of();
         }
-        try (BufferedReader bufferedReader = StorageConfig.newReader(file);
+        CompressionFactory.ResolvedDelimitedFile ref =
+                CompressionFactory.resolveActual(file, configPrefix + ".compression.codec");
+        try (BufferedReader bufferedReader = CompressionFactory.openDelimitedReader(
+                ref.file(), ref.codec(), StorageConfig.getCharset());
              DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
             reader.readHeader();
             return reader.readAll();
