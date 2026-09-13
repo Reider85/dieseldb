@@ -1,0 +1,566 @@
+package diesel.storage;
+
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.StringReader;
+import java.io.StringWriter;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import diesel.DieselIOException;
+
+/**
+ * Single owner of the JSONL schema: the ordered column names, the
+ * case-insensitive column index, the column-to-Java-type map, value type
+ * validation for the reader and the writer, JSON Path (dot-notation)
+ * resolution into embedded JSON columns, and the schema sidecar file
+ * (prompt 41).
+ *
+ * <p>The detailed conversion rules (strict vs lenient coercion, 2^53
+ * handling) are owned by JsonTypeMapper (prompt 43), the diagnostics policy
+ * by prompt 48 and the flatten / json_column storage rules by prompt 45.
+ * Schema inference and evolution belong to prompt 44 - this class only
+ * provides the base {@code <name>.schema.json} sidecar write/read/verify
+ * mechanics those prompts build on.
+ *
+ * <p>Read validation rejects only the token shapes that would otherwise
+ * <em>silently</em> corrupt a value: a nested JSON object/array dropping into
+ * a typed (non-String) column, or a JSON number landing in a Boolean / date /
+ * UUID column as raw text. Scalar string conversions stay lenient until
+ * prompt 43 and parse failures already surface through the existing
+ * {@code file:line:field} diagnostics.
+ */
+public class JsonlSchemaManager {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(JsonlSchemaManager.class);
+    private static final JsonFactory JSON = new JsonFactory();
+
+    /** Format version written into the {@code <name>.schema.json} sidecar. */
+    public static final int SCHEMA_FORMAT_VERSION = 1;
+
+    /** The sidecar file suffix (dots included), e.g. {@code USERS.schema.json}. */
+    public static final String SCHEMA_FILE_SUFFIX = ".schema.json";
+
+    private final List<String> columns;
+    private final Map<String, Class<?>> columnTypes;
+    private final Map<String, Integer> indexByName;
+
+    public JsonlSchemaManager(List<String> columns, Map<String, Class<?>> columnTypes) {
+        this.columns = new ArrayList<>();
+        if (columns != null) {
+            this.columns.addAll(columns);
+        }
+        this.columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (columnTypes != null) {
+            this.columnTypes.putAll(columnTypes);
+        }
+        this.indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < this.columns.size(); i++) {
+            indexByName.put(this.columns.get(i), i);
+        }
+    }
+
+    // ─── Schema accessors ────────────────────────────────────────────
+
+    /** Returns the ordered canonical column names. */
+    public List<String> columns() {
+        return new ArrayList<>(columns);
+    }
+
+    /** Returns the number of schema columns. */
+    public int size() {
+        return columns.size();
+    }
+
+    /** Returns the (case-insensitive) index of the column, or {@code -1}. */
+    public int indexOf(String column) {
+        if (column == null) {
+            return -1;
+        }
+        Integer idx = indexByName.get(column);
+        return idx != null ? idx : -1;
+    }
+
+    /** Returns the canonical column name for an index, or {@code null}. */
+    public String columnName(int index) {
+        return index >= 0 && index < columns.size() ? columns.get(index) : null;
+    }
+
+    /** Returns the expected Java type of the given column, or {@code null}. */
+    public Class<?> typeOf(String column) {
+        return typeOf(indexOf(column));
+    }
+
+    /** Returns the expected Java type of the given column index, or {@code null}. */
+    public Class<?> typeOf(int index) {
+        if (index < 0 || index >= columns.size()) {
+            return null;
+        }
+        return columnTypes.get(columns.get(index));
+    }
+
+    /**
+     * Returns the effective type treated as a STRING column: an explicit
+     * String type or an unmapped/missing type is treated as String (nested
+     * JSON text is only capturable into String columns, prompt 41/45).
+     */
+    private Class<?> effectiveType(int index) {
+        Class<?> type = typeOf(index);
+        return type == null ? String.class : type;
+    }
+
+    // ─── Read-side validation (prompt 41) ────────────────────────────
+
+    /**
+     * Validates that a raw JSON token can be placed into the schema column
+     * without silent type corruption. Callers convert afterwards; parse
+     * failures keep flowing through the existing {@code file:line:field}
+     * conversion diagnostics.
+     *
+     * @param columnIndex the schema column index
+     * @param token the JSON value token read from the record
+     * @param raw the raw token text (used in the message)
+     * @param context a prefix carrying {@code file:line} diagnostics, e.g.
+     *                {@code "users.jsonl:line 12: "}
+     * @throws DieselIOException when the token shape cannot map to the column
+     */
+    public void validateReadToken(int columnIndex, JsonToken token, String raw, String context) {
+        if (columnIndex < 0 || columnIndex >= columns.size() || token == null) {
+            return;
+        }
+        String field = columns.get(columnIndex);
+        Class<?> type = effectiveType(columnIndex);
+        if (isStringType(type)) {
+            return;
+        }
+        if (token == JsonToken.VALUE_NULL) {
+            return;
+        }
+        if (isNumericType(type)) {
+            if (token == JsonToken.VALUE_STRING
+                    || token == JsonToken.VALUE_NUMBER_INT
+                    || token == JsonToken.VALUE_NUMBER_FLOAT) {
+                return;
+            }
+            throw incompatible(context, field, raw, token, type);
+        }
+        if (type == Boolean.class || type == LocalDate.class
+                || type == LocalDateTime.class || type == UUID.class) {
+            if (token == JsonToken.VALUE_STRING
+                    || (type == Boolean.class
+                        && (token == JsonToken.VALUE_TRUE || token == JsonToken.VALUE_FALSE))) {
+                return;
+            }
+            throw incompatible(context, field, raw, token, type);
+        }
+        if (token == JsonToken.VALUE_STRING) {
+            return;
+        }
+        throw incompatible(context, field, raw, token, type);
+    }
+
+    private DieselIOException incompatible(String context, String field, String raw, JsonToken token, Class<?> type) {
+        String tag = switch (token) {
+            case START_OBJECT -> "object";
+            case START_ARRAY -> "array";
+            case VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> "number";
+            case VALUE_TRUE, VALUE_FALSE -> "boolean";
+            default -> String.valueOf(token);
+        };
+        String detail = raw != null && !raw.isBlank() ? " " + raw : "";
+        return new DieselIOException(context + "field '" + field + "': JSON " + tag + detail
+                + " is not compatible with column type " + typeName(type), null);
+    }
+
+    // ─── Write-side validation (prompt 41) ───────────────────────────
+
+    /**
+     * Validates that a Java value can be serialised into the schema column
+     * without breaking the read-back contract. Rejects the shapes that would
+     * either fail or silently corrupt on load; scalar string coercion stays
+     * lenient until JsonTypeMapper (prompt 43).
+     *
+     * @param columnIndex the schema column index
+     * @param value the value about to be written
+     * @param field the field name used in diagnostics
+     * @param recordContext a prefix carrying the record coordinate, e.g.
+     *                      {@code "record 1: "} (no file/line exists at write
+     *                      time)
+     * @throws DieselIOException when the value is not representable in the column
+     */
+    public void validateWriteValue(int columnIndex, Object value, String field, String recordContext) {
+        if (columnIndex < 0 || columnIndex >= columns.size()) {
+            return;
+        }
+        Class<?> type = effectiveType(columnIndex);
+        if (isStringType(type) || value == null) {
+            return;
+        }
+        if (value instanceof Map<?, ?> || value instanceof List<?> || value.getClass().isArray()) {
+            throw new DieselIOException(recordContext + "field '" + field + "': JSON object/array cannot be stored "
+                    + "in column type " + typeName(type)
+                    + " (nested structures are captured as JSON text only in STRING columns)", null);
+        }
+        if (value instanceof Boolean) {
+            requireType(field, value, type, Boolean.class, recordContext);
+        } else if (value instanceof Integer || value instanceof Long
+                || value instanceof Short || value instanceof Byte) {
+            requireNumeric(field, value, type, recordContext);
+        } else if (value instanceof Float || value instanceof Double) {
+            if (type == Integer.class || type == Long.class || type == Short.class || type == Byte.class) {
+                throw new DieselIOException(recordContext + "field '" + field + "': floating-point value " + value
+                        + " cannot be stored in column type " + typeName(type), null);
+            }
+        } else if (value instanceof BigDecimal) {
+            if (type == Integer.class || type == Long.class || type == Short.class || type == Byte.class) {
+                throw new DieselIOException(recordContext + "field '" + field + "': BigDecimal value " + value
+                        + " cannot be stored in column type " + typeName(type), null);
+            }
+        } else if (value instanceof LocalDate) {
+            requireType(field, value, type, LocalDate.class, recordContext);
+        } else if (value instanceof LocalDateTime) {
+            requireType(field, value, type, LocalDateTime.class, recordContext);
+        } else if (value instanceof UUID) {
+            requireType(field, value, type, UUID.class, recordContext);
+        }
+    }
+
+    private void requireNumeric(String field, Object value, Class<?> type, String recordContext) {
+        if (!isNumericType(type) && type != BigDecimal.class) {
+            throw new DieselIOException(recordContext + "field '" + field + "': value " + value
+                    + " cannot be stored in column type " + typeName(type), null);
+        }
+    }
+
+    private void requireType(String field, Object value, Class<?> type, Class<?> expected, String recordContext) {
+        if (type != expected) {
+            throw new DieselIOException(recordContext + "field '" + field + "': value " + value
+                    + " cannot be stored in column type " + typeName(type), null);
+        }
+    }
+
+    // ─── JSON Path (dot-notation) base (prompt 41/45) ────────────────
+
+    /**
+     * A projection item resolved against the schema: either an exact column
+     * ({@code segments} empty) or a dot-path whose longest schema-column
+     * prefix was matched and whose remaining segments address a nested value
+     * inside that column's captured JSON text.
+     *
+     * @param columnIndex the schema column index holding the value
+     * @param segments the remaining dot-path segments inside the column value
+     * @param key the original projection item string
+     */
+    public record ProjectionSlot(int columnIndex, List<String> segments, String key) {
+        public boolean isPlainColumn() {
+            return columnIndex >= 0 && segments.isEmpty();
+        }
+    }
+
+    /**
+     * Resolves a projection item (a plain column name or a dot path) against
+     * the schema. Uses the longest schema-column prefix for dotted paths so
+     * {@code DATA.user.address.city} maps to the {@code DATA} column with the
+     * remaining segments; an item that matches no column at all yields a slot
+     * with {@code columnIndex == -1}.
+     */
+    public ProjectionSlot resolveProjectionItem(String item) {
+        if (item == null || item.isBlank()) {
+            return new ProjectionSlot(-1, List.of(), item);
+        }
+        int exact = indexOf(item);
+        if (exact >= 0) {
+            return new ProjectionSlot(exact, List.of(), item);
+        }
+        String[] parts = item.split("\\.");
+        for (int prefix = parts.length; prefix > 0; prefix--) {
+            String joined = String.join(".", java.util.Arrays.copyOf(parts, prefix));
+            int idx = indexOf(joined);
+            if (idx >= 0) {
+                List<String> rest = new ArrayList<>();
+                for (int i = prefix; i < parts.length; i++) {
+                    rest.add(parts[i]);
+                }
+                return new ProjectionSlot(idx, rest, item);
+            }
+        }
+        return new ProjectionSlot(-1, List.of(), item);
+    }
+
+    /**
+     * Extracts the value at the given dot-path segments from a JSON text value
+     * (the compact JSON text captured into a STRING column). Token-level walk,
+     * no DOM. Returns {@code null} when the path is absent or the container is
+     * not an object; scalar leaves are returned as their raw token text and
+     * nested leaves as compact JSON text.
+     */
+    public Object extractPathValue(String jsonText, List<String> segments) {
+        if (jsonText == null || segments == null || segments.isEmpty()) {
+            return null;
+        }
+        try (JsonParser p = JSON.createParser(new StringReader(jsonText))) {
+            JsonToken t = p.nextToken();
+            for (int i = 0; i < segments.size(); i++) {
+                if (t != JsonToken.START_OBJECT) {
+                    return null;
+                }
+                String wanted = segments.get(i);
+                boolean found = false;
+                while (p.nextToken() != JsonToken.END_OBJECT) {
+                    if (p.currentToken() != JsonToken.FIELD_NAME) {
+                        return null;
+                    }
+                    if (!wanted.equals(p.currentName())) {
+                        JsonToken value = p.nextToken();
+                        skipValue(p, value);
+                        continue;
+                    }
+                    t = p.nextToken();
+                    found = true;
+                    break;
+                }
+                if (!found) {
+                    return null;
+                }
+                if (i == segments.size() - 1) {
+                    return leafValue(p, t);
+                }
+                if (t != JsonToken.START_OBJECT) {
+                    return null;
+                }
+            }
+            return null;
+        } catch (IOException e) {
+            LOGGER.warn("Failed to extract JSON path {}: {}", String.join(".", segments), e.getMessage());
+            return null;
+        }
+    }
+
+    private Object leafValue(JsonParser p, JsonToken t) throws IOException {
+        return switch (t) {
+            case VALUE_NULL -> null;
+            case VALUE_STRING -> p.getText();
+            case VALUE_TRUE, VALUE_FALSE, VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> p.getText();
+            case START_OBJECT, START_ARRAY -> capture(p);
+            default -> null;
+        };
+    }
+
+    private static String capture(JsonParser p) throws IOException {
+        StringWriter sw = new StringWriter();
+        try (JsonGenerator g = JSON.createGenerator(sw)) {
+            g.copyCurrentStructure(p);
+            g.flush();
+        }
+        return sw.toString();
+    }
+
+    private static void skipValue(JsonParser p, JsonToken t) throws IOException {
+        if (t == JsonToken.START_OBJECT || t == JsonToken.START_ARRAY) {
+            p.skipChildren();
+        }
+    }
+
+    // ─── Schema sidecar file (base, prompt 41/44) ────────────────────
+
+    /**
+     * A deterministic description of the table schema as written to the
+     * {@code <name>.schema.json} sidecar.
+     *
+     * @param formatVersion the sidecar format version
+     * @param columns the ordered columns with names and type names
+     */
+    public record SchemaDescriptor(int formatVersion, List<SchemaColumn> columns) {
+    }
+
+    /** A single schema column in the sidecar descriptor. */
+    public record SchemaColumn(String name, String type) {
+    }
+
+    /** Returns the current schema as a sidecar descriptor. */
+    public SchemaDescriptor describe() {
+        List<SchemaColumn> columns = new ArrayList<>();
+        for (int i = 0; i < this.columns.size(); i++) {
+            columns.add(new SchemaColumn(this.columns.get(i), typeName(effectiveType(i))));
+        }
+        return new SchemaDescriptor(SCHEMA_FORMAT_VERSION, columns);
+    }
+
+    /**
+     * Writes the sidecar schema descriptor deterministically (UTF-8, column
+     * order, {@code \n} terminator). Schema inference and evolution decisions
+     * belong to prompt 44; this only persists the current schema.
+     */
+    public void writeSchemaFile(Path target) throws IOException {
+        try (BufferedWriter bw = Files.newBufferedWriter(target, StandardCharsets.UTF_8);
+             JsonGenerator g = JSON.createGenerator(bw)) {
+            g.writeStartObject();
+            g.writeNumberField("formatVersion", SCHEMA_FORMAT_VERSION);
+            g.writeArrayFieldStart("columns");
+            for (SchemaColumn column : describe().columns()) {
+                g.writeStartObject();
+                g.writeStringField("name", column.name());
+                g.writeStringField("type", column.type());
+                g.writeEndObject();
+            }
+            g.writeEndArray();
+            g.writeEndObject();
+            g.writeRaw('\n');
+        }
+    }
+
+    /**
+     * Reads a sidecar descriptor, or returns {@code null} when the file is
+     * missing or malformed (a WARNING is logged for malformed content).
+     */
+    public SchemaDescriptor readSchemaFile(Path file) {
+        if (!Files.exists(file)) {
+            return null;
+        }
+        try (BufferedReader br = Files.newBufferedReader(file, StandardCharsets.UTF_8);
+             JsonParser p = JSON.createParser(br)) {
+            int formatVersion = -1;
+            List<SchemaColumn> columns = new ArrayList<>();
+            while (p.nextToken() != null) {
+                if (p.currentToken() == JsonToken.FIELD_NAME && "formatVersion".equals(p.currentName())) {
+                    p.nextToken();
+                    formatVersion = p.getIntValue();
+                } else if (p.currentToken() == JsonToken.FIELD_NAME && "columns".equals(p.currentName())) {
+                    p.nextToken();
+                    if (p.currentToken() != JsonToken.START_ARRAY) {
+                        return null;
+                    }
+                    while (p.nextToken() != JsonToken.END_ARRAY) {
+                        if (p.currentToken() != JsonToken.START_OBJECT) {
+                            return null;
+                        }
+                        String name = null;
+                        String type = null;
+                        while (p.nextToken() != JsonToken.END_OBJECT) {
+                            if (p.currentToken() != JsonToken.FIELD_NAME) {
+                                return null;
+                            }
+                            String field = p.currentName();
+                            p.nextToken();
+                            if ("name".equals(field)) {
+                                name = p.getText();
+                            } else if ("type".equals(field)) {
+                                type = p.getText();
+                            } else {
+                                skipValue(p, p.currentToken());
+                            }
+                        }
+                        columns.add(new SchemaColumn(name, type));
+                    }
+                }
+            }
+            return new SchemaDescriptor(formatVersion, columns);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to read JSONL schema sidecar {}: {}", file, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Verifies a sidecar descriptor against the current schema and returns a
+     * list of problems (empty when the sidecar is consistent).
+     */
+    public List<String> verifySchemaFile(SchemaDescriptor descriptor) {
+        List<String> problems = new ArrayList<>();
+        if (descriptor == null || descriptor.columns() == null) {
+            problems.add("schema sidecar is missing or malformed");
+            return problems;
+        }
+        if (descriptor.formatVersion() > SCHEMA_FORMAT_VERSION) {
+            problems.add("schema sidecar format version " + descriptor.formatVersion()
+                    + " exceeds supported " + SCHEMA_FORMAT_VERSION);
+        }
+        List<SchemaColumn> stored = descriptor.columns();
+        if (stored.size() != columns.size()) {
+            problems.add("schema sidecar has " + stored.size() + " columns, schema has " + columns.size());
+        }
+        for (int i = 0; i < Math.min(stored.size(), columns.size()); i++) {
+            SchemaColumn column = stored.get(i);
+            if (!columns.get(i).equalsIgnoreCase(column.name() == null ? "" : column.name())) {
+                problems.add("schema sidecar column " + i + " '" + column.name()
+                        + "' does not match schema '" + columns.get(i) + "'");
+            } else if (!typeName(effectiveType(i)).equals(column.type())) {
+                problems.add("schema sidecar column '" + column.name() + "': type '" + column.type()
+                        + "' does not match schema '" + typeName(effectiveType(i)) + "'");
+            }
+        }
+        return problems;
+    }
+
+    // ─── Type name helpers ───────────────────────────────────────────
+
+    /** Returns the sidecar type name for a Java class, or {@code null}. */
+    public static String typeName(Class<?> type) {
+        if (type == null) {
+            return null;
+        }
+        return switch (type.getSimpleName()) {
+            case "Long" -> "Long";
+            case "Integer" -> "Integer";
+            case "Short" -> "Short";
+            case "Byte" -> "Byte";
+            case "Double" -> "Double";
+            case "Float" -> "Float";
+            case "BigDecimal" -> "BigDecimal";
+            case "Boolean" -> "Boolean";
+            case "LocalDate" -> "LocalDate";
+            case "LocalDateTime" -> "LocalDateTime";
+            case "UUID" -> "UUID";
+            case "String" -> "String";
+            default -> type.getSimpleName();
+        };
+    }
+
+    /** Resolves a sidecar type name to a Java class, or {@code null}. */
+    public static Class<?> typeClass(String name) {
+        if (name == null) {
+            return null;
+        }
+        return switch (name) {
+            case "Long" -> Long.class;
+            case "Integer" -> Integer.class;
+            case "Short" -> Short.class;
+            case "Byte" -> Byte.class;
+            case "Double" -> Double.class;
+            case "Float" -> Float.class;
+            case "BigDecimal" -> BigDecimal.class;
+            case "Boolean" -> Boolean.class;
+            case "LocalDate" -> LocalDate.class;
+            case "LocalDateTime" -> LocalDateTime.class;
+            case "UUID" -> UUID.class;
+            case "String" -> String.class;
+            default -> null;
+        };
+    }
+
+    private static boolean isStringType(Class<?> type) {
+        return type == String.class;
+    }
+
+    private static boolean isNumericType(Class<?> type) {
+        return type == Long.class || type == Integer.class || type == Short.class || type == Byte.class
+                || type == Double.class || type == Float.class || type == BigDecimal.class;
+    }
+
+    }

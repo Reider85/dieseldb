@@ -19,10 +19,11 @@ import diesel.DieselIOException;
  *
  * <p>Base implementation (prompt 40), explicitly out of scope here: no
  * secondary Java-serialised .table mirror (prompt 50), no compression
- * (prompt 52), no append-only mode (prompt 49), no schema manager or
- * type-coercion policies (prompts 41/43/44). Nested object/array values are
- * stored in a column as compact JSON text - the flatten/json_column rules land
- * in prompt 45.
+ * (prompt 52), no append-only mode (prompt 49). Type validation is wired
+ * through the shared {@link JsonlSchemaManager} on both read and write
+ * (prompt 41); strict coercion, schema inference/evolution and the
+ * flatten/json_column storage rules land in prompts 43/44/45. Nested
+ * object/array values are stored in a column as compact JSON text.
  *
  * <p>Rows are kept internally as compact Object[] arrays (one per row, slot
  * {@code i} = value of schema column {@code i}) instead of per-row Maps
@@ -118,7 +119,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
         String fileName = resolveFilePath(".jsonl");
         try {
             try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
-                 JsonlRowWriter jsonlWriter = new JsonlRowWriter(afw.bufferedWriter(), columns)) {
+                 JsonlRowWriter jsonlWriter = new JsonlRowWriter(afw.bufferedWriter(), columns, columnTypes)) {
                 for (Object[] row : rows) {
                     jsonlWriter.writeRow(row);
                 }

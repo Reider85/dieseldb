@@ -29,6 +29,14 @@ import diesel.DieselIOException;
  * objects/arrays (base nesting support, prompt 40; the storage stores such
  * values as compact JSON text in a column - full flatten/json_column rules
  * land in prompt 45).
+ *
+ * <p>Write-side type validation (prompt 41): when the writer is constructed
+ * with schema types, every value is checked against its column type before
+ * serialisation. Shapes that would corrupt the read-back contract - a nested
+ * object/array into a typed (non-String) column, a floating-point value into
+ * an integer column, a date/UUID value into a differently-typed column - fail
+ * with {@code record N: field 'X'} diagnostics. String-to-typed coercion
+ * stays lenient (strict rules arrive with JsonTypeMapper, prompt 43).
  */
 public class JsonlRowWriter implements AutoCloseable {
 
@@ -36,13 +44,34 @@ public class JsonlRowWriter implements AutoCloseable {
 
     private final JsonGenerator generator;
     private final List<String> columns;
+    private final JsonlSchemaManager schema;
+    private long recordNumber;
 
     /**
      * @param writer  the underlying character-output stream
      * @param columns the ordered column names (field order of each record)
      */
     public JsonlRowWriter(Writer writer, List<String> columns) throws IOException {
-        this.columns = columns;
+        this(writer, new JsonlSchemaManager(columns, null));
+    }
+
+    /**
+     * @param writer      the underlying character-output stream
+     * @param columns     the ordered column names (field order of each record)
+     * @param columnTypes the column name to expected Java type, enabling
+     *                    write-side type validation against the schema
+     */
+    public JsonlRowWriter(Writer writer, List<String> columns, Map<String, Class<?>> columnTypes) throws IOException {
+        this(writer, new JsonlSchemaManager(columns, columnTypes));
+    }
+
+    /**
+     * @param writer the underlying character-output stream
+     * @param schema the shared schema manager (type validation on write)
+     */
+    public JsonlRowWriter(Writer writer, JsonlSchemaManager schema) throws IOException {
+        this.columns = schema.columns();
+        this.schema = schema;
         this.generator = JSON.createGenerator(writer);
     }
 
@@ -53,10 +82,14 @@ public class JsonlRowWriter implements AutoCloseable {
      * @param row the column-to-value map
      */
     public void writeRow(Map<String, Object> row) throws IOException {
+        recordNumber++;
         generator.writeStartObject();
-        for (String column : columns) {
+        for (int i = 0; i < columns.size(); i++) {
+            String column = columns.get(i);
+            Object value = row == null ? null : row.get(column);
+            schema.validateWriteValue(i, value, column, recordContext());
             generator.writeFieldName(column);
-            writeValue(row == null ? null : row.get(column));
+            writeValue(value);
         }
         generator.writeEndObject();
         generator.writeRaw('\n');
@@ -70,13 +103,20 @@ public class JsonlRowWriter implements AutoCloseable {
      * @param row the ordered values aligned with the columns
      */
     public void writeRow(Object[] row) throws IOException {
+        recordNumber++;
         generator.writeStartObject();
         for (int i = 0; i < columns.size(); i++) {
+            Object value = row == null || i >= row.length ? null : row[i];
+            schema.validateWriteValue(i, value, columns.get(i), recordContext());
             generator.writeFieldName(columns.get(i));
-            writeValue(row == null || i >= row.length ? null : row[i]);
+            writeValue(value);
         }
         generator.writeEndObject();
         generator.writeRaw('\n');
+    }
+
+    private String recordContext() {
+        return "record " + recordNumber + ": ";
     }
 
     /**

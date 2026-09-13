@@ -111,9 +111,10 @@
                         <include>**/CsvStorageAdvancedTest.java</include>
                         <include>**/TsvStorageAdvancedTest.java</include>
                         <include>**/CompressionTest.java</include>
-                        <include>**/JsonlStorageTest.java</include>
-                    </includes>
-                    <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
+<include>**/JsonlStorageTest.java</include>
+                         <include>**/JsonlSchemaProjectionTest.java</include>
+                     </includes>
+                     <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
                         <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
                     </systemPropertyVariables>
@@ -182,9 +183,10 @@
                                 <include>**/CsvStorageAdvancedTest.java</include>
                                 <include>**/TsvStorageAdvancedTest.java</include>
                                 <include>**/CompressionTest.java</include>
-                                <include>**/JsonlStorageTest.java</include>
-                            </includes>
-                            <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
+<include>**/JsonlStorageTest.java</include>
+                                 <include>**/JsonlSchemaProjectionTest.java</include>
+                             </includes>
+                             <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
