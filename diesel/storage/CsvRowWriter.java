@@ -19,6 +19,7 @@ public class CsvRowWriter implements AutoCloseable {
 
     private final BufferedWriter writer;
     private final List<String> columns;
+    private final StringBuilder sb = new StringBuilder(256);
 
     /**
      * @param writer  the underlying character-output stream
@@ -32,7 +33,7 @@ public class CsvRowWriter implements AutoCloseable {
     /** Writes the header line (column names separated by commas). */
     public void writeHeader() throws IOException {
         boolean sentinel = TsvRowWriter.isSentinelMode();
-        StringBuilder sb = new StringBuilder();
+        sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append(',');
@@ -49,7 +50,7 @@ public class CsvRowWriter implements AutoCloseable {
      */
     public void writeRow(Map<String, Object> row) throws IOException {
         boolean sentinel = TsvRowWriter.isSentinelMode();
-        StringBuilder sb = new StringBuilder();
+        sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append(',');
@@ -69,7 +70,7 @@ public class CsvRowWriter implements AutoCloseable {
      */
     public void writeRow(Object[] row) throws IOException {
         boolean sentinel = TsvRowWriter.isSentinelMode();
-        StringBuilder sb = new StringBuilder();
+        sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append(',');

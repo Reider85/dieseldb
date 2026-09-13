@@ -2,6 +2,7 @@ package diesel.storage;
 
 import com.github.luben.zstd.ZstdInputStream;
 import com.github.luben.zstd.ZstdOutputStream;
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FilterOutputStream;
@@ -169,7 +170,7 @@ public final class CompressionFactory {
      */
     static BufferedReader openDelimitedReader(File file, CompressionCodec codec, Charset charset)
             throws IOException {
-        InputStream in = Files.newInputStream(file.toPath());
+        InputStream in = new BufferedInputStream(Files.newInputStream(file.toPath()));
         if (codec != null && !codec.isNone()) {
             in = codec.wrapInputStream(in);
         }

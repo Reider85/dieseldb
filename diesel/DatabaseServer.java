@@ -561,15 +561,11 @@ public class DatabaseServer {
          */
         private void sendSerializedResult(Object result) throws IOException {
             byte[] serialized = serializeResult(result);
-            if (serialized.length > compressionThreshold) {
-                out.writeByte(0x01); // compressed marker
-                out.writeInt(serialized.length);
-                out.write(serialized);
-            } else {
-                out.writeByte(0x00); // uncompressed marker
-                out.writeInt(serialized.length);
-                out.write(serialized);
-            }
+            byte[] toSend = compressWithMetrics(serialized);
+            boolean isCompressed = (toSend != serialized);
+            out.writeByte(isCompressed ? 0x01 : 0x00);
+            out.writeInt(toSend.length);
+            out.write(toSend);
             out.flush();
         }
 

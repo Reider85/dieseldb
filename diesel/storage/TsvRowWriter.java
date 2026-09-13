@@ -22,6 +22,7 @@ public class TsvRowWriter implements AutoCloseable {
 
     private final BufferedWriter writer;
     private final List<String> columns;
+    private final StringBuilder sb = new StringBuilder(256);
 
     /**
      * @param writer  the underlying character-output stream
@@ -35,7 +36,7 @@ public class TsvRowWriter implements AutoCloseable {
     /** Writes the header line (column names separated by tabs). */
     public void writeHeader() throws IOException {
         boolean sentinel = isSentinelMode();
-        StringBuilder sb = new StringBuilder();
+        sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append('\t');
@@ -53,7 +54,7 @@ public class TsvRowWriter implements AutoCloseable {
      */
     public void writeRow(Map<String, Object> row) throws IOException {
         boolean sentinel = isSentinelMode();
-        StringBuilder sb = new StringBuilder();
+        sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append('\t');
@@ -73,7 +74,7 @@ public class TsvRowWriter implements AutoCloseable {
      */
     public void writeRow(Object[] row) throws IOException {
         boolean sentinel = isSentinelMode();
-        StringBuilder sb = new StringBuilder();
+        sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append('\t');

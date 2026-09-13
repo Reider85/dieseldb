@@ -249,7 +249,8 @@ LOGGER.warn(msg);
             lineNumber++;
             currentRowLine = lineNumber;
             StringBuilder sb = new StringBuilder(line);
-            while (endsInsideQuotes(sb.toString())) {
+            boolean inQuotes = scanQuotes(sb, 0, false);
+            while (inQuotes) {
                 String more = reader.readLine();
                 if (more == null) {
                     unterminatedRow = true;
@@ -257,7 +258,9 @@ LOGGER.warn(msg);
                 }
                 lineNumber++;
                 sb.append('\n');
+                int start = sb.length();
                 sb.append(more);
+                inQuotes = scanQuotes(sb, start, true);
             }
             nextLine = sb.toString();
         } catch (IOException e) {
@@ -266,10 +269,9 @@ LOGGER.warn(msg);
         }
     }
 
-    /** Returns whether the partial text ends inside an unterminated quoted field. */
-    static boolean endsInsideQuotes(String text) {
-        boolean inQuotes = false;
-        for (int i = 0; i < text.length(); i++) {
+    /** Scans {@code text} from {@code startOffset} given the initial {@code inQuotes} state. */
+    private static boolean scanQuotes(CharSequence text, int startOffset, boolean inQuotes) {
+        for (int i = startOffset; i < text.length(); i++) {
             char c = text.charAt(i);
             if (inQuotes) {
                 if (c == '"') {
@@ -284,6 +286,11 @@ LOGGER.warn(msg);
             }
         }
         return inQuotes;
+    }
+
+    /** Returns whether the partial text ends inside an unterminated quoted field. */
+    static boolean endsInsideQuotes(String text) {
+        return scanQuotes(text, 0, false);
     }
 
     private Object[] parseDataLineArray(String line) {
