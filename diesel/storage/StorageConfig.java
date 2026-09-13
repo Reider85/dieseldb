@@ -52,6 +52,20 @@ final class StorageConfig {
         return ROOT_PROPS.getProperty(key, defaultValue);
     }
 
+    /**
+     * Returns an integer config value parsed from {@link #getString}. Returns
+     * {@code defaultValue} when the value is absent or unparsable.
+     */
+    static int getInt(String key, int defaultValue) {
+        String raw = getString(key, String.valueOf(defaultValue));
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (RuntimeException e) {
+            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+            return defaultValue;
+        }
+    }
+
     /** Returns the configured charset (default UTF-8). */
     static Charset getCharset() {
         String name = System.getProperty(CHARSET_KEY);

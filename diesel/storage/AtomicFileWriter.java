@@ -64,10 +64,13 @@ public final class AtomicFileWriter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AtomicFileWriter.class);
 
     /** How many times the final rename may be attempted before giving up. */
-    private static final int MAX_MOVE_ATTEMPTS = 5;
+    private static final int MAX_MOVE_ATTEMPTS = StorageConfig.getInt("atomic.write.move.max.attempts", 10);
 
     /** Exponent base (ms) of the backoff between rename attempts, doubled each time. */
     private static final long MOVE_RETRY_BASE_DELAY_MS = 25;
+
+    /** Upper bound (ms) of the exponential backoff per attempt. */
+    private static final long MOVE_RETRY_MAX_DELAY_MS = StorageConfig.getInt("atomic.write.move.retry.max.delay.ms", 300);
 
     /**
      * Serialises same-target writers within the JVM. The temp path is the
@@ -221,7 +224,7 @@ public final class AtomicFileWriter implements Closeable {
                 if (attempt < MAX_MOVE_ATTEMPTS) {
                     LOGGER.warn("Move {} -> {} failed on attempt {} (\"{}\"); retrying",
                             tmp, target, attempt, e.getMessage());
-                    sleepQuietly(MOVE_RETRY_BASE_DELAY_MS * (1L << (attempt - 1)));
+                    sleepQuietly(Math.min(MOVE_RETRY_BASE_DELAY_MS * (1L << (attempt - 1)), MOVE_RETRY_MAX_DELAY_MS));
                 }
             }
         }
