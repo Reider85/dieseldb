@@ -1,6 +1,10 @@
 package diesel.storage.json;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.util.Objects;
+import java.util.Properties;
 
 /**
  * Common configuration for the streaming JSON abstraction (prompt 42).
@@ -15,12 +19,16 @@ import java.util.Objects;
  * <p>Duplicate-key behaviour is carried here as the single hook for the
  * {@code jsonl.duplicate.keys} config (prompt 43): {@link #FAIL} (default)
  * rejects a duplicated field name, {@link #LAST_WINS} keeps the current
- * warn-and-overwrite behaviour.
+ * warn-and-overwrite behaviour. The type-coercion mode for JSONL readers is
+ * carried here as the hook for {@code jsonl.type.coercion} (prompt 43):
+ * {@link #STRICT} (default) rejects a JSON string being coerced into a
+ * numeric column, {@link #LENIENT} allows it with a WARNING.
  *
- * <p>Values may be overridden through system properties
+ * <p>Values may be overridden through the root {@code config.properties}
+ * file, and a system property of the same name wins over it:
  * {@code jsonl.max.nesting.depth}, {@code jsonl.max.string.length},
- * {@code jsonl.parser.backend} and {@code jsonl.duplicate.keys}; invalid
- * overrides fall back to the defaults.
+ * {@code jsonl.parser.backend}, {@code jsonl.duplicate.keys} and
+ * {@code jsonl.type.coercion}; invalid overrides fall back to the defaults.
  */
 public final class JsonParserConfig {
 
@@ -36,16 +44,21 @@ public final class JsonParserConfig {
     /** Duplicate-key policy wired to the jsonl.duplicate.keys config (prompt 43). */
     public enum DuplicateKeyMode { FAIL, LAST_WINS }
 
+    /** JSONL type-coercion mode wired to the jsonl.type.coercion config (prompt 43). */
+    public enum CoercionMode { STRICT, LENIENT }
+
     private final int maxNestingDepth;
     private final int maxStringLength;
     private final Backend backend;
     private final DuplicateKeyMode duplicateKeys;
+    private final CoercionMode coercion;
 
     private JsonParserConfig(Builder builder) {
         this.maxNestingDepth = builder.maxNestingDepth;
         this.maxStringLength = builder.maxStringLength;
         this.backend = builder.backend;
         this.duplicateKeys = builder.duplicateKeys;
+        this.coercion = builder.coercion;
     }
 
     /** Returns the default configuration (strict, depth 64, 1MB strings, Jackson backend). */
@@ -74,6 +87,11 @@ public final class JsonParserConfig {
         return duplicateKeys;
     }
 
+    /** Returns the JSONL type-coercion mode (STRICT by default, prompt 43). */
+    public CoercionMode typeCoercion() {
+        return coercion;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -81,13 +99,16 @@ public final class JsonParserConfig {
     /** Fluent builder; invalid values are clamped to the defaults. */
     public static final class Builder {
 
+        private static final Properties ROOT_PROPS = loadRootProps();
+
         private int maxNestingDepth = readIntProperty("jsonl.max.nesting.depth", DEFAULT_MAX_NESTING_DEPTH);
         private int maxStringLength = readIntProperty("jsonl.max.string.length", DEFAULT_MAX_STRING_LENGTH);
         private Backend backend = readBackendProperty();
         private DuplicateKeyMode duplicateKeys = readDuplicateKeyProperty();
+        private CoercionMode coercion = readCoercionProperty();
 
         private static int readIntProperty(String key, int fallback) {
-            String value = System.getProperty(key);
+            String value = readString(key, null);
             if (value == null) {
                 return fallback;
             }
@@ -99,11 +120,17 @@ public final class JsonParserConfig {
             }
         }
 
-        private static Backend readBackendProperty() {
-            String value = System.getProperty("jsonl.parser.backend");
-            if (value == null) {
-                return Backend.JACKSON;
+        private static String readString(String key, String fallback) {
+            String systemValue = System.getProperty(key);
+            if (systemValue != null) {
+                return systemValue;
             }
+            String configured = ROOT_PROPS.getProperty(key);
+            return configured != null && !configured.isBlank() ? configured.trim() : fallback;
+        }
+
+        private static Backend readBackendProperty() {
+            String value = readString("jsonl.parser.backend", "JACKSON");
             try {
                 return Backend.valueOf(value.trim().toUpperCase());
             } catch (IllegalArgumentException e) {
@@ -112,15 +139,36 @@ public final class JsonParserConfig {
         }
 
         private static DuplicateKeyMode readDuplicateKeyProperty() {
-            String value = System.getProperty("jsonl.duplicate.keys");
-            if (value == null) {
-                return DuplicateKeyMode.FAIL;
-            }
+            String value = readString("jsonl.duplicate.keys", "FAIL");
             try {
                 return DuplicateKeyMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
             } catch (IllegalArgumentException e) {
                 return DuplicateKeyMode.FAIL;
             }
+        }
+
+        private static CoercionMode readCoercionProperty() {
+            String value = readString("jsonl.type.coercion", "STRICT");
+            try {
+                return CoercionMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
+            } catch (IllegalArgumentException e) {
+                return CoercionMode.STRICT;
+            }
+        }
+
+        private static Properties loadRootProps() {
+            Properties props = new Properties();
+            try {
+                File configFile = new File("config.properties");
+                if (configFile.exists()) {
+                    try (FileInputStream fis = new FileInputStream(configFile)) {
+                        props.load(fis);
+                    }
+                }
+            } catch (IOException ignored) {
+                // Fail-safe: an empty set lets callers keep defaults.
+            }
+            return props;
         }
 
         public Builder maxNestingDepth(int maxNestingDepth) {
@@ -143,6 +191,12 @@ public final class JsonParserConfig {
             return this;
         }
 
+        /** Sets the JSONL type-coercion mode ({@code null} resets to STRICT). */
+        public Builder typeCoercion(CoercionMode coercion) {
+            this.coercion = coercion != null ? coercion : CoercionMode.STRICT;
+            return this;
+        }
+
         public JsonParserConfig build() {
             return new JsonParserConfig(this);
         }
@@ -159,12 +213,13 @@ public final class JsonParserConfig {
         return maxNestingDepth == other.maxNestingDepth
                 && maxStringLength == other.maxStringLength
                 && backend == other.backend
-                && duplicateKeys == other.duplicateKeys;
+                && duplicateKeys == other.duplicateKeys
+                && coercion == other.coercion;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys);
+        return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion);
     }
 
     @Override
@@ -172,6 +227,7 @@ public final class JsonParserConfig {
         return "JsonParserConfig{maxNestingDepth=" + maxNestingDepth
                 + ", maxStringLength=" + maxStringLength
                 + ", backend=" + backend
-                + ", duplicateKeys=" + duplicateKeys + '}';
+                + ", duplicateKeys=" + duplicateKeys
+                + ", coercion=" + coercion + '}';
     }
 }

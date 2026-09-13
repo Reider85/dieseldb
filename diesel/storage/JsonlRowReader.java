@@ -4,9 +4,6 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -15,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +21,7 @@ import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonStreamGenerator;
 import diesel.storage.json.JsonStreamParser;
 import diesel.storage.json.JsonStreams;
+import diesel.storage.json.JsonTypeMapper;
 
 /**
  * Streaming reader for JSON Lines (NDJSON) files: one JSON object per line.
@@ -49,8 +46,11 @@ import diesel.storage.json.JsonStreams;
  * schema column type through the shared {@link JsonlSchemaManager} before
  * conversion, so a value that cannot live in a typed column fails with
  * {@code file:line:field} diagnostics instead of silently storing raw text.
- * String-to-typed coercion stays lenient (strict rules arrive with
- * JsonTypeMapper, prompt 43).
+ * Conversion itself is owned by {@link JsonTypeMapper} (prompt 43): numbers
+ * follow the precision rules (2^53 boundary in DOUBLE columns, exact LONG
+ * reads, scientific notation supported) and the {@code jsonl.type.coercion}
+ * mode decides whether a JSON string may be coerced into a numeric column
+ * (STRICT default rejects, LENIENT allows with a WARNING).
  *
  * <p>Projection (prompt 41): {@link #setProjection} limits a read to the
  * requested schema columns and/or JSON Path (dot-notation) items. Fields
@@ -73,6 +73,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private final Map<String, Integer> indexByName;
     private final JsonlSchemaManager schema;
     private final JsonParserConfig config;
+    private final JsonTypeMapper typeMapper;
     private List<JsonlSchemaManager.ProjectionSlot> projectionSlots;
     private boolean[] neededByColumn;
     private long parsedFieldCount;
@@ -123,6 +124,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         this.columnTypes = columnTypes;
         this.fileName = fileName;
         this.config = config;
+        this.typeMapper = new JsonTypeMapper(config);
         this.indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (int i = 0; i < columns.size(); i++) {
             indexByName.put(columns.get(i), i);
@@ -161,6 +163,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         }
         this.fileName = fileName;
         this.config = config;
+        this.typeMapper = new JsonTypeMapper(config);
         this.indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (int i = 0; i < columns.size(); i++) {
             indexByName.put(columns.get(i), i);
@@ -471,63 +474,15 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             case VALUE_NULL -> {
                 return null;
             }
-            case VALUE_STRING, VALUE_TRUE, VALUE_FALSE -> {
-                return convertString(p.getText(), idx);
-            }
-            case VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> {
-                return convertNumber(p.getText(), idx);
+            case VALUE_STRING, VALUE_TRUE, VALUE_FALSE, VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> {
+                return typeMapper.toColumnValue(typeAt(idx), valueToken, p.getText(),
+                        contextPrefix() + "line " + lastRowLine + ": field '" + field + "': ");
             }
             case START_OBJECT, START_ARRAY -> {
                 return captureNested(p);
             }
             default -> throw new DieselIOException(contextPrefix() + "line " + lastRowLine
                     + ": field '" + field + "': unsupported JSON value " + valueToken, null);
-        }
-    }
-
-    private Object convertString(String raw, Integer columnIndex) {
-        Class<?> type = typeAt(columnIndex);
-        if (type == null) {
-            return raw;
-        }
-        try {
-            return switch (type.getSimpleName()) {
-                case "Long" -> Long.parseLong(raw.trim());
-                case "Integer" -> Integer.parseInt(raw.trim());
-                case "Short" -> Short.parseShort(raw.trim());
-                case "Byte" -> Byte.parseByte(raw.trim());
-                case "Double" -> Double.parseDouble(raw.trim());
-                case "Float" -> Float.parseFloat(raw.trim());
-                case "BigDecimal" -> new BigDecimal(raw.trim());
-                case "Boolean" -> DelimitedRowReader.parseBooleanStrict(raw);
-                case "LocalDate" -> LocalDate.parse(raw.trim());
-                case "LocalDateTime" -> LocalDateTime.parse(raw.trim());
-                case "UUID" -> UUID.fromString(raw.trim());
-                default -> raw;
-            };
-        } catch (RuntimeException e) {
-            throw conversionError(e, raw, type.getSimpleName(), columnName(columnIndex));
-        }
-    }
-
-    private Object convertNumber(String raw, Integer columnIndex) {
-        Class<?> type = typeAt(columnIndex);
-        if (type == null) {
-            return raw;
-        }
-        try {
-            return switch (type.getSimpleName()) {
-                case "Long" -> Long.parseLong(raw);
-                case "Integer" -> Integer.parseInt(raw);
-                case "Short" -> Short.parseShort(raw);
-                case "Byte" -> Byte.parseByte(raw);
-                case "Double" -> Double.parseDouble(raw);
-                case "Float" -> Float.parseFloat(raw);
-                case "BigDecimal" -> new BigDecimal(raw);
-                default -> raw;
-            };
-        } catch (RuntimeException e) {
-            throw conversionError(e, raw, type.getSimpleName(), columnName(columnIndex));
         }
     }
 
@@ -540,17 +495,6 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             return null;
         }
         return type;
-    }
-
-    private String columnName(Integer columnIndex) {
-        return columnIndex == null || columnIndex < 0 || columnIndex >= columns.size()
-                ? String.valueOf(columnIndex)
-                : columns.get(columnIndex);
-    }
-
-    private DieselIOException conversionError(RuntimeException cause, String raw, String typeName, String colName) {
-        return new DieselIOException(contextPrefix() + "line " + lastRowLine
-                + ": field '" + colName + "': cannot parse \"" + raw + "\" as " + typeName, cause);
     }
 
     /**

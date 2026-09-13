@@ -117,9 +117,10 @@
                         <include>**/TsvStorageAdvancedTest.java</include>
                         <include>**/CompressionTest.java</include>
 <include>**/JsonlStorageTest.java</include>
-                         <include>**/JsonlSchemaProjectionTest.java</include>
- <include>**/JsonStreamAbstractionTest.java</include>
-                     </includes>
+<include>**/JsonlSchemaProjectionTest.java</include>
+  <include>**/JsonlTypeMapperTest.java</include>
+  <include>**/JsonStreamAbstractionTest.java</include>
+                             </includes>
                      <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
                         <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
@@ -190,8 +191,9 @@
                                 <include>**/TsvStorageAdvancedTest.java</include>
                                 <include>**/CompressionTest.java</include>
 <include>**/JsonlStorageTest.java</include>
-                                 <include>**/JsonlSchemaProjectionTest.java</include>
- <include>**/JsonStreamAbstractionTest.java</include>
+<include>**/JsonlSchemaProjectionTest.java</include>
+  <include>**/JsonlTypeMapperTest.java</include>
+  <include>**/JsonStreamAbstractionTest.java</include>
                              </includes>
                              <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>

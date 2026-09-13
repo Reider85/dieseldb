@@ -4,6 +4,7 @@ import diesel.storage.JsonlRowReader;
 import diesel.storage.JsonlRowStorage;
 import diesel.storage.JsonlRowWriter;
 import diesel.storage.StorageFactory;
+import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -331,6 +332,9 @@ class JsonlStorageTest {
     void jsonBooleansAndNumbersConvertToColumns() throws Exception {
         List<String> columns = List.of("ID", "AGE", "ACTIVE");
         Map<String, Class<?>> types = Map.of("ID", Long.class, "AGE", Integer.class, "ACTIVE", Boolean.class);
+        JsonParserConfig lenient = JsonParserConfig.builder()
+                .typeCoercion(JsonParserConfig.CoercionMode.LENIENT)
+                .build();
 
         File jsonlFile = tempDir.resolve("conv.jsonl").toFile();
         try (FileWriter fw = new FileWriter(jsonlFile)) {
@@ -340,7 +344,7 @@ class JsonlStorageTest {
 
         List<Map<String, Object>> loaded;
         try (BufferedReader br = new BufferedReader(new FileReader(jsonlFile));
-             JsonlRowReader reader = new JsonlRowReader(br, columns, types)) {
+             JsonlRowReader reader = new JsonlRowReader(br, columns, types, jsonlFile.getPath(), lenient)) {
             loaded = reader.readAll();
         }
 

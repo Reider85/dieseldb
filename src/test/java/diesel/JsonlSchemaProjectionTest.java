@@ -4,6 +4,7 @@ import diesel.storage.JsonlRowReader;
 import diesel.storage.JsonlRowStorage;
 import diesel.storage.JsonlRowWriter;
 import diesel.storage.JsonlSchemaManager;
+import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -119,10 +120,13 @@ class JsonlSchemaProjectionTest {
 
     @Test
     void readScalarStringCoercionStaysLenient() throws Exception {
+        JsonParserConfig lenient = JsonParserConfig.builder()
+                .typeCoercion(JsonParserConfig.CoercionMode.LENIENT)
+                .build();
         Map<String, Object> loaded = readOne("{\"ID\":\"1\",\"NAME\":\"A\",\"AGE\":\"30\","
                 + "\"BALANCE\":\"100.5\",\"BIRTHDATE\":\"2020-01-02\","
                 + "\"LAST_LOGIN\":\"2020-01-02T10:00:00\","
-                + "\"SESSION_ID\":\"123e4567-e89b-12d3-a456-426614174000\",\"ACTIVE\":\"true\"}");
+                + "\"SESSION_ID\":\"123e4567-e89b-12d3-a456-426614174000\",\"ACTIVE\":\"true\"}", lenient);
         assertEquals(1L, loaded.get("ID"));
         assertEquals(30, loaded.get("AGE"));
         assertEquals(new BigDecimal("100.5"), loaded.get("BALANCE"));
@@ -571,6 +575,13 @@ class JsonlSchemaProjectionTest {
     private static Map<String, Object> readOne(String line) throws Exception {
         try (BufferedReader br = new BufferedReader(new StringReader(line + "\n"));
              JsonlRowReader reader = new JsonlRowReader(br, cols(), types(), FILE_HINT)) {
+            return reader.readAll().get(0);
+        }
+    }
+
+    private static Map<String, Object> readOne(String line, JsonParserConfig config) throws Exception {
+        try (BufferedReader br = new BufferedReader(new StringReader(line + "\n"));
+             JsonlRowReader reader = new JsonlRowReader(br, cols(), types(), FILE_HINT, config)) {
             return reader.readAll().get(0);
         }
     }

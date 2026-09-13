@@ -25,6 +25,7 @@ import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonStreamGenerator;
 import diesel.storage.json.JsonStreamParser;
 import diesel.storage.json.JsonStreams;
+import diesel.storage.json.JsonTypeMapper;
 
 /**
  * Single owner of the JSONL schema: the ordered column names, the
@@ -43,9 +44,9 @@ import diesel.storage.json.JsonStreams;
  * <p>Read validation rejects only the token shapes that would otherwise
  * <em>silently</em> corrupt a value: a nested JSON object/array dropping into
  * a typed (non-String) column, or a JSON number landing in a Boolean / date /
- * UUID column as raw text. Scalar string conversions stay lenient until
- * prompt 43 and parse failures already surface through the existing
- * {@code file:line:field} diagnostics.
+ * UUID column as raw text. Actual value conversion and the number-precision
+ * / coercion rules are owned by JsonTypeMapper (prompt 43) and surface their
+ * failures through the existing {@code file:line:field} diagnostics.
  */
 public class JsonlSchemaManager {
 
@@ -204,8 +205,8 @@ public class JsonlSchemaManager {
     /**
      * Validates that a Java value can be serialised into the schema column
      * without breaking the read-back contract. Rejects the shapes that would
-     * either fail or silently corrupt on load; scalar string coercion stays
-     * lenient until JsonTypeMapper (prompt 43).
+     * either fail or silently corrupt on load; numeric conversion and the 2^53
+     * DOUBLE precision rule are delegated to JsonTypeMapper (prompt 43).
      *
      * @param columnIndex the schema column index
      * @param value the value about to be written
@@ -232,6 +233,7 @@ public class JsonlSchemaManager {
             requireType(field, value, type, Boolean.class, recordContext);
         } else if (value instanceof Integer || value instanceof Long
                 || value instanceof Short || value instanceof Byte) {
+            JsonTypeMapper.validateDoublePrecision(type, value, field, recordContext);
             requireNumeric(field, value, type, recordContext);
         } else if (value instanceof Float || value instanceof Double) {
             if (type == Integer.class || type == Long.class || type == Short.class || type == Byte.class) {
@@ -239,6 +241,7 @@ public class JsonlSchemaManager {
                         + " cannot be stored in column type " + typeName(type), null);
             }
         } else if (value instanceof BigDecimal) {
+            JsonTypeMapper.validateDoublePrecision(type, value, field, recordContext);
             if (type == Integer.class || type == Long.class || type == Short.class || type == Byte.class) {
                 throw new DieselIOException(recordContext + "field '" + field + "': BigDecimal value " + value
                         + " cannot be stored in column type " + typeName(type), null);

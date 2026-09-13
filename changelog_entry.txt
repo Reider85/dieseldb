@@ -1,1 +1,1 @@
-3.0.80 Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable
+3.0.80 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
