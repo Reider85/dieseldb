@@ -340,21 +340,32 @@ public class PersistenceTest {
     @Test
     void testDropTableDeletesCompressedDelimitedFiles() {
         LOGGER.log(Level.INFO, "Starting test: testDropTableDeletesCompressedDelimitedFiles");
-        String prev = System.getProperty("csv.compression.codec");
+        String prevCsv = System.getProperty("csv.compression.codec");
+        String prevTsv = System.getProperty("tsv.compression.codec");
         try {
             System.setProperty("csv.compression.codec", "zstd");
+            System.setProperty("tsv.compression.codec", "zstd");
             Database db = new Database(".");
             db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING)", null);
             db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME) VALUES ('X1', 'Xray')", null);
             db.getTable(TABLE).saveToSerializedFile(TABLE);
-            assertTrue(new File(TABLE + ".csv.zst").exists(), "zstd compressed delimited file exists before drop");
+            String delimited = delimitedExtension(db.getTable(TABLE));
+            assertTrue(delimited != null, "test requires a delimited storage type");
+            String compressed = TABLE + delimited + ".zst";
+            assertTrue(new File(compressed).exists(), "zstd compressed delimited file exists before drop");
             db.dropTable(TABLE);
-            assertTrue(!new File(TABLE + ".csv.zst").exists(), "zstd compressed delimited file deleted after drop");
+            assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
+            assertTrue(!new File(compressed).exists(), "zstd compressed delimited file deleted after drop");
         } finally {
-            if (prev == null) {
+            if (prevCsv == null) {
                 System.clearProperty("csv.compression.codec");
             } else {
-                System.setProperty("csv.compression.codec", prev);
+                System.setProperty("csv.compression.codec", prevCsv);
+            }
+            if (prevTsv == null) {
+                System.clearProperty("tsv.compression.codec");
+            } else {
+                System.setProperty("tsv.compression.codec", prevTsv);
             }
             cleanup();
         }
