@@ -2745,3 +2745,22 @@ Changes:
 - src/test/java/diesel/JsonlStorageTest.java: storageNestedColumnRoundTrip now builds the expected nested map with explicit LinkedHashMap insertion order instead of Map.of - Map.of iteration order is JVM-dependent (the JDK currently used iterates "age" before "name"), so the assertion was unreliable; the engine's exact order-preserving round-trip is unaffected.
 - config.properties: storage.type stays csv and csv.compression.codec stays zstd as committed defaults (the configuration this fix targets).
 
+3.0.79 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
+
+Changes:
+- diesel/storage/json/JsonParserConfig.java (new): self-contained config record holding Backend (JACKSON|GSON), maxNestingDepth (default 64), maxStringLength (default 1MB), duplicateKeys mode (FAIL|LAST_WINS); sysprop overrides for all three limits; defaultsFor(Backend) factory
+- diesel/storage/json/JsonStreamParser.java (new): streaming parser interface with hasToken(), getToken(), nextToken(), currentName(), getFieldName(), getDecimalValue(), getString(), getDouble(), getInt(), close()
+- diesel/storage/json/JsonStreamGenerator.java (new): streaming generator interface with writeStartObject/EndObject/WriteFieldName/Null/Boolean/String/Number/Number(long/BigDecimal/float/double)/Raw(char), flush(), close()
+- diesel/storage/json/JsonStreamException.java (new): unchecked exception wrapping IOException/JsonParseException for streaming facade
+- diesel/storage/json/JsonCopy.java (new): structure-copy utility replicating Jackson's copyCurrentStructure semantics on the streaming parser/generator; VALUE_NUMBER_INT uses getLongValue(), VALUE_NUMBER_FLOAT normalizes via getDecimalValue().doubleValue() (matching Jackson's native normalization where 1e3->1000.0, 100.50->100.5), non-finite rejects via Double.isFinite
+- diesel/storage/json/JsonStreams.java (new): top-level facade with parser(Reader,config), parser(String,config), generator(Writer,config), copy(JsonStreamParser,JsonStreamGenerator), toJson(Object,config), toJsonBytes(Object,config)
+- diesel/storage/json/JsonStreamsFactory.java (new): cached Jackson JsonFactory keyed by JsonParserConfig; root value separator set to empty to avoid spurious space between JSONL top-level documents
+- diesel/storage/json/JacksonStreamParser.java (new): JsonStreamParser over Jackson JsonParser; hasToken/name normalization; BigDecimal return for numbers
+- diesel/storage/json/JacksonStreamGenerator.java (new): JsonStreamGenerator wrapping Jackson JsonGenerator; requireFinite guards on writeNumber(float/double) rejecting NaN/Infinity
+- diesel/storage/json/GsonStreamParser.java (new): JsonStreamParser over Gson JsonReader (strict mode); manual nesting depth counter; string-length check; NUMBER int/float distinction via decimal-point detection; raw literal via nextString()
+- diesel/storage/json/GsonStreamGenerator.java (new): JsonStreamGenerator wrapping Gson JsonWriter; setHtmlSafe(false) + setSerializeNulls(true) + setLenient(true) for byte-identical Jackson parity; writeRaw via flush+raw.write
+- diesel/storage/JsonlRowReader.java: migrated to JsonStreamParser/JsonCopy (direct Jackson imports removed); schema validateReadToken called for nested objects/arrays
+- diesel/storage/JsonlRowWriter.java: migrated to JsonStreamGenerator/JsonCopy (direct Jackson imports removed)
+- diesel/storage/JsonlSchemaManager.java: migrated to JsonStreamParser/JsonCopy (direct Jackson imports removed); readSchemaFile/writeSchemaFile parse via streaming facade
+- pom.xml: added com.google.code.gson:gson:2.8.9 (NOT 2.10.1) + JsonStreamAbstractionTest to surefire includes
+- src/test/java/diesel/JsonStreamAbstractionTest.java (new, 14 tests): parser round-trip across backends, nested/flatMap/smooth/NestedReader equivalents, byte-identical copy, writer output byte-identical across backends, non-finite write rejected by both, schema projection round-trip, depth limit rejection, string-length limit, within-limit nesting depth

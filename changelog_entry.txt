@@ -1,8 +1,19 @@
-3.0.78 Prompt 41 - JSONL storage extended features (type validation, field projection, JSON Path dot-notation, schema sidecar)
+3.0.79 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
 
-- new diesel/storage/JsonlSchemaManager: schema owner with read-side validateReadToken (rejects only silent-corruption shapes - nested object/array into typed columns, number into Boolean/date/UUID - with file:line:field diagnostics) and write-side validateWriteValue (Map/List/array into typed columns, float/BigDecimal into integer columns with record N: field 'X'); JSON Path base (resolveProjectionItem longest-prefix + extractPathValue token-level walk); <name>.schema.json sidecar write/read/verify (SCHEMA_FORMAT_VERSION=1)
-- JsonlRowReader: nextArray() validated via the schema; new setProjection/nextProjected/nextProjectedMap/getProjectionItems with token-level skipping of non-requested fields and parsed/skipped counters; projection does not affect full reads; unresolved items dropped with one WARNING
-- JsonlRowWriter: new 3-arg ctor with columnTypes wiring write validation (2-arg unchanged, output identical); JsonlRowStorage.saveToFile passes columnTypes (1-line)
-- JsonlSchemaProjectionTest (19 tests): read/write validation coordinates, lenient string coercion, projection counters on 40-col rows (parsed=3x, skipped=37x), dot path DATA.user.address.city -> "Moscow", sidecar round-trip + mismatch, storage save-reject keeps previous file, load-reject rolls back
-- Benchmark (20k rows x 40 cols): full 620.8ms vs projected 227.2ms (2.7x faster), records parsed=60000/skipped=740000
-- Quick 297/0/0, full suite (4GB, @LargeTest) 297/0/0/0 BUILD SUCCESS, timing exit 0 (heavy >=100ms queries stable), profile skipped (no JOIN/performance keywords)
+Changes:
+- diesel/storage/json/JsonParserConfig.java (new): self-contained config record holding Backend (JACKSON|GSON), maxNestingDepth (default 64), maxStringLength (default 1MB), duplicateKeys mode (FAIL|LAST_WINS); sysprop overrides for all three limits; defaultsFor(Backend) factory
+- diesel/storage/json/JsonStreamParser.java (new): streaming parser interface with hasToken(), getToken(), nextToken(), currentName(), getFieldName(), getDecimalValue(), getString(), getDouble(), getInt(), close()
+- diesel/storage/json/JsonStreamGenerator.java (new): streaming generator interface with writeStartObject/EndObject/WriteFieldName/Null/Boolean/String/Number/Number(long/BigDecimal/float/double)/Raw(char), flush(), close()
+- diesel/storage/json/JsonStreamException.java (new): unchecked exception wrapping IOException/JsonParseException for streaming facade
+- diesel/storage/json/JsonCopy.java (new): structure-copy utility replicating Jackson's copyCurrentStructure semantics on the streaming parser/generator; VALUE_NUMBER_INT uses getLongValue(), VALUE_NUMBER_FLOAT normalizes via getDecimalValue().doubleValue() (matching Jackson's native normalization where 1e3->1000.0, 100.50->100.5), non-finite rejects via Double.isFinite
+- diesel/storage/json/JsonStreams.java (new): top-level facade with parser(Reader,config), parser(String,config), generator(Writer,config), copy(JsonStreamParser,JsonStreamGenerator), toJson(Object,config), toJsonBytes(Object,config)
+- diesel/storage/json/JsonStreamsFactory.java (new): cached Jackson JsonFactory keyed by JsonParserConfig; root value separator set to empty to avoid spurious space between JSONL top-level documents
+- diesel/storage/json/JacksonStreamParser.java (new): JsonStreamParser over Jackson JsonParser; hasToken/name normalization; BigDecimal return for numbers
+- diesel/storage/json/JacksonStreamGenerator.java (new): JsonStreamGenerator wrapping Jackson JsonGenerator; requireFinite guards on writeNumber(float/double) rejecting NaN/Infinity
+- diesel/storage/json/GsonStreamParser.java (new): JsonStreamParser over Gson JsonReader (strict mode); manual nesting depth counter; string-length check; NUMBER int/float distinction via decimal-point detection; raw literal via nextString()
+- diesel/storage/json/GsonStreamGenerator.java (new): JsonStreamGenerator wrapping Gson JsonWriter; setHtmlSafe(false) + setSerializeNulls(true) + setLenient(true) for byte-identical Jackson parity; writeRaw via flush+raw.write
+- diesel/storage/JsonlRowReader.java: migrated to JsonStreamParser/JsonCopy (direct Jackson imports removed); schema validateReadToken called for nested objects/arrays
+- diesel/storage/JsonlRowWriter.java: migrated to JsonStreamGenerator/JsonCopy (direct Jackson imports removed)
+- diesel/storage/JsonlSchemaManager.java: migrated to JsonStreamParser/JsonCopy (direct Jackson imports removed); readSchemaFile/writeSchemaFile parse via streaming facade
+- pom.xml: added com.google.code.gson:gson:2.8.9 (NOT 2.10.1) + JsonStreamAbstractionTest to surefire includes
+- src/test/java/diesel/JsonStreamAbstractionTest.java (new, 14 tests): parser round-trip across backends, nested/flatMap/smooth/NestedReader equivalents, byte-identical copy, writer output byte-identical across backends, non-finite write rejected by both, schema projection round-trip, depth limit rejection, string-length limit, within-limit nesting depth

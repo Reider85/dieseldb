@@ -1,9 +1,5 @@
 package diesel.storage;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.StringWriter;
@@ -24,16 +20,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
+import diesel.storage.json.JsonEvent;
+import diesel.storage.json.JsonParserConfig;
+import diesel.storage.json.JsonStreamGenerator;
+import diesel.storage.json.JsonStreamParser;
+import diesel.storage.json.JsonStreams;
 
 /**
  * Streaming reader for JSON Lines (NDJSON) files: one JSON object per line.
- * Rows are parsed one line at a time through Jackson's streaming API - no DOM
- * tree is ever built per line, so memory stays constant regardless of line
- * length or file size (prompt 40 requirement). A nested object/array value is
- * captured as compact JSON text with a token-level walk
- * ({@link JsonGenerator#copyCurrentStructure(JsonParser)}, still pure
- * streaming) and stored in the mapped column; full nested storage rules land
- * in prompt 45.
+ * Rows are parsed one line at a time through the streaming JSON abstraction
+ * ({@code diesel.storage.json}, prompt 42) - no DOM tree is ever built per
+ * line, so memory stays constant regardless of line length or file size
+ * (prompt 40 requirement). A nested object/array value is captured as compact
+ * JSON text with a token-level walk and stored in the mapped column; full
+ * nested storage rules land in prompt 45.
  *
  * <p>Fields map to schema columns by name (case-insensitive); the JSONL
  * format is self-describing, so there is no header line. A missing field
@@ -55,9 +55,9 @@ import diesel.DieselIOException;
  * <p>Projection (prompt 41): {@link #setProjection} limits a read to the
  * requested schema columns and/or JSON Path (dot-notation) items. Fields
  * outside the projection are skipped at the token level - nested structures
- * via {@code JsonParser.skipChildren()} without any capture/conversion - so a
- * 3-of-40-column projection parses only 3 values per row (the base for the
- * projection-pushdown work in prompt 55). {@link #getParsedFieldCount()} /
+ * via {@code JsonStreamParser.skipChildren()} without any capture/conversion -
+ * so a 3-of-40-column projection parses only 3 values per row (the base for
+ * the projection-pushdown work in prompt 55). {@link #getParsedFieldCount()} /
  * {@link #getSkippedFieldCount()} expose the exact skipped-vs-parsed split
  * for measurements.
  */
@@ -72,11 +72,12 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private final String fileName;
     private final Map<String, Integer> indexByName;
     private final JsonlSchemaManager schema;
+    private final JsonParserConfig config;
     private List<JsonlSchemaManager.ProjectionSlot> projectionSlots;
     private boolean[] neededByColumn;
     private long parsedFieldCount;
     private long skippedFieldCount;
-    private JsonParser parser;
+    private JsonStreamParser parser;
     private boolean finished;
     private boolean firstLine = true;
     private long lineNumber;
@@ -91,7 +92,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
      * @param columnTypes column name to expected Java type
      */
     public JsonlRowReader(BufferedReader reader, List<String> columns, Map<String, Class<?>> columnTypes) {
-        this(reader, columns, columnTypes, null);
+        this(reader, columns, columnTypes, null, JsonParserConfig.defaults());
     }
 
     /**
@@ -103,15 +104,30 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
      */
     public JsonlRowReader(BufferedReader reader, List<String> columns, Map<String, Class<?>> columnTypes,
                           String fileName) {
+        this(reader, columns, columnTypes, fileName, JsonParserConfig.defaults());
+    }
+
+    /**
+     * @param reader      the underlying character-input stream
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     * @param fileName    the source file name used in error diagnostics, or
+     *                    {@code null} when unknown
+     * @param config      the streaming JSON configuration (backend, limits,
+     *                    duplicate-key policy) used for every line
+     */
+    public JsonlRowReader(BufferedReader reader, List<String> columns, Map<String, Class<?>> columnTypes,
+                          String fileName, JsonParserConfig config) {
         this.reader = reader;
         this.columns = columns;
         this.columnTypes = columnTypes;
         this.fileName = fileName;
+        this.config = config;
         this.indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (int i = 0; i < columns.size(); i++) {
             indexByName.put(columns.get(i), i);
         }
-        this.schema = new JsonlSchemaManager(columns, columnTypes);
+        this.schema = new JsonlSchemaManager(columns, columnTypes, config);
     }
 
     /**
@@ -122,6 +138,19 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
      *                 {@code null} when unknown
      */
     public JsonlRowReader(BufferedReader reader, JsonlSchemaManager schema, String fileName) {
+        this(reader, schema, fileName, JsonParserConfig.defaults());
+    }
+
+    /**
+     * @param reader   the underlying character-input stream
+     * @param schema   the shared schema manager owning type validation and
+     *                 JSON Path resolution
+     * @param fileName the source file name used in error diagnostics, or
+     *                 {@code null} when unknown
+     * @param config   the streaming JSON configuration used for every line
+     */
+    public JsonlRowReader(BufferedReader reader, JsonlSchemaManager schema, String fileName,
+                          JsonParserConfig config) {
         this.reader = reader;
         this.schema = schema;
         this.columns = schema.columns();
@@ -131,6 +160,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             columnTypes.put(columns.get(i), type == null ? String.class : type);
         }
         this.fileName = fileName;
+        this.config = config;
         this.indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (int i = 0; i < columns.size(); i++) {
             indexByName.put(columns.get(i), i);
@@ -173,19 +203,19 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         if (parser == null) {
             throw new NoSuchElementException("No more rows in JSONL file");
         }
-        JsonParser p = parser;
+        JsonStreamParser p = parser;
         lastRowLine = lineNumber;
         Object[] row = new Object[columns.size()];
         boolean[] seen = new boolean[columns.size()];
         try {
-            while (p.nextToken() != JsonToken.END_OBJECT) {
-                if (p.currentToken() != JsonToken.FIELD_NAME) {
+            while (p.nextToken() != JsonEvent.END_OBJECT) {
+                if (p.currentEvent() != JsonEvent.FIELD_NAME) {
                     throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                            + ": malformed JSON record: expected a field name, found " + p.currentToken(), null);
+                            + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
                 }
                 String field = p.currentName();
                 Integer idx = indexByName.get(field);
-                JsonToken valueToken = p.nextToken();
+                JsonEvent valueToken = p.nextToken();
                 if (valueToken == null) {
                     throw new DieselIOException(contextPrefix() + "line " + lastRowLine
                             + ": malformed JSON record: missing value for field '" + field + "'", null);
@@ -196,7 +226,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                     skippedFieldCount++;
                 } else {
                     if (seen[idx]) {
-                        warnDuplicateField(field);
+                        handleDuplicateField(field);
                     }
                     parsedFieldCount++;
                     row[idx] = parseFieldValue(p, idx, field, valueToken);
@@ -272,20 +302,20 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         if (parser == null) {
             throw new NoSuchElementException("No more rows in JSONL file");
         }
-        JsonParser p = parser;
+        JsonStreamParser p = parser;
         lastRowLine = lineNumber;
         int slots = projectionSlots.size();
         Object[] values = new Object[slots];
         boolean[] seenColumn = new boolean[columns.size()];
         try {
-            while (p.nextToken() != JsonToken.END_OBJECT) {
-                if (p.currentToken() != JsonToken.FIELD_NAME) {
+            while (p.nextToken() != JsonEvent.END_OBJECT) {
+                if (p.currentEvent() != JsonEvent.FIELD_NAME) {
                     throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                            + ": malformed JSON record: expected a field name, found " + p.currentToken(), null);
+                            + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
                 }
                 String field = p.currentName();
                 Integer idx = indexByName.get(field);
-                JsonToken valueToken = p.nextToken();
+                JsonEvent valueToken = p.nextToken();
                 if (valueToken == null) {
                     throw new DieselIOException(contextPrefix() + "line " + lastRowLine
                             + ": malformed JSON record: missing value for field '" + field + "'", null);
@@ -302,7 +332,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                     continue;
                 }
                 if (seenColumn[idx]) {
-                    warnDuplicateField(field);
+                    handleDuplicateField(field);
                 }
                 parsedFieldCount++;
                 Object value = parseFieldValue(p, idx, field, valueToken);
@@ -315,7 +345,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                     if (slot.isPlainColumn()) {
                         values[s] = value;
                     } else if (value instanceof String txt
-                            && (valueToken == JsonToken.START_OBJECT || valueToken == JsonToken.START_ARRAY)) {
+                            && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
                         values[s] = schema.extractPathValue(txt, slot.segments());
                     }
                 }
@@ -405,17 +435,17 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             if (line.trim().isEmpty()) {
                 continue;
             }
-            JsonParser p;
+            JsonStreamParser p;
             try {
-                p = JSON.createParser(line);
+                p = JsonStreams.createParser(line, config);
             } catch (IOException e) {
                 throw new DieselIOException(contextPrefix() + "line " + lineNumber + ": " + e.getMessage(), e);
             }
             try {
-                if (p.nextToken() != JsonToken.START_OBJECT) {
+                if (p.nextToken() != JsonEvent.START_OBJECT) {
                     closeQuietly(p);
                     throw new DieselIOException(contextPrefix() + "line " + lineNumber
-                            + ": JSON record must be a single JSON object, found " + p.currentToken(), null);
+                            + ": JSON record must be a single JSON object, found " + p.currentEvent(), null);
                 }
             } catch (IOException e) {
                 closeQuietly(p);
@@ -435,7 +465,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         }
     }
 
-    private Object parseFieldValue(JsonParser p, int idx, String field, JsonToken valueToken) throws IOException {
+    private Object parseFieldValue(JsonStreamParser p, int idx, String field, JsonEvent valueToken) throws IOException {
         schema.validateReadToken(idx, valueToken, p.getText(), contextPrefix() + "line " + lastRowLine + ": ");
         switch (valueToken) {
             case VALUE_NULL -> {
@@ -529,9 +559,9 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
      * token-level copy - no DOM tree is built (prompt 40/42). Advances the
      * parser past the whole structure.
      */
-    private String captureNested(JsonParser p) throws IOException {
+    private String captureNested(JsonStreamParser p) throws IOException {
         StringWriter sw = new StringWriter();
-        try (JsonGenerator g = JSON.createGenerator(sw)) {
+        try (JsonStreamGenerator g = JsonStreams.createGenerator(sw, config)) {
             g.copyCurrentStructure(p);
             g.flush();
         }
@@ -556,6 +586,15 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         }
     }
 
+    private void handleDuplicateField(String field) {
+        if (config.duplicateKeys() == JsonParserConfig.DuplicateKeyMode.FAIL) {
+            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+                    + ": duplicate field '" + field
+                    + "' (set jsonl.duplicate.keys=LAST_WINS to keep the last value)", null);
+        }
+        warnDuplicateField(field);
+    }
+
     private void warnDuplicateField(String field) {
         if (!duplicateFieldWarned) {
             duplicateFieldWarned = true;
@@ -568,10 +607,10 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     /**
      * Advances the parser past a value that is not needed (unknown field or a
      * non-projected field). Scalars are already at their value token; nested
-     * objects/arrays are skipped with {@code JsonParser.skipChildren()}.
+     * objects/arrays are skipped with {@code JsonStreamParser.skipChildren()}.
      */
-    private static void skipValue(JsonParser p, JsonToken t) throws IOException {
-        if (t == JsonToken.START_OBJECT || t == JsonToken.START_ARRAY) {
+    private static void skipValue(JsonStreamParser p, JsonEvent t) throws IOException {
+        if (t == JsonEvent.START_OBJECT || t == JsonEvent.START_ARRAY) {
             p.skipChildren();
         }
     }
@@ -580,13 +619,11 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         return fileName != null ? fileName + ":" : "";
     }
 
-    private static void closeQuietly(JsonParser p) {
+    private static void closeQuietly(JsonStreamParser p) {
         try {
             p.close();
         } catch (IOException ignored) {
             // Best effort.
         }
     }
-
-    private static final JsonFactory JSON = new JsonFactory();
 }

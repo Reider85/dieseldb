@@ -1,9 +1,5 @@
 package diesel.storage;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -24,6 +20,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
+import diesel.storage.json.JsonEvent;
+import diesel.storage.json.JsonParserConfig;
+import diesel.storage.json.JsonStreamGenerator;
+import diesel.storage.json.JsonStreamParser;
+import diesel.storage.json.JsonStreams;
 
 /**
  * Single owner of the JSONL schema: the ordered column names, the
@@ -49,7 +50,6 @@ import diesel.DieselIOException;
 public class JsonlSchemaManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(JsonlSchemaManager.class);
-    private static final JsonFactory JSON = new JsonFactory();
 
     /** Format version written into the {@code <name>.schema.json} sidecar. */
     public static final int SCHEMA_FORMAT_VERSION = 1;
@@ -60,8 +60,13 @@ public class JsonlSchemaManager {
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final Map<String, Integer> indexByName;
+    private final JsonParserConfig jsonConfig;
 
     public JsonlSchemaManager(List<String> columns, Map<String, Class<?>> columnTypes) {
+        this(columns, columnTypes, JsonParserConfig.defaults());
+    }
+
+    public JsonlSchemaManager(List<String> columns, Map<String, Class<?>> columnTypes, JsonParserConfig jsonConfig) {
         this.columns = new ArrayList<>();
         if (columns != null) {
             this.columns.addAll(columns);
@@ -74,6 +79,12 @@ public class JsonlSchemaManager {
         for (int i = 0; i < this.columns.size(); i++) {
             indexByName.put(this.columns.get(i), i);
         }
+        this.jsonConfig = jsonConfig != null ? jsonConfig : JsonParserConfig.defaults();
+    }
+
+    /** Returns the streaming JSON configuration used for sidecar reads / JSON Path walks. */
+    public JsonParserConfig jsonConfig() {
+        return jsonConfig;
     }
 
     // ─── Schema accessors ────────────────────────────────────────────
@@ -134,13 +145,13 @@ public class JsonlSchemaManager {
      * conversion diagnostics.
      *
      * @param columnIndex the schema column index
-     * @param token the JSON value token read from the record
+     * @param token the JSON value event read from the record
      * @param raw the raw token text (used in the message)
      * @param context a prefix carrying {@code file:line} diagnostics, e.g.
      *                {@code "users.jsonl:line 12: "}
      * @throws DieselIOException when the token shape cannot map to the column
      */
-    public void validateReadToken(int columnIndex, JsonToken token, String raw, String context) {
+    public void validateReadToken(int columnIndex, JsonEvent token, String raw, String context) {
         if (columnIndex < 0 || columnIndex >= columns.size() || token == null) {
             return;
         }
@@ -149,33 +160,33 @@ public class JsonlSchemaManager {
         if (isStringType(type)) {
             return;
         }
-        if (token == JsonToken.VALUE_NULL) {
+        if (token == JsonEvent.VALUE_NULL) {
             return;
         }
         if (isNumericType(type)) {
-            if (token == JsonToken.VALUE_STRING
-                    || token == JsonToken.VALUE_NUMBER_INT
-                    || token == JsonToken.VALUE_NUMBER_FLOAT) {
+            if (token == JsonEvent.VALUE_STRING
+                    || token == JsonEvent.VALUE_NUMBER_INT
+                    || token == JsonEvent.VALUE_NUMBER_FLOAT) {
                 return;
             }
             throw incompatible(context, field, raw, token, type);
         }
         if (type == Boolean.class || type == LocalDate.class
                 || type == LocalDateTime.class || type == UUID.class) {
-            if (token == JsonToken.VALUE_STRING
+            if (token == JsonEvent.VALUE_STRING
                     || (type == Boolean.class
-                        && (token == JsonToken.VALUE_TRUE || token == JsonToken.VALUE_FALSE))) {
+                        && (token == JsonEvent.VALUE_TRUE || token == JsonEvent.VALUE_FALSE))) {
                 return;
             }
             throw incompatible(context, field, raw, token, type);
         }
-        if (token == JsonToken.VALUE_STRING) {
+        if (token == JsonEvent.VALUE_STRING) {
             return;
         }
         throw incompatible(context, field, raw, token, type);
     }
 
-    private DieselIOException incompatible(String context, String field, String raw, JsonToken token, Class<?> type) {
+    private DieselIOException incompatible(String context, String field, String raw, JsonEvent token, Class<?> type) {
         String tag = switch (token) {
             case START_OBJECT -> "object";
             case START_ARRAY -> "array";
@@ -314,20 +325,20 @@ public class JsonlSchemaManager {
         if (jsonText == null || segments == null || segments.isEmpty()) {
             return null;
         }
-        try (JsonParser p = JSON.createParser(new StringReader(jsonText))) {
-            JsonToken t = p.nextToken();
+        try (JsonStreamParser p = JsonStreams.createParser(new StringReader(jsonText), jsonConfig)) {
+            JsonEvent t = p.nextToken();
             for (int i = 0; i < segments.size(); i++) {
-                if (t != JsonToken.START_OBJECT) {
+                if (t != JsonEvent.START_OBJECT) {
                     return null;
                 }
                 String wanted = segments.get(i);
                 boolean found = false;
-                while (p.nextToken() != JsonToken.END_OBJECT) {
-                    if (p.currentToken() != JsonToken.FIELD_NAME) {
+                while (p.nextToken() != JsonEvent.END_OBJECT) {
+                    if (p.currentEvent() != JsonEvent.FIELD_NAME) {
                         return null;
                     }
                     if (!wanted.equals(p.currentName())) {
-                        JsonToken value = p.nextToken();
+                        JsonEvent value = p.nextToken();
                         skipValue(p, value);
                         continue;
                     }
@@ -341,7 +352,7 @@ public class JsonlSchemaManager {
                 if (i == segments.size() - 1) {
                     return leafValue(p, t);
                 }
-                if (t != JsonToken.START_OBJECT) {
+                if (t != JsonEvent.START_OBJECT) {
                     return null;
                 }
             }
@@ -352,7 +363,7 @@ public class JsonlSchemaManager {
         }
     }
 
-    private Object leafValue(JsonParser p, JsonToken t) throws IOException {
+    private Object leafValue(JsonStreamParser p, JsonEvent t) throws IOException {
         return switch (t) {
             case VALUE_NULL -> null;
             case VALUE_STRING -> p.getText();
@@ -362,17 +373,17 @@ public class JsonlSchemaManager {
         };
     }
 
-    private static String capture(JsonParser p) throws IOException {
+    private String capture(JsonStreamParser p) throws IOException {
         StringWriter sw = new StringWriter();
-        try (JsonGenerator g = JSON.createGenerator(sw)) {
+        try (JsonStreamGenerator g = JsonStreams.createGenerator(sw, jsonConfig)) {
             g.copyCurrentStructure(p);
             g.flush();
         }
         return sw.toString();
     }
 
-    private static void skipValue(JsonParser p, JsonToken t) throws IOException {
-        if (t == JsonToken.START_OBJECT || t == JsonToken.START_ARRAY) {
+    private static void skipValue(JsonStreamParser p, JsonEvent t) throws IOException {
+        if (t == JsonEvent.START_OBJECT || t == JsonEvent.START_ARRAY) {
             p.skipChildren();
         }
     }
@@ -409,14 +420,18 @@ public class JsonlSchemaManager {
      */
     public void writeSchemaFile(Path target) throws IOException {
         try (BufferedWriter bw = Files.newBufferedWriter(target, StandardCharsets.UTF_8);
-             JsonGenerator g = JSON.createGenerator(bw)) {
+             JsonStreamGenerator g = JsonStreams.createGenerator(bw, jsonConfig)) {
             g.writeStartObject();
-            g.writeNumberField("formatVersion", SCHEMA_FORMAT_VERSION);
-            g.writeArrayFieldStart("columns");
+            g.writeFieldName("formatVersion");
+            g.writeNumber(SCHEMA_FORMAT_VERSION);
+            g.writeFieldName("columns");
+            g.writeStartArray();
             for (SchemaColumn column : describe().columns()) {
                 g.writeStartObject();
-                g.writeStringField("name", column.name());
-                g.writeStringField("type", column.type());
+                g.writeFieldName("name");
+                g.writeString(column.name());
+                g.writeFieldName("type");
+                g.writeString(column.type());
                 g.writeEndObject();
             }
             g.writeEndArray();
@@ -434,26 +449,26 @@ public class JsonlSchemaManager {
             return null;
         }
         try (BufferedReader br = Files.newBufferedReader(file, StandardCharsets.UTF_8);
-             JsonParser p = JSON.createParser(br)) {
+             JsonStreamParser p = JsonStreams.createParser(br, jsonConfig)) {
             int formatVersion = -1;
             List<SchemaColumn> columns = new ArrayList<>();
-            while (p.nextToken() != null) {
-                if (p.currentToken() == JsonToken.FIELD_NAME && "formatVersion".equals(p.currentName())) {
+            while (p.nextToken() != JsonEvent.END_INPUT) {
+                if (p.currentEvent() == JsonEvent.FIELD_NAME && "formatVersion".equals(p.currentName())) {
                     p.nextToken();
-                    formatVersion = p.getIntValue();
-                } else if (p.currentToken() == JsonToken.FIELD_NAME && "columns".equals(p.currentName())) {
+                    formatVersion = (int) p.getLongValue();
+                } else if (p.currentEvent() == JsonEvent.FIELD_NAME && "columns".equals(p.currentName())) {
                     p.nextToken();
-                    if (p.currentToken() != JsonToken.START_ARRAY) {
+                    if (p.currentEvent() != JsonEvent.START_ARRAY) {
                         return null;
                     }
-                    while (p.nextToken() != JsonToken.END_ARRAY) {
-                        if (p.currentToken() != JsonToken.START_OBJECT) {
+                    while (p.nextToken() != JsonEvent.END_ARRAY) {
+                        if (p.currentEvent() != JsonEvent.START_OBJECT) {
                             return null;
                         }
                         String name = null;
                         String type = null;
-                        while (p.nextToken() != JsonToken.END_OBJECT) {
-                            if (p.currentToken() != JsonToken.FIELD_NAME) {
+                        while (p.nextToken() != JsonEvent.END_OBJECT) {
+                            if (p.currentEvent() != JsonEvent.FIELD_NAME) {
                                 return null;
                             }
                             String field = p.currentName();
@@ -463,7 +478,7 @@ public class JsonlSchemaManager {
                             } else if ("type".equals(field)) {
                                 type = p.getText();
                             } else {
-                                skipValue(p, p.currentToken());
+                                skipValue(p, p.currentEvent());
                             }
                         }
                         columns.add(new SchemaColumn(name, type));

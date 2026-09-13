@@ -1,7 +1,5 @@
 package diesel.storage;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonGenerator;
 import java.io.IOException;
 import java.io.Writer;
 import java.math.BigDecimal;
@@ -12,6 +10,9 @@ import java.util.Map;
 import java.util.UUID;
 
 import diesel.DieselIOException;
+import diesel.storage.json.JsonParserConfig;
+import diesel.storage.json.JsonStreamGenerator;
+import diesel.storage.json.JsonStreams;
 
 /**
  * Writes rows to a JSON Lines (NDJSON) stream: one table row = one JSON object
@@ -20,10 +21,11 @@ import diesel.DieselIOException;
  * deterministic. Nulls are written as JSON {@code null}.
  *
  * <p>JSON validity is enforced at write time (prompt 40): values are
- * serialised through Jackson's streaming API so quoting/escaping is always
+ * serialised through the streaming JSON abstraction
+ * ({@code diesel.storage.json}, prompt 42) so quoting/escaping is always
  * correct, and non-finite floats ({@code NaN}/{@code Infinity}), which have no
- * JSON representation, are rejected instead of being emitted as the invalid
- * tokens Jackson would otherwise produce.
+ * JSON representation, are rejected instead of being emitted as invalid
+ * tokens.
  *
  * <p>Nested structures (Map/List/array values) are written as nested JSON
  * objects/arrays (base nesting support, prompt 40; the storage stores such
@@ -40,9 +42,7 @@ import diesel.DieselIOException;
  */
 public class JsonlRowWriter implements AutoCloseable {
 
-    private static final JsonFactory JSON = new JsonFactory();
-
-    private final JsonGenerator generator;
+    private final JsonStreamGenerator generator;
     private final List<String> columns;
     private final JsonlSchemaManager schema;
     private long recordNumber;
@@ -66,13 +66,34 @@ public class JsonlRowWriter implements AutoCloseable {
     }
 
     /**
+     * @param writer      the underlying character-output stream
+     * @param columns     the ordered column names (field order of each record)
+     * @param columnTypes the column name to expected Java type, enabling
+     *                    write-side type validation against the schema
+     * @param config      the streaming JSON configuration (backend, limits)
+     */
+    public JsonlRowWriter(Writer writer, List<String> columns, Map<String, Class<?>> columnTypes,
+                          JsonParserConfig config) throws IOException {
+        this(writer, new JsonlSchemaManager(columns, columnTypes, config), config);
+    }
+
+    /**
      * @param writer the underlying character-output stream
      * @param schema the shared schema manager (type validation on write)
      */
     public JsonlRowWriter(Writer writer, JsonlSchemaManager schema) throws IOException {
+        this(writer, schema, JsonParserConfig.defaults());
+    }
+
+    /**
+     * @param writer the underlying character-output stream
+     * @param schema the shared schema manager (type validation on write)
+     * @param config the streaming JSON configuration (backend, limits)
+     */
+    public JsonlRowWriter(Writer writer, JsonlSchemaManager schema, JsonParserConfig config) throws IOException {
         this.columns = schema.columns();
         this.schema = schema;
-        this.generator = JSON.createGenerator(writer);
+        this.generator = JsonStreams.createGenerator(writer, config);
     }
 
     /**
