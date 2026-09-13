@@ -1,8 +1,3 @@
-3.0.72 Prompt 38 - CSV/TSV storage negative-scenario and property tests (CsvStorageAdvancedTest, TsvStorageAdvancedTest)
+3.0.73 Changelog tidy: remove test-run/verification notes from the 3.0.72 entry and commit so the changelog keeps the no-test-info convention of 3.0.41; commit message reworded without test-run notes.
 
-Adds two 18-test suites anchoring the CSV/TSV storage behavior agreed in prompts 24-36:
-- CsvStorageAdvancedTest.java: header mapping by column name (reordered / extra columns -> single WARNING via Slf4jLogCapture then extras ignored; missing column -> fail throws DieselIOException naming the file and wrapping cause naming [COL] with rollback, or warn -> NULL), BOM + case-insensitive headers, escaped header-column names round-trip, sentinel \N vs empty vs whitespace, file:line:column diagnostics + transactional rollback, skip_row / skip_value error modes, interrupted-save crash safety (previous file intact, .tmp cleaned) + orphan-.tmp WARNING, auto_mtime broken-.table fallback, clustered insertAt + primary-key search, 2000-row deferred bulk-delete (beginBulkUpdate/endBulkUpdate) index consistency, parallel == sequential load on 10k rows, 150-row randomized difficult-value round-trip (Random(42)), strict boolean parsing with invalid-value rejection, malformed UTF-8 (KOI8-R / windows-1251) Cyrillic byte files failing load with the file named.
-- TsvStorageAdvancedTest.java: the exact mirror for the tab-separated backend, including the escaped tab-bearing header column, literal-\\N round-trip and embedded-CR survival via backslash escaping.
-- pom.xml: both classes registered in the default surefire includes and the ci profile.
-
-Verification: quick 233/0/0/6, mvn -Ptest 1003/0/0/6, full suite (4GB, @LargeTest) 233/0/0/0 BUILD SUCCESS, compare-timing exit 0 (no heavy-query regressions); profile check skipped (no JOIN/hash-join/performance dependency in the prompt).
+Also fixes a typo in the PROMPT_STATUS.md Prompt 38 Latest entry (ignorar -> ignored).
