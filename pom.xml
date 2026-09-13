@@ -55,6 +55,11 @@
             <artifactId>snappy-java</artifactId>
             <version>1.1.10.5</version>
         </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.17.2</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -106,6 +111,7 @@
                         <include>**/CsvStorageAdvancedTest.java</include>
                         <include>**/TsvStorageAdvancedTest.java</include>
                         <include>**/CompressionTest.java</include>
+                        <include>**/JsonlStorageTest.java</include>
                     </includes>
                     <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
@@ -176,6 +182,7 @@
                                 <include>**/CsvStorageAdvancedTest.java</include>
                                 <include>**/TsvStorageAdvancedTest.java</include>
                                 <include>**/CompressionTest.java</include>
+                                <include>**/JsonlStorageTest.java</include>
                             </includes>
                             <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>

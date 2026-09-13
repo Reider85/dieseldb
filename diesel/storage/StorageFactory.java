@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code in_memory} (default) &mdash; {@link InMemoryRowStorage}</li>
  *   <li>{@code csv} &mdash; {@link CsvRowStorage}</li>
  *   <li>{@code tsv} &mdash; {@link TsvRowStorage}</li>
+ *   <li>{@code jsonl} &mdash; {@link JsonlRowStorage}</li>
  * </ul>
  */
 public final class StorageFactory {
@@ -28,7 +29,7 @@ public final class StorageFactory {
      * Creates a {@link RowStorage} of the requested type.
      *
      * @param type        the storage type name ({@code "in_memory"},
-     *                    {@code "csv"} or {@code "tsv"})
+     *                    {@code "csv"}, {@code "tsv"} or {@code "jsonl"})
      * @param tableName   the table name
      * @param columns     the ordered column names
      * @param columnTypes the column name to type mapping
@@ -46,6 +47,10 @@ public final class StorageFactory {
             case "tsv" -> {
                 LOGGER.debug("Creating TsvRowStorage for table {}", tableName);
                 yield new TsvRowStorage(tableName, columns, columnTypes);
+            }
+            case "jsonl" -> {
+                LOGGER.debug("Creating JsonlRowStorage for table {}", tableName);
+                yield new JsonlRowStorage(tableName, columns, columnTypes);
             }
             default -> {
                 LOGGER.debug("Creating InMemoryRowStorage for table {}", tableName);
