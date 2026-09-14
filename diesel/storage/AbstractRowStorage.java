@@ -297,7 +297,7 @@ public abstract class AbstractRowStorage implements RowStorage {
     protected static String resolveLoadMode(String configKey) {
         String raw = StorageConfig.getString(configKey, LOAD_MODE_FILE);
         String mode = raw.trim().toLowerCase(Locale.ROOT);
-        if (LOAD_MODE_FILE.equals(mode) || "csv".equals(mode) || "tsv".equals(mode)) {
+        if (LOAD_MODE_FILE.equals(mode) || "csv".equals(mode) || "tsv".equals(mode) || "jsonl".equals(mode)) {
             return LOAD_MODE_FILE;
         }
         if (LOAD_MODE_AUTO_MTIME.equals(mode)) {

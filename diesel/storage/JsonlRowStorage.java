@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.ObjectOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
 import java.io.Writer;
@@ -19,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
+import diesel.ErrorMessages;
 import diesel.storage.json.JsonEvent;
 import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonSchemaInference;
@@ -236,6 +238,9 @@ public class JsonlRowStorage extends AbstractRowStorage {
         } else {
             saveRewriteMode(tableName);
         }
+        if (isTableMirrorEnabled("jsonl.table.mirror")) {
+            saveSerialized(tableName);
+        }
     }
 
     /**
@@ -270,6 +275,27 @@ public class JsonlRowStorage extends AbstractRowStorage {
         } catch (IOException e) {
             LOGGER.error("Failed to save JSONL for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to JSONL file: " + fileName, e);
+        }
+    }
+
+    /**
+     * Writes a Java-serialised .table mirror for the auto_mtime fast load path.
+     * The serialised file carries the same {@link SerializedTableData} format
+     * used by CSV/TSV (prompt 32) so the shared consistency checks apply.
+     */
+    private void saveSerialized(String tableName) {
+        String fileName = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
+            ObjectOutputStream oos = new ObjectOutputStream(afw.outputStream());
+            oos.writeObject(new SerializedTableData(CURRENT_STORAGE_FORMAT_VERSION, columns, columnTypes,
+                    new ArrayList<>(rows)));
+            oos.flush();
+            afw.commit();
+            LOGGER.info("JsonlRowStorage {} saved serialised to {} with {} rows",
+                    tableName, fileName, rows.size());
+        } catch (IOException e) {
+            LOGGER.error("Failed to save serialised file for {}: {}", tableName, fileName);
+            throw new DieselIOException("Failed to save table to file: " + fileName, e);
         }
     }
 
@@ -336,7 +362,48 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void loadFromFile(String tableName) {
-        File file = new File(resolveFilePath(".jsonl"));
+        String jsonlFile = resolveFilePath(".jsonl");
+        String tableFile = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
+        String loadMode = resolveLoadMode("jsonl.load.mode");
+
+        if (resolveLoadSource(jsonlFile, tableFile, loadMode) == LoadSource.SERIALIZED) {
+            SerializedTableData data = readSerializedTable(tableFile);
+            if (data != null) {
+                List<String> problems = checkSerializedConsistency(data);
+                if (problems.isEmpty()) {
+                    List<Object[]> previous = new ArrayList<>(rows);
+                    List<boolean[]> previousPresence = new ArrayList<>(rowPresence);
+                    try {
+                        setSchema(data.columns, data.columnTypes);
+                        this.rowColumns = new RowArrays(data.columns);
+                        rows.clear();
+                        rowPresence.clear();
+                        for (Object row : data.rows) {
+                            rows.add((Object[]) row);
+                            rowPresence.add(allPresent(rowColumns.size()));
+                        }
+                        fileInitialized = true;
+                        LOGGER.info("JsonlRowStorage {} loaded serialised from {} with {} rows",
+                                tableName, tableFile, rows.size());
+                        syncIndexBulkFromArrays(rows);
+                        return;
+                    } catch (Exception e) {
+                        rows.clear();
+                        rows.addAll(previous);
+                        rowPresence.clear();
+                        rowPresence.addAll(previousPresence);
+                        sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
+                        LOGGER.warn("JsonlRowStorage {} serialised fast path rejected ({}), falling back to JSONL {}",
+                                tableName, e.getMessage(), jsonlFile);
+                    }
+                } else {
+                    LOGGER.warn("JsonlRowStorage {} serialised fast path rejected ({}), falling back to JSONL {}",
+                            tableName, String.join("; ", problems), jsonlFile);
+                }
+            }
+        }
+
+        File file = new File(jsonlFile);
         if (!file.exists()) {
             AtomicFileWriter.warnInterruptedWrite(file.toPath());
             LOGGER.info("JSONL file {} not found for storage {}", file.getPath(), tableName);

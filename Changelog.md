@@ -2857,6 +2857,15 @@ Changes:
 - New src/test/java/diesel/JsonlAppendModeTest.java (19 tests): append round-trip; delta sidecar persistence for delete/update; new-rows-then-delete-before-save vanish; crash mid-append discards truncated fragment; missing-final-newline repaired; auto-compaction rewrites base when threshold exceeded; manual compaction clears delta; rewrite mode remains full rewrite; append incremental save >4x faster than rewrite (criterion: >=10x faster); config property resolution and invalid threshold clamping; delta survives multi-cycle loads
 - Verification: isolated class 19/19 green; quick suite (mvn test -DskipLargeTests) 415/0/0/6; full suite (4GB heap, @LargeTest) 415/0/0/0 BUILD SUCCESS; timing gate: timing136.md vs timing.md baseline compared via compare-timing rule (>20% on >=11ms heavy queries) - 0 regressions, 1 improvement, 14 unchanged, exit 0. Profile check skipped - prompt 49 has no JOIN / hash join / performance wording (strict condition); make/changelog targets unavailable on this machine, entry appended manually.
 
+3.0.90 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
+
+Changes:
+- diesel/storage/AbstractRowStorage.java: added "jsonl" as a synonym for LOAD_MODE_FILE in resolveLoadMode() so jsonl.load.mode=file works identically to csv/tsv
+- diesel/storage/JsonlRowStorage.java: loadFromFile() rewritten to support two load modes via resolveLoadSource() (shared helper from prompt 32); auto_mtime mode prefers a fresh .table (Java-serialised fast path with formatVersion/schema/rowCount consistency check, automatic fallback to .jsonl on failure with WARNING); saveSerialized() writes a .table mirror using AtomicFileWriter + ObjectOutputStream + SerializedTableData (same format as CSV/TSV); saveToFile() conditionally writes the .table mirror when jsonl.table.mirror=on
+- config.properties: jsonl.load.mode = file (default, system property -Djsonl.load.mode overrides); jsonl.table.mirror = off (default, on/off toggle for .table mirror writes)
+- New src/test/java/diesel/JsonlLoadModeTest.java (9 tests): file mode ignores fresher .table; auto_mtime loads fresh .table via fast path; stale .table falls back to .jsonl; equal mtime prefers .jsonl; corrupt .table falls back; jsonl.load.mode independent from csv.load.mode; .table-only load when .jsonl missing; unknown mode falls back to file; mirror=off skips .table write. Registered in pom.xml default + ci surefire includes.
+- Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6; full suite (@LargeTest) 415/0/0/0 BUILD SUCCESS.
+
 3.0.89 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
 
 Changes:
