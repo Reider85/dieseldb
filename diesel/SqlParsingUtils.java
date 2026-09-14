@@ -42,7 +42,14 @@ class SqlParsingUtils {
             return null;
         }
         String trimmed = identifier.trim();
-        if (trimmed.length() >= 2 && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"') {
+        // For multi-part quoted identifiers like "table"."col", each part is
+        // independently quoted so we must NOT strip the outermost quotes.
+        // Only strip when the identifier is a single quoted segment (no dot
+        // between the outermost quotes) or an unquoted dotted name.
+        boolean singleQuoted = trimmed.length() >= 2
+                && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"'
+                && !trimmed.substring(1, trimmed.length() - 1).contains("\".");
+        if (singleQuoted) {
             trimmed = trimmed.substring(1, trimmed.length() - 1);
         }
         String[] parts = trimmed.split("\\.", -1);

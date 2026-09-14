@@ -1576,6 +1576,10 @@ class QueryParser {
         joinParts.add(tableAndJoins.substring(lastEnd).trim());
 
         String mainTablePart = joinParts.get(0).trim();
+        Matcher clauseTruncator = Pattern.compile("(?i)\\b(?:WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT|OFFSET|HAVING)\\b").matcher(mainTablePart);
+        if (clauseTruncator.find()) {
+            mainTablePart = mainTablePart.substring(0, clauseTruncator.start()).trim();
+        }
         String[] mainTableTokens = mainTablePart.split("\\s+");
         tableName = unquoteIdentifier(mainTableTokens[0].trim());
         if (mainTableTokens.length > 1) {
