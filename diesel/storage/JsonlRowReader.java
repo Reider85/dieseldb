@@ -52,7 +52,18 @@ import diesel.storage.json.JsonTypeMapper;
  * typo hint, hybrid/inferred warn once per file and are expanded at the
  * storage level.
  * Blank and whitespace-only lines are skipped and a UTF-8 BOM on the first
- * record is stripped (prompt 48 covers BOM handling formally).
+ * record is stripped (prompt 48 covers the full tolerance contract:
+ * blank lines, BOM, non-object lines and truncated last lines).
+ *
+ * <p>Malformed rows are governed by the {@code jsonl.load.error.mode} policy
+ * (prompt 48): {@code fail} (default) aborts the load with {@code file:line}
+ * / {@code file:line:field} diagnostics (dot-notation JSON path), while
+ * {@code skip_row} logs each bad row's coordinates and reason as a WARNING,
+ * advances to the next line and reports a single final WARNING with the total
+ * skipped-row count ({@link #getSkippedRowCount()}). A JSON object broken by
+ * the end of the file (unclosed bracket on the last line) is treated as a
+ * possibly truncated record (interrupted append, prompt 49) and is diagnosed
+ * as such.
  *
  * <p>Error diagnostics carry {@code file:line} / {@code file:line:field}
  * context.
@@ -101,6 +112,9 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private boolean unknownFieldWarned;
     private boolean duplicateFieldWarned;
     private boolean unresolvedProjectionWarned;
+    /** Rows skipped so far by the {@code jsonl.load.error.mode=skip_row} policy (prompt 48). */
+    private long skippedRowCount;
+    private boolean skipRowWarningEmitted;
     /** Present-column flags of the last consumed row (prompt 47). */
     private boolean[] lastRowPresent;
     /** FLATTEN-mode container paths (every dot-prefix of a schema column). */
@@ -220,6 +234,9 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     @Override
     public Map<String, Object> next() {
         Object[] values = nextArray();
+        if (values == null) {
+            return null;
+        }
         Map<String, Object> row = new HashMap<>(Math.max(columns.size() * 2, 4));
         for (int i = 0; i < columns.size(); i++) {
             row.put(columns.get(i), values[i]);
@@ -232,33 +249,58 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
      * holds the value of schema column {@code i} (prompt 36). Missing fields
      * leave {@code null} slot values. Values are validated against their
      * column types (prompt 41) - a JSON token that cannot live in a typed
-     * column fails with {@code file:line:field} diagnostics.
+     * column fails with {@code file:line:field} diagnostics. Returns
+     * {@code null} instead of throwing when the end of the file was reached
+     * while recovering from a skipped row (prompt 48 {@code skip_row} policy).
      */
     public Object[] nextArray() {
-        if (finished) {
-            throw new NoSuchElementException("No more rows in JSONL file");
-        }
-        if (parser == null) {
-            prefetch();
-        }
-        if (parser == null) {
-            throw new NoSuchElementException("No more rows in JSONL file");
-        }
-        JsonStreamParser p = parser;
-        lastRowLine = lineNumber;
-        Object[] row = new Object[columns.size()];
-        boolean[] seen = new boolean[columns.size()];
-        try {
-            parseCurrentRow(p, row, seen);
-        } catch (IOException e) {
-            throw new DieselIOException(contextPrefix() + "line " + lastRowLine + ": " + e.getMessage(), e);
-        } finally {
+        while (true) {
+            if (finished) {
+                throw new NoSuchElementException("No more rows in JSONL file");
+            }
+            if (parser == null) {
+                prefetch();
+            }
+            if (parser == null) {
+                return null;
+            }
+            JsonStreamParser p = parser;
+            lastRowLine = lineNumber;
+            Object[] row = new Object[columns.size()];
+            boolean[] seen = new boolean[columns.size()];
+            try {
+                parseCurrentRow(p, row, seen);
+            } catch (IOException e) {
+                closeQuietly(p);
+                parser = null;
+                String msg = contextPrefix() + "line " + lastRowLine
+                        + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
+                        + ": " + e.getMessage();
+                if (skipRow(msg, e)) {
+                    continue;
+                }
+                throw new DieselIOException(msg, e);
+            } catch (DieselIOException e) {
+                closeQuietly(p);
+                parser = null;
+                if (skipRow(null, e)) {
+                    continue;
+                }
+                throw e;
+            }
             closeQuietly(p);
             parser = null;
+            try {
+                enforceMissingFieldPolicy(seen);
+            } catch (DieselIOException e) {
+                if (skipRow(null, e)) {
+                    continue;
+                }
+                throw e;
+            }
+            lastRowPresent = seen;
+            return row;
         }
-        enforceMissingFieldPolicy(seen);
-        lastRowPresent = seen;
-        return row;
     }
 
     /**
@@ -506,88 +548,104 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         if (projectionSlots == null || projectionSlots.isEmpty()) {
             return nextArray();
         }
-        if (finished) {
-            throw new NoSuchElementException("No more rows in JSONL file");
-        }
-        if (parser == null) {
-            prefetch();
-        }
-        if (parser == null) {
-            throw new NoSuchElementException("No more rows in JSONL file");
-        }
-        JsonStreamParser p = parser;
-        lastRowLine = lineNumber;
-        int slots = projectionSlots.size();
-        Object[] values = new Object[slots];
-        boolean[] seenColumn = new boolean[columns.size()];
-        try {
-            if (config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
-                // FLATTEN mode must parse nested containers to reach the leaf
-                // columns; dot-path items resolve to exact leaf columns, so the
-                // full-row parse still honours the requested columns.
-                Object[] fullRow = new Object[columns.size()];
-                boolean[] seenFull = new boolean[columns.size()];
-                parseCurrentRow(p, fullRow, seenFull);
-                lastRowPresent = seenFull;
-                for (int s = 0; s < slots; s++) {
-                    JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
-                    int idx = slot.columnIndex();
-                    if (idx >= 0 && seenFull[idx]) {
-                        values[s] = fullRow[idx];
-                    }
-                }
-            } else {
-                while (p.nextToken() != JsonEvent.END_OBJECT) {
-                    if (p.currentEvent() != JsonEvent.FIELD_NAME) {
-                        throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                                + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
-                    }
-                    String field = p.currentName();
-                    Integer idx = indexByName.get(field);
-                    JsonEvent valueToken = p.nextToken();
-                    if (valueToken == null) {
-                        throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                                + ": malformed JSON record: missing value for field '" + field + "'", null);
-                    }
-                    if (idx == null) {
-                        handleUnknownField(field);
-                        skipValue(p, valueToken);
-                        skippedFieldCount++;
-                        continue;
-                    }
-                    if (neededByColumn == null || !neededByColumn[idx]) {
-                        skipValue(p, valueToken);
-                        skippedFieldCount++;
-                        continue;
-                    }
-                    if (seenColumn[idx]) {
-                        handleDuplicateField(field);
-                    }
-                    parsedFieldCount++;
-                    Object value = parseFieldValue(p, idx, field, valueToken);
-                    seenColumn[idx] = true;
-                    lastRowPresent = seenColumn;
+        while (true) {
+            if (finished) {
+                throw new NoSuchElementException("No more rows in JSONL file");
+            }
+            if (parser == null) {
+                prefetch();
+            }
+            if (parser == null) {
+                throw new NoSuchElementException("No more rows in JSONL file");
+            }
+            JsonStreamParser p = parser;
+            lastRowLine = lineNumber;
+            int slots = projectionSlots.size();
+            Object[] values = new Object[slots];
+            boolean[] seenColumn = new boolean[columns.size()];
+            try {
+                if (config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
+                    // FLATTEN mode must parse nested containers to reach the leaf
+                    // columns; dot-path items resolve to exact leaf columns, so the
+                    // full-row parse still honours the requested columns.
+                    Object[] fullRow = new Object[columns.size()];
+                    boolean[] seenFull = new boolean[columns.size()];
+                    parseCurrentRow(p, fullRow, seenFull);
+                    lastRowPresent = seenFull;
                     for (int s = 0; s < slots; s++) {
                         JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
-                        if (slot.columnIndex() != idx) {
+                        int idx = slot.columnIndex();
+                        if (idx >= 0 && seenFull[idx]) {
+                            values[s] = fullRow[idx];
+                        }
+                    }
+                } else {
+                    while (p.nextToken() != JsonEvent.END_OBJECT) {
+                        if (p.currentEvent() != JsonEvent.FIELD_NAME) {
+                            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+                                    + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
+                        }
+                        String field = p.currentName();
+                        Integer idx = indexByName.get(field);
+                        JsonEvent valueToken = p.nextToken();
+                        if (valueToken == null) {
+                            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+                                    + ": malformed JSON record: missing value for field '" + field + "'", null);
+                        }
+                        if (idx == null) {
+                            handleUnknownField(field);
+                            skipValue(p, valueToken);
+                            skippedFieldCount++;
                             continue;
                         }
-                        if (slot.isPlainColumn()) {
-                            values[s] = value;
-                        } else if (value instanceof String txt
-                                && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
-                            values[s] = schema.extractPathValue(txt, slot.segments());
+                        if (neededByColumn == null || !neededByColumn[idx]) {
+                            skipValue(p, valueToken);
+                            skippedFieldCount++;
+                            continue;
+                        }
+                        if (seenColumn[idx]) {
+                            handleDuplicateField(field);
+                        }
+                        parsedFieldCount++;
+                        Object value = parseFieldValue(p, idx, field, valueToken);
+                        seenColumn[idx] = true;
+                        lastRowPresent = seenColumn;
+                        for (int s = 0; s < slots; s++) {
+                            JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
+                            if (slot.columnIndex() != idx) {
+                                continue;
+                            }
+                            if (slot.isPlainColumn()) {
+                                values[s] = value;
+                            } else if (value instanceof String txt
+                                    && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
+                                values[s] = schema.extractPathValue(txt, slot.segments());
+                            }
                         }
                     }
                 }
+            } catch (IOException e) {
+                closeQuietly(p);
+                parser = null;
+                String msg = contextPrefix() + "line " + lastRowLine
+                        + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
+                        + ": " + e.getMessage();
+                if (skipRow(msg, e)) {
+                    continue;
+                }
+                throw new DieselIOException(msg, e);
+            } catch (DieselIOException e) {
+                closeQuietly(p);
+                parser = null;
+                if (skipRow(null, e)) {
+                    continue;
+                }
+                throw e;
             }
-        } catch (IOException e) {
-            throw new DieselIOException(contextPrefix() + "line " + lastRowLine + ": " + e.getMessage(), e);
-        } finally {
             closeQuietly(p);
             parser = null;
+            return values;
         }
-        return values;
     }
 
     /**
@@ -625,7 +683,10 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     public List<Map<String, Object>> readAll() {
         List<Map<String, Object>> result = new ArrayList<>();
         while (hasNext()) {
-            result.add(next());
+            Map<String, Object> row = next();
+            if (row != null) {
+                result.add(row);
+            }
         }
         return result;
     }
@@ -636,6 +697,15 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
      */
     public long getLineNumber() {
         return lastRowLine;
+    }
+
+    /**
+     * Returns the number of rows skipped under the {@code jsonl.load.error.mode=skip_row}
+     * policy (prompt 48) since this reader was created. In {@code fail} mode
+     * this stays {@code 0}.
+     */
+    public long getSkippedRowCount() {
+        return skippedRowCount;
     }
 
     /**
@@ -672,6 +742,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             String line = readLineSafely();
             if (line == null) {
                 finished = true;
+                emitSkipRowSummary();
                 return;
             }
             lineNumber++;
@@ -684,24 +755,46 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             if (line.trim().isEmpty()) {
                 continue;
             }
-            JsonStreamParser p;
-            try {
-                p = JsonStreams.createParser(line, config);
-            } catch (IOException e) {
-                throw new DieselIOException(contextPrefix() + "line " + lineNumber + ": " + e.getMessage(), e);
+            if (buildParserForLine(line)) {
+                return;
             }
-            try {
-                if (p.nextToken() != JsonEvent.START_OBJECT) {
-                    closeQuietly(p);
-                    throw new DieselIOException(contextPrefix() + "line " + lineNumber
-                            + ": JSON record must be a single JSON object, found " + p.currentEvent(), null);
-                }
-            } catch (IOException e) {
+        }
+    }
+
+    /**
+     * Builds a JSON parser over one physical line and verifies the record
+     * starts as a JSON object. Returns {@code true} when the parser is ready
+     * for the caller; {@code false} when the line was malformed and, under the
+     * {@code jsonl.load.error.mode=skip_row} policy (prompt 48), was logged and
+     * skipped so {@link #prefetch()} keeps scanning (in {@code fail} mode the
+     * exception propagates instead).
+     */
+    private boolean buildParserForLine(String line) {
+        JsonStreamParser p = null;
+        try {
+            p = JsonStreams.createParser(line, config);
+            if (p.nextToken() != JsonEvent.START_OBJECT) {
                 closeQuietly(p);
-                throw new DieselIOException(contextPrefix() + "line " + lineNumber + ": " + e.getMessage(), e);
+                throw new DieselIOException(contextPrefix() + "line " + lineNumber
+                        + ": JSON record must be a single JSON object, found " + p.currentEvent(), null);
             }
             parser = p;
-            return;
+            return true;
+        } catch (IOException e) {
+            closeQuietly(p);
+            String msg = contextPrefix() + "line " + lineNumber
+                    + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
+                    + ": " + e.getMessage();
+            if (skipRow(msg, e)) {
+                return false;
+            }
+            throw new DieselIOException(msg, e);
+        } catch (DieselIOException e) {
+            closeQuietly(p);
+            if (skipRow(null, e)) {
+                return false;
+            }
+            throw e;
         }
     }
 
@@ -846,7 +939,55 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         return fileName != null ? fileName + ":" : "";
     }
 
+    /**
+     * Applies the {@code jsonl.load.error.mode} policy (prompt 48) to a
+     * malformed row. In {@code fail} mode the error is re-thrown unchanged; in
+     * {@code skip_row} mode the coordinates and reason are logged as a WARNING,
+     * the row is counted as skipped and the load continues ({@code true}).
+     * {@code message} may be {@code null} to reuse the exception's own message.
+     */
+    private boolean skipRow(String message, Exception e) {
+        if (config.loadErrorMode() != JsonParserConfig.LoadErrorMode.SKIP_ROW) {
+            throw new DieselIOException(message != null ? message : e.getMessage(), e);
+        }
+        skippedRowCount++;
+        LOGGER.warn("{} skipping malformed JSONL row: {}",
+                contextPrefix(),
+                message != null ? message : e.getMessage());
+        return true;
+    }
+
+    /**
+     * Cheap probe whether the underlying reader is at the physical end of the
+     * file (no more lines). Used to diagnose an unclosed JSON record on the
+     * last line as a possibly truncated record (interrupted append, prompt 48
+     * gluing onto prompt 49). A failed probe conservatively reports
+     * {@code false} so only the true end-of-file case is annotated.
+     */
+    private boolean atPhysicalEof() {
+        try {
+            reader.mark(1);
+            boolean eof = reader.readLine() == null;
+            reader.reset();
+            return eof;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Emits the single final WARNING with the total skipped-row count (prompt 48). */
+    private void emitSkipRowSummary() {
+        if (skippedRowCount > 0 && !skipRowWarningEmitted) {
+            skipRowWarningEmitted = true;
+            LOGGER.warn("{} JSONL load skipped {} malformed line(s) (jsonl.load.error.mode=skip_row)",
+                    contextPrefix(), skippedRowCount);
+        }
+    }
+
     private static void closeQuietly(JsonStreamParser p) {
+        if (p == null) {
+            return;
+        }
         try {
             p.close();
         } catch (IOException ignored) {

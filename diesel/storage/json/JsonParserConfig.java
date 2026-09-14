@@ -29,8 +29,9 @@ import java.util.Properties;
  * {@code jsonl.max.nesting.depth}, {@code jsonl.max.string.length},
  * {@code jsonl.parser.backend}, {@code jsonl.duplicate.keys},
  * {@code jsonl.type.coercion}, {@code jsonl.schema.mode},
- * {@code jsonl.nested.mode}, {@code jsonl.array.columns} and
- * {@code jsonl.missing.field}; invalid overrides fall back to the defaults.
+ * {@code jsonl.nested.mode}, {@code jsonl.array.columns},
+ * {@code jsonl.missing.field} and {@code jsonl.load.error.mode}; invalid
+ * overrides fall back to the defaults.
  *
  * <p>The schema mode ({@code jsonl.schema.mode}, prompt 44) is carried here
  * as the single hook for the JSONL schema-matching policies: {@link #STRICT}
@@ -51,6 +52,13 @@ import java.util.Properties;
  * (default) keeps the whole array in one JSON column, {@link ArrayColumnsMode#EXPAND}
  * expands it into {@code arr[0]}, {@code arr[1]}, ... columns. Arrays of
  * objects always fall back to a single JSON column.
+ *
+ * <p>The load-error policy ({@code jsonl.load.error.mode}, prompt 48) decides
+ * what a {@link diesel.storage.JsonlRowReader} does with a malformed row (bad
+ * JSON, non-object line, type failure): {@link LoadErrorMode#FAIL} (default)
+ * aborts the load with {@code file:line}/field diagnostics,
+ * {@link LoadErrorMode#SKIP_ROW} logs the coordinates, skips the row and lets
+ * the load continue (a final WARNING reports the skipped-row count).
  */
 public final class JsonParserConfig {
 
@@ -88,6 +96,14 @@ public final class JsonParserConfig {
         DEFAULT
     }
 
+    /** JSONL load-error policy wired to the jsonl.load.error.mode config (prompt 48). */
+    public enum LoadErrorMode {
+        /** A malformed row aborts the load with file:line diagnostics. */
+        FAIL,
+        /** A malformed row is logged with file:line and skipped; loads continue. */
+        SKIP_ROW
+    }
+
     private final int maxNestingDepth;
     private final int maxStringLength;
     private final Backend backend;
@@ -97,6 +113,7 @@ public final class JsonParserConfig {
     private final NestedMode nestedMode;
     private final ArrayColumnsMode arrayColumns;
     private final MissingFieldMode missingField;
+    private final LoadErrorMode loadErrorMode;
 
     private JsonParserConfig(Builder builder) {
         this.maxNestingDepth = builder.maxNestingDepth;
@@ -108,6 +125,7 @@ public final class JsonParserConfig {
         this.nestedMode = builder.nestedMode;
         this.arrayColumns = builder.arrayColumns;
         this.missingField = builder.missingField;
+        this.loadErrorMode = builder.loadErrorMode;
     }
 
     /** Returns the default configuration (strict, depth 64, 1MB strings, Jackson backend). */
@@ -161,6 +179,11 @@ public final class JsonParserConfig {
         return missingField;
     }
 
+    /** Returns the JSONL load-error policy (FAIL by default, prompt 48). */
+    public LoadErrorMode loadErrorMode() {
+        return loadErrorMode;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -179,6 +202,7 @@ public final class JsonParserConfig {
         private NestedMode nestedMode = readNestedModeProperty();
         private ArrayColumnsMode arrayColumns = readArrayColumnsProperty();
         private MissingFieldMode missingField = readMissingFieldProperty();
+        private LoadErrorMode loadErrorMode = readLoadErrorModeProperty();
 
         private static int readIntProperty(String key, int fallback) {
             String value = readString(key, null);
@@ -265,6 +289,15 @@ public final class JsonParserConfig {
             }
         }
 
+        private static LoadErrorMode readLoadErrorModeProperty() {
+            String value = readString("jsonl.load.error.mode", "FAIL");
+            try {
+                return LoadErrorMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
+            } catch (IllegalArgumentException e) {
+                return LoadErrorMode.FAIL;
+            }
+        }
+
         private static Properties loadRootProps() {
             Properties props = new Properties();
             try {
@@ -330,6 +363,12 @@ public final class JsonParserConfig {
             return this;
         }
 
+        /** Sets the JSONL load-error policy ({@code null} resets to FAIL, prompt 48). */
+        public Builder loadErrorMode(LoadErrorMode loadErrorMode) {
+            this.loadErrorMode = loadErrorMode != null ? loadErrorMode : LoadErrorMode.FAIL;
+            return this;
+        }
+
         public JsonParserConfig build() {
             return new JsonParserConfig(this);
         }
@@ -351,13 +390,14 @@ public final class JsonParserConfig {
                 && schemaMode == other.schemaMode
                 && nestedMode == other.nestedMode
                 && arrayColumns == other.arrayColumns
-                && missingField == other.missingField;
+                && missingField == other.missingField
+                && loadErrorMode == other.loadErrorMode;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion, schemaMode,
-                nestedMode, arrayColumns, missingField);
+                nestedMode, arrayColumns, missingField, loadErrorMode);
     }
 
     @Override
@@ -370,6 +410,7 @@ public final class JsonParserConfig {
                 + ", schemaMode=" + schemaMode
                 + ", nestedMode=" + nestedMode
                 + ", arrayColumns=" + arrayColumns
-                + ", missingField=" + missingField + '}';
+                + ", missingField=" + missingField
+                + ", loadErrorMode=" + loadErrorMode + '}';
     }
 }

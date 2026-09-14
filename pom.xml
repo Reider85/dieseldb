@@ -122,8 +122,9 @@
                          <include>**/JsonlNestedModeTest.java</include>
    <include>**/JsonlTypeMapperTest.java</include>
 <include>**/JsonStreamAbstractionTest.java</include>
-   <include>**/JsonlNullSemanticsTest.java</include>
-                               </includes>
+<include>**/JsonlNullSemanticsTest.java</include>
+    <include>**/JsonlLoadDiagnosticsTest.java</include>
+                                </includes>
                       <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
                         <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
@@ -200,6 +201,7 @@
   <include>**/JsonlTypeMapperTest.java</include>
   <include>**/JsonStreamAbstractionTest.java</include>
   <include>**/JsonlNullSemanticsTest.java</include>
+  <include>**/JsonlLoadDiagnosticsTest.java</include>
                              </includes>
                              <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>

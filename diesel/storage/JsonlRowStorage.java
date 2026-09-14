@@ -57,6 +57,13 @@ import diesel.storage.json.JsonSchemaInference;
  * memory mark every column present. Reading is governed by the
  * {@code jsonl.missing.field} policy in {@link JsonParserConfig}.
  *
+ * <p>Malformed rows are governed by the {@code jsonl.load.error.mode} policy
+ * (prompt 48): {@code fail} (default) aborts the load, rolls back to the
+ * previous in-memory state and rethrows the {@link DieselIOException} with
+ * {@code file:line}/field diagnostics; {@code skip_row} logs each bad row's
+ * coordinates, continues loading the valid rows and commits the result (the
+ * reader reports the total skipped count as a final WARNING).
+ *
  * <p>Inherited infrastructure (prompt 46 checklist): saves go through the
  * shared crash-safe {@link AtomicFileWriter} (temp + fsync + atomic rename,
  * prompt 30) so an interrupted write can never truncate the previous valid
