@@ -33,6 +33,14 @@ import java.util.Properties;
  * {@code jsonl.missing.field} and {@code jsonl.load.error.mode}; invalid
  * overrides fall back to the defaults.
  *
+ * <p>The write-mode policy ({@code jsonl.write.mode}, prompt 49) decides how
+ * {@link diesel.storage.JsonlRowStorage} persists data: {@link WriteMode#REWRITE}
+ * (default) performs a full atomic rewrite via {@link diesel.storage.AtomicFileWriter}
+ * on every save, {@link WriteMode#APPEND} appends new rows to the base file
+ * and tracks deltas in a sidecar. The compaction threshold
+ * ({@code jsonl.compaction.threshold}, prompt 49) controls automatic
+ * compaction when the delta ratio exceeds the configured fraction (default 0.3).
+ *
  * <p>The schema mode ({@code jsonl.schema.mode}, prompt 44) is carried here
  * as the single hook for the JSONL schema-matching policies: {@link #STRICT}
  * requires every row's field set to match the table schema (unknown fields
@@ -104,6 +112,14 @@ public final class JsonParserConfig {
         SKIP_ROW
     }
 
+    /** JSONL write-mode policy wired to the jsonl.write.mode config (prompt 49). */
+    public enum WriteMode {
+        /** Full atomic rewrite via AtomicFileWriter on every save (current default). */
+        REWRITE,
+        /** Append new rows to the base file; deltas tracked in a sidecar. */
+        APPEND
+    }
+
     private final int maxNestingDepth;
     private final int maxStringLength;
     private final Backend backend;
@@ -114,6 +130,8 @@ public final class JsonParserConfig {
     private final ArrayColumnsMode arrayColumns;
     private final MissingFieldMode missingField;
     private final LoadErrorMode loadErrorMode;
+    private final WriteMode writeMode;
+    private final double compactionThreshold;
 
     private JsonParserConfig(Builder builder) {
         this.maxNestingDepth = builder.maxNestingDepth;
@@ -126,6 +144,8 @@ public final class JsonParserConfig {
         this.arrayColumns = builder.arrayColumns;
         this.missingField = builder.missingField;
         this.loadErrorMode = builder.loadErrorMode;
+        this.writeMode = builder.writeMode;
+        this.compactionThreshold = builder.compactionThreshold;
     }
 
     /** Returns the default configuration (strict, depth 64, 1MB strings, Jackson backend). */
@@ -184,6 +204,16 @@ public final class JsonParserConfig {
         return loadErrorMode;
     }
 
+    /** Returns the JSONL write-mode policy (REWRITE by default, prompt 49). */
+    public WriteMode writeMode() {
+        return writeMode;
+    }
+
+    /** Returns the JSONL compaction threshold (0.3 = 30% default, prompt 49). */
+    public double compactionThreshold() {
+        return compactionThreshold;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -203,6 +233,8 @@ public final class JsonParserConfig {
         private ArrayColumnsMode arrayColumns = readArrayColumnsProperty();
         private MissingFieldMode missingField = readMissingFieldProperty();
         private LoadErrorMode loadErrorMode = readLoadErrorModeProperty();
+        private WriteMode writeMode = readWriteModeProperty();
+        private double compactionThreshold = readDoubleProperty("jsonl.compaction.threshold", 0.3);
 
         private static int readIntProperty(String key, int fallback) {
             String value = readString(key, null);
@@ -298,6 +330,28 @@ public final class JsonParserConfig {
             }
         }
 
+        private static WriteMode readWriteModeProperty() {
+            String value = readString("jsonl.write.mode", "REWRITE");
+            try {
+                return WriteMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
+            } catch (IllegalArgumentException e) {
+                return WriteMode.REWRITE;
+            }
+        }
+
+        private static double readDoubleProperty(String key, double fallback) {
+            String value = readString(key, null);
+            if (value == null) {
+                return fallback;
+            }
+            try {
+                double parsed = Double.parseDouble(value.trim());
+                return parsed >= 0.0 && parsed <= 1.0 ? parsed : fallback;
+            } catch (NumberFormatException e) {
+                return fallback;
+            }
+        }
+
         private static Properties loadRootProps() {
             Properties props = new Properties();
             try {
@@ -369,6 +423,19 @@ public final class JsonParserConfig {
             return this;
         }
 
+        /** Sets the JSONL write-mode policy ({@code null} resets to REWRITE, prompt 49). */
+        public Builder writeMode(WriteMode writeMode) {
+            this.writeMode = writeMode != null ? writeMode : WriteMode.REWRITE;
+            return this;
+        }
+
+        /** Sets the JSONL compaction threshold (prompt 49). */
+        public Builder compactionThreshold(double compactionThreshold) {
+            this.compactionThreshold = compactionThreshold >= 0.0 && compactionThreshold <= 1.0
+                    ? compactionThreshold : 0.3;
+            return this;
+        }
+
         public JsonParserConfig build() {
             return new JsonParserConfig(this);
         }
@@ -391,13 +458,16 @@ public final class JsonParserConfig {
                 && nestedMode == other.nestedMode
                 && arrayColumns == other.arrayColumns
                 && missingField == other.missingField
-                && loadErrorMode == other.loadErrorMode;
+                && loadErrorMode == other.loadErrorMode
+                && writeMode == other.writeMode
+                && Double.compare(compactionThreshold, other.compactionThreshold) == 0;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion, schemaMode,
-                nestedMode, arrayColumns, missingField, loadErrorMode);
+                nestedMode, arrayColumns, missingField, loadErrorMode, writeMode,
+                Double.hashCode(compactionThreshold));
     }
 
     @Override
@@ -411,6 +481,8 @@ public final class JsonParserConfig {
                 + ", nestedMode=" + nestedMode
                 + ", arrayColumns=" + arrayColumns
                 + ", missingField=" + missingField
-                + ", loadErrorMode=" + loadErrorMode + '}';
+                + ", loadErrorMode=" + loadErrorMode
+                + ", writeMode=" + writeMode
+                + ", compactionThreshold=" + compactionThreshold + '}';
     }
 }

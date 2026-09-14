@@ -2,7 +2,12 @@ package diesel.storage;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.RandomAccessFile;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -14,8 +19,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
+import diesel.storage.json.JsonEvent;
 import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonSchemaInference;
+import diesel.storage.json.JsonStreamParser;
+import diesel.storage.json.JsonStreams;
 
 /**
  * JSON Lines (NDJSON) backed implementation of {@link RowStorage}. Rows are
@@ -73,6 +81,14 @@ import diesel.storage.json.JsonSchemaInference;
  * backends (they no-op here until an index manager exists, prompt 53);
  * logging uses slf4j (prompt 37); UTF-8 and {@code \n} are fixed (prompt 29);
  * the engine calls files under the table write lock (prompt 37).
+ *
+ * <p>Write modes (prompt 49): the {@code jsonl.write.mode} config controls
+ * how data is persisted. {@code rewrite} (default) performs a full atomic
+ * rewrite via {@link AtomicFileWriter} on every save (identical to CSV/TSV).
+ * {@code append} tracks new rows and deletions in a {@link JsonlDeltaManager}
+ * and writes only deltas to the base file (append + fsync) with an atomic
+ * delta sidecar; automatic compaction is triggered when the delta ratio
+ * exceeds {@code jsonl.compaction.threshold} (default 0.3).
  */
 public class JsonlRowStorage extends AbstractRowStorage {
 
@@ -92,6 +108,12 @@ public class JsonlRowStorage extends AbstractRowStorage {
      */
     private final List<boolean[]> rowPresence = new ArrayList<>();
 
+    /** Write mode: REWRITE (full atomic rewrite) or APPEND (delta-tracked, prompt 49). */
+    private final JsonParserConfig.WriteMode writeMode;
+
+    /** Delta manager for append mode; null in rewrite mode (prompt 49). */
+    private JsonlDeltaManager deltaManager;
+
     public JsonlRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         this(tableName, columns, columnTypes, JsonParserConfig.defaults());
     }
@@ -101,8 +123,9 @@ public class JsonlRowStorage extends AbstractRowStorage {
      * @param columns     the ordered column names
      * @param columnTypes column name to expected Java type
      * @param config      the streaming JSON configuration (backend, limits,
-     *                    duplicate-key policy, schema mode) used for every
-     *                    line and for the schema sidecar (prompt 44)
+     *                    duplicate-key policy, schema mode, write mode,
+     *                    compaction threshold) used for every line and for
+     *                    the schema sidecar (prompt 44, prompt 49)
      */
     public JsonlRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes,
                            JsonParserConfig config) {
@@ -110,6 +133,10 @@ public class JsonlRowStorage extends AbstractRowStorage {
         this.config = config != null ? config : JsonParserConfig.defaults();
         this.rowColumns = new RowArrays(columns);
         this.sharedSchemaManager = new JsonlSchemaManager(columns, columnTypes, this.config);
+        this.writeMode = this.config.writeMode();
+        if (this.writeMode == JsonParserConfig.WriteMode.APPEND) {
+            this.deltaManager = new JsonlDeltaManager(this.config.compactionThreshold());
+        }
     }
 
     /** Returns whether this storage has been persisted to disk at least once. */
@@ -147,32 +174,51 @@ public class JsonlRowStorage extends AbstractRowStorage {
     public void insert(Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(arr);
-        rowPresence.add(allPresent(rowColumns.size()));
+        boolean[] present = allPresent(rowColumns.size());
+        rowPresence.add(present);
         syncIndexAppend(arr, rows.size() - 1);
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+            deltaManager.onInsert(arr, present);
+        }
     }
 
     @Override
     public void insertAt(int rowIndex, Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(rowIndex, arr);
-        rowPresence.add(rowIndex, allPresent(rowColumns.size()));
+        boolean[] present = allPresent(rowColumns.size());
+        rowPresence.add(rowIndex, present);
         syncIndexInsert(arr, rowIndex);
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+            deltaManager.onInsert(arr, present);
+        }
     }
 
     @Override
     public void update(int rowIndex, Map<String, Object> row) {
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = rowColumns.fromMap(row);
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+            deltaManager.onDelete(rowIndex, rows);
+        }
         rows.set(rowIndex, newRow);
-        rowPresence.set(rowIndex, allPresent(rowColumns.size()));
+        boolean[] present = allPresent(rowColumns.size());
+        rowPresence.set(rowIndex, present);
         syncIndexUpdate(oldRow, rowIndex, newRow);
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+            deltaManager.onInsert(newRow, present);
+        }
     }
 
     @Override
     public void delete(int rowIndex) {
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+            deltaManager.onDelete(rowIndex, rows);
+        }
         rows.remove(rowIndex);
         rowPresence.remove(rowIndex);
         syncIndexDelete(rowIndex);
+        checkAutoCompact();
     }
 
     private static boolean[] allPresent(int size) {
@@ -185,6 +231,18 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void saveToFile(String tableName) {
+        if (writeMode == JsonParserConfig.WriteMode.APPEND) {
+            saveAppendMode(tableName);
+        } else {
+            saveRewriteMode(tableName);
+        }
+    }
+
+    /**
+     * Full atomic rewrite via AtomicFileWriter (prompt 30). Used in REWRITE
+     * mode and also for compaction in APPEND mode.
+     */
+    private void saveRewriteMode(String tableName) {
         String fileName = resolveFilePath(".jsonl");
         try {
             try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
@@ -192,7 +250,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
                 for (int i = 0; i < rows.size(); i++) {
                     Object[] row = rows.get(i);
                     boolean[] present = i < rowPresence.size() ? rowPresence.get(i) : null;
-                    jsonlWriter.writeRow(row, present);
+                    jsonlRowWriterWrite(jsonlWriter, row, present);
                 }
                 jsonlWriter.flush();
                 afw.commit();
@@ -201,12 +259,79 @@ public class JsonlRowStorage extends AbstractRowStorage {
             if (config.schemaMode() != JsonParserConfig.SchemaMode.STRICT) {
                 writeSchemaSidecar();
             }
-            LOGGER.info("JsonlRowStorage {} saved JSONL to {} with {} rows",
+            // After a full rewrite, reset the delta manager
+            if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+                deltaManager.reset();
+                // Re-initialize with current rows as base
+                deltaManager.onLoad(rows, rowPresence, rows.size());
+            }
+            LOGGER.info("JsonlRowStorage {} saved JSONL (rewrite) to {} with {} rows",
                     tableName, fileName, rows.size());
         } catch (IOException e) {
             LOGGER.error("Failed to save JSONL for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to JSONL file: " + fileName, e);
         }
+    }
+
+    /**
+     * Append mode: new rows are appended to the base file, deltas are
+     * tracked in the .jsonl.delta sidecar (prompt 49).
+     */
+    private void saveAppendMode(String tableName) {
+        if (deltaManager == null) {
+            saveRewriteMode(tableName);
+            return;
+        }
+        String fileName = resolveFilePath(".jsonl");
+        String deltaFileName = resolveFilePath(JsonlDeltaManager.DELTA_FILE_SUFFIX);
+        List<Object[]> pendingNew = deltaManager.getPendingNewRows();
+        List<boolean[]> pendingPresence = deltaManager.getPendingNewPresence();
+        // If no new rows and no deletions, nothing to save
+        if (pendingNew.isEmpty() && deltaManager.getDeletedBaseLines().isEmpty()) {
+            LOGGER.debug("JsonlRowStorage {} nothing to save in append mode", tableName);
+            return;
+        }
+        try {
+            // Append new rows to the base file
+            if (!pendingNew.isEmpty()) {
+                File baseFile = new File(fileName);
+                boolean append = baseFile.exists();
+                try (FileOutputStream fos = new FileOutputStream(baseFile, append);
+                     OutputStreamWriter osw = new OutputStreamWriter(fos, StorageConfig.getCharset());
+                     Writer bw = new java.io.BufferedWriter(osw);
+                     JsonlRowWriter jsonlWriter = new JsonlRowWriter(bw, sharedSchemaManager, config)) {
+                    for (int i = 0; i < pendingNew.size(); i++) {
+                        Object[] row = pendingNew.get(i);
+                        boolean[] present = i < pendingPresence.size() ? pendingPresence.get(i) : null;
+                        jsonlRowWriterWrite(jsonlWriter, row, present);
+                    }
+                    jsonlWriter.flush();
+                    fos.flush();
+                    fos.getChannel().force(true); // fsync
+                }
+                fileInitialized = true;
+            }
+            // Write the delta file atomically (deletions only; new rows are in the base)
+            deltaManager.writeDeltaFile(deltaFileName);
+            // After successful save, update delta manager state
+            deltaManager.onSaveComplete();
+            if (config.schemaMode() != JsonParserConfig.SchemaMode.STRICT) {
+                writeSchemaSidecar();
+            }
+            LOGGER.info("JsonlRowStorage {} saved JSONL (append) to {} with {} base + {} new rows, {} deletions",
+                    tableName, fileName, deltaManager.getBaseFileLineCount(),
+                    pendingNew.size(), deltaManager.getDeletedBaseLines().size());
+        } catch (IOException e) {
+            LOGGER.error("Failed to save JSONL (append) for {}: {}", tableName, fileName);
+            throw new DieselIOException("Failed to save table to JSONL file: " + fileName, e);
+        }
+    }
+
+    /**
+     * Writes a row through the JsonlRowWriter (Map boundary not needed for Object[]).
+     */
+    private static void jsonlRowWriterWrite(JsonlRowWriter writer, Object[] row, boolean[] present) throws IOException {
+        writer.writeRow(row, present);
     }
 
     @Override
@@ -215,15 +340,24 @@ public class JsonlRowStorage extends AbstractRowStorage {
         if (!file.exists()) {
             AtomicFileWriter.warnInterruptedWrite(file.toPath());
             LOGGER.info("JSONL file {} not found for storage {}", file.getPath(), tableName);
+            // In append mode, still try to load delta for new rows
+            if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+                loadFromDeltaOnly(tableName);
+            }
             return;
         }
         List<Object[]> previous = new ArrayList<>(rows);
         List<boolean[]> previousPresence = new ArrayList<>(rowPresence);
         try {
+            // Crash recovery for append mode (prompt 49)
+            if (writeMode == JsonParserConfig.WriteMode.APPEND) {
+                repairTruncatedAppend(file);
+            }
             SchemaPlan plan = planSchemaForLoad(file);
             sharedSchemaManager = new JsonlSchemaManager(plan.columns(), plan.columnTypes(), config);
             List<Object[]> loaded = new ArrayList<>();
             List<boolean[]> loadedPresence = new ArrayList<>();
+            int lineCount = 0;
             try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset());
                  JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
                          file.getPath(), config)) {
@@ -233,6 +367,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
                         loaded.add(row);
                         boolean[] present = jsonlReader.getLastRowPresent();
                         loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
+                        lineCount++;
                     }
                 }
             }
@@ -242,6 +377,14 @@ public class JsonlRowStorage extends AbstractRowStorage {
             rowPresence.clear();
             rowPresence.addAll(loadedPresence);
             fileInitialized = true;
+
+            // In append mode, apply delta on top of the base
+            if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+                String deltaPath = resolveFilePath(JsonlDeltaManager.DELTA_FILE_SUFFIX);
+                deltaManager.onLoad(loaded, loadedPresence, lineCount);
+                applyDelta(deltaPath);
+            }
+
             LOGGER.info("JsonlRowStorage {} loaded from {} with {} rows",
                     tableName, file.getPath(), rows.size());
             syncIndexBulkFromArrays(rows);
@@ -262,6 +405,144 @@ public class JsonlRowStorage extends AbstractRowStorage {
             rowPresence.addAll(previousPresence);
             sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
             throw new DieselIOException("Failed to load table from JSONL file: " + file.getPath(), e);
+        }
+    }
+
+    /**
+     * Loads only from the delta file path (base .jsonl missing - nothing to
+     * reconstruct, new rows live in the base file, not the delta).
+     */
+    private void loadFromDeltaOnly(String tableName) {
+        String deltaPath = resolveFilePath(JsonlDeltaManager.DELTA_FILE_SUFFIX);
+        if (!new File(deltaPath).exists()) {
+            return;
+        }
+        List<Object[]> previous = new ArrayList<>(rows);
+        List<boolean[]> previousPresence = new ArrayList<>(rowPresence);
+        try {
+            deltaManager.readDeltaFile(deltaPath);
+            // Without a base file there are no rows to delete from; keep the
+            // delta file so a later-recovered base still applies it.
+            LOGGER.info("JsonlRowStorage {} loaded with no base; {} deletions deferred",
+                    tableName, deltaManager.getDeletedBaseLines().size());
+            syncIndexBulkFromArrays(rows);
+        } catch (Exception e) {
+            rows.clear();
+            rows.addAll(previous);
+            rowPresence.clear();
+            rowPresence.addAll(previousPresence);
+            LOGGER.warn("Failed to load delta-only for {}: {}", tableName, e.getMessage());
+        }
+    }
+
+    /**
+     * Applies the delta to the current in-memory rows after loading the base
+     * file: removed the recorded base lines. New rows need no re-appending -
+     * they are physically part of the base file.
+     */
+    private void applyDelta(String deltaPath) {
+        File deltaFile = new File(deltaPath);
+        if (!deltaFile.exists()) {
+            return;
+        }
+        try {
+            int result = deltaManager.readDeltaFile(deltaPath);
+            if (result < 0) {
+                LOGGER.warn("Corrupt delta file for {}: {}", tableName, deltaPath);
+                return;
+            }
+            // Remove deleted lines (iterate in reverse to preserve indices)
+            List<Integer> sortedDeletes = new ArrayList<>(deltaManager.getDeletedBaseLines());
+            sortedDeletes.sort((a, b) -> b - a); // reverse order
+            for (int lineNum : sortedDeletes) {
+                if (lineNum < rows.size()) {
+                    rows.remove(lineNum);
+                    rowPresence.remove(lineNum);
+                }
+            }
+            // The delta file is kept: its deletions are re-applied on each
+            // subsequent load until a compaction rewrites the base file.
+            LOGGER.info("Applied delta: deleted {} lines -> {} total",
+                    sortedDeletes.size(), rows.size());
+        } catch (Exception e) {
+            LOGGER.warn("Failed to apply delta {}: {}", deltaPath, e.getMessage());
+        }
+    }
+
+    // ─── Append-mode crash recovery (prompt 49) ───────────────────
+
+    /**
+     * Recovers from an append interrupted mid-write. Appends are written with
+     * every row terminated by {@code '\n'}, so a base file that does not end in
+     * {@code '\n'} carries an unterminated trailing fragment. If that fragment
+     * is a complete JSON object we restore the missing terminator (the row is
+     * fully written, just missing its newline before the next append); if it
+     * is a truncated prefix it is discarded and the file is truncated at the
+     * last intact newline.
+     */
+    private void repairTruncatedAppend(File file) {
+        if (!file.exists() || file.length() == 0) {
+            return;
+        }
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+            long length = raf.length();
+            raf.seek(length - 1);
+            if (raf.read() == '\n') {
+                return; // properly terminated
+            }
+            long lineStart = lastIndexOfByte(raf, (byte) '\n', length);
+            int tailLen = (int) (length - (lineStart + 1));
+            if (tailLen <= 0) {
+                return;
+            }
+            byte[] tail = new byte[tailLen];
+            raf.seek(lineStart + 1);
+            raf.readFully(tail);
+            String lastLine = new String(tail, StandardCharsets.UTF_8);
+            if (isCompleteJsonObject(lastLine)) {
+                raf.seek(length);
+                raf.write('\n');
+                LOGGER.warn("JsonlRowStorage {} restored missing newline after interrupted append",
+                        tableName);
+            } else {
+                raf.setLength(lineStart + 1);
+                LOGGER.warn("JsonlRowStorage {} discarded {} bytes of truncated JSON after interrupted append",
+                        tableName, tailLen);
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Failed to repair truncated append for {}: {}", tableName, e.getMessage());
+        }
+    }
+
+    /** Index of the last {@code value} byte in {@code [0, limit)}, or -1. */
+    private static long lastIndexOfByte(RandomAccessFile raf, byte value, long limit) throws IOException {
+        long pos = limit;
+        int chunkSize = 8192;
+        while (pos > 0) {
+            long readStart = Math.max(0, pos - chunkSize);
+            int readLen = (int) (pos - readStart);
+            byte[] chunk = new byte[readLen];
+            raf.seek(readStart);
+            raf.readFully(chunk);
+            for (int i = readLen - 1; i >= 0; i--) {
+                if (chunk[i] == value) {
+                    return readStart + i;
+                }
+            }
+            pos = readStart;
+        }
+        return -1;
+    }
+
+    /** Returns true if the text is one complete, well-formed JSON document. */
+    private boolean isCompleteJsonObject(String text) {
+        try (JsonStreamParser parser = JsonStreams.createParser(text, config)) {
+            while (parser.nextToken() != JsonEvent.END_INPUT) {
+                // drain tokens
+            }
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -389,7 +670,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
         return rows;
     }
 
-    /** Replaces the internal row list. */
+    /** Replaces the internal row list. Used by compaction (prompt 49). */
     public void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
         rowPresence.clear();
@@ -398,6 +679,33 @@ public class JsonlRowStorage extends AbstractRowStorage {
             rowPresence.add(allPresent(rowColumns.size()));
         }
         syncIndexBulkFromArrays(rows);
+        // After setRows (compaction), reset delta manager
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+            deltaManager.reset();
+            deltaManager.onLoad(rows, rowPresence, rows.size());
+        }
+    }
+
+    /**
+     * Checks whether automatic compaction is needed (prompt 49) and
+     * triggers a full rewrite + delta reset if the threshold is exceeded.
+     */
+    private void checkAutoCompact() {
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null
+                && deltaManager.shouldCompact()) {
+            LOGGER.info("Auto-compaction triggered for {}", tableName);
+            compactJsonl();
+        }
+    }
+
+    /**
+     * Performs a full compaction of the JSONL file (prompt 49): rewrites the
+     * base file atomically with only live rows and resets the delta manager.
+     * This is equivalent to a full rewrite.
+     */
+    public void compactJsonl() {
+        LOGGER.info("Compacting JSONL for {}: {} rows", tableName, rows.size());
+        saveRewriteMode(tableName);
     }
 
     /** Returns the per-row present-column flags (prompt 47), parallel to the internal rows. */
@@ -411,5 +719,15 @@ public class JsonlRowStorage extends AbstractRowStorage {
         for (boolean[] p : presence) {
             rowPresence.add(p != null ? p.clone() : null);
         }
+    }
+
+    /** Returns the write mode (prompt 49). */
+    public JsonParserConfig.WriteMode getWriteMode() {
+        return writeMode;
+    }
+
+    /** Returns the delta manager (null in REWRITE mode, prompt 49). */
+    public JsonlDeltaManager getDeltaManager() {
+        return deltaManager;
     }
 }
