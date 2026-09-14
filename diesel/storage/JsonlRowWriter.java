@@ -22,7 +22,11 @@ import diesel.storage.json.JsonStreams;
  * Writes rows to a JSON Lines (NDJSON) stream: one table row = one JSON object
  * per line, {@code \n}-separated, UTF-8 (the caller supplies the character
  * stream). Fields are written in schema column order so the file layout is
- * deterministic. Nulls are written as JSON {@code null}.
+ * deterministic. Null semantics (prompt 47): an explicit {@code null} is
+ * written as JSON {@code null}, the empty string as {@code ""}, and an absent
+ * field (flagged not-present in the per-row presence mask) has its key omitted
+ * from the object entirely - so the three states stay distinct after a
+ * load&rarr;save round trip.
  *
  * <p>JSON validity is enforced at write time (prompt 40): values are
  * serialised through the streaming JSON abstraction
@@ -146,10 +150,28 @@ public class JsonlRowWriter implements AutoCloseable {
      * @param row the ordered values aligned with the columns
      */
     public void writeRow(Object[] row) throws IOException {
+        writeRow(row, null);
+    }
+
+    /**
+     * Writes a single Object[] row, honouring the per-column present flags
+     * (prompt 47): a column with {@code present[i] == false} has its key
+     * omitted from the JSON object, so an absent field stays distinct from an
+     * explicit {@code null} after a load&rarr;save round trip. Passing
+     * {@code null} (or an array of the wrong length) treats every column as
+     * present, which preserves the pre-prompt-47 behaviour.
+     *
+     * @param row     the ordered values aligned with the columns
+     * @param present per-column presence flags, or {@code null} for all-present
+     */
+    public void writeRow(Object[] row, boolean[] present) throws IOException {
         recordNumber++;
         if (flatten) {
             Map<String, Object> nested = new LinkedHashMap<>();
             for (int i = 0; i < columns.size(); i++) {
+                if (!isPresent(present, i)) {
+                    continue;
+                }
                 Object value = row == null || i >= row.length ? null : row[i];
                 schema.validateWriteValue(i, value, columns.get(i), recordContext());
                 insertNested(nested, columns.get(i), unwrapNested(i, value));
@@ -160,6 +182,9 @@ public class JsonlRowWriter implements AutoCloseable {
         }
         generator.writeStartObject();
         for (int i = 0; i < columns.size(); i++) {
+            if (!isPresent(present, i)) {
+                continue;
+            }
             Object value = row == null || i >= row.length ? null : row[i];
             schema.validateWriteValue(i, value, columns.get(i), recordContext());
             generator.writeFieldName(columns.get(i));
@@ -167,6 +192,10 @@ public class JsonlRowWriter implements AutoCloseable {
         }
         generator.writeEndObject();
         generator.writeRaw('\n');
+    }
+
+    private static boolean isPresent(boolean[] present, int i) {
+        return present == null || i >= present.length || present[i];
     }
 
     private String recordContext() {

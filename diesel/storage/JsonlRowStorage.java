@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -48,6 +49,14 @@ import diesel.storage.json.JsonSchemaInference;
  * (prompt 36). Column-to-value Maps are built only at the Map-based API
  * boundary ({@link #scan()}, {@link #insert(Map)}, {@link #update(int, Map)}).
  *
+ * <p>Null semantics (prompt 47): a per-row presence mask keeps the three
+ * states of a record distinct on save. Rows loaded from a .jsonl file carry
+ * the presence flags the reader observed ({@code null} field vs absent key),
+ * so a load&rarr;save cycle writes an explicit {@code null} back as JSON
+ * {@code null} and an absent key back as an omitted key. Rows inserted in
+ * memory mark every column present. Reading is governed by the
+ * {@code jsonl.missing.field} policy in {@link JsonParserConfig}.
+ *
  * <p>Inherited infrastructure (prompt 46 checklist): saves go through the
  * shared crash-safe {@link AtomicFileWriter} (temp + fsync + atomic rename,
  * prompt 30) so an interrupted write can never truncate the previous valid
@@ -67,6 +76,14 @@ public class JsonlRowStorage extends AbstractRowStorage {
     private final JsonParserConfig config;
     private JsonlSchemaManager sharedSchemaManager;
     private boolean fileInitialized;
+    /**
+     * Per-row present-column flags (prompt 47), parallel to {@link #rows}:
+     * index {@code i} marks which schema columns the row actually carried
+     * (explicitly, possibly as JSON {@code null}). Used on save to omit the
+     * keys that were absent so the null-vs-missing distinction survives a
+     * load&rarr;save round trip.
+     */
+    private final List<boolean[]> rowPresence = new ArrayList<>();
 
     public JsonlRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         this(tableName, columns, columnTypes, JsonParserConfig.defaults());
@@ -123,6 +140,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     public void insert(Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(arr);
+        rowPresence.add(allPresent(rowColumns.size()));
         syncIndexAppend(arr, rows.size() - 1);
     }
 
@@ -130,6 +148,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     public void insertAt(int rowIndex, Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(rowIndex, arr);
+        rowPresence.add(rowIndex, allPresent(rowColumns.size()));
         syncIndexInsert(arr, rowIndex);
     }
 
@@ -138,13 +157,21 @@ public class JsonlRowStorage extends AbstractRowStorage {
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = rowColumns.fromMap(row);
         rows.set(rowIndex, newRow);
+        rowPresence.set(rowIndex, allPresent(rowColumns.size()));
         syncIndexUpdate(oldRow, rowIndex, newRow);
     }
 
     @Override
     public void delete(int rowIndex) {
         rows.remove(rowIndex);
+        rowPresence.remove(rowIndex);
         syncIndexDelete(rowIndex);
+    }
+
+    private static boolean[] allPresent(int size) {
+        boolean[] present = new boolean[size];
+        Arrays.fill(present, true);
+        return present;
     }
 
     // ─── Persistence ────────────────────────────────────────────────
@@ -155,8 +182,10 @@ public class JsonlRowStorage extends AbstractRowStorage {
         try {
             try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
                  JsonlRowWriter jsonlWriter = new JsonlRowWriter(afw.bufferedWriter(), sharedSchemaManager)) {
-                for (Object[] row : rows) {
-                    jsonlWriter.writeRow(row);
+                for (int i = 0; i < rows.size(); i++) {
+                    Object[] row = rows.get(i);
+                    boolean[] present = i < rowPresence.size() ? rowPresence.get(i) : null;
+                    jsonlWriter.writeRow(row, present);
                 }
                 jsonlWriter.flush();
                 afw.commit();
@@ -182,10 +211,12 @@ public class JsonlRowStorage extends AbstractRowStorage {
             return;
         }
         List<Object[]> previous = new ArrayList<>(rows);
+        List<boolean[]> previousPresence = new ArrayList<>(rowPresence);
         try {
             SchemaPlan plan = planSchemaForLoad(file);
             sharedSchemaManager = new JsonlSchemaManager(plan.columns(), plan.columnTypes(), config);
             List<Object[]> loaded = new ArrayList<>();
+            List<boolean[]> loadedPresence = new ArrayList<>();
             try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset());
                  JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
                          file.getPath(), config)) {
@@ -193,12 +224,16 @@ public class JsonlRowStorage extends AbstractRowStorage {
                     Object[] row = jsonlReader.nextArray();
                     if (row != null) {
                         loaded.add(row);
+                        boolean[] present = jsonlReader.getLastRowPresent();
+                        loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
                     }
                 }
             }
             adoptSchema(plan);
             rows.clear();
             rows.addAll(loaded);
+            rowPresence.clear();
+            rowPresence.addAll(loadedPresence);
             fileInitialized = true;
             LOGGER.info("JsonlRowStorage {} loaded from {} with {} rows",
                     tableName, file.getPath(), rows.size());
@@ -209,11 +244,15 @@ public class JsonlRowStorage extends AbstractRowStorage {
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
+            rowPresence.clear();
+            rowPresence.addAll(previousPresence);
             sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
             throw e;
         } catch (IOException e) {
             rows.clear();
             rows.addAll(previous);
+            rowPresence.clear();
+            rowPresence.addAll(previousPresence);
             sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
             throw new DieselIOException("Failed to load table from JSONL file: " + file.getPath(), e);
         }
@@ -346,9 +385,24 @@ public class JsonlRowStorage extends AbstractRowStorage {
     /** Replaces the internal row list. */
     public void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
+        rowPresence.clear();
         for (Map<String, Object> row : newRows) {
             rows.add(rowColumns.fromMap(row));
+            rowPresence.add(allPresent(rowColumns.size()));
         }
         syncIndexBulkFromArrays(rows);
+    }
+
+    /** Returns the per-row present-column flags (prompt 47), parallel to the internal rows. */
+    public List<boolean[]> getRowPresence() {
+        return rowPresence;
+    }
+
+    /** Replaces the per-row present-column flags (must stay aligned with the row list). */
+    public void setRowPresence(List<boolean[]> presence) {
+        rowPresence.clear();
+        for (boolean[] p : presence) {
+            rowPresence.add(p != null ? p.clone() : null);
+        }
     }
 }

@@ -38,10 +38,19 @@ import diesel.storage.json.JsonTypeMapper;
  * columns for scalar arrays under {@code jsonl.array.columns = expand}).
  *
  * <p>Fields map to schema columns by name (case-insensitive); the JSONL
- * format is self-describing, so there is no header line. A missing field
- * yields {@code null}; an unknown field is handled per the schema mode
- * (prompt 44): {@code strict} fails with a "did you mean ..." typo hint,
- * hybrid/inferred warn once per file and are expanded at the storage level.
+ * format is self-describing, so there is no header line. The three null-ish
+ * states of a record (prompt 47) are kept distinct: an explicit JSON
+ * {@code null} yields {@code null} with the column flagged present, the JSON
+ * string {@code ""} yields an empty string, and a key absent from the object
+ * yields {@code null} with the column flagged absent - the presence flags are
+ * exposed by {@link #getLastRowPresent()} and honoured on save so a
+ * load&rarr;save round trip preserves the distinction. The
+ * {@code jsonl.missing.field} policy decides what happens to the absent
+ * columns: {@code null}/{@code default} (backward-compatible) leave them
+ * {@code null}, {@code error} fails the row. An unknown field is handled per
+ * the schema mode (prompt 44): {@code strict} fails with a "did you mean ..."
+ * typo hint, hybrid/inferred warn once per file and are expanded at the
+ * storage level.
  * Blank and whitespace-only lines are skipped and a UTF-8 BOM on the first
  * record is stripped (prompt 48 covers BOM handling formally).
  *
@@ -92,6 +101,8 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private boolean unknownFieldWarned;
     private boolean duplicateFieldWarned;
     private boolean unresolvedProjectionWarned;
+    /** Present-column flags of the last consumed row (prompt 47). */
+    private boolean[] lastRowPresent;
     /** FLATTEN-mode container paths (every dot-prefix of a schema column). */
     private final TreeSet<String> containerPrefixes = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
 
@@ -245,6 +256,8 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             closeQuietly(p);
             parser = null;
         }
+        enforceMissingFieldPolicy(seen);
+        lastRowPresent = seen;
         return row;
     }
 
@@ -515,6 +528,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                 Object[] fullRow = new Object[columns.size()];
                 boolean[] seenFull = new boolean[columns.size()];
                 parseCurrentRow(p, fullRow, seenFull);
+                lastRowPresent = seenFull;
                 for (int s = 0; s < slots; s++) {
                     JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
                     int idx = slot.columnIndex();
@@ -552,6 +566,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                     parsedFieldCount++;
                     Object value = parseFieldValue(p, idx, field, valueToken);
                     seenColumn[idx] = true;
+                    lastRowPresent = seenColumn;
                     for (int s = 0; s < slots; s++) {
                         JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
                         if (slot.columnIndex() != idx) {
@@ -621,6 +636,24 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
      */
     public long getLineNumber() {
         return lastRowLine;
+    }
+
+    /**
+     * Returns the present-column flags of the last consumed row (prompt 47):
+     * {@code present[i] == true} means the JSON object carried schema column
+     * {@code i} (explicitly, possibly as {@code null}); {@code false} means
+     * the key (or flatten leaf) was absent from the record. Distinct from an
+     * explicit {@code null}: a slot may be {@code null} while its flag is
+     * {@code true} (JSON {@code null}) and a slot's value is only trustworthy
+     * when the flag is {@code true}.
+     */
+    public boolean[] getLastRowPresent() {
+        return lastRowPresent == null ? null : lastRowPresent.clone();
+    }
+
+    /** Returns whether the configured missing-field policy (prompt 47) is {@code error}. */
+    public boolean isMissingFieldError() {
+        return config.missingField() == JsonParserConfig.MissingFieldMode.ERROR;
     }
 
     /** Releases the active parser; the underlying reader is not closed. */
@@ -703,7 +736,10 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         if (columnIndex == null || columnIndex < 0 || columnIndex >= columns.size()) {
             return null;
         }
-        Class<?> type = columnTypes.get(columns.get(columnIndex));
+        Class<?> type = null;
+        if (columnTypes != null) {
+            type = columnTypes.get(columns.get(columnIndex));
+        }
         if (type == null || "String".equals(type.getSimpleName())) {
             return null;
         }
@@ -779,6 +815,30 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private static void skipValue(JsonStreamParser p, JsonEvent t) throws IOException {
         if (t == JsonEvent.START_OBJECT || t == JsonEvent.START_ARRAY) {
             p.skipChildren();
+        }
+    }
+
+    /**
+     * Applies the missing-field policy (prompt 47) after a full row has been
+     * parsed. In {@code error} mode a schema column that the record did not
+     * carry at all (regardless of an explicit JSON {@code null}) fails the row
+     * with {@code file:line} context listing the missing columns. The
+     * {@code null}/{@code default} modes leave absent slots as {@code null}.
+     */
+    private void enforceMissingFieldPolicy(boolean[] seen) {
+        if (config.missingField() != JsonParserConfig.MissingFieldMode.ERROR) {
+            return;
+        }
+        List<String> missing = new ArrayList<>();
+        for (int i = 0; i < columns.size(); i++) {
+            if (!seen[i]) {
+                missing.add("'" + columns.get(i) + "'");
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+                    + ": record is missing field(s) " + String.join(", ", missing)
+                    + " (jsonl.missing.field=error, prompt 47)", null);
         }
     }
 

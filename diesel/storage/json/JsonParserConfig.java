@@ -29,8 +29,8 @@ import java.util.Properties;
  * {@code jsonl.max.nesting.depth}, {@code jsonl.max.string.length},
  * {@code jsonl.parser.backend}, {@code jsonl.duplicate.keys},
  * {@code jsonl.type.coercion}, {@code jsonl.schema.mode},
- * {@code jsonl.nested.mode} and {@code jsonl.array.columns}; invalid
- * overrides fall back to the defaults.
+ * {@code jsonl.nested.mode}, {@code jsonl.array.columns} and
+ * {@code jsonl.missing.field}; invalid overrides fall back to the defaults.
  *
  * <p>The schema mode ({@code jsonl.schema.mode}, prompt 44) is carried here
  * as the single hook for the JSONL schema-matching policies: {@link #STRICT}
@@ -78,6 +78,16 @@ public final class JsonParserConfig {
     /** JSONL array-storage mode wired to the jsonl.array.columns config (prompt 45). */
     public enum ArrayColumnsMode { JSON, EXPAND }
 
+    /** JSONL missing-field policy wired to the jsonl.missing.field config (prompt 47). */
+    public enum MissingFieldMode {
+        /** Missing field is treated as {@code null}. */
+        NULL,
+        /** Missing field raises an error with file:line:field diagnostics. */
+        ERROR,
+        /** Backward-compatible default: missing field is treated as {@code null}. */
+        DEFAULT
+    }
+
     private final int maxNestingDepth;
     private final int maxStringLength;
     private final Backend backend;
@@ -86,6 +96,7 @@ public final class JsonParserConfig {
     private final SchemaMode schemaMode;
     private final NestedMode nestedMode;
     private final ArrayColumnsMode arrayColumns;
+    private final MissingFieldMode missingField;
 
     private JsonParserConfig(Builder builder) {
         this.maxNestingDepth = builder.maxNestingDepth;
@@ -96,6 +107,7 @@ public final class JsonParserConfig {
         this.schemaMode = builder.schemaMode;
         this.nestedMode = builder.nestedMode;
         this.arrayColumns = builder.arrayColumns;
+        this.missingField = builder.missingField;
     }
 
     /** Returns the default configuration (strict, depth 64, 1MB strings, Jackson backend). */
@@ -144,6 +156,11 @@ public final class JsonParserConfig {
         return arrayColumns;
     }
 
+    /** Returns the JSONL missing-field policy (DEFAULT by default, prompt 47). */
+    public MissingFieldMode missingField() {
+        return missingField;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -161,6 +178,7 @@ public final class JsonParserConfig {
         private SchemaMode schemaMode = readSchemaModeProperty();
         private NestedMode nestedMode = readNestedModeProperty();
         private ArrayColumnsMode arrayColumns = readArrayColumnsProperty();
+        private MissingFieldMode missingField = readMissingFieldProperty();
 
         private static int readIntProperty(String key, int fallback) {
             String value = readString(key, null);
@@ -238,6 +256,15 @@ public final class JsonParserConfig {
             }
         }
 
+        private static MissingFieldMode readMissingFieldProperty() {
+            String value = readString("jsonl.missing.field", "DEFAULT");
+            try {
+                return MissingFieldMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
+            } catch (IllegalArgumentException e) {
+                return MissingFieldMode.DEFAULT;
+            }
+        }
+
         private static Properties loadRootProps() {
             Properties props = new Properties();
             try {
@@ -297,6 +324,12 @@ public final class JsonParserConfig {
             return this;
         }
 
+        /** Sets the JSONL missing-field policy ({@code null} resets to DEFAULT, prompt 47). */
+        public Builder missingField(MissingFieldMode missingField) {
+            this.missingField = missingField != null ? missingField : MissingFieldMode.DEFAULT;
+            return this;
+        }
+
         public JsonParserConfig build() {
             return new JsonParserConfig(this);
         }
@@ -317,13 +350,14 @@ public final class JsonParserConfig {
                 && coercion == other.coercion
                 && schemaMode == other.schemaMode
                 && nestedMode == other.nestedMode
-                && arrayColumns == other.arrayColumns;
+                && arrayColumns == other.arrayColumns
+                && missingField == other.missingField;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion, schemaMode,
-                nestedMode, arrayColumns);
+                nestedMode, arrayColumns, missingField);
     }
 
     @Override
@@ -335,6 +369,7 @@ public final class JsonParserConfig {
                 + ", coercion=" + coercion
                 + ", schemaMode=" + schemaMode
                 + ", nestedMode=" + nestedMode
-                + ", arrayColumns=" + arrayColumns + '}';
+                + ", arrayColumns=" + arrayColumns
+                + ", missingField=" + missingField + '}';
     }
 }
