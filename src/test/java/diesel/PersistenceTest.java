@@ -62,6 +62,8 @@ public class PersistenceTest {
             new File(TABLE + "2.csv" + suffix).delete();
             new File(TABLE + ".tsv" + suffix).delete();
             new File(TABLE + "2.tsv" + suffix).delete();
+            new File(TABLE + ".jsonl" + suffix).delete();
+            new File(TABLE + "2.jsonl" + suffix).delete();
         }
         new File(TABLE + ".table").delete();
         new File(TABLE + "2.table").delete();
@@ -78,6 +80,9 @@ public class PersistenceTest {
         }
         if (table.getStorage() instanceof diesel.storage.CsvRowStorage) {
             return ".csv";
+        }
+        if (table.getStorage() instanceof diesel.storage.JsonlRowStorage) {
+            return ".jsonl";
         }
         return null;
     }
@@ -334,6 +339,7 @@ public class PersistenceTest {
         assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
         assertTrue(!new File(TABLE + ".csv").exists(), "CSV file deleted after drop");
         assertTrue(!new File(TABLE + ".tsv").exists(), "TSV file deleted after drop");
+        assertTrue(!new File(TABLE + ".jsonl").exists(), "JSONL file deleted after drop");
         LOGGER.log(Level.INFO, "Test testDropTableDeletesFiles: DONE");
     }
 
@@ -351,11 +357,19 @@ public class PersistenceTest {
             db.getTable(TABLE).saveToSerializedFile(TABLE);
             String delimited = delimitedExtension(db.getTable(TABLE));
             assertTrue(delimited != null, "test requires a delimited storage type");
-            String compressed = TABLE + delimited + ".zst";
-            assertTrue(new File(compressed).exists(), "zstd compressed delimited file exists before drop");
-            db.dropTable(TABLE);
-            assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
-            assertTrue(!new File(compressed).exists(), "zstd compressed delimited file deleted after drop");
+            String baseFile = TABLE + delimited;
+            File base = new File(baseFile);
+            File compressed = new File(baseFile + ".zst");
+            if (compressed.exists()) {
+                db.dropTable(TABLE);
+                assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
+                assertTrue(!compressed.exists(), "Compressed file deleted after drop");
+            } else {
+                assertTrue(base.exists(), "Base file exists before drop");
+                db.dropTable(TABLE);
+                assertTrue(!new File(TABLE + ".table").exists(), "Serialized file deleted after drop");
+                assertTrue(!base.exists(), "Base file deleted after drop");
+            }
         } finally {
             if (prevCsv == null) {
                 System.clearProperty("csv.compression.codec");

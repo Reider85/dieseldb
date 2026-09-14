@@ -1227,6 +1227,7 @@ class Database {
         String[] suffixes = {
                 ".csv", ".csv.zst", ".csv.lz4", ".csv.snappy",
                 ".tsv", ".tsv.zst", ".tsv.lz4", ".tsv.snappy",
+                ".jsonl", ".jsonl.zst", ".jsonl.lz4", ".jsonl.snappy",
                 ErrorMessages.TABLE_EXTENSION
         };
         for (String extension : suffixes) {
