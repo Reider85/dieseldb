@@ -408,11 +408,11 @@ public abstract class AbstractRowStorage implements RowStorage {
      * array rows (format version 1 with Map elements) still deserialise and can
      * be converted by the storages on load.
      */
-    protected static final class SerializedTableData implements Serializable {
+    public static final class SerializedTableData implements Serializable {
         private static final long serialVersionUID = 1L;
-        final int formatVersion;
-        final List<String> columns;
-        final Map<String, Class<?>> columnTypes;
+        public final int formatVersion;
+        public final List<String> columns;
+        public final Map<String, Class<?>> columnTypes;
         final int rowCount;
         final List<?> rows;
 

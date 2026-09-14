@@ -44,7 +44,11 @@ class CompressionTest {
             "tsv.compression.codec",
             "tsv.compression.level",
             "storage.null.representation",
-            "csv.parallel.read.threshold"
+            "csv.parallel.read.threshold",
+            "csv.load.mode",
+            "tsv.load.mode",
+            "csv.table.mirror",
+            "tsv.table.mirror"
     };
 
     private final Map<String, String> prevProps = new LinkedHashMap<>();
@@ -54,6 +58,10 @@ class CompressionTest {
         for (String key : PROP_KEYS) {
             prevProps.put(key, System.getProperty(key));
         }
+        System.setProperty("csv.load.mode", "file");
+        System.setProperty("tsv.load.mode", "file");
+        System.setProperty("csv.table.mirror", "off");
+        System.setProperty("tsv.table.mirror", "off");
     }
 
     @AfterEach

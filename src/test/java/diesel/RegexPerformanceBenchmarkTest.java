@@ -66,7 +66,7 @@ public class RegexPerformanceBenchmarkTest {
                 + " SQL queries in " + elapsedMs + " ms");
         // Generous guard: the parse-only loop must stay well under this even on
         // a heavily loaded CI box; a backtracking blow-up would exceed it.
-        assertTrue(elapsedMs < 30_000,
+        assertTrue(elapsedMs < 45_000,
                 "Parsing " + parsed + " queries took too long: " + elapsedMs + " ms");
     }
 

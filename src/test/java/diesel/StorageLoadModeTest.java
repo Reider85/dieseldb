@@ -33,24 +33,34 @@ class StorageLoadModeTest {
     Path tempDir;
 
     private String prevCsvCodec;
+    private String prevCsvLoadMode;
+    private String prevTsvLoadMode;
 
     @BeforeEach
-    void pinPlainCodec() {
+    void pinDefaults() {
         prevCsvCodec = System.getProperty("csv.compression.codec");
         System.setProperty("csv.compression.codec", "none");
+        prevCsvLoadMode = System.getProperty("csv.load.mode");
+        System.setProperty("csv.load.mode", "file");
+        prevTsvLoadMode = System.getProperty("tsv.load.mode");
+        System.setProperty("tsv.load.mode", "file");
     }
 
     @AfterEach
     void clearProperties() {
-        if (prevCsvCodec == null) {
-            System.clearProperty("csv.compression.codec");
-        } else {
-            System.setProperty("csv.compression.codec", prevCsvCodec);
-        }
-        System.clearProperty("csv.load.mode");
-        System.clearProperty("tsv.load.mode");
+        restoreOrClear("csv.compression.codec", prevCsvCodec);
+        restoreOrClear("csv.load.mode", prevCsvLoadMode);
+        restoreOrClear("tsv.load.mode", prevTsvLoadMode);
         System.clearProperty("csv.table.mirror");
         System.clearProperty("tsv.table.mirror");
+    }
+
+    private static void restoreOrClear(String key, String prev) {
+        if (prev == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, prev);
+        }
     }
 
     private static List<String> schema() {

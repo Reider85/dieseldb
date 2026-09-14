@@ -2323,21 +2323,38 @@ class Table implements Serializable {
             return table;
         }
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileName))) {
-            Table table = (Table) ois.readObject();
-            if (table.formatVersion > CURRENT_FORMAT_VERSION) {
-                throw new IllegalArgumentException("Unsupported table format version: " + table.formatVersion
-                        + ", max supported: " + CURRENT_FORMAT_VERSION);
-            }
-            table.database = database;
-            if (table.storage instanceof AbstractRowStorage ars) {
-                ars.setDataDir(dir);
-                if (table.primaryKeyColumn != null) {
-                    ars.setPrimaryKeyColumn(table.primaryKeyColumn);
+            Object obj = ois.readObject();
+            if (obj instanceof Table table) {
+                if (table.formatVersion > CURRENT_FORMAT_VERSION) {
+                    throw new IllegalArgumentException("Unsupported table format version: " + table.formatVersion
+                            + ", max supported: " + CURRENT_FORMAT_VERSION);
                 }
+                table.database = database;
+                if (table.storage instanceof AbstractRowStorage ars) {
+                    ars.setDataDir(dir);
+                    if (table.primaryKeyColumn != null) {
+                        ars.setPrimaryKeyColumn(table.primaryKeyColumn);
+                    }
+                }
+                table.setFileInitialized(true);
+                LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
+                return table;
             }
-            table.setFileInitialized(true);
-            LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
-            return table;
+            if (obj instanceof AbstractRowStorage.SerializedTableData data) {
+                LOGGER.log(Level.INFO, "Table {0} .table contains storage mirror (SerializedTableData), "
+                        + "loading via storage auto_mtime path", tableName);
+                Table table = new Table(database, tableName,
+                        new ArrayList<>(data.columns), new TreeMap<>(data.columnTypes),
+                        null, new HashMap<String, Sequence>());
+                table.formatVersion = CURRENT_FORMAT_VERSION;
+                if (table.getStorage() instanceof AbstractRowStorage ars) {
+                    ars.setDataDir(dir);
+                    ars.loadFromFile(tableName);
+                }
+                table.setFileInitialized(true);
+                return table;
+            }
+            throw new ClassNotFoundException("Unexpected object type in " + fileName + ": " + obj.getClass());
         } catch (IOException | ClassNotFoundException e) {
             LOGGER.log(Level.WARNING, "Failed to load table {0}, creating empty: {1}",
                     new Object[]{tableName, e.getMessage()});
