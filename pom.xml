@@ -124,7 +124,8 @@
 <include>**/JsonStreamAbstractionTest.java</include>
 <include>**/JsonlNullSemanticsTest.java</include>
     <include>**/JsonlLoadDiagnosticsTest.java</include>
-    <include>**/JsonlAppendModeTest.java</include>
+     <include>**/JsonlAppendModeTest.java</include>
+     <include>**/JsonlDeterministicSerializationTest.java</include>
                                 </includes>
                       <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
@@ -204,6 +205,7 @@
   <include>**/JsonlNullSemanticsTest.java</include>
   <include>**/JsonlLoadDiagnosticsTest.java</include>
   <include>**/JsonlAppendModeTest.java</include>
+  <include>**/JsonlDeterministicSerializationTest.java</include>
                              </includes>
                              <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>

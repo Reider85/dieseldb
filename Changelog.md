@@ -14,3 +14,10 @@ Changes:
 - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion
 - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files
 - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
+
+3.0.93 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
+
+Changes:
+- diesel/storage/JsonlRowWriter.java: new writeObjectMapSorted() method sorts nested-object keys alphabetically before writing (prompt 51 deterministic key order); the original writeObjectMap() (unsorted, preserves LinkedHashMap iteration order) is retained for the FLATTEN-mode top-level row where the LinkedHashMap is built in deterministic schema-column order; writeValue(Map) delegates to writeObjectMapSorted() for nested Map values; added import java.util.Arrays
+- src/test/java/diesel/JsonlDeterministicSerializationTest.java (new, 15 tests): doubleWriteProducesIdenticalBytes; bigDecimalPreservesTrailingZeros (Jackson: 100.50 stays 100.50); bigIntegerNoExponent; unicodeStringWrittenAsUtf8; controlCharactersAreEscaped; booleanAndNullLiteralsExact; nestedObjectKeysSortedAlphabetically; nestedHashMapKeysStillSorted; arrayOrderPreserved; fullRowAllTypesDeterministic; noByteOrderMark; lineEndingIsLfNotCrlf; jacksonBackendDeterministic; gsonBackendDeterministic; nestedObjectWithMixedTypesDeterministic. Registered in pom.xml default + ci surefire includes.
+- src/test/java/diesel/JsonlStorageTest.java: updated storageNestedColumnRoundTrip expected value to match deterministic nested-key alphabetical order (age before name)

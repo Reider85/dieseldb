@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -375,7 +376,7 @@ public class JsonlRowWriter implements AutoCloseable {
         } else if (value instanceof UUID uuid) {
             generator.writeString(uuid.toString());
         } else if (value instanceof Map<?, ?> map) {
-            writeObjectMap(map);
+            writeObjectMapSorted(map);
         } else if (value instanceof List<?> list) {
             writeArray(list.toArray());
         } else if (value.getClass().isArray()) {
@@ -385,6 +386,31 @@ public class JsonlRowWriter implements AutoCloseable {
         }
     }
 
+    /**
+     * Writes a nested JSON object from a map. Keys are sorted alphabetically
+     * (prompt 51) so the output is byte-deterministic regardless of the
+     * {@link Map} implementation used by the caller.
+     */
+    private void writeObjectMapSorted(Map<?, ?> map) throws IOException {
+        generator.writeStartObject();
+        String[] keys = new String[map.size()];
+        int idx = 0;
+        for (Object key : map.keySet()) {
+            keys[idx++] = String.valueOf(key);
+        }
+        Arrays.sort(keys);
+        for (String key : keys) {
+            generator.writeFieldName(key);
+            writeValue(map.get(key));
+        }
+        generator.writeEndObject();
+    }
+
+    /**
+     * Writes a JSON object from a map preserving iteration order. Used for
+     * the top-level row in FLATTEN mode where the LinkedHashMap is built in
+     * deterministic schema-column order.
+     */
     private void writeObjectMap(Map<?, ?> map) throws IOException {
         generator.writeStartObject();
         for (Map.Entry<?, ?> entry : map.entrySet()) {

@@ -442,7 +442,7 @@ class JsonlStorageTest {
         List<Map<String, Object>> rows = loaded.scan();
         assertEquals(1, rows.size());
         assertEquals(1L, rows.get(0).get("ID"));
-        assertEquals("{\"user\":{\"name\":\"Alice\",\"age\":30}}", rows.get(0).get("DATA"));
+        assertEquals("{\"user\":{\"age\":30,\"name\":\"Alice\"}}", rows.get(0).get("DATA"));
         storage.close();
         loaded.close();
     }
