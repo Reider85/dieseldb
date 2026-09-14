@@ -2355,7 +2355,7 @@ class Table implements Serializable {
                 return table;
             }
             throw new ClassNotFoundException("Unexpected object type in " + fileName + ": " + obj.getClass());
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Failed to load table {0}, creating empty: {1}",
                     new Object[]{tableName, e.getMessage()});
             Table empty = new Table(database, tableName, new ArrayList<>(), new HashMap<>(),

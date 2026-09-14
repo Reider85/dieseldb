@@ -10,6 +10,8 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,13 +28,15 @@ public class ServerConnectionLimitTest {
     private Thread serverThread;
     private int port;
     private List<Socket> clientSockets = new ArrayList<>();
+    private Path tempDir;
 
     @BeforeEach
     void setUp() throws IOException {
+        tempDir = Files.createTempDirectory("diesel-conn-limit-test");
         try (ServerSocket tempSocket = new ServerSocket(0)) {
             port = tempSocket.getLocalPort();
         }
-        server = new DatabaseServer(port, 30000);
+        server = new DatabaseServer(port, 30000, new Database(tempDir.toString()));
         serverThread = new Thread(() -> server.start(), "test-server");
         serverThread.start();
         waitForServerReady(port);
@@ -50,6 +54,13 @@ public class ServerConnectionLimitTest {
         }
         if (serverThread != null) {
             serverThread.interrupt();
+        }
+        if (tempDir != null) {
+            try {
+                Files.walk(tempDir)
+                    .sorted((a, b) -> b.compareTo(a))
+                    .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+            } catch (IOException ignored) {}
         }
     }
 

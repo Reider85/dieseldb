@@ -11,6 +11,8 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -28,13 +30,15 @@ public class SocketTimeoutTest {
     private DatabaseServer server;
     private Thread serverThread;
     private int port;
+    private java.nio.file.Path tempDir;
 
     @BeforeEach
     void setUp() throws IOException {
+        tempDir = Files.createTempDirectory("diesel-socket-timeout-test");
         try (ServerSocket tempSocket = new ServerSocket(0)) {
             port = tempSocket.getLocalPort();
         }
-        server = new DatabaseServer(port, SOCKET_TIMEOUT_MS);
+        server = new DatabaseServer(port, SOCKET_TIMEOUT_MS, new Database(tempDir.toString()));
         serverThread = new Thread(() -> server.start(), "test-server");
         serverThread.start();
         waitForServerReady(port);
@@ -47,6 +51,13 @@ public class SocketTimeoutTest {
         }
         if (serverThread != null) {
             serverThread.interrupt();
+        }
+        if (tempDir != null) {
+            try {
+                Files.walk(tempDir)
+                    .sorted((a, b) -> b.compareTo(a))
+                    .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+            } catch (IOException ignored) {}
         }
     }
 

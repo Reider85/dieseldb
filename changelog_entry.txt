@@ -1,22 +1,9 @@
-Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
-
-Root cause: Two writers (Table.saveToSerializedFile writes Table, CsvRowStorage.saveSerialized writes
-SerializedTableData) shared the same .table extension. Database.loadTablesFromDisk() called
-Table.loadFromFile() which unconditionally cast to Table, crashing on SerializedTableData with an
-uncaught ClassCastException that propagated up and killed server startup (13 client-server test errors).
+3.0.86 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
 
 Changes:
-- Table.loadFromFile(): detect object type (Table vs SerializedTableData) via instanceof;
-  on SerializedTableData, create Table with correct schema from the data and delegate to
-  storage.loadFromFile() which runs the auto_mtime path (shared fix for CSV + TSV)
-- AbstractRowStorage.SerializedTableData: widened from protected to public with public fields
-  (formatVersion, columns, columnTypes) for cross-package access from diesel.Table
-- StorageLoadModeTest: @BeforeEach now pins csv.load.mode=file + tsv.load.mode=file (saves/restores
-  previous values) so tests are independent of config.properties
-- CompressionTest: added csv.load.mode/tsv.load.mode/csv.table.mirror/tsv.table.mirror to PROP_KEYS;
-  @BeforeEach sets safe defaults to prevent auto_mtime+mirror from hijacking codec-fallback tests
-- RegexPerformanceBenchmarkTest: threshold widened 30s -> 45s for CI load variability
-- config.properties: defaults restored to csv.load.mode=file, csv.table.mirror=off (safe defaults;
-  auto_mtime+mirror is opt-in)
-
-Full suite: 341/0/0/0 BUILD SUCCESS
+- diesel/Database.java: Database.loadTablesFromDisk() now wraps each Table.loadFromFile() in try/catch(Exception) and logs a WARNING instead of letting an unhandled RuntimeException (DieselIOException from a stale/corrupt .table or mismatched CSV header) propagate up and kill the server thread during startup - the server now skips the bad table and starts cleanly
+- diesel/Table.java: Table.loadFromFile() catch widened from IOException | ClassNotFoundException to Exception (a DieselIOException from the storage layer is a RuntimeException and previously escaped, crashing DatabaseServer.start() via loadTablesFromDisk); a failed load now logs a WARNING "Failed to load table X, creating empty" and returns the empty fallback table
+- src/test/java/diesel/ServerConnectionLimitTest.java: start the server against a JUnit temp directory (diesel-conn-limit-test) instead of the project data/ dir so stale data\PROFILES.csv cannot trigger the load failure; temp dir removed in tearDown
+- src/test/java/diesel/SocketTimeoutTest.java: same temp-dir isolation (diesel-socket-timeout-test)
+- Root cause: ServerConnectionLimitTest/SocketTimeoutTest previously used the default Database() constructor (data dir = ./data); a leftover data\PROFILES.csv whose header no longer matches the persisted schema (CSV header columns missing from file (required by schema): [PROFILE_CODE, NON_INDEXED, PROFILE_DATE]) made CsvRowStorage.loadCsv -> CsvRowReader.buildColumnMapping throw DieselIOException, an unchecked exception the loader did not catch - the server thread died before the accept loop, failing both tests with "DieselIO Failed to load table from CSV file"
+- Verification: isolated run ServerConnectionLimitTest,SocketTimeoutTest 2/2 green BUILD SUCCESS; quick suite green; full suite (4GB heap, @LargeTest) 360/0/0/0 BUILD SUCCESS (AllTestsSampleTest.prompt69Group timing flake elapsed 29995 ms vs 30000 ms was rerun green - this is unrelated 5 ms timer noise). Profile check skipped - fix has no JOIN / hash join / performance wording (strict condition); make/timing targets not available on this machine, acceptance gate run as raw Maven full suite.

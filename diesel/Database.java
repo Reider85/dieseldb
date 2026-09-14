@@ -1208,11 +1208,16 @@ class Database {
         }
         for (File file : files) {
             String tableName = file.getName().substring(0, file.getName().length() - ErrorMessages.TABLE_EXTENSION.length());
-            Table table = Table.loadFromFile(this, tableName);
-            if (table != null) {
-                tables.put(tableName, table);
-                LOGGER.log(Level.INFO, "Loaded table {0} from disk with {1} rows",
-                        new Object[]{tableName, table.getLiveRowCount()});
+            try {
+                Table table = Table.loadFromFile(this, tableName);
+                if (table != null) {
+                    tables.put(tableName, table);
+                    LOGGER.log(Level.INFO, "Loaded table {0} from disk with {1} rows",
+                            new Object[]{tableName, table.getLiveRowCount()});
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to load table {0} from disk, skipping: {1}",
+                        new Object[]{tableName, e.getMessage()});
             }
         }
         queryCache.invalidateAll();
