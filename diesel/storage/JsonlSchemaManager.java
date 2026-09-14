@@ -88,6 +88,11 @@ public class JsonlSchemaManager {
         return jsonConfig;
     }
 
+    /** Returns the JSONL schema-matching mode (prompt 44), from the shared config. */
+    public JsonParserConfig.SchemaMode schemaMode() {
+        return jsonConfig.schemaMode();
+    }
+
     // ─── Schema accessors ────────────────────────────────────────────
 
     /** Returns the ordered canonical column names. */
@@ -135,6 +140,53 @@ public class JsonlSchemaManager {
     private Class<?> effectiveType(int index) {
         Class<?> type = typeOf(index);
         return type == null ? String.class : type;
+    }
+
+    // ─── Typo detection (prompt 44) ───────────────────────────────────
+
+    /**
+     * Returns the schema column with the smallest case-insensitive Levenshtein
+     * distance to {@code name}, when that distance is within the typo
+     * threshold ({@code max(2, name.length() / 3)}), or {@code null} when the
+     * name is blank, matches no column closely or the schema has no columns.
+     * Used to turn an unknown JSON field into an actionable error with a
+     * "did you mean ..." hint instead of silently dropping or accepting it.
+     */
+    public String suggestNearestColumn(String name) {
+        if (name == null || name.isBlank() || columns.isEmpty()) {
+            return null;
+        }
+        String target = name.trim().toLowerCase(java.util.Locale.ROOT);
+        String best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        for (String column : columns) {
+            int distance = levenshtein(target, column.toLowerCase(java.util.Locale.ROOT));
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = column;
+            }
+        }
+        int threshold = Math.max(2, name.length() / 3);
+        return bestDistance <= threshold ? best : null;
+    }
+
+    private static int levenshtein(String a, String b) {
+        int[] previous = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) {
+            previous[j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            int[] current = new int[b.length() + 1];
+            current[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                current[j] = Math.min(
+                        Math.min(previous[j] + 1, current[j - 1] + 1),
+                        previous[j - 1] + cost);
+            }
+            previous = current;
+        }
+        return previous[b.length()];
     }
 
     // ─── Read-side validation (prompt 41) ────────────────────────────
@@ -398,13 +450,54 @@ public class JsonlSchemaManager {
      * {@code <name>.schema.json} sidecar.
      *
      * @param formatVersion the sidecar format version
-     * @param columns the ordered columns with names and type names
+     * @param columns       the ordered columns with names and type names
+     * @param data          the data-file stamp (mtime/size) at inference time,
+     *                      or {@code null} when the stamp is unknown or was not
+     *                      written (pre-prompt-44 sidecars)
      */
-    public record SchemaDescriptor(int formatVersion, List<SchemaColumn> columns) {
+    public record SchemaDescriptor(int formatVersion, List<SchemaColumn> columns, SchemaStamp data) {
+
+        /** Creates a descriptor without a data stamp (sidecars written before prompt 44). */
+        public SchemaDescriptor(int formatVersion, List<SchemaColumn> columns) {
+            this(formatVersion, columns, null);
+        }
     }
 
     /** A single schema column in the sidecar descriptor. */
     public record SchemaColumn(String name, String type) {
+    }
+
+    /**
+     * The data-file stamp recorded in the sidecar so a loader can detect
+     * whether the schema is stale (prompt 44): the data file's last-modified
+     * mtime in milliseconds and its size in bytes at schema-inference time.
+     *
+     * @param mtimeMillis the data file {@code lastModified()} value
+     * @param sizeBytes   the data file length in bytes
+     */
+    public record SchemaStamp(long mtimeMillis, long sizeBytes) {
+
+        /** Returns a fresh stamp from the given data file's current mtime/size. */
+        public static SchemaStamp of(Path dataFile) {
+            long mtime = Files.exists(dataFile) ? dataFile.toFile().lastModified() : -1L;
+            long size = Files.exists(dataFile) ? dataFile.toFile().length() : -1L;
+            return new SchemaStamp(mtime, size);
+        }
+
+        /** Returns whether the stamp matches the data file's current mtime/size. */
+        public boolean matches(Path dataFile) {
+            SchemaStamp current = of(dataFile);
+            return mtimeMillis == current.mtimeMillis && sizeBytes == current.sizeBytes;
+        }
+
+        /**
+         * Returns whether the data stamp is usable for a freshness check: both
+         * a non-negative mtime/size recorded and a matching current file. A
+         * {@code null} stamp (sidecar written before prompt 44) is always stale.
+         */
+        public static boolean isFresh(SchemaStamp stamp, Path dataFile) {
+            return stamp != null && stamp.matches(dataFile);
+        }
     }
 
     /** Returns the current schema as a sidecar descriptor. */
@@ -422,6 +515,16 @@ public class JsonlSchemaManager {
      * belong to prompt 44; this only persists the current schema.
      */
     public void writeSchemaFile(Path target) throws IOException {
+        writeSchemaFile(target, null);
+    }
+
+    /**
+     * Writes the sidecar schema descriptor deterministically, recording the
+     * data-file stamp {@code stamp} (mtime/size at inference time, prompt 44)
+     * so later loads can detect staleness. A {@code null} stamp omits the
+     * {@code data} block (pre-prompt-44 layout).
+     */
+    public void writeSchemaFile(Path target, SchemaStamp stamp) throws IOException {
         try (BufferedWriter bw = Files.newBufferedWriter(target, StandardCharsets.UTF_8);
              JsonStreamGenerator g = JsonStreams.createGenerator(bw, jsonConfig)) {
             g.writeStartObject();
@@ -438,6 +541,15 @@ public class JsonlSchemaManager {
                 g.writeEndObject();
             }
             g.writeEndArray();
+            if (stamp != null) {
+                g.writeFieldName("data");
+                g.writeStartObject();
+                g.writeFieldName("mtime");
+                g.writeNumber(stamp.mtimeMillis());
+                g.writeFieldName("size");
+                g.writeNumber(stamp.sizeBytes());
+                g.writeEndObject();
+            }
             g.writeEndObject();
             g.writeRaw('\n');
         }
@@ -445,7 +557,9 @@ public class JsonlSchemaManager {
 
     /**
      * Reads a sidecar descriptor, or returns {@code null} when the file is
-     * missing or malformed (a WARNING is logged for malformed content).
+     * missing or malformed (a WARNING is logged for malformed content). The
+     * descriptor carries the recorded data-file stamp (prompt 44) so callers
+     * can detect schema staleness via {@link SchemaStamp#isFresh}.
      */
     public SchemaDescriptor readSchemaFile(Path file) {
         if (!Files.exists(file)) {
@@ -455,6 +569,7 @@ public class JsonlSchemaManager {
              JsonStreamParser p = JsonStreams.createParser(br, jsonConfig)) {
             int formatVersion = -1;
             List<SchemaColumn> columns = new ArrayList<>();
+            SchemaStamp data = null;
             while (p.nextToken() != JsonEvent.END_INPUT) {
                 if (p.currentEvent() == JsonEvent.FIELD_NAME && "formatVersion".equals(p.currentName())) {
                     p.nextToken();
@@ -486,9 +601,31 @@ public class JsonlSchemaManager {
                         }
                         columns.add(new SchemaColumn(name, type));
                     }
+                } else if (p.currentEvent() == JsonEvent.FIELD_NAME && "data".equals(p.currentName())) {
+                    p.nextToken();
+                    if (p.currentEvent() != JsonEvent.START_OBJECT) {
+                        return null;
+                    }
+                    long mtime = -1;
+                    long size = -1;
+                    while (p.nextToken() != JsonEvent.END_OBJECT) {
+                        if (p.currentEvent() != JsonEvent.FIELD_NAME) {
+                            return null;
+                        }
+                        String field = p.currentName();
+                        p.nextToken();
+                        if ("mtime".equals(field)) {
+                            mtime = p.getLongValue();
+                        } else if ("size".equals(field)) {
+                            size = p.getLongValue();
+                        } else {
+                            skipValue(p, p.currentEvent());
+                        }
+                    }
+                    data = new SchemaStamp(mtime, size);
                 }
             }
-            return new SchemaDescriptor(formatVersion, columns);
+            return new SchemaDescriptor(formatVersion, columns, data);
         } catch (IOException e) {
             LOGGER.warn("Failed to read JSONL schema sidecar {}: {}", file, e.getMessage());
             return null;

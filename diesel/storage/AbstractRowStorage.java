@@ -45,8 +45,8 @@ public abstract class AbstractRowStorage implements RowStorage {
         SERIALIZED
     }
 
-    protected final List<String> columns;
-    protected final Map<String, Class<?>> columnTypes;
+    protected List<String> columns;
+    protected Map<String, Class<?>> columnTypes;
     protected final String tableName;
     protected String dataDir;
     private String primaryKeyColumn;
@@ -74,6 +74,23 @@ public abstract class AbstractRowStorage implements RowStorage {
     /** Sets the data directory used for file-based persistence. */
     public void setDataDir(String dataDir) {
         this.dataDir = dataDir;
+    }
+
+    /**
+     * Replaces the current schema (ordered columns and their types). Used by
+     * the JSONL backend for schema adoption and expansion (prompt 44: inferred
+     * mode adopts the data-derived schema, hybrid mode appends new observed
+     * fields); the storage's rows must be re-aligned by the caller.
+     */
+    protected void setSchema(List<String> newColumns, Map<String, Class<?>> newTypes) {
+        this.columns.clear();
+        if (newColumns != null) {
+            this.columns.addAll(newColumns);
+        }
+        this.columnTypes.clear();
+        if (newTypes != null) {
+            this.columnTypes.putAll(newTypes);
+        }
     }
 
     /** Returns the table name. */

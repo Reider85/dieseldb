@@ -34,10 +34,11 @@ import diesel.storage.json.JsonTypeMapper;
  *
  * <p>Fields map to schema columns by name (case-insensitive); the JSONL
  * format is self-describing, so there is no header line. A missing field
- * yields {@code null}; an unknown field is ignored with a single per-file
- * WARNING (hybrid schema semantics get formalised in prompt 44). Blank and
- * whitespace-only lines are skipped and a UTF-8 BOM on the first record is
- * stripped (prompt 48 covers BOM handling formally).
+ * yields {@code null}; an unknown field is handled per the schema mode
+ * (prompt 44): {@code strict} fails with a "did you mean ..." typo hint,
+ * hybrid/inferred warn once per file and are expanded at the storage level.
+ * Blank and whitespace-only lines are skipped and a UTF-8 BOM on the first
+ * record is stripped (prompt 48 covers BOM handling formally).
  *
  * <p>Error diagnostics carry {@code file:line} / {@code file:line:field}
  * context.
@@ -224,7 +225,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                             + ": malformed JSON record: missing value for field '" + field + "'", null);
                 }
                 if (idx == null) {
-                    warnUnknownField(field);
+                    handleUnknownField(field);
                     skipValue(p, valueToken);
                     skippedFieldCount++;
                 } else {
@@ -324,7 +325,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                             + ": malformed JSON record: missing value for field '" + field + "'", null);
                 }
                 if (idx == null) {
-                    warnUnknownField(field);
+                    handleUnknownField(field);
                     skipValue(p, valueToken);
                     skippedFieldCount++;
                     continue;
@@ -512,12 +513,22 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         return sw.toString();
     }
 
+    private void handleUnknownField(String field) {
+        if (config.schemaMode() == JsonParserConfig.SchemaMode.STRICT) {
+            String hint = schema.suggestNearestColumn(field);
+            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+                    + ": unknown field '" + field + "' is not part of the table schema (strict schema mode)"
+                    + (hint != null ? "; did you mean '" + hint + "'?" : ""), null);
+        }
+        warnUnknownField(field);
+    }
+
     private void warnUnknownField(String field) {
         if (!unknownFieldWarned) {
             unknownFieldWarned = true;
             LOGGER.warn(contextPrefix() + "line " + lastRowLine + ": unknown field '" + field
                     + "' ignored (not part of the table schema); further occurrences are not reported "
-                    + "(hybrid schema mode, prompt 44)");
+                    + "(hybrid schema mode expands the schema, prompt 44)");
         }
     }
 

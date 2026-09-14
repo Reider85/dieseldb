@@ -118,6 +118,7 @@
                         <include>**/CompressionTest.java</include>
 <include>**/JsonlStorageTest.java</include>
 <include>**/JsonlSchemaProjectionTest.java</include>
+<include>**/JsonlSchemaModeTest.java</include>
   <include>**/JsonlTypeMapperTest.java</include>
   <include>**/JsonStreamAbstractionTest.java</include>
                              </includes>
@@ -192,6 +193,7 @@
                                 <include>**/CompressionTest.java</include>
 <include>**/JsonlStorageTest.java</include>
 <include>**/JsonlSchemaProjectionTest.java</include>
+<include>**/JsonlSchemaModeTest.java</include>
   <include>**/JsonlTypeMapperTest.java</include>
   <include>**/JsonStreamAbstractionTest.java</include>
                              </includes>

@@ -29,6 +29,14 @@ import java.util.Properties;
  * {@code jsonl.max.nesting.depth}, {@code jsonl.max.string.length},
  * {@code jsonl.parser.backend}, {@code jsonl.duplicate.keys} and
  * {@code jsonl.type.coercion}; invalid overrides fall back to the defaults.
+ *
+ * <p>The schema mode ({@code jsonl.schema.mode}, prompt 44) is carried here
+ * as the single hook for the JSONL schema-matching policies: {@link #STRICT}
+ * requires every row's field set to match the table schema (unknown fields
+ * are errors, a typo is reported with the nearest column-name hint),
+ * {@link #INFERRED} derives the schema from the data on first load and
+ * {@link #HYBRID} (default) keeps the schema columns mandatory and typed
+ * while expanding the schema with new fields observed in the data.
  */
 public final class JsonParserConfig {
 
@@ -47,11 +55,15 @@ public final class JsonParserConfig {
     /** JSONL type-coercion mode wired to the jsonl.type.coercion config (prompt 43). */
     public enum CoercionMode { STRICT, LENIENT }
 
+    /** JSONL schema-matching mode wired to the jsonl.schema.mode config (prompt 44). */
+    public enum SchemaMode { STRICT, INFERRED, HYBRID }
+
     private final int maxNestingDepth;
     private final int maxStringLength;
     private final Backend backend;
     private final DuplicateKeyMode duplicateKeys;
     private final CoercionMode coercion;
+    private final SchemaMode schemaMode;
 
     private JsonParserConfig(Builder builder) {
         this.maxNestingDepth = builder.maxNestingDepth;
@@ -59,6 +71,7 @@ public final class JsonParserConfig {
         this.backend = builder.backend;
         this.duplicateKeys = builder.duplicateKeys;
         this.coercion = builder.coercion;
+        this.schemaMode = builder.schemaMode;
     }
 
     /** Returns the default configuration (strict, depth 64, 1MB strings, Jackson backend). */
@@ -92,6 +105,11 @@ public final class JsonParserConfig {
         return coercion;
     }
 
+    /** Returns the JSONL schema-matching mode (HYBRID by default, prompt 44). */
+    public SchemaMode schemaMode() {
+        return schemaMode;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -106,6 +124,7 @@ public final class JsonParserConfig {
         private Backend backend = readBackendProperty();
         private DuplicateKeyMode duplicateKeys = readDuplicateKeyProperty();
         private CoercionMode coercion = readCoercionProperty();
+        private SchemaMode schemaMode = readSchemaModeProperty();
 
         private static int readIntProperty(String key, int fallback) {
             String value = readString(key, null);
@@ -156,6 +175,15 @@ public final class JsonParserConfig {
             }
         }
 
+        private static SchemaMode readSchemaModeProperty() {
+            String value = readString("jsonl.schema.mode", "HYBRID");
+            try {
+                return SchemaMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
+            } catch (IllegalArgumentException e) {
+                return SchemaMode.HYBRID;
+            }
+        }
+
         private static Properties loadRootProps() {
             Properties props = new Properties();
             try {
@@ -197,6 +225,12 @@ public final class JsonParserConfig {
             return this;
         }
 
+        /** Sets the JSONL schema-matching mode ({@code null} resets to HYBRID). */
+        public Builder schemaMode(SchemaMode schemaMode) {
+            this.schemaMode = schemaMode != null ? schemaMode : SchemaMode.HYBRID;
+            return this;
+        }
+
         public JsonParserConfig build() {
             return new JsonParserConfig(this);
         }
@@ -214,12 +248,13 @@ public final class JsonParserConfig {
                 && maxStringLength == other.maxStringLength
                 && backend == other.backend
                 && duplicateKeys == other.duplicateKeys
-                && coercion == other.coercion;
+                && coercion == other.coercion
+                && schemaMode == other.schemaMode;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion);
+        return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion, schemaMode);
     }
 
     @Override
@@ -228,6 +263,7 @@ public final class JsonParserConfig {
                 + ", maxStringLength=" + maxStringLength
                 + ", backend=" + backend
                 + ", duplicateKeys=" + duplicateKeys
-                + ", coercion=" + coercion + '}';
+                + ", coercion=" + coercion
+                + ", schemaMode=" + schemaMode + '}';
     }
 }

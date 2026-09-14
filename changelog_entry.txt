@@ -1,1 +1,11 @@
-3.0.80 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
+3.0.81 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
+
+- diesel/storage/json/JsonSchemaInference.java (new): single-pass schema inference (BOM/blank handling, per-line object check, per-field kind tracking, fail-fast file:line:field on scalar type changes, Long/Double/Boolean/LocalDate/LocalDateTime/UUID/String resolution, object/array -> String JSON text)
+- diesel/storage/json/JsonParserConfig.java: SchemaMode (STRICT|INFERRED|HYBRID) + jsonl.schema.mode resolution (sysprop -> config.properties -> HYBRID default), builder setter, equals/hashCode/toString
+- diesel/storage/JsonlSchemaManager.java: schemaMode(), suggestNearestColumn edit-distance typo hint, sidecar SchemaStamp(mtime,size) write/read
+- diesel/storage/JsonlRowReader.java: strict mode rejects unknown fields with typo hint; hybrid/inferred keep single WARNING
+- diesel/storage/JsonlRowStorage.java: mode-aware load planning, schema adoption after successful read (rollback-safe), sidecar write on save for hybrid/inferred
+- diesel/storage/AbstractRowStorage.java: columns/columnTypes mutable + protected setSchema
+- config.properties: jsonl.schema.mode = hybrid
+- src/test/java/diesel/JsonlSchemaModeTest.java (new, 19 tests); pom.xml registration
+- Verification: quick 360/0/0/6; full suite (4GB, @LargeTest) 360/0/0/0 BUILD SUCCESS; profile check skipped (no JOIN/performance wording); make/timing absent -> raw Maven full suite gate

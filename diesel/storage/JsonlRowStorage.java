@@ -4,13 +4,17 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
+import diesel.storage.json.JsonParserConfig;
+import diesel.storage.json.JsonSchemaInference;
 
 /**
  * JSON Lines (NDJSON) backed implementation of {@link RowStorage}. Rows are
@@ -21,9 +25,17 @@ import diesel.DieselIOException;
  * secondary Java-serialised .table mirror (prompt 50), no compression
  * (prompt 52), no append-only mode (prompt 49). Type validation is wired
  * through the shared {@link JsonlSchemaManager} on both read and write
- * (prompt 41); strict coercion, schema inference/evolution and the
- * flatten/json_column storage rules land in prompts 43/44/45. Nested
- * object/array values are stored in a column as compact JSON text.
+ * (prompt 41); strict coercion lands in prompt 43 and the flatten /
+ * json_column storage rules in prompt 45. Schema inference and evolution
+ * (prompt 44) are driven by {@code jsonl.schema.mode}: {@code strict} loads
+ * against the fixed schema and rejects unknown fields with a typo hint,
+ * {@code inferred} derives the schema from the data on first load and
+ * {@code hybrid} (default) keeps the schema columns mandatory and typed
+ * while expanding the schema with new fields observed in the data. The
+ * adopted schema is persisted to the {@code <table>.schema.json} sidecar
+ * together with a data-file mtime/size stamp that detects staleness and
+ * triggers re-inference. Nested object/array values are stored in a column
+ * as compact JSON text.
  *
  * <p>Rows are kept internally as compact Object[] arrays (one per row, slot
  * {@code i} = value of schema column {@code i}) instead of per-row Maps
@@ -45,11 +57,26 @@ public class JsonlRowStorage extends AbstractRowStorage {
     private static final Logger LOGGER = LoggerFactory.getLogger(JsonlRowStorage.class);
 
     protected final List<Object[]> rows = new ArrayList<>();
-    private final RowArrays rowColumns;
+    private RowArrays rowColumns;
+    private final JsonParserConfig config;
     private boolean fileInitialized;
 
     public JsonlRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
+        this(tableName, columns, columnTypes, JsonParserConfig.defaults());
+    }
+
+    /**
+     * @param tableName   the table name
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     * @param config      the streaming JSON configuration (backend, limits,
+     *                    duplicate-key policy, schema mode) used for every
+     *                    line and for the schema sidecar (prompt 44)
+     */
+    public JsonlRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes,
+                           JsonParserConfig config) {
         super(tableName, columns, columnTypes);
+        this.config = config != null ? config : JsonParserConfig.defaults();
         this.rowColumns = new RowArrays(columns);
     }
 
@@ -127,6 +154,9 @@ public class JsonlRowStorage extends AbstractRowStorage {
                 afw.commit();
             }
             fileInitialized = true;
+            if (config.schemaMode() != JsonParserConfig.SchemaMode.STRICT) {
+                writeSchemaSidecar();
+            }
             LOGGER.info("JsonlRowStorage {} saved JSONL to {} with {} rows",
                     tableName, fileName, rows.size());
         } catch (IOException e) {
@@ -144,21 +174,29 @@ public class JsonlRowStorage extends AbstractRowStorage {
             return;
         }
         List<Object[]> previous = new ArrayList<>(rows);
-        try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset());
-             JsonlRowReader jsonlReader = new JsonlRowReader(br, columns, columnTypes, file.getPath())) {
+        try {
+            SchemaPlan plan = planSchemaForLoad(file);
             List<Object[]> loaded = new ArrayList<>();
-            while (jsonlReader.hasNext()) {
-                Object[] row = jsonlReader.nextArray();
-                if (row != null) {
-                    loaded.add(row);
+            try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset());
+                 JsonlRowReader jsonlReader = new JsonlRowReader(br, plan.columns(), plan.columnTypes(),
+                         file.getPath(), config)) {
+                while (jsonlReader.hasNext()) {
+                    Object[] row = jsonlReader.nextArray();
+                    if (row != null) {
+                        loaded.add(row);
+                    }
                 }
             }
+            adoptSchema(plan);
             rows.clear();
             rows.addAll(loaded);
             fileInitialized = true;
             LOGGER.info("JsonlRowStorage {} loaded from {} with {} rows",
                     tableName, file.getPath(), rows.size());
             syncIndexBulkFromArrays(rows);
+            if (plan.writeSidecar()) {
+                writeSchemaSidecar();
+            }
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
@@ -168,6 +206,124 @@ public class JsonlRowStorage extends AbstractRowStorage {
             rows.addAll(previous);
             throw new DieselIOException("Failed to load table from JSONL file: " + file.getPath(), e);
         }
+    }
+
+    // ─── Schema mode planning (prompt 44) ──────────────────────────
+
+    /** The columns, types and sidecar policy decided before a load pass. */
+    private record SchemaPlan(List<String> columns, Map<String, Class<?>> columnTypes, boolean writeSidecar) {
+    }
+
+    /**
+     * Decides which schema a load pass reads against, per the configured
+     * {@code jsonl.schema.mode} (prompt 44):
+     * <ul>
+     * <li>{@code strict} - always the current schema; unknown fields fail at
+     * the reader with a typo hint;</li>
+     * <li>{@code hybrid} - current schema stays mandatory and typed, fields
+     * observed in the data (or recorded by a fresh sidecar) that are not in
+     * the schema are appended with their inferred types; the sidecar is
+     * rewritten;</li>
+     * <li>{@code inferred} - the data-derived schema replaces the current one;
+     * a fresh sidecar is reused, otherwise inference runs and the sidecar is
+     * written.</li>
+     * </ul>
+     */
+    private SchemaPlan planSchemaForLoad(File file) throws IOException {
+        JsonParserConfig.SchemaMode mode = config.schemaMode();
+        if (mode == JsonParserConfig.SchemaMode.STRICT) {
+            return new SchemaPlan(new ArrayList<>(columns), copyTypes(columnTypes), false);
+        }
+        Path sidecarPath = new File(resolveFilePath(JsonlSchemaManager.SCHEMA_FILE_SUFFIX)).toPath();
+        JsonlSchemaManager schemaManager = new JsonlSchemaManager(columns, columnTypes, config);
+        JsonlSchemaManager.SchemaDescriptor sidecar = schemaManager.readSchemaFile(sidecarPath);
+        boolean fresh = sidecar != null && JsonlSchemaManager.SchemaStamp.isFresh(sidecar.data(), file.toPath());
+        if (mode == JsonParserConfig.SchemaMode.INFERRED) {
+            if (fresh) {
+                return planFromDescriptor(sidecar, false);
+            }
+            return planFromDescriptor(infer(file), true);
+        }
+        // HYBRID: keep the current columns, append the fields the data adds.
+        List<String> planColumns = new ArrayList<>(columns);
+        Map<String, Class<?>> planTypes = copyTypes(columnTypes);
+        if (fresh) {
+            for (JsonlSchemaManager.SchemaColumn column : sidecar.columns()) {
+                if (indexOfIgnoreCase(planColumns, column.name()) < 0) {
+                    planColumns.add(column.name());
+                    planTypes.put(column.name(), JsonlSchemaManager.typeClass(column.type()));
+                }
+            }
+            return new SchemaPlan(planColumns, planTypes, false);
+        }
+        JsonSchemaInference.InferredSchema inferred = infer(file);
+        for (String field : inferred.columns()) {
+            if (indexOfIgnoreCase(planColumns, field) < 0) {
+                planColumns.add(field);
+                planTypes.put(field, inferred.columnTypes().get(field));
+            }
+        }
+        return new SchemaPlan(planColumns, planTypes, true);
+    }
+
+    /** Builds a plan from a (fresh) sidecar descriptor. */
+    private static SchemaPlan planFromDescriptor(JsonlSchemaManager.SchemaDescriptor sidecar, boolean writeSidecar) {
+        List<String> planColumns = new ArrayList<>();
+        Map<String, Class<?>> planTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (JsonlSchemaManager.SchemaColumn column : sidecar.columns()) {
+            planColumns.add(column.name());
+            planTypes.put(column.name(), JsonlSchemaManager.typeClass(column.type()));
+        }
+        return new SchemaPlan(planColumns, planTypes, writeSidecar);
+    }
+
+    /** Builds a plan from a fresh inference result (inferred mode adopts it fully). */
+    private static SchemaPlan planFromDescriptor(JsonSchemaInference.InferredSchema inferred, boolean writeSidecar) {
+        List<String> planColumns = new ArrayList<>(inferred.columns());
+        Map<String, Class<?>> planTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        planTypes.putAll(inferred.columnTypes());
+        return new SchemaPlan(planColumns, planTypes, writeSidecar);
+    }
+
+    /** Runs the single-pass schema inference over the data file. */
+    private JsonSchemaInference.InferredSchema infer(File file) throws IOException {
+        try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset())) {
+            return JsonSchemaInference.infer(br, file.getPath(), config);
+        }
+    }
+
+    /** Applies the planned schema to the storage (and re-aligns the row mapper). */
+    private void adoptSchema(SchemaPlan plan) {
+        setSchema(plan.columns(), plan.columnTypes());
+        this.rowColumns = new RowArrays(plan.columns());
+    }
+
+    /** Writes the {@code <table>.schema.json} sidecar with the current data stamp. */
+    private void writeSchemaSidecar() {
+        JsonlSchemaManager schemaManager = new JsonlSchemaManager(columns, columnTypes, config);
+        Path sidecarPath = new File(resolveFilePath(JsonlSchemaManager.SCHEMA_FILE_SUFFIX)).toPath();
+        Path dataFile = new File(resolveFilePath(".jsonl")).toPath();
+        try {
+            schemaManager.writeSchemaFile(sidecarPath, JsonlSchemaManager.SchemaStamp.of(dataFile));
+            LOGGER.info("JsonlRowStorage {} wrote JSONL schema sidecar {}", tableName, sidecarPath);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to write JSONL schema sidecar {}: {}", sidecarPath, e.getMessage());
+        }
+    }
+
+    private static Map<String, Class<?>> copyTypes(Map<String, Class<?>> types) {
+        Map<String, Class<?>> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        copy.putAll(types);
+        return copy;
+    }
+
+    private static int indexOfIgnoreCase(List<String> names, String name) {
+        for (int i = 0; i < names.size(); i++) {
+            if (names.get(i).equalsIgnoreCase(name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     // ─── Internal helpers ───────────────────────────────────────────
