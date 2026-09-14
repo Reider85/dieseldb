@@ -1,5 +1,8 @@
 package diesel;
 
+import diesel.storage.json.JsonPathResolver;
+
+import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.logging.Level;
@@ -30,13 +33,19 @@ class SqlParsingUtils {
 
     /**
      * Removes the surrounding double quotes from each part of a possibly
-     * qualified (table.column) identifier.
+     * qualified (table.column) identifier. A dotted identifier quoted as a
+     * whole ({@code "user.address.city"}) is unquoted first, then each
+     * dot-separated part is unquoted individually.
      */
     static String unquoteQualifiedIdentifier(String identifier) {
         if (identifier == null) {
             return null;
         }
-        String[] parts = identifier.split("\\.", -1);
+        String trimmed = identifier.trim();
+        if (trimmed.length() >= 2 && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"') {
+            trimmed = trimmed.substring(1, trimmed.length() - 1);
+        }
+        String[] parts = trimmed.split("\\.", -1);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < parts.length; i++) {
             if (i > 0) {
@@ -49,7 +58,10 @@ class SqlParsingUtils {
 
     /**
      * Normalizes a column name to the format "table.column".
-     * Resolves table aliases to actual table names.
+     * Resolves table aliases to actual table names. Dotted identifiers that
+     * do not start with a known table alias are kept whole, so a nested JSON
+     * leaf ({@code user.address.city}) or a JSON Path on a whole-value column
+     * ({@code PROFILE.user.address.city}) survives table-qualification.
      */
     static String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {
         Objects.requireNonNull(defaultTableName, "Default table name must not be null");
@@ -63,11 +75,31 @@ class SqlParsingUtils {
         if (unquoted.contains(".")) {
             String[] parts = unquoted.split("\\.");
             String tableOrAlias = parts[0].trim();
-            String colName = parts[1].trim();
-            String tableName = tableAliases.getOrDefault(tableOrAlias, tableOrAlias);
-            return tableName + "." + colName;
+            String tableName = resolveTableOrAlias(tableOrAlias, tableAliases);
+            if (tableName != null) {
+                return tableName + "." + String.join(".", partsFrom(parts, 1));
+            }
+            return unquoted.trim();
         }
         return defaultTableName + "." + unquoted.trim();
+    }
+
+    private static String resolveTableOrAlias(String prefix, Map<String, String> tableAliases) {
+        for (Map.Entry<String, String> entry : tableAliases.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(prefix)) {
+                return entry.getValue();
+            }
+            if (entry.getValue().equalsIgnoreCase(prefix)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private static String[] partsFrom(String[] parts, int from) {
+        String[] tail = new String[parts.length - from];
+        System.arraycopy(parts, from, tail, 0, tail.length);
+        return tail;
     }
 
     /**
@@ -90,23 +122,49 @@ class SqlParsingUtils {
 
     /**
      * Validates that a column exists in the combined column types map.
+     * A dotted path matches when it is an exact (case-insensitive) column name
+     * or resolves to a JSON Path prefix; a leading {@code TABLE.} segment, if
+     * present, is dropped before the JSON Path lookup.
      * Throws IllegalArgumentException if the column is not found.
      */
     static void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
         Objects.requireNonNull(column, "Column name must not be null");
-        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-        boolean found = false;
-        for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-            String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-            if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
+        if (!matchesColumnOrPath(column, combinedColumnTypes.keySet())) {
             LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
                     new Object[]{column, combinedColumnTypes.keySet()});
             throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
         }
+    }
+
+    private static boolean matchesColumnOrPath(String column, Collection<String> schemaColumns) {
+        for (String key : schemaColumns) {
+            if (key.equalsIgnoreCase(column)) {
+                return true;
+            }
+        }
+        return JsonPathResolver.resolveQualified(schemaColumns, column).columnIndex() >= 0;
+    }
+
+    /**
+     * Resolves the Java type of a possibly dotted column against the combined
+     * column type map. Exact column names win, then the longest JSON Path
+     * column prefix; a leading {@code TABLE.} segment is dropped before the
+     * path lookup. Returns {@code null} when the column is not found.
+     */
+    static Class<?> resolveColumnType(String column, Map<String, Class<?>> combinedColumnTypes) {
+        JsonPathResolver.ResolvedPath resolved = JsonPathResolver.resolveQualified(combinedColumnTypes.keySet(), column);
+        if (resolved.columnIndex() < 0) {
+            return null;
+        }
+        Class<?> type = combinedColumnTypes.get(resolved.column());
+        if (type != null) {
+            return type;
+        }
+        for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(resolved.column())) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 }

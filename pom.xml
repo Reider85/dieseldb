@@ -117,12 +117,13 @@
                         <include>**/TsvStorageAdvancedTest.java</include>
                         <include>**/CompressionTest.java</include>
 <include>**/JsonlStorageTest.java</include>
-<include>**/JsonlSchemaProjectionTest.java</include>
-<include>**/JsonlSchemaModeTest.java</include>
-  <include>**/JsonlTypeMapperTest.java</include>
-  <include>**/JsonStreamAbstractionTest.java</include>
-                             </includes>
-                     <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
+                         <include>**/JsonlSchemaProjectionTest.java</include>
+                         <include>**/JsonlSchemaModeTest.java</include>
+                         <include>**/JsonlNestedModeTest.java</include>
+   <include>**/JsonlTypeMapperTest.java</include>
+   <include>**/JsonStreamAbstractionTest.java</include>
+                              </includes>
+                      <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
                         <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
                     </systemPropertyVariables>
@@ -194,6 +195,7 @@
 <include>**/JsonlStorageTest.java</include>
 <include>**/JsonlSchemaProjectionTest.java</include>
 <include>**/JsonlSchemaModeTest.java</include>
+<include>**/JsonlNestedModeTest.java</include>
   <include>**/JsonlTypeMapperTest.java</include>
   <include>**/JsonStreamAbstractionTest.java</include>
                              </includes>

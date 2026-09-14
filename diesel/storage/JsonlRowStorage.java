@@ -26,7 +26,10 @@ import diesel.storage.json.JsonSchemaInference;
  * (prompt 52), no append-only mode (prompt 49). Type validation is wired
  * through the shared {@link JsonlSchemaManager} on both read and write
  * (prompt 41); strict coercion lands in prompt 43 and the flatten /
- * json_column storage rules in prompt 45. Schema inference and evolution
+ * json_column storage rules in prompt 45 are implemented here (one shared
+ * {@link JsonlSchemaManager} is kept across the load&rarr;save lifecycle so the
+ * nested-JSON holder columns captured on read are re-embedded as structure on
+ * write). Schema inference and evolution
  * (prompt 44) are driven by {@code jsonl.schema.mode}: {@code strict} loads
  * against the fixed schema and rejects unknown fields with a typo hint,
  * {@code inferred} derives the schema from the data on first load and
@@ -34,8 +37,11 @@ import diesel.storage.json.JsonSchemaInference;
  * while expanding the schema with new fields observed in the data. The
  * adopted schema is persisted to the {@code <table>.schema.json} sidecar
  * together with a data-file mtime/size stamp that detects staleness and
- * triggers re-inference. Nested object/array values are stored in a column
- * as compact JSON text.
+ * triggers re-inference. Nested object/array values follow the configured
+ * {@code jsonl.nested.mode}: {@code json_column} stores them in a column as
+ * compact JSON text, {@code flatten} stores every nested leaf in its own
+ * dot-notation column and scalar arrays may expand to index columns under
+ * {@code jsonl.array.columns = expand}.
  *
  * <p>Rows are kept internally as compact Object[] arrays (one per row, slot
  * {@code i} = value of schema column {@code i}) instead of per-row Maps
@@ -59,6 +65,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     protected final List<Object[]> rows = new ArrayList<>();
     private RowArrays rowColumns;
     private final JsonParserConfig config;
+    private JsonlSchemaManager sharedSchemaManager;
     private boolean fileInitialized;
 
     public JsonlRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
@@ -78,6 +85,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
         super(tableName, columns, columnTypes);
         this.config = config != null ? config : JsonParserConfig.defaults();
         this.rowColumns = new RowArrays(columns);
+        this.sharedSchemaManager = new JsonlSchemaManager(columns, columnTypes, this.config);
     }
 
     /** Returns whether this storage has been persisted to disk at least once. */
@@ -146,7 +154,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
         String fileName = resolveFilePath(".jsonl");
         try {
             try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
-                 JsonlRowWriter jsonlWriter = new JsonlRowWriter(afw.bufferedWriter(), columns, columnTypes)) {
+                 JsonlRowWriter jsonlWriter = new JsonlRowWriter(afw.bufferedWriter(), sharedSchemaManager)) {
                 for (Object[] row : rows) {
                     jsonlWriter.writeRow(row);
                 }
@@ -176,9 +184,10 @@ public class JsonlRowStorage extends AbstractRowStorage {
         List<Object[]> previous = new ArrayList<>(rows);
         try {
             SchemaPlan plan = planSchemaForLoad(file);
+            sharedSchemaManager = new JsonlSchemaManager(plan.columns(), plan.columnTypes(), config);
             List<Object[]> loaded = new ArrayList<>();
             try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset());
-                 JsonlRowReader jsonlReader = new JsonlRowReader(br, plan.columns(), plan.columnTypes(),
+                 JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
                          file.getPath(), config)) {
                 while (jsonlReader.hasNext()) {
                     Object[] row = jsonlReader.nextArray();
@@ -200,10 +209,12 @@ public class JsonlRowStorage extends AbstractRowStorage {
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
+            sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
             throw e;
         } catch (IOException e) {
             rows.clear();
             rows.addAll(previous);
+            sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
             throw new DieselIOException("Failed to load table from JSONL file: " + file.getPath(), e);
         }
     }
@@ -300,11 +311,10 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     /** Writes the {@code <table>.schema.json} sidecar with the current data stamp. */
     private void writeSchemaSidecar() {
-        JsonlSchemaManager schemaManager = new JsonlSchemaManager(columns, columnTypes, config);
         Path sidecarPath = new File(resolveFilePath(JsonlSchemaManager.SCHEMA_FILE_SUFFIX)).toPath();
         Path dataFile = new File(resolveFilePath(".jsonl")).toPath();
         try {
-            schemaManager.writeSchemaFile(sidecarPath, JsonlSchemaManager.SchemaStamp.of(dataFile));
+            sharedSchemaManager.writeSchemaFile(sidecarPath, JsonlSchemaManager.SchemaStamp.of(dataFile));
             LOGGER.info("JsonlRowStorage {} wrote JSONL schema sidecar {}", tableName, sidecarPath);
         } catch (IOException e) {
             LOGGER.warn("Failed to write JSONL schema sidecar {}: {}", sidecarPath, e.getMessage());

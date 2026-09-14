@@ -1598,29 +1598,15 @@ for (int i = 0; i < input.length(); i++) {
     }
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> combinedColumnTypes) {
-        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-        for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-            String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-            if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                return entry.getValue();
-            }
+        Class<?> type = SqlParsingUtils.resolveColumnType(column, combinedColumnTypes);
+        if (type != null) {
+            return type;
         }
         throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
     }
 
     private void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
-        String unqualifiedColumn = column.contains(".") ? column.split("\\.")[1].trim() : column;
-        boolean found = false;
-        for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-            String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-            if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
-        }
+        SqlParsingUtils.validateColumn(column, combinedColumnTypes);
     }
 
     private String normalizeColumnName(String column, String defaultTableName, Map<String, String> tableAliases) {

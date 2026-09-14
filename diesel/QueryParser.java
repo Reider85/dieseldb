@@ -3185,12 +3185,9 @@ class QueryParser {
                 .findFirst()
                 .orElse(column);
         String normalizedColumn = normalizeColumnName(actualColumn, defaultTableName, tableAliases);
-        String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
-        for (Map.Entry<String, Class<?>> entry : combinedColumnTypes.entrySet()) {
-            String entryKeyUnqualified = entry.getKey().contains(".") ? entry.getKey().split("\\.")[1].trim() : entry.getKey();
-            if (entryKeyUnqualified.equalsIgnoreCase(unqualifiedColumn)) {
-                return entry.getValue();
-            }
+        Class<?> type = SqlParsingUtils.resolveColumnType(normalizedColumn, combinedColumnTypes);
+        if (type != null) {
+            return type;
         }
         throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
     }

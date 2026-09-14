@@ -28,7 +28,13 @@ import diesel.DieselIOException;
  * <ul>
  * <li>an object or array value ever observed &rarr; {@code String} column
  * holding the value as compact JSON text (the nested storage contract of
- * prompts 41/45), scalars keep their raw token text;</li>
+ * prompts 41/45);</li>
+ * <li>under {@code jsonl.nested.mode = flatten} (prompt 45) nested objects are
+ * instead walked recursively and each leaf gets its own exact dot-notation
+ * column ({@code user.address.city}); pure containers emit no column of their
+ * own, arrays of scalars follow {@code jsonl.array.columns} (a single JSON
+ * column, or {@code field[0]}, {@code field[1]}, ... index columns),
+ * arrays of objects always fall back to one JSON column;</li>
  * <li>integers only &rarr; {@code Long}; integer + float literals &rarr;
  * {@code Double}; booleans only &rarr; {@code Boolean};</li>
  * <li>strings only &rarr; ISO-8601 date / datetime / UUID when every observed
@@ -67,6 +73,11 @@ public final class JsonSchemaInference {
         private boolean stringParsesAsDateTime = true;
         private boolean stringParsesAsUuid = true;
         private boolean sawString;
+        // Array tracking for FLATTEN + EXPAND mode (prompt 45)
+        private boolean isArray;
+        private boolean arrayHasObjectElements;
+        private int arrayMaxLength;
+        private final Map<Integer, EnumSet<JsonEvent>> arrayIndexKinds = new java.util.LinkedHashMap<>();
     }
 
     private JsonSchemaInference() {
@@ -111,7 +122,7 @@ public final class JsonSchemaInference {
             }
             inspectLine(line, lineNumber, fileName, cfg, byName);
         }
-        return resolve(byName, fileName);
+        return resolve(byName, fileName, cfg);
     }
 
     private static void inspectLine(String line, long lineNumber, String fileName, JsonParserConfig cfg,
@@ -132,13 +143,13 @@ public final class JsonSchemaInference {
                     throw new DieselIOException(prefix(fileName, lineNumber)
                             + ": malformed JSON record: missing value for field '" + field + "'", null);
                 }
-                observe(byName, field, value, lineNumber, fileName, p);
+                observe(byName, field, value, lineNumber, fileName, p, cfg);
             }
         }
     }
 
     private static void observe(Map<String, FieldObserved> byName, String field, JsonEvent value, long line,
-                                String fileName, JsonStreamParser p) throws IOException {
+                                String fileName, JsonStreamParser p, JsonParserConfig config) throws IOException {
         FieldObserved observed = byName.computeIfAbsent(field, k -> new FieldObserved());
         observed.kinds.add(value);
         switch (value) {
@@ -163,12 +174,72 @@ public final class JsonSchemaInference {
                     observed.booleanLine = line;
                 }
             }
-            case START_OBJECT, START_ARRAY -> {
-                p.skipChildren();
+            case START_OBJECT -> {
+                if (config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
+                    observeNestedObject(byName, field, line, fileName, p, config);
+                } else {
+                    p.skipChildren();
+                }
+            }
+            case START_ARRAY -> {
+                if (config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
+                    observeNestedArray(observed, field, line, fileName, p, config);
+                } else {
+                    p.skipChildren();
+                }
             }
             default -> { /* END_* tokens are structural and handled by the walk */ }
         }
         throwOnConflict(field, observed, line, fileName);
+    }
+
+    /**
+     * FLATTEN-mode nested-object walk (prompt 45): recursively emits an exact
+     * dot-notation column for every leaf, e.g. {@code user.address.city}.
+     * Arrays nested inside objects are delegated to the array walk.
+     */
+    private static void observeNestedObject(Map<String, FieldObserved> byName, String prefix, long line,
+                                            String fileName, JsonStreamParser p, JsonParserConfig config)
+            throws IOException {
+        while (p.nextToken() != JsonEvent.END_OBJECT) {
+            if (p.currentEvent() != JsonEvent.FIELD_NAME) {
+                throw new DieselIOException(prefix(fileName, line)
+                        + "malformed JSON record: expected a field name, found " + p.currentEvent(), null);
+            }
+            String child = p.currentName();
+            JsonEvent childValue = p.nextToken();
+            observe(byName, prefix + "." + child, childValue, line, fileName, p, config);
+        }
+    }
+
+    /**
+     * FLATTEN-mode array walk (prompt 45): an array of objects always falls
+     * back to a single JSON (String) column; an array of scalars under
+     * {@code jsonl.array.columns = json} also stays a single JSON column,
+     * while {@code expand} records the per-index value kinds and the maximum
+     * observed length so the schema can emit {@code field[0]},
+     * {@code field[1]}, ... columns.
+     */
+    private static void observeNestedArray(FieldObserved observed, String field, long line,
+                                           String fileName, JsonStreamParser p, JsonParserConfig config)
+            throws IOException {
+        observed.isArray = true;
+        int index = 0;
+        while (p.nextToken() != JsonEvent.END_ARRAY) {
+            JsonEvent element = p.currentEvent();
+            if (element == JsonEvent.START_OBJECT || element == JsonEvent.START_ARRAY) {
+                observed.arrayHasObjectElements = true;
+                p.skipChildren();
+                index++;
+                continue;
+            }
+            if (element == JsonEvent.VALUE_STRING) {
+                p.getText();
+            }
+            observed.arrayIndexKinds.computeIfAbsent(index, k -> EnumSet.noneOf(JsonEvent.class)).add(element);
+            observed.arrayMaxLength = Math.max(observed.arrayMaxLength, index + 1);
+            index++;
+        }
     }
 
     private static void throwOnConflict(String field, FieldObserved observed, long line, String fileName) {
@@ -194,20 +265,67 @@ public final class JsonSchemaInference {
         }
     }
 
-    private static InferredSchema resolve(Map<String, FieldObserved> byName, String fileName) {
+    private static InferredSchema resolve(Map<String, FieldObserved> byName, String fileName, JsonParserConfig config) {
         if (byName.isEmpty()) {
             return InferredSchema.empty();
         }
         List<String> columns = new ArrayList<>(byName.size());
         Map<String, Class<?>> columnTypes = new LinkedHashMap<>(byName.size());
+        boolean flatten = config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN;
+        boolean expandArrays = flatten && config.arrayColumns() == JsonParserConfig.ArrayColumnsMode.EXPAND;
         for (Map.Entry<String, FieldObserved> entry : byName.entrySet()) {
             String field = entry.getKey();
             FieldObserved observed = entry.getValue();
+            if (flatten && isPureContainer(observed.kinds)) {
+                // FLATTEN: nested objects emit their leaf columns only; the
+                // container itself gets no column (no silent prefix shadowing).
+                continue;
+            }
+            if (expandArrays && observed.isArray && !observed.arrayHasObjectElements) {
+                int length = observed.arrayMaxLength;
+                for (int i = 0; i < length; i++) {
+                    String indexedColumn = field + "[" + i + "]";
+                    EnumSet<JsonEvent> kinds = observed.arrayIndexKinds.get(i);
+                    Class<?> type = kinds == null ? String.class : resolveElementType(kinds);
+                    columns.add(indexedColumn);
+                    columnTypes.put(indexedColumn, type);
+                }
+                continue;
+            }
             Class<?> type = resolveType(field, observed, fileName);
             columns.add(field);
             columnTypes.put(field, type);
         }
         return new InferredSchema(List.copyOf(columns), Map.copyOf(columnTypes));
+    }
+
+    /** Returns whether the observed kinds are only nested objects (plus nulls). */
+    private static boolean isPureContainer(EnumSet<JsonEvent> kinds) {
+        int count = 0;
+        for (JsonEvent kind : kinds) {
+            if (kind == JsonEvent.VALUE_NULL) {
+                continue;
+            }
+            if (kind != JsonEvent.START_OBJECT) {
+                return false;
+            }
+            count++;
+        }
+        return count > 0;
+    }
+
+    private static Class<?> resolveElementType(EnumSet<JsonEvent> kinds) {
+        boolean number = kinds.contains(JsonEvent.VALUE_NUMBER_INT)
+                || kinds.contains(JsonEvent.VALUE_NUMBER_FLOAT);
+        boolean booleanV = kinds.contains(JsonEvent.VALUE_TRUE) || kinds.contains(JsonEvent.VALUE_FALSE);
+        boolean string = kinds.contains(JsonEvent.VALUE_STRING);
+        if (!string && !booleanV && number) {
+            return kinds.contains(JsonEvent.VALUE_NUMBER_FLOAT) ? Double.class : Long.class;
+        }
+        if (!number && !string && booleanV) {
+            return Boolean.class;
+        }
+        return String.class;
     }
 
     private static Class<?> resolveType(String field, FieldObserved observed, String fileName) {

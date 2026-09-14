@@ -29,6 +29,9 @@ import java.nio.file.Files;
 import java.util.Objects;
 import java.util.stream.IntStream;
 
+import diesel.storage.json.JsonParserConfig;
+import diesel.storage.json.JsonPathResolver;
+
 /**
  * Executes a SELECT statement against a table: applies WHERE conditions
  * (optionally via an index), joins, GROUP BY / HAVING aggregation, ORDER BY,
@@ -77,6 +80,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * longer re-compiles the same regex on every row. Cleared per execution.
      */
     private final Map<String, Pattern> likePatternCache = new HashMap<>();
+
+    /**
+     * Prompt 45: memoizes the JSON Path resolution of each dotted column so
+     * the per-row WHERE/projection lookups collapse to a single hash hit. The
+     * row key set is constant within one execution, so a resolved path stays
+     * valid for every row.
+     */
+    private final Map<String, JsonPathResolver.ResolvedPath> pathResolutionCache = new HashMap<>();
 
     /**
      * Pre-resolved SELECT projection, built once per execution so the hot
@@ -898,6 +909,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         reorderJoinsForNestedLoop(tables);
         normalizeCache.clear();
         likePatternCache.clear();
+        pathResolutionCache.clear();
         groupAggregateKeys.clear();
         orderByKeys.clear();
         orderByKeys.addAll(resolveOrderByKeys());
@@ -2890,7 +2902,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
 
     private ThreeValuedLogic evaluateIsNullCondition(Map<String, Object> row, QueryParser.Condition condition) {
         String column = normalizeColumnName(condition.column, mainTableName);
-        Object value = row.get(column);
+        Object value = resolveRowValue(row, column);
         boolean isNull = value == null;
         boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
         return evaluateNestedCondition(condition.not, result);
@@ -2899,7 +2911,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
     private ThreeValuedLogic evaluateInCondition(Map<String, Object> row, QueryParser.Condition condition,
                                                  Map<String, Table> tables) {
         String column = normalizeColumnName(condition.column, mainTableName);
-        Object value = row.get(column);
+        Object value = resolveRowValue(row, column);
         if (value == null) {
             return UNKNOWN;
         }
@@ -2947,15 +2959,15 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
     private ThreeValuedLogic evaluateColumnComparison(Map<String, Object> row, QueryParser.Condition condition) {
         String leftColumn = normalizeColumnName(condition.column, mainTableName);
         String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
-        Object leftValue = row.get(leftColumn);
-        Object rightValue = row.get(rightColumn);
+        Object leftValue = resolveRowValue(row, leftColumn);
+        Object rightValue = resolveRowValue(row, rightColumn);
         return compareConditionOperand(leftValue, rightValue, condition);
     }
 
     private ThreeValuedLogic evaluateScalarCondition(Map<String, Object> row, QueryParser.Condition condition,
                                                      Map<String, Table> tables) {
         String column = normalizeColumnName(condition.column, mainTableName);
-        Object rowValue = row.get(column);
+        Object rowValue = resolveRowValue(row, column);
         if (condition.subQuery != null) {
             Database database = Objects.requireNonNull(tables.get(mainTableName).getDatabase(),
                     ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
@@ -3092,9 +3104,10 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             if (trimmed.equals("*")) {
                 plan.add(new ColumnProjection(null, null, Collections.emptyList()));
             } else {
-                String normalizedColumn = normalizeColumnName(column, mainTableName);
-                String columnAlias = normalizeColumnKey(column, mainTableName);
                 String[] parts = trimmed.split("\\s+AS\\s+|\\s+", 2);
+                String selectKey = parts[0].trim();
+                String normalizedColumn = normalizeColumnName(selectKey, mainTableName);
+                String columnAlias = normalizeColumnKey(column, mainTableName);
                 if (parts.length > 1) {
                     columnAlias = parts[1].trim();
                     if (!CharOps.isAsciiIdentifier(columnAlias)) {
@@ -3102,8 +3115,8 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                     }
                 }
                 List<String> fallbackKeys = new ArrayList<>();
-                if (!column.contains(".")) {
-                    String unqualifiedColumn = column.trim();
+                if (!selectKey.contains(".")) {
+                    String unqualifiedColumn = selectKey;
                     for (Map.Entry<String, String> aliasEntry : tableAliases.entrySet()) {
                         fallbackKeys.add(aliasEntry.getValue() + "." + unqualifiedColumn);
                     }
@@ -3128,6 +3141,9 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                 extractAllColumns(row, filtered);
             } else {
                 Object value = findFallbackValue(row, proj.fallbackKeys);
+                if (value == null && proj.normalized != null && proj.normalized.contains(".")) {
+                    value = resolveRowValue(row, proj.normalized);
+                }
                 if (value != null) {
                     filtered.put(proj.alias, value);
                 }
@@ -3168,14 +3184,61 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         if (column.contains(".")) {
             String[] parts = column.split("\\.", 2);
             String prefix = parts[0].trim();
-            String colName = parts[1].trim();
-            String resolvedTable = tableAliases.getOrDefault(prefix, prefix);
-            if (!tableAliases.containsValue(resolvedTable)) {
-                resolvedTable = defaultTable;
+            String tail = parts[1].trim();
+            String resolvedTable = resolveTableOrAlias(prefix);
+            if (resolvedTable != null) {
+                return resolvedTable + "." + tail;
             }
-            return resolvedTable + "." + colName;
+            // Not a table/alias prefix: this is a nested JSON leaf or a JSON
+            // Path on a whole-value column, so the full dotted path survives.
+            return defaultTable + "." + column.trim();
         }
         return defaultTable + "." + column.trim();
+    }
+
+    /**
+     * Resolves a qualified-column prefix to the real table name, treating
+     * alias/table keys and values case-insensitively. The parser uppercases
+     * the FROM/JOIN aliases while SELECT columns keep their original case
+     * ({@code USERS u} aliases are stored as {@code U}, columns arrive as
+     * {@code u.NAME}), so a plain case-sensitive map lookup would miss them.
+     * Returns {@code null} when the prefix is not a known table or alias.
+     */
+    private String resolveTableOrAlias(String prefix) {
+        for (Map.Entry<String, String> entry : tableAliases.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(prefix)) {
+                return entry.getValue();
+            }
+            if (entry.getValue().equalsIgnoreCase(prefix)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Prompt 45: reads a row value for a normalized column key. Plain columns
+     * hit the row map directly; dotted JSON Path keys that have no literal
+     * column (json_column nested mode) resolve to the longest matching column
+     * prefix and extract the leaf from its compact JSON text.
+     */
+    private Object resolveRowValue(Map<String, Object> row, String columnKey) {
+        Object direct = row.get(columnKey);
+        if (direct != null) {
+            return direct;
+        }
+        JsonPathResolver.ResolvedPath resolved = pathResolutionCache.computeIfAbsent(columnKey, key -> {
+            JsonPathResolver.ResolvedPath resolvedPath = JsonPathResolver.resolve(row.keySet(), key);
+            return resolvedPath.columnIndex() < 0 ? JsonPathResolver.UNRESOLVED : resolvedPath;
+        });
+        if (resolved.columnIndex() < 0 || resolved.segments().isEmpty()) {
+            return null;
+        }
+        Object baseValue = row.get(resolved.column());
+        if (baseValue instanceof String jsonText) {
+            return JsonPathResolver.extract(jsonText, resolved.segments(), JsonParserConfig.defaults());
+        }
+        return null;
     }
 
     private String normalizeColumnKey(String column, String defaultTable) {

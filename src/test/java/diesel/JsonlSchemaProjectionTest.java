@@ -40,6 +40,10 @@ class JsonlSchemaProjectionTest {
 
     private static final String FILE_HINT = "schema_test.jsonl";
 
+    /** These tests exercise the classic single-JSON-column capture semantics. */
+    private static final JsonParserConfig JSON_COLUMN =
+            JsonParserConfig.builder().nestedMode(JsonParserConfig.NestedMode.JSON_COLUMN).build();
+
     private static List<String> cols() {
         return List.of("ID", "NAME", "AGE", "BALANCE", "BIRTHDATE", "LAST_LOGIN", "SESSION_ID", "ACTIVE");
     }
@@ -250,7 +254,7 @@ class JsonlSchemaProjectionTest {
         String content = "{\"ID\":1,\"NAME\":\"A\",\"AGE\":20}\n"
                 + "{\"ID\":2,\"NAME\":\"B\",\"AGE\":30}\n";
         try (BufferedReader br = new BufferedReader(new StringReader(content));
-             JsonlRowReader reader = new JsonlRowReader(br, cols(), types(), FILE_HINT)) {
+             JsonlRowReader reader = new JsonlRowReader(br, cols(), types(), FILE_HINT, JSON_COLUMN)) {
             reader.setProjection(List.of("NAME", "ID"));
             assertEquals(List.of("NAME", "ID"), reader.getProjectionItems());
 
@@ -300,7 +304,7 @@ class JsonlSchemaProjectionTest {
         String content = "{\"ID\":1,\"DATA\":" + compactJson(nested) + ",\"EXTRA\":5}\n";
 
         try (BufferedReader br = new BufferedReader(new StringReader(content));
-             JsonlRowReader reader = new JsonlRowReader(br, columns, columnTypes, FILE_HINT)) {
+             JsonlRowReader reader = new JsonlRowReader(br, columns, columnTypes, FILE_HINT, JSON_COLUMN)) {
             reader.setProjection(List.of("DATA.user.address.city", "ID"));
             assertEquals(List.of("DATA.user.address.city", "ID"), reader.getProjectionItems());
 
@@ -322,7 +326,7 @@ class JsonlSchemaProjectionTest {
         String content = "{\"ID\":1,\"DATA\":" + compactJson(nested) + "}\n";
 
         try (BufferedReader br = new BufferedReader(new StringReader(content));
-             JsonlRowReader reader = new JsonlRowReader(br, columns, columnTypes, FILE_HINT)) {
+             JsonlRowReader reader = new JsonlRowReader(br, columns, columnTypes, FILE_HINT, JSON_COLUMN)) {
             reader.setProjection(List.of("DATA.user.address.city", "DATA.user.name", "DATA"));
             Object[] row0 = reader.nextProjected();
             assertEquals(List.of("DATA.user.address.city", "DATA.user.name", "DATA"), reader.getProjectionItems());
@@ -369,7 +373,7 @@ class JsonlSchemaProjectionTest {
         List<String> columns = wideColumns(columnCount);
 
         try (BufferedReader br = new BufferedReader(new StringReader(content));
-             JsonlRowReader reader = new JsonlRowReader(br, columns, wideTypes(columnCount), FILE_HINT)) {
+             JsonlRowReader reader = new JsonlRowReader(br, columns, wideTypes(columnCount), FILE_HINT, JSON_COLUMN)) {
             reader.setProjection(List.of("C0", "C1", "C2"));
             for (int i = 0; i < rows; i++) {
                 Object[] projected = reader.nextProjected();
@@ -393,7 +397,7 @@ class JsonlSchemaProjectionTest {
 
         long fullNanos;
         try (BufferedReader br = new BufferedReader(new StringReader(content));
-             JsonlRowReader reader = new JsonlRowReader(br, columns, wideTypes(columnCount), FILE_HINT)) {
+             JsonlRowReader reader = new JsonlRowReader(br, columns, wideTypes(columnCount), FILE_HINT, JSON_COLUMN)) {
             long start = System.nanoTime();
             long parsed = 0;
             Object[] row;
@@ -409,7 +413,7 @@ class JsonlSchemaProjectionTest {
         long parsedTotal = 0;
         long skippedTotal = 0;
         try (BufferedReader br = new BufferedReader(new StringReader(content));
-             JsonlRowReader reader = new JsonlRowReader(br, columns, wideTypes(columnCount), FILE_HINT)) {
+             JsonlRowReader reader = new JsonlRowReader(br, columns, wideTypes(columnCount), FILE_HINT, JSON_COLUMN)) {
             reader.setProjection(List.of("C0", "C1", "C2"));
             long start = System.nanoTime();
             Object[] row;

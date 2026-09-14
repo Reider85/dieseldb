@@ -4,7 +4,6 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.StringReader;
-import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -14,7 +13,9 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import diesel.DieselIOException;
 import diesel.storage.json.JsonEvent;
 import diesel.storage.json.JsonParserConfig;
+import diesel.storage.json.JsonPathResolver;
 import diesel.storage.json.JsonStreamGenerator;
 import diesel.storage.json.JsonStreamParser;
 import diesel.storage.json.JsonStreams;
@@ -62,6 +64,8 @@ public class JsonlSchemaManager {
     private final Map<String, Class<?>> columnTypes;
     private final Map<String, Integer> indexByName;
     private final JsonParserConfig jsonConfig;
+    /** Columns that hold compact JSON text for a nested object/array (prompt 45). */
+    private final Set<Integer> nestedJsonColumns;
 
     public JsonlSchemaManager(List<String> columns, Map<String, Class<?>> columnTypes) {
         this(columns, columnTypes, JsonParserConfig.defaults());
@@ -81,6 +85,10 @@ public class JsonlSchemaManager {
             indexByName.put(this.columns.get(i), i);
         }
         this.jsonConfig = jsonConfig != null ? jsonConfig : JsonParserConfig.defaults();
+        if (nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
+            validateFlattenSchema();
+        }
+        this.nestedJsonColumns = new TreeSet<>();
     }
 
     /** Returns the streaming JSON configuration used for sidecar reads / JSON Path walks. */
@@ -91,6 +99,71 @@ public class JsonlSchemaManager {
     /** Returns the JSONL schema-matching mode (prompt 44), from the shared config. */
     public JsonParserConfig.SchemaMode schemaMode() {
         return jsonConfig.schemaMode();
+    }
+
+    /** Returns the JSONL nested-storage mode (prompt 45), from the shared config. */
+    public JsonParserConfig.NestedMode nestedMode() {
+        return jsonConfig.nestedMode();
+    }
+
+    /** Returns the JSONL array-storage mode (prompt 45), from the shared config. */
+    public JsonParserConfig.ArrayColumnsMode arrayColumns() {
+        return jsonConfig.arrayColumns();
+    }
+
+    /**
+     * Flatten-mode schema rule (prompt 45): a column that is a dot-prefix of
+     * another column (e.g. {@code user} and {@code user.address} together)
+     * is ambiguous and rejected with a schema error.
+     */
+    private void validateFlattenSchema() {
+        for (int i = 0; i < this.columns.size(); i++) {
+            for (int j = 0; j < this.columns.size(); j++) {
+                if (i == j) {
+                    continue;
+                }
+                String a = this.columns.get(i);
+                String b = this.columns.get(j);
+                if (isDotPrefix(a, b)) {
+                    throw new DieselIOException("flatten schema conflict: column '" + a
+                            + "' is a dot-prefix of '" + b + "' (ambiguous nested path)", null);
+                }
+            }
+        }
+    }
+
+    private static boolean isDotPrefix(String prefix, String candidate) {
+        return candidate.length() > prefix.length()
+                && candidate.regionMatches(true, 0, prefix, 0, prefix.length())
+                && candidate.charAt(prefix.length()) == '.';
+    }
+
+    /**
+     * Marks the column as a nested-JSON holder: its values are compact JSON
+     * text of a nested object/array (prompt 45). In flatten mode such a column
+     * is a leaf whose value must be re-embedded as structure on save; in
+     * json_column mode every marked column is written back as the nested
+     * structure it was captured from.
+     */
+    public void markNestedJson(int columnIndex) {
+        if (columnIndex >= 0 && columnIndex < columns.size()) {
+            nestedJsonColumns.add(columnIndex);
+        }
+    }
+
+    /** Marks a column as a nested-JSON holder by its name (case-insensitive). */
+    public void markNestedJson(String column) {
+        markNestedJson(indexOf(column));
+    }
+
+    /** Returns whether the column index holds nested JSON text. */
+    public boolean isNestedJson(int columnIndex) {
+        return nestedJsonColumns.contains(columnIndex);
+    }
+
+    /** Returns the indexes of all nested-JSON holder columns. */
+    public Set<Integer> nestedJsonIndexes() {
+        return new TreeSet<>(nestedJsonColumns);
     }
 
     // ─── Schema accessors ────────────────────────────────────────────
@@ -344,29 +417,15 @@ public class JsonlSchemaManager {
      * the schema. Uses the longest schema-column prefix for dotted paths so
      * {@code DATA.user.address.city} maps to the {@code DATA} column with the
      * remaining segments; an item that matches no column at all yields a slot
-     * with {@code columnIndex == -1}.
+     * with {@code columnIndex == -1}. Resolution is delegated to the single
+     * path engine {@link JsonPathResolver} shared with the SQL layer (prompt 45).
      */
     public ProjectionSlot resolveProjectionItem(String item) {
         if (item == null || item.isBlank()) {
             return new ProjectionSlot(-1, List.of(), item);
         }
-        int exact = indexOf(item);
-        if (exact >= 0) {
-            return new ProjectionSlot(exact, List.of(), item);
-        }
-        String[] parts = item.split("\\.");
-        for (int prefix = parts.length; prefix > 0; prefix--) {
-            String joined = String.join(".", java.util.Arrays.copyOf(parts, prefix));
-            int idx = indexOf(joined);
-            if (idx >= 0) {
-                List<String> rest = new ArrayList<>();
-                for (int i = prefix; i < parts.length; i++) {
-                    rest.add(parts[i]);
-                }
-                return new ProjectionSlot(idx, rest, item);
-            }
-        }
-        return new ProjectionSlot(-1, List.of(), item);
+        JsonPathResolver.ResolvedPath resolved = JsonPathResolver.resolve(columns, item);
+        return new ProjectionSlot(resolved.columnIndex(), resolved.segments(), item);
     }
 
     /**
@@ -377,64 +436,7 @@ public class JsonlSchemaManager {
      * nested leaves as compact JSON text.
      */
     public Object extractPathValue(String jsonText, List<String> segments) {
-        if (jsonText == null || segments == null || segments.isEmpty()) {
-            return null;
-        }
-        try (JsonStreamParser p = JsonStreams.createParser(new StringReader(jsonText), jsonConfig)) {
-            JsonEvent t = p.nextToken();
-            for (int i = 0; i < segments.size(); i++) {
-                if (t != JsonEvent.START_OBJECT) {
-                    return null;
-                }
-                String wanted = segments.get(i);
-                boolean found = false;
-                while (p.nextToken() != JsonEvent.END_OBJECT) {
-                    if (p.currentEvent() != JsonEvent.FIELD_NAME) {
-                        return null;
-                    }
-                    if (!wanted.equals(p.currentName())) {
-                        JsonEvent value = p.nextToken();
-                        skipValue(p, value);
-                        continue;
-                    }
-                    t = p.nextToken();
-                    found = true;
-                    break;
-                }
-                if (!found) {
-                    return null;
-                }
-                if (i == segments.size() - 1) {
-                    return leafValue(p, t);
-                }
-                if (t != JsonEvent.START_OBJECT) {
-                    return null;
-                }
-            }
-            return null;
-        } catch (IOException e) {
-            LOGGER.warn("Failed to extract JSON path {}: {}", String.join(".", segments), e.getMessage());
-            return null;
-        }
-    }
-
-    private Object leafValue(JsonStreamParser p, JsonEvent t) throws IOException {
-        return switch (t) {
-            case VALUE_NULL -> null;
-            case VALUE_STRING -> p.getText();
-            case VALUE_TRUE, VALUE_FALSE, VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> p.getText();
-            case START_OBJECT, START_ARRAY -> capture(p);
-            default -> null;
-        };
-    }
-
-    private String capture(JsonStreamParser p) throws IOException {
-        StringWriter sw = new StringWriter();
-        try (JsonStreamGenerator g = JsonStreams.createGenerator(sw, jsonConfig)) {
-            g.copyCurrentStructure(p);
-            g.flush();
-        }
-        return sw.toString();
+        return JsonPathResolver.extract(jsonText, segments, jsonConfig);
     }
 
     private static void skipValue(JsonStreamParser p, JsonEvent t) throws IOException {

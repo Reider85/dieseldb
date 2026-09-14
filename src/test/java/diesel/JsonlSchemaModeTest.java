@@ -42,7 +42,8 @@ class JsonlSchemaModeTest {
     }
 
     private static JsonParserConfig config(JsonParserConfig.SchemaMode mode) {
-        return new JsonParserConfig.Builder().schemaMode(mode).build();
+        return new JsonParserConfig.Builder().schemaMode(mode)
+                .nestedMode(JsonParserConfig.NestedMode.JSON_COLUMN).build();
     }
 
     // ── Config / manager plumbing ─────────────────────────────────────────

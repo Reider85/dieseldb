@@ -27,8 +27,10 @@ import java.util.Properties;
  * <p>Values may be overridden through the root {@code config.properties}
  * file, and a system property of the same name wins over it:
  * {@code jsonl.max.nesting.depth}, {@code jsonl.max.string.length},
- * {@code jsonl.parser.backend}, {@code jsonl.duplicate.keys} and
- * {@code jsonl.type.coercion}; invalid overrides fall back to the defaults.
+ * {@code jsonl.parser.backend}, {@code jsonl.duplicate.keys},
+ * {@code jsonl.type.coercion}, {@code jsonl.schema.mode},
+ * {@code jsonl.nested.mode} and {@code jsonl.array.columns}; invalid
+ * overrides fall back to the defaults.
  *
  * <p>The schema mode ({@code jsonl.schema.mode}, prompt 44) is carried here
  * as the single hook for the JSONL schema-matching policies: {@link #STRICT}
@@ -37,6 +39,18 @@ import java.util.Properties;
  * {@link #INFERRED} derives the schema from the data on first load and
  * {@link #HYBRID} (default) keeps the schema columns mandatory and typed
  * while expanding the schema with new fields observed in the data.
+ *
+ * <p>The nested-storage mode ({@code jsonl.nested.mode}, prompt 45) decides
+ * how nested JSON objects are persisted: {@link NestedMode#FLATTEN} (default)
+ * writes every nested leaf into its own dot-notated column
+ * ({@code user.address.city}) and reconstructs the object on save, while
+ * {@link NestedMode#JSON_COLUMN} stores the whole object/array as compact JSON
+ * text in a single column (type TEXT) addressed through JSON Path. The
+ * array-storage mode ({@code jsonl.array.columns}, prompt 45) decides how an
+ * array of scalars is persisted in flatten mode: {@link ArrayColumnsMode#JSON}
+ * (default) keeps the whole array in one JSON column, {@link ArrayColumnsMode#EXPAND}
+ * expands it into {@code arr[0]}, {@code arr[1]}, ... columns. Arrays of
+ * objects always fall back to a single JSON column.
  */
 public final class JsonParserConfig {
 
@@ -58,12 +72,20 @@ public final class JsonParserConfig {
     /** JSONL schema-matching mode wired to the jsonl.schema.mode config (prompt 44). */
     public enum SchemaMode { STRICT, INFERRED, HYBRID }
 
+    /** JSONL nested-storage mode wired to the jsonl.nested.mode config (prompt 45). */
+    public enum NestedMode { FLATTEN, JSON_COLUMN }
+
+    /** JSONL array-storage mode wired to the jsonl.array.columns config (prompt 45). */
+    public enum ArrayColumnsMode { JSON, EXPAND }
+
     private final int maxNestingDepth;
     private final int maxStringLength;
     private final Backend backend;
     private final DuplicateKeyMode duplicateKeys;
     private final CoercionMode coercion;
     private final SchemaMode schemaMode;
+    private final NestedMode nestedMode;
+    private final ArrayColumnsMode arrayColumns;
 
     private JsonParserConfig(Builder builder) {
         this.maxNestingDepth = builder.maxNestingDepth;
@@ -72,6 +94,8 @@ public final class JsonParserConfig {
         this.duplicateKeys = builder.duplicateKeys;
         this.coercion = builder.coercion;
         this.schemaMode = builder.schemaMode;
+        this.nestedMode = builder.nestedMode;
+        this.arrayColumns = builder.arrayColumns;
     }
 
     /** Returns the default configuration (strict, depth 64, 1MB strings, Jackson backend). */
@@ -110,6 +134,16 @@ public final class JsonParserConfig {
         return schemaMode;
     }
 
+    /** Returns the JSONL nested-storage mode (FLATTEN by default, prompt 45). */
+    public NestedMode nestedMode() {
+        return nestedMode;
+    }
+
+    /** Returns the JSONL array-storage mode (JSON by default, prompt 45). */
+    public ArrayColumnsMode arrayColumns() {
+        return arrayColumns;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -125,6 +159,8 @@ public final class JsonParserConfig {
         private DuplicateKeyMode duplicateKeys = readDuplicateKeyProperty();
         private CoercionMode coercion = readCoercionProperty();
         private SchemaMode schemaMode = readSchemaModeProperty();
+        private NestedMode nestedMode = readNestedModeProperty();
+        private ArrayColumnsMode arrayColumns = readArrayColumnsProperty();
 
         private static int readIntProperty(String key, int fallback) {
             String value = readString(key, null);
@@ -184,6 +220,24 @@ public final class JsonParserConfig {
             }
         }
 
+        private static NestedMode readNestedModeProperty() {
+            String value = readString("jsonl.nested.mode", "FLATTEN");
+            try {
+                return NestedMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
+            } catch (IllegalArgumentException e) {
+                return NestedMode.FLATTEN;
+            }
+        }
+
+        private static ArrayColumnsMode readArrayColumnsProperty() {
+            String value = readString("jsonl.array.columns", "JSON");
+            try {
+                return ArrayColumnsMode.valueOf(value.trim().toUpperCase().replace('-', '_'));
+            } catch (IllegalArgumentException e) {
+                return ArrayColumnsMode.JSON;
+            }
+        }
+
         private static Properties loadRootProps() {
             Properties props = new Properties();
             try {
@@ -231,6 +285,18 @@ public final class JsonParserConfig {
             return this;
         }
 
+        /** Sets the JSONL nested-storage mode ({@code null} resets to FLATTEN, prompt 45). */
+        public Builder nestedMode(NestedMode nestedMode) {
+            this.nestedMode = nestedMode != null ? nestedMode : NestedMode.FLATTEN;
+            return this;
+        }
+
+        /** Sets the JSONL array-storage mode ({@code null} resets to JSON, prompt 45). */
+        public Builder arrayColumns(ArrayColumnsMode arrayColumns) {
+            this.arrayColumns = arrayColumns != null ? arrayColumns : ArrayColumnsMode.JSON;
+            return this;
+        }
+
         public JsonParserConfig build() {
             return new JsonParserConfig(this);
         }
@@ -249,12 +315,15 @@ public final class JsonParserConfig {
                 && backend == other.backend
                 && duplicateKeys == other.duplicateKeys
                 && coercion == other.coercion
-                && schemaMode == other.schemaMode;
+                && schemaMode == other.schemaMode
+                && nestedMode == other.nestedMode
+                && arrayColumns == other.arrayColumns;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion, schemaMode);
+        return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion, schemaMode,
+                nestedMode, arrayColumns);
     }
 
     @Override
@@ -264,6 +333,8 @@ public final class JsonParserConfig {
                 + ", backend=" + backend
                 + ", duplicateKeys=" + duplicateKeys
                 + ", coercion=" + coercion
-                + ", schemaMode=" + schemaMode + '}';
+                + ", schemaMode=" + schemaMode
+                + ", nestedMode=" + nestedMode
+                + ", arrayColumns=" + arrayColumns + '}';
     }
 }

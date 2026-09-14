@@ -5,13 +5,17 @@ import java.io.Writer;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import diesel.DieselIOException;
+import diesel.storage.json.JsonEvent;
 import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonStreamGenerator;
+import diesel.storage.json.JsonStreamParser;
 import diesel.storage.json.JsonStreams;
 
 /**
@@ -27,10 +31,14 @@ import diesel.storage.json.JsonStreams;
  * JSON representation, are rejected instead of being emitted as invalid
  * tokens.
  *
- * <p>Nested structures (Map/List/array values) are written as nested JSON
- * objects/arrays (base nesting support, prompt 40; the storage stores such
- * values as compact JSON text in a column - full flatten/json_column rules
- * land in prompt 45).
+ * <p>Nested storage rules (prompt 45): in the {@code json_column} mode a
+ * column marked as a nested-JSON holder (captured from a nested object/array
+ * on load) is written back as the actual JSON structure, not as an escaped
+ * string, so a load&rarr;save round trip preserves nesting. In the
+ * {@code flatten} mode dot-notation leaf columns ({@code user.address.city})
+ * are reconstructed into nested objects, scalar-array index columns
+ * ({@code tags[0]}, {@code tags[1]}) into arrays, and nested-JSON holders are
+ * embedded as structure - all in deterministic schema-column order.
  *
  * <p>Write-side type validation (prompt 41): when the writer is constructed
  * with schema types, every value is checked against its column type before
@@ -45,6 +53,7 @@ public class JsonlRowWriter implements AutoCloseable {
     private final JsonStreamGenerator generator;
     private final List<String> columns;
     private final JsonlSchemaManager schema;
+    private final boolean flatten;
     private long recordNumber;
 
     /**
@@ -93,6 +102,7 @@ public class JsonlRowWriter implements AutoCloseable {
     public JsonlRowWriter(Writer writer, JsonlSchemaManager schema, JsonParserConfig config) throws IOException {
         this.columns = schema.columns();
         this.schema = schema;
+        this.flatten = schema.nestedMode() == JsonParserConfig.NestedMode.FLATTEN;
         this.generator = JsonStreams.createGenerator(writer, config);
     }
 
@@ -104,13 +114,25 @@ public class JsonlRowWriter implements AutoCloseable {
      */
     public void writeRow(Map<String, Object> row) throws IOException {
         recordNumber++;
+        if (flatten) {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            for (int i = 0; i < columns.size(); i++) {
+                String column = columns.get(i);
+                Object value = row == null ? null : row.get(column);
+                schema.validateWriteValue(i, value, column, recordContext());
+                insertNested(nested, column, unwrapNested(i, value));
+            }
+            writeObjectMap(nested);
+            generator.writeRaw('\n');
+            return;
+        }
         generator.writeStartObject();
         for (int i = 0; i < columns.size(); i++) {
             String column = columns.get(i);
             Object value = row == null ? null : row.get(column);
             schema.validateWriteValue(i, value, column, recordContext());
             generator.writeFieldName(column);
-            writeValue(value);
+            writeValue(unwrapNested(i, value));
         }
         generator.writeEndObject();
         generator.writeRaw('\n');
@@ -125,12 +147,23 @@ public class JsonlRowWriter implements AutoCloseable {
      */
     public void writeRow(Object[] row) throws IOException {
         recordNumber++;
+        if (flatten) {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            for (int i = 0; i < columns.size(); i++) {
+                Object value = row == null || i >= row.length ? null : row[i];
+                schema.validateWriteValue(i, value, columns.get(i), recordContext());
+                insertNested(nested, columns.get(i), unwrapNested(i, value));
+            }
+            writeObjectMap(nested);
+            generator.writeRaw('\n');
+            return;
+        }
         generator.writeStartObject();
         for (int i = 0; i < columns.size(); i++) {
             Object value = row == null || i >= row.length ? null : row[i];
             schema.validateWriteValue(i, value, columns.get(i), recordContext());
             generator.writeFieldName(columns.get(i));
-            writeValue(value);
+            writeValue(unwrapNested(i, value));
         }
         generator.writeEndObject();
         generator.writeRaw('\n');
@@ -138,6 +171,141 @@ public class JsonlRowWriter implements AutoCloseable {
 
     private String recordContext() {
         return "record " + recordNumber + ": ";
+    }
+
+    /**
+     * FLATTEN-mode value unwrapping (prompt 45): a nested-JSON holder column
+     * holds compact JSON text captured on load; before writing, that text is
+     * parsed back into the structure it was captured from so the JSON file
+     * stays truly nested (no double-encoded strings).
+     */
+    private Object unwrapNested(int columnIndex, Object value) {
+        if (schema.isNestedJson(columnIndex) && value instanceof String text) {
+            return parseJsonText(text);
+        }
+        return value;
+    }
+
+    /**
+     * Parses captured JSON text into nested Map/List/scalar values, falling
+     * back to the original text when it is not valid JSON (defensive - the
+     * column is only marked after a successful capture).
+     */
+    private Object parseJsonText(String text) {
+        try (JsonStreamParser p = JsonStreams.createParser(text, schema.jsonConfig())) {
+            return parseJsonValue(p.nextToken(), p);
+        } catch (IOException e) {
+            return text;
+        }
+    }
+
+    private Object parseJsonValue(JsonEvent token, JsonStreamParser p) throws IOException {
+        return switch (token) {
+            case VALUE_NULL -> null;
+            case VALUE_STRING -> p.getText();
+            case VALUE_TRUE -> Boolean.TRUE;
+            case VALUE_FALSE -> Boolean.FALSE;
+            case VALUE_NUMBER_INT -> p.getLongValue();
+            case VALUE_NUMBER_FLOAT -> p.getDecimalValue();
+            case START_OBJECT -> {
+                Map<String, Object> map = new LinkedHashMap<>();
+                while (p.nextToken() != JsonEvent.END_OBJECT) {
+                    String name = p.currentName();
+                    map.put(name, parseJsonValue(p.nextToken(), p));
+                }
+                yield map;
+            }
+            case START_ARRAY -> {
+                List<Object> list = new ArrayList<>();
+                while (p.nextToken() != JsonEvent.END_ARRAY) {
+                    list.add(parseJsonValue(p.currentEvent(), p));
+                }
+                yield list;
+            }
+            default -> throw new DieselIOException("unexpected token " + token + " in nested JSON text", null);
+        };
+    }
+
+    /**
+     * FLATTEN-mode reconstruction: inserts a column value into the nested row
+     * structure. Dot-notation columns ({@code user.address.city}) create nested
+     * objects; {@code index} tokens ({@code user.tags[0]}) create/extend arrays.
+     * Deterministic because columns are processed in schema order.
+     */
+    private static void insertNested(Map<String, Object> root, String column, Object value) {
+        insert(root, tokenizePath(column), 0, value);
+    }
+
+    private static void insert(Object container, List<PathToken> tokens, int depth, Object value) {
+        PathToken token = tokens.get(depth);
+        if (depth == tokens.size() - 1) {
+            if (token.index >= 0) {
+                @SuppressWarnings("unchecked")
+                List<Object> list = (List<Object>) container;
+                ensureSize(list, token.index + 1);
+                list.set(token.index, value);
+            } else {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> map = (Map<String, Object>) container;
+                map.put(token.name, value);
+            }
+            return;
+        }
+        PathToken next = tokens.get(depth + 1);
+        Object child;
+        if (token.index >= 0) {
+            @SuppressWarnings("unchecked")
+            List<Object> list = (List<Object>) container;
+            ensureSize(list, token.index + 1);
+            child = list.get(token.index);
+            if (child == null) {
+                child = next.index >= 0 ? new ArrayList<>() : new LinkedHashMap<>();
+                list.set(token.index, child);
+            }
+        } else {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = (Map<String, Object>) container;
+            child = map.get(token.name);
+            if (child == null) {
+                child = next.index >= 0 ? new ArrayList<>() : new LinkedHashMap<>();
+                map.put(token.name, child);
+            }
+        }
+        insert(child, tokens, depth + 1, value);
+    }
+
+    private static void ensureSize(List<Object> list, int size) {
+        while (list.size() < size) {
+            list.add(null);
+        }
+    }
+
+    /** A token of a column name path: a map key ({@code index < 0}) or an array element. */
+    private record PathToken(String name, int index) {
+        PathToken(String name, int index) {
+            this.name = name;
+            this.index = index;
+        }
+    }
+
+    private static List<PathToken> tokenizePath(String column) {
+        List<PathToken> tokens = new ArrayList<>();
+        for (String segment : column.split("\\.")) {
+            int open = segment.lastIndexOf('[');
+            if (open > 0 && segment.endsWith("]")) {
+                String base = segment.substring(0, open);
+                String index = segment.substring(open + 1, segment.length() - 1);
+                tokens.add(new PathToken(base, -1));
+                if (index.matches("\\d+")) {
+                    tokens.add(new PathToken(index, Integer.parseInt(index)));
+                } else {
+                    tokens.add(new PathToken(segment, -1));
+                }
+            } else {
+                tokens.add(new PathToken(segment, -1));
+            }
+        }
+        return tokens;
     }
 
     /**
