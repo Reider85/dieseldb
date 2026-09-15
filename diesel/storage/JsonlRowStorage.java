@@ -1,15 +1,16 @@
 package diesel.storage;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -33,8 +34,11 @@ import diesel.storage.json.JsonStreams;
  * ({@code <table>.jsonl}, UTF-8, {@code \n} separator).
  *
  * <p>Base implementation (prompt 40), explicitly out of scope here: no
- * secondary Java-serialised .table mirror (prompt 50), no compression
- * (prompt 52), no append-only mode (prompt 49). Type validation is wired
+ * secondary Java-serialised .table mirror (prompt 50). Compression (prompt
+ * 52) is wired through the shared {@link CompressionFactory} keyed by the
+ * {@code jsonl.compression.codec} config; changing the codec only affects new
+ * writes while existing files keep being read by their actual format. Type
+ * validation is wired
  * through the shared {@link JsonlSchemaManager} on both read and write
  * (prompt 41); strict coercion lands in prompt 43 and the flatten /
  * json_column storage rules in prompt 45 are implemented here (one shared
@@ -95,6 +99,12 @@ import diesel.storage.json.JsonStreams;
 public class JsonlRowStorage extends AbstractRowStorage {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(JsonlRowStorage.class);
+
+    /** JSONL compression codec config key (prompt 52): none | zstd | lz4 | snappy. */
+    private static final String COMPRESSION_CODEC_KEY = "jsonl.compression.codec";
+
+    /** JSONL compression level config key (prompt 52, ZSTD: 1..22, default 3). */
+    private static final String COMPRESSION_LEVEL_KEY = "jsonl.compression.level";
 
     protected final List<Object[]> rows = new ArrayList<>();
     private RowArrays rowColumns;
@@ -245,20 +255,21 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     /**
      * Full atomic rewrite via AtomicFileWriter (prompt 30). Used in REWRITE
-     * mode and also for compaction in APPEND mode.
+     * mode and also for compaction in APPEND mode. Compression (prompt 52) is
+     * applied at the file boundary: the configured codec decides the physical
+     * write target ({@code .jsonl} vs {@code .jsonl.zst} / {@code .lz4} /
+     * {@code .snappy}) and wraps the stream, while the row code stays
+     * identical for plain and compressed paths.
      */
     private void saveRewriteMode(String tableName) {
-        String fileName = resolveFilePath(".jsonl");
+        CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
+        File base = new File(resolveFilePath(".jsonl"));
+        String fileName = CompressionFactory.delimitedWriteTarget(base, codec).getPath();
         try {
-            try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
-                 JsonlRowWriter jsonlWriter = new JsonlRowWriter(afw.bufferedWriter(), sharedSchemaManager)) {
-                for (int i = 0; i < rows.size(); i++) {
-                    Object[] row = rows.get(i);
-                    boolean[] present = i < rowPresence.size() ? rowPresence.get(i) : null;
-                    jsonlRowWriterWrite(jsonlWriter, row, present);
-                }
-                jsonlWriter.flush();
-                afw.commit();
+            if (codec.isNone()) {
+                saveRewritePlain(fileName);
+            } else {
+                saveRewriteCompressed(fileName, codec);
             }
             fileInitialized = true;
             if (config.schemaMode() != JsonParserConfig.SchemaMode.STRICT) {
@@ -275,6 +286,43 @@ public class JsonlRowStorage extends AbstractRowStorage {
         } catch (IOException e) {
             LOGGER.error("Failed to save JSONL for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to JSONL file: " + fileName, e);
+        }
+    }
+
+    /** Writes the plain (uncompressed) JSONL file - the pre-prompt-52 format. */
+    private void saveRewritePlain(String fileName) throws IOException {
+        try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
+             JsonlRowWriter jsonlWriter = new JsonlRowWriter(afw.bufferedWriter(), sharedSchemaManager)) {
+            for (int i = 0; i < rows.size(); i++) {
+                Object[] row = rows.get(i);
+                boolean[] present = i < rowPresence.size() ? rowPresence.get(i) : null;
+                jsonlRowWriterWrite(jsonlWriter, row, present);
+            }
+            jsonlWriter.flush();
+            afw.commit();
+        }
+    }
+
+    /**
+     * Writes the JSONL file through the configured compressor. The compressor
+     * finishes its frame (and is closed) before {@link AtomicFileWriter#commit()}
+     * so the fsync'd file is complete and self-contained (same contract as the
+     * CSV/TSV compressed writers, prompt 39).
+     */
+    private void saveRewriteCompressed(String fileName, CompressionCodec codec) throws IOException {
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
+            OutputStream compressed = codec.wrapOutputStream(CompressionFactory.nonClosing(afw.outputStream()));
+            try (BufferedWriter writer = new BufferedWriter(
+                    new OutputStreamWriter(compressed, StorageConfig.getCharset()));
+                 JsonlRowWriter jsonlWriter = new JsonlRowWriter(writer, sharedSchemaManager)) {
+                for (int i = 0; i < rows.size(); i++) {
+                    Object[] row = rows.get(i);
+                    boolean[] present = i < rowPresence.size() ? rowPresence.get(i) : null;
+                    jsonlRowWriterWrite(jsonlWriter, row, present);
+                }
+                jsonlWriter.flush();
+            }
+            afw.commit();
         }
     }
 
@@ -315,6 +363,15 @@ public class JsonlRowStorage extends AbstractRowStorage {
         // If no new rows and no deletions, nothing to save
         if (pendingNew.isEmpty() && deltaManager.getDeletedBaseLines().isEmpty()) {
             LOGGER.debug("JsonlRowStorage {} nothing to save in append mode", tableName);
+            return;
+        }
+        // Append mode is not supported with compression (compressed streams are
+        // frame-based and cannot be appended to); fall back to a full rewrite.
+        CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
+        if (!codec.isNone()) {
+            LOGGER.info("JsonlRowStorage {} jsonl.compression.codec={} is not none, "
+                    + "append mode falls back to a full rewrite", tableName, codec.name());
+            saveRewriteMode(tableName);
             return;
         }
         try {
@@ -362,7 +419,8 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void loadFromFile(String tableName) {
-        String jsonlFile = resolveFilePath(".jsonl");
+        CompressionFactory.ResolvedDelimitedFile ref = resolveJsonlFile();
+        String jsonlFile = ref.file().getPath();
         String tableFile = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
         String loadMode = resolveLoadMode("jsonl.load.mode");
 
@@ -403,7 +461,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             }
         }
 
-        File file = new File(jsonlFile);
+        File file = ref.file();
         if (!file.exists()) {
             AtomicFileWriter.warnInterruptedWrite(file.toPath());
             LOGGER.info("JSONL file {} not found for storage {}", file.getPath(), tableName);
@@ -416,16 +474,19 @@ public class JsonlRowStorage extends AbstractRowStorage {
         List<Object[]> previous = new ArrayList<>(rows);
         List<boolean[]> previousPresence = new ArrayList<>(rowPresence);
         try {
-            // Crash recovery for append mode (prompt 49)
-            if (writeMode == JsonParserConfig.WriteMode.APPEND) {
+            // Crash recovery for append mode (prompt 49). Compressed files are
+            // always complete full rewrites (append+compression falls back to
+            // rewrite), and RandomAccessFile cannot address compressed bytes,
+            // so the repair only applies to plain files.
+            if (writeMode == JsonParserConfig.WriteMode.APPEND && ref.codec().isNone()) {
                 repairTruncatedAppend(file);
             }
-            SchemaPlan plan = planSchemaForLoad(file);
+            SchemaPlan plan = planSchemaForLoad(file, ref.codec());
             sharedSchemaManager = new JsonlSchemaManager(plan.columns(), plan.columnTypes(), config);
             List<Object[]> loaded = new ArrayList<>();
             List<boolean[]> loadedPresence = new ArrayList<>();
             int lineCount = 0;
-            try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset());
+            try (BufferedReader br = CompressionFactory.openDelimitedReader(file, ref.codec(), StorageConfig.getCharset());
                  JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
                          file.getPath(), config)) {
                 while (jsonlReader.hasNext()) {
@@ -634,7 +695,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
      * written.</li>
      * </ul>
      */
-    private SchemaPlan planSchemaForLoad(File file) throws IOException {
+    private SchemaPlan planSchemaForLoad(File file, CompressionCodec codec) throws IOException {
         JsonParserConfig.SchemaMode mode = config.schemaMode();
         if (mode == JsonParserConfig.SchemaMode.STRICT) {
             return new SchemaPlan(new ArrayList<>(columns), copyTypes(columnTypes), false);
@@ -647,7 +708,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             if (fresh) {
                 return planFromDescriptor(sidecar, false);
             }
-            return planFromDescriptor(infer(file), true);
+            return planFromDescriptor(infer(file, codec), true);
         }
         // HYBRID: keep the current columns, append the fields the data adds.
         List<String> planColumns = new ArrayList<>(columns);
@@ -661,7 +722,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             }
             return new SchemaPlan(planColumns, planTypes, false);
         }
-        JsonSchemaInference.InferredSchema inferred = infer(file);
+        JsonSchemaInference.InferredSchema inferred = infer(file, codec);
         for (String field : inferred.columns()) {
             if (indexOfIgnoreCase(planColumns, field) < 0) {
                 planColumns.add(field);
@@ -690,9 +751,9 @@ public class JsonlRowStorage extends AbstractRowStorage {
         return new SchemaPlan(planColumns, planTypes, writeSidecar);
     }
 
-    /** Runs the single-pass schema inference over the data file. */
-    private JsonSchemaInference.InferredSchema infer(File file) throws IOException {
-        try (BufferedReader br = Files.newBufferedReader(file.toPath(), StorageConfig.getCharset())) {
+    /** Runs the single-pass schema inference over the data file (codec-aware, prompt 52). */
+    private JsonSchemaInference.InferredSchema infer(File file, CompressionCodec codec) throws IOException {
+        try (BufferedReader br = CompressionFactory.openDelimitedReader(file, codec, StorageConfig.getCharset())) {
             return JsonSchemaInference.infer(br, file.getPath(), config);
         }
     }
@@ -706,7 +767,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     /** Writes the {@code <table>.schema.json} sidecar with the current data stamp. */
     private void writeSchemaSidecar() {
         Path sidecarPath = new File(resolveFilePath(JsonlSchemaManager.SCHEMA_FILE_SUFFIX)).toPath();
-        Path dataFile = new File(resolveFilePath(".jsonl")).toPath();
+        Path dataFile = resolveJsonlFile().file().toPath();
         try {
             sharedSchemaManager.writeSchemaFile(sidecarPath, JsonlSchemaManager.SchemaStamp.of(dataFile));
             LOGGER.info("JsonlRowStorage {} wrote JSONL schema sidecar {}", tableName, sidecarPath);
@@ -731,6 +792,11 @@ public class JsonlRowStorage extends AbstractRowStorage {
     }
 
     // ─── Internal helpers ───────────────────────────────────────────
+
+    /** Resolves the physical JSONL file and its codec, transparent to the configured codec (prompt 52). */
+    private CompressionFactory.ResolvedDelimitedFile resolveJsonlFile() {
+        return CompressionFactory.resolveActual(new File(resolveFilePath(".jsonl")), COMPRESSION_CODEC_KEY);
+    }
 
     /** Returns the internal row list directly (no copy). */
     public List<Object[]> getInternalRows() {

@@ -1,16 +1,1 @@
-Prompt 49: JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
-
-Changes:
-- JsonParserConfig: WriteMode enum (REWRITE|APPEND) + compactionThreshold (0.3 default) wired to jsonl.write.mode / jsonl.compaction.threshold configs
-- config.properties: jsonl.write.mode = rewrite, jsonl.compaction.threshold = 0.3 documented
-- JsonlDeltaManager (new): tracks pending new rows (appended to base .jsonl) and deleted base lines (.jsonl.delta header {"baseLineCount":N,"deletions":[...]}); onLoad reads base + re-applies delta; onSaveComplete promotes pending; shouldCompact() triggers full atomic rewrite when (deleted+pending)/live exceeds threshold
-- JsonlRowStorage: saveToFile dispatches to saveRewriteMode/saveAppendMode; loadFromFile in APPEND calls repairTruncatedAppend() before base read + delta apply; checkAutoCompact() after delete/update; compactJsonl() manual rewrite + delta reset; insert/update/delete track delta
-- JsonlAppendModeTest (19 tests): append round-trip, delta delete/update, new-rows-then-delete vanish, crash truncation discard, missing-newline repair, auto-compaction, manual compaction, rewrite mode unchanged, append incremental >4x faster than rewrite (criterion >=10x), config resolution/clamping, multi-cycle delta survival
-- pom.xml: JsonlAppendModeTest registered in default+ci surefire includes
-
-Verification:
-- isolated 19/19 green
-- quick (mvn test -DskipLargeTests) 415/0/0/6
-- full suite (4GB, @LargeTest) 415/0/0/0 BUILD SUCCESS
-- timing compare-timing 0 regressions, 1 improvement, exit 0
-- profile check skipped (no JOIN/hash join/performance wording)
+3.0.100 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
