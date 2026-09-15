@@ -1,9 +1,14 @@
 package diesel.storage;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Streaming row reader for a delimited storage format, shared by
@@ -114,6 +119,33 @@ public interface DelimitedRowReader extends Iterator<Map<String, Object>>, AutoC
             case "true", "1", "yes", "t" -> true;
             case "false", "0", "no", "f" -> false;
             default -> throw new IllegalArgumentException("Invalid boolean value: '" + raw + "'");
+        };
+    }
+
+    /**
+     * Returns the value parser for a column type given by its simple name
+     * ({@code Long}, {@code Integer}, {@code Double}, {@code Float},
+     * {@code BigDecimal}, {@code Boolean}, {@code LocalDate},
+     * {@code LocalDateTime}, {@code UUID}), or {@code null} for String/unknown
+     * types whose values stay as text. Returning concrete function references
+     * lets the readers precompile a per-column converter at construction time,
+     * so no per-cell type switch runs on the hot path.
+     *
+     * @param typeName the column type's simple name, or {@code null}
+     * @return the parse function, or {@code null} for text columns
+     */
+    static Function<String, Object> baseParser(String typeName) {
+        return switch (typeName) {
+            case "Long" -> Long::parseLong;
+            case "Integer" -> Integer::parseInt;
+            case "Double" -> Double::parseDouble;
+            case "Float" -> Float::parseFloat;
+            case "BigDecimal" -> BigDecimal::new;
+            case "Boolean" -> DelimitedRowReader::parseBooleanStrict;
+            case "LocalDate" -> LocalDate::parse;
+            case "LocalDateTime" -> LocalDateTime::parse;
+            case "UUID" -> UUID::fromString;
+            default -> null;
         };
     }
 }

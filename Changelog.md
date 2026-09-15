@@ -1,4 +1,13 @@
-﻿3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
+﻿3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
+
+Changes:
+- diesel/storage/DelimitedRowReader.java: new static baseParser(String typeName) returns a precompiled Function<String,Object> (Long::parseLong, Integer::parseInt, Double::parseDouble, Float::parseFloat, BigDecimal::new, parseBooleanStrict, LocalDate::parse, LocalDateTime::parse, UUID::fromString; null for unknown/String) so both delimited readers share one typed-parser source; added imports and the parseBooleanStrict host already lives here.
+- diesel/storage/TsvRowReader.java: buildConverters() delegates to a new typeParser(typeName, colName); non-String cells parse the raw token directly via baseParser (no unescape on the typed hot path - unescape kept only for String/unknown cells), sentinel/empty-value checks hoisted from the per-cell lambda into convertValue; unused imports dropped.
+- diesel/storage/CsvRowReader.java: buildConverters() delegates to typeParser (String/unknown -> identity, typed -> precompiled method refs); the per-cell switch (typeName) removed; unused imports dropped.
+
+Verification: quick suite (mvn test -DskipLargeTests) 432/0/0/7 BUILD SUCCESS; full suite (4GB heap, @LargeTest) 432/0/0/0 BUILD SUCCESS; DelimitedIoPerfTest (200k rows x 6 cols) [DELIM-IO] writeCsv=133ms writeTsv=140ms loadCsvSeq=491ms loadCsvPar=297ms loadTsvSeq=454ms loadTsvPar=306ms (within 30s ceilings + seq<=par*4+500ms guard). Manual heavy-query check of timing124 vs the pre-change timing123 (compare-timing.sh awk mis-parses the markdown rows, so the >=100ms set was compared directly): only complex-subquery moved 172.3->163.1ms (0.95x, no regression). TsvCsvBenchmark single runs are too noisy on this machine to quote a reliable delta (before: READ CSV 26.60/TSV 13.15; after 3-run sweep: READ CSV 23.4-29.5/TSV 15.4-17.7), so the storage-path [DELIM-IO] numbers above are the trusted gate. Profile check skipped - no JOIN/hash join/performance wording, no make/check-profile target; make/changelog unavailable so the entry + PROMPT_STATUS update were done manually.
+
+3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
 
 Changes:
 - diesel/storage/LineSource.java (new, public): single-line abstraction over BufferedReader or a decoded List<String>, wraps from-line reads so plain files stream straight off a whole-file split.

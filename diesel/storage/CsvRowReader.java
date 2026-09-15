@@ -4,16 +4,12 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
-import java.util.UUID;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -116,33 +112,35 @@ public class CsvRowReader implements DelimitedRowReader {
     private Function<String, Object>[] buildConverters() {
         Function<String, Object>[] converters = new Function[columns.size()];
         for (int i = 0; i < columns.size(); i++) {
-            Class<?> type = columnTypes.get(columns.get(i));
+            String colName = columns.get(i);
+            Class<?> type = columnTypes.get(colName);
             if (type == null) {
                 converters[i] = raw -> raw;
                 continue;
             }
             String typeName = type.getSimpleName();
-            String colName = columns.get(i);
-            converters[i] = raw -> {
-                try {
-                    return switch (typeName) {
-                        case "Long" -> Long.parseLong(raw);
-                        case "Integer" -> Integer.parseInt(raw);
-                        case "Double" -> Double.parseDouble(raw);
-                        case "Float" -> Float.parseFloat(raw);
-                        case "BigDecimal" -> new BigDecimal(raw);
-                        case "Boolean" -> DelimitedRowReader.parseBooleanStrict(raw);
-                        case "LocalDate" -> LocalDate.parse(raw);
-                        case "LocalDateTime" -> LocalDateTime.parse(raw);
-                        case "UUID" -> UUID.fromString(raw);
-                        default -> raw;
-                    };
-                } catch (RuntimeException e) {
-                    return handleConversionError(e, raw, typeName, colName);
-                }
-            };
+            converters[i] = typeParser(typeName, colName);
         }
         return converters;
+    }
+
+    /**
+     * Precompiles the value converter for one column: the parse function is
+     * selected once at construction (see {@link DelimitedRowReader#baseParser})
+     * instead of on every cell, so no per-cell type switch runs on the hot path.
+     */
+    private Function<String, Object> typeParser(String typeName, String colName) {
+        Function<String, Object> parser = DelimitedRowReader.baseParser(typeName);
+        if (parser == null) {
+            return raw -> raw;
+        }
+        return raw -> {
+            try {
+                return parser.apply(raw);
+            } catch (RuntimeException e) {
+                return handleConversionError(e, raw, typeName, colName);
+            }
+        };
     }
 
     /** Reads and validates the header line. Returns parsed file header columns. */

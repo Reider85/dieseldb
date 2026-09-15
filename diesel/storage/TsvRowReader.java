@@ -4,16 +4,12 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
-import java.util.UUID;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -114,43 +110,33 @@ public class TsvRowReader implements DelimitedRowReader {
     private Function<String, Object>[] buildConverters() {
         Function<String, Object>[] converters = new Function[columns.size()];
         for (int i = 0; i < columns.size(); i++) {
-            Class<?> type = columnTypes.get(columns.get(i));
-            String typeName = type == null ? null : type.getSimpleName();
             String colName = columns.get(i);
-            converters[i] = raw -> {
-                if (sentinelMode) {
-                    if ("\\N".equals(raw)) {
-                        return null;
-                    }
-                    if (raw.isEmpty()) {
-                        return "";
-                    }
-                } else if (raw.isEmpty()) {
-                    return null;
-                }
-                String unescaped = unescape(raw);
-                if (typeName == null) {
-                    return unescaped;
-                }
-                try {
-                    return switch (typeName) {
-                        case "Long" -> Long.parseLong(unescaped);
-                        case "Integer" -> Integer.parseInt(unescaped);
-                        case "Double" -> Double.parseDouble(unescaped);
-                        case "Float" -> Float.parseFloat(unescaped);
-                        case "BigDecimal" -> new BigDecimal(unescaped);
-                        case "Boolean" -> DelimitedRowReader.parseBooleanStrict(unescaped);
-                        case "LocalDate" -> LocalDate.parse(unescaped);
-                        case "LocalDateTime" -> LocalDateTime.parse(unescaped);
-                        case "UUID" -> UUID.fromString(unescaped);
-                        default -> unescaped;
-                    };
-                } catch (RuntimeException e) {
-                    return handleConversionError(e, raw, unescaped, typeName, colName);
-                }
-            };
+            Class<?> type = columnTypes.get(colName);
+            converters[i] = typeParser(type == null ? null : type.getSimpleName(), colName);
         }
         return converters;
+    }
+
+    /**
+     * Precompiles the value converter for one column: non-String types parse the
+     * raw field directly without unescaping (valid numbers, dates, UUIDs and
+     * booleans never contain backslashes, so the raw value equals its unescaped
+     * form on every successful parse), dropping the per-cell unescape scan and
+     * the per-cell type switch. String and unknown columns still run the
+     * backslash unescape.
+     */
+    private Function<String, Object> typeParser(String typeName, String colName) {
+        Function<String, Object> parser = (typeName == null) ? null : DelimitedRowReader.baseParser(typeName);
+        if (parser == null) {
+            return TsvRowReader::unescape;
+        }
+        return raw -> {
+            try {
+                return parser.apply(raw);
+            } catch (RuntimeException e) {
+                return handleConversionError(e, raw, raw, typeName, colName);
+            }
+        };
     }
 
     /** Reads and validates the header line. Returns parsed file header columns. */
@@ -362,6 +348,16 @@ LOGGER.warn(msg);
     }
 
     private Object convertValue(String raw, int columnIdx) {
+        if (sentinelMode) {
+            if ("\\N".equals(raw)) {
+                return null;
+            }
+            if (raw.isEmpty()) {
+                return "";
+            }
+        } else if (raw.isEmpty()) {
+            return null;
+        }
         return converters[columnIdx].apply(raw);
     }
 
