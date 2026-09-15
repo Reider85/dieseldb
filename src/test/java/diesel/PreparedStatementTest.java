@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,10 +29,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class PreparedStatementTest {
 
     private Database database;
+    private Path tempDir;
 
     @BeforeEach
-    void setUp() {
-        database = new Database();
+    void setUp() throws IOException {
+        tempDir = Files.createTempDirectory("diesel-ps-test");
+        database = new Database(tempDir.toString());
         dropTable();
         database.executeQuery("CREATE TABLE PS_TEST (ID LONG PRIMARY KEY SEQUENCE(ps_seq 1 1), NAME STRING, AGE INTEGER)", null);
         insert("alpha", 25);
@@ -40,9 +44,19 @@ public class PreparedStatementTest {
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws IOException {
         dropTable();
         PreparedStatement.resetGlobalCacheSize();
+        if (tempDir != null) {
+            Files.walk(tempDir)
+                    .sorted((a, b) -> b.compareTo(a))
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {
+                        }
+                    });
+        }
     }
 
     private void dropTable() {

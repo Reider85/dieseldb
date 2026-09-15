@@ -1,1 +1,11 @@
-3.0.100 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
+3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
+
+Changes:
+- diesel/DatabaseServer.java: OOM responses (handleOutOfMemory), invalid-message rejection, and query-execution error catch now go through sendSerializedResult() (compression-aware marker+length+data protocol) instead of raw out.writeObject() — restores wire-protocol consistency so clients/tests that read via the compression-aware protocol no longer get OptionalDataException.
+- src/test/java/diesel/PreparedStatementTest.java: setUp() now backs the Database with a fresh temp directory (real storage root matching the file-persisted engine) and tearDown() recursively deletes it; fixes "Missing value for column: ID" in the client-server round-trip path (fallback seq-generation when the implicit table reload lacks the registered sequence) and removes leftover temp artifacts.
+- src/test/java/diesel/OomHandlingTest.java: roundTrip() and direct cursor-open/cursor-fetch reads now use the compression-aware readResult() protocol (marker byte + length + payload) matching sendSerializedResult, replacing raw ObjectInputStream.readObject().
+
+Verification:
+- Isolated: OomHandlingTest 5/5, PreparedStatementTest 11/11 green.
+- Combined (mvn test -Dtest=PreparedStatementTest,OomHandlingTest): 16/16 green.
+- Quick suite (mvn test -DskipLargeTests): 448/0/0/7 BUILD SUCCESS.

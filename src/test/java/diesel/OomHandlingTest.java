@@ -164,7 +164,7 @@ public class OomHandlingTest {
                 ObjectInputStream in = new ObjectInputStream(client.getInputStream());
                 out.writeObject(new OpenCursorMessage("SELECT * FROM USERS", 10, null));
                 out.flush();
-                Object response = in.readObject();
+                Object response = readResult(in);
                 assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", response,
                         "the client must receive the friendly OOM message on cursor open");
             }
@@ -219,8 +219,8 @@ public class OomHandlingTest {
                 out.writeObject(new FetchCursorMessage(cursorId, null));
                 out.flush();
 
-                // OOM is caught and sent via writeObject (not sendSerializedResult)
-                Object fetchResponse = in.readObject();
+                // OOM is caught and sent via sendSerializedResult (marker + length + data)
+                Object fetchResponse = readResult(in);
                 assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", fetchResponse,
                         "the client must receive the friendly OOM message on cursor fetch");
             }
@@ -266,7 +266,23 @@ public class OomHandlingTest {
             out.writeObject(message);
             out.flush();
             ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-            return in.readObject();
+            return readResult(in);
+        }
+    }
+
+    private static Object readResult(ObjectInputStream in) throws Exception {
+        int marker = in.read();
+        int dataLength = in.readInt();
+        byte[] data = in.readNBytes(dataLength);
+        if (marker == 0x01) {
+            java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
+                    new java.io.ByteArrayInputStream(data));
+            java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
+            Object result = ois.readObject();
+            ois.close();
+            return result;
+        } else {
+            return deserializeBytes(data);
         }
     }
 }
