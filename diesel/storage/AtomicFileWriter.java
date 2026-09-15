@@ -100,7 +100,8 @@ public final class AtomicFileWriter implements Closeable {
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
             if (text) {
                 this.bufferedWriter = new BufferedWriter(
-                        new OutputStreamWriter(Channels.newOutputStream(channel), StorageConfig.getCharset()));
+                        new OutputStreamWriter(Channels.newOutputStream(channel), StorageConfig.getCharset()),
+                        StorageConfig.bufferSize());
             } else {
                 this.outputStream = Channels.newOutputStream(channel);
             }

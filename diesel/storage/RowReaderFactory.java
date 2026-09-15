@@ -1,6 +1,5 @@
 package diesel.storage;
 
-import java.io.BufferedReader;
 import java.util.List;
 import java.util.Map;
 
@@ -19,10 +18,11 @@ import java.util.Map;
 public interface RowReaderFactory {
 
     /**
-     * @param in          the underlying character-input stream
+     * @param source      the physical-line provider (streaming buffer or
+     *                    in-memory split lines)
      * @param columns     the ordered column names of the schema
      * @param columnTypes the column name to type mapping
      * @return a fresh reader positioned before the header line
      */
-    DelimitedRowReader create(BufferedReader in, List<String> columns, Map<String, Class<?>> columnTypes);
+    DelimitedRowReader create(LineSource source, List<String> columns, Map<String, Class<?>> columnTypes);
 }

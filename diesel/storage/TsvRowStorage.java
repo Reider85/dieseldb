@@ -178,7 +178,7 @@ public class TsvRowStorage extends AbstractRowStorage {
     /** Writes the plain (uncompressed) TSV file - the pre-prompt-39 format. */
     private void saveTsvPlain(String fileName) throws IOException {
         try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
-             TsvRowWriter tsvWriter = new TsvRowWriter(afw.bufferedWriter(), columns)) {
+             TsvRowWriter tsvWriter = new TsvRowWriter(afw.bufferedWriter(), columns, columnTypes)) {
             tsvWriter.writeHeader();
             for (Object[] row : rows) {
                 tsvWriter.writeRow(row);
@@ -197,8 +197,8 @@ public class TsvRowStorage extends AbstractRowStorage {
         try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
             OutputStream compressed = codec.wrapOutputStream(CompressionFactory.nonClosing(afw.outputStream()));
             try (BufferedWriter writer = new BufferedWriter(
-                    new OutputStreamWriter(compressed, StorageConfig.getCharset()));
-                 TsvRowWriter tsvWriter = new TsvRowWriter(writer, columns)) {
+                    new OutputStreamWriter(compressed, StorageConfig.getCharset()), StorageConfig.bufferSize());
+                 TsvRowWriter tsvWriter = new TsvRowWriter(writer, columns, columnTypes)) {
                 tsvWriter.writeHeader();
                 for (Object[] row : rows) {
                     tsvWriter.writeRow(row);
@@ -218,22 +218,27 @@ public class TsvRowStorage extends AbstractRowStorage {
             return;
         }
         List<Object[]> previous = new ArrayList<>(rows);
-        try (BufferedReader br = CompressionFactory.openDelimitedReader(file, ref.codec(), StorageConfig.getCharset());
-             TsvRowReader tsvReader = new TsvRowReader(br, columns, columnTypes, file.getPath())) {
-            tsvReader.readHeader();
-            List<Object[]> loaded = new ArrayList<>();
-            while (tsvReader.hasNext()) {
-                Object[] row = tsvReader.nextArray();
-                if (row != null) {
-                    loaded.add(row);
+        try {
+            byte[] bytes = DelimitedContent.readAllBytes(file, ref.codec());
+            String text = DelimitedContent.decode(bytes, StorageConfig.getCharset(), file);
+            List<String> lines = DelimitedContent.splitLines(text);
+            try (LineSource source = LineSource.over(lines);
+                 TsvRowReader tsvReader = new TsvRowReader(source, columns, columnTypes, file.getPath())) {
+                tsvReader.readHeader();
+                List<Object[]> loaded = new ArrayList<>();
+                while (tsvReader.hasNext()) {
+                    Object[] row = tsvReader.nextArray();
+                    if (row != null) {
+                        loaded.add(row);
+                    }
                 }
+                rows.clear();
+                rows.addAll(loaded);
+                fileInitialized = true;
+                LOGGER.info("TsvRowStorage {} loaded TSV from {} with {} rows",
+                        tableName, file.getPath(), rows.size());
+                syncIndexBulkFromArrays(rows);
             }
-            rows.clear();
-            rows.addAll(loaded);
-            fileInitialized = true;
-            LOGGER.info("TsvRowStorage {} loaded TSV from {} with {} rows",
-                    tableName, file.getPath(), rows.size());
-            syncIndexBulkFromArrays(rows);
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
@@ -442,13 +447,11 @@ public class TsvRowStorage extends AbstractRowStorage {
         }
         boolean useParallel = parallel && !ref.compressed();
         DelimitedIndexManager manager = index();
-        List<Map<String, Object>> loaded = useParallel
-                ? manager.loadFromFileParallel(file.getPath())
-                : manager.loadFromFileSequential(file.getPath());
+        List<Object[]> loaded = useParallel
+                ? manager.loadFromFileParallelArrays(file.getPath())
+                : manager.loadFromFileSequentialArrays(file.getPath());
         rows.clear();
-        for (Map<String, Object> row : loaded) {
-            rows.add(rowColumns.fromMap(row));
-        }
+        rows.addAll(loaded);
         fileInitialized = true;
         syncIndexBulkFromArrays(rows);
     }

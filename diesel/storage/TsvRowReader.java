@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,11 +41,12 @@ public class TsvRowReader implements DelimitedRowReader {
     private static final Logger LOGGER = LoggerFactory.getLogger(TsvRowReader.class);
     private static final String BOM = "\uFEFF";
 
-    private final BufferedReader reader;
+    private final LineSource source;
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final boolean sentinelMode;
     private final String fileName;
+    private final Function<String, Object>[] converters;
     private String nextLine;
     private boolean finished;
     private int[] columnMapping;
@@ -72,11 +74,32 @@ public class TsvRowReader implements DelimitedRowReader {
      *                    {@code null} when unknown
      */
     public TsvRowReader(BufferedReader reader, List<String> columns, Map<String, Class<?>> columnTypes, String fileName) {
-        this.reader = reader;
+        this(reader == null ? null : LineSource.over(reader), columns, columnTypes, fileName);
+    }
+
+    /**
+     * @param source      the physical-line provider
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     */
+    public TsvRowReader(LineSource source, List<String> columns, Map<String, Class<?>> columnTypes) {
+        this(source, columns, columnTypes, null);
+    }
+
+    /**
+     * @param source      the physical-line provider
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     * @param fileName    the source file name used in error diagnostics, or
+     *                    {@code null} when unknown
+     */
+    public TsvRowReader(LineSource source, List<String> columns, Map<String, Class<?>> columnTypes, String fileName) {
+        this.source = source;
         this.columns = columns;
         this.columnTypes = columnTypes;
         this.fileName = fileName;
         this.sentinelMode = TsvRowWriter.isSentinelMode();
+        this.converters = buildConverters();
         this.finished = false;
         this.nextLine = null;
         this.headerRead = false;
@@ -87,9 +110,52 @@ public class TsvRowReader implements DelimitedRowReader {
         this.extraFieldsWarned = false;
     }
 
+    @SuppressWarnings("unchecked")
+    private Function<String, Object>[] buildConverters() {
+        Function<String, Object>[] converters = new Function[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            Class<?> type = columnTypes.get(columns.get(i));
+            String typeName = type == null ? null : type.getSimpleName();
+            String colName = columns.get(i);
+            converters[i] = raw -> {
+                if (sentinelMode) {
+                    if ("\\N".equals(raw)) {
+                        return null;
+                    }
+                    if (raw.isEmpty()) {
+                        return "";
+                    }
+                } else if (raw.isEmpty()) {
+                    return null;
+                }
+                String unescaped = unescape(raw);
+                if (typeName == null) {
+                    return unescaped;
+                }
+                try {
+                    return switch (typeName) {
+                        case "Long" -> Long.parseLong(unescaped);
+                        case "Integer" -> Integer.parseInt(unescaped);
+                        case "Double" -> Double.parseDouble(unescaped);
+                        case "Float" -> Float.parseFloat(unescaped);
+                        case "BigDecimal" -> new BigDecimal(unescaped);
+                        case "Boolean" -> DelimitedRowReader.parseBooleanStrict(unescaped);
+                        case "LocalDate" -> LocalDate.parse(unescaped);
+                        case "LocalDateTime" -> LocalDateTime.parse(unescaped);
+                        case "UUID" -> UUID.fromString(unescaped);
+                        default -> unescaped;
+                    };
+                } catch (RuntimeException e) {
+                    return handleConversionError(e, raw, unescaped, typeName, colName);
+                }
+            };
+        }
+        return converters;
+    }
+
     /** Reads and validates the header line. Returns parsed file header columns. */
     public List<String> readHeader() throws IOException {
-        String header = reader.readLine();
+        String header = source.nextLine();
         if (header == null) {
             throw new IOException("TSV file is empty – expected header line");
         }
@@ -231,14 +297,14 @@ LOGGER.warn(msg);
 
     @Override
     public void close() throws IOException {
-        reader.close();
+        source.close();
     }
 
     // ─── Internal ───────────────────────────────────────────────────
 
     private void prefetch() {
         try {
-            nextLine = reader.readLine();
+            nextLine = source.nextLine();
             if (nextLine == null) {
                 finished = true;
             } else {
@@ -286,7 +352,7 @@ LOGGER.warn(msg);
         for (int i = 0; i < columns.size(); i++) {
             int fileIdx = columnMapping[i];
             String rawValue = (fileIdx >= 0 && fileIdx < raw.length) ? raw[fileIdx] : "";
-            values[i] = convertValue(rawValue, columns.get(i));
+            values[i] = convertValue(rawValue, i);
         }
         if (rowSkipped) {
             rowSkipped = false;
@@ -295,38 +361,8 @@ LOGGER.warn(msg);
         return values;
     }
 
-    private Object convertValue(String raw, String colName) {
-        if (sentinelMode) {
-            if ("\\N".equals(raw)) {
-                return null;
-            }
-            if (raw.isEmpty()) {
-                return "";
-            }
-        } else if (raw.isEmpty()) {
-            return null;
-        }
-        String unescaped = unescape(raw);
-        Class<?> type = columnTypes.get(colName);
-        if (type == null) {
-            return unescaped;
-        }
-        try {
-            return switch (type.getSimpleName()) {
-                case "Long" -> Long.parseLong(unescaped);
-                case "Integer" -> Integer.parseInt(unescaped);
-                case "Double" -> Double.parseDouble(unescaped);
-                case "Float" -> Float.parseFloat(unescaped);
-                case "BigDecimal" -> new BigDecimal(unescaped);
-                case "Boolean" -> DelimitedRowReader.parseBooleanStrict(unescaped);
-                case "LocalDate" -> LocalDate.parse(unescaped);
-                case "LocalDateTime" -> LocalDateTime.parse(unescaped);
-                case "UUID" -> UUID.fromString(unescaped);
-                default -> unescaped;
-            };
-        } catch (RuntimeException e) {
-            return handleConversionError(e, raw, unescaped, type.getSimpleName(), colName);
-        }
+    private Object convertValue(String raw, int columnIdx) {
+        return converters[columnIdx].apply(raw);
     }
 
     /**

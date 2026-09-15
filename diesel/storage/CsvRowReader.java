@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,11 +41,12 @@ public class CsvRowReader implements DelimitedRowReader {
     private static final Logger LOGGER = LoggerFactory.getLogger(CsvRowReader.class);
     private static final String BOM = "\uFEFF";
 
-    private final BufferedReader reader;
+    private final LineSource source;
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final boolean sentinelMode;
     private final String fileName;
+    private final Function<String, Object>[] converters;
     private String nextLine;
     private boolean finished;
     private int[] columnMapping;
@@ -73,11 +75,32 @@ public class CsvRowReader implements DelimitedRowReader {
      *                    {@code null} when unknown
      */
     public CsvRowReader(BufferedReader reader, List<String> columns, Map<String, Class<?>> columnTypes, String fileName) {
-        this.reader = reader;
+        this(reader == null ? null : LineSource.over(reader), columns, columnTypes, fileName);
+    }
+
+    /**
+     * @param source      the physical-line provider
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     */
+    public CsvRowReader(LineSource source, List<String> columns, Map<String, Class<?>> columnTypes) {
+        this(source, columns, columnTypes, null);
+    }
+
+    /**
+     * @param source      the physical-line provider
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     * @param fileName    the source file name used in error diagnostics, or
+     *                    {@code null} when unknown
+     */
+    public CsvRowReader(LineSource source, List<String> columns, Map<String, Class<?>> columnTypes, String fileName) {
+        this.source = source;
         this.columns = columns;
         this.columnTypes = columnTypes;
         this.fileName = fileName;
         this.sentinelMode = TsvRowWriter.isSentinelMode();
+        this.converters = buildConverters();
         this.finished = false;
         this.nextLine = null;
         this.headerRead = false;
@@ -89,9 +112,42 @@ public class CsvRowReader implements DelimitedRowReader {
         this.extraFieldsWarned = false;
     }
 
+    @SuppressWarnings("unchecked")
+    private Function<String, Object>[] buildConverters() {
+        Function<String, Object>[] converters = new Function[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            Class<?> type = columnTypes.get(columns.get(i));
+            if (type == null) {
+                converters[i] = raw -> raw;
+                continue;
+            }
+            String typeName = type.getSimpleName();
+            String colName = columns.get(i);
+            converters[i] = raw -> {
+                try {
+                    return switch (typeName) {
+                        case "Long" -> Long.parseLong(raw);
+                        case "Integer" -> Integer.parseInt(raw);
+                        case "Double" -> Double.parseDouble(raw);
+                        case "Float" -> Float.parseFloat(raw);
+                        case "BigDecimal" -> new BigDecimal(raw);
+                        case "Boolean" -> DelimitedRowReader.parseBooleanStrict(raw);
+                        case "LocalDate" -> LocalDate.parse(raw);
+                        case "LocalDateTime" -> LocalDateTime.parse(raw);
+                        case "UUID" -> UUID.fromString(raw);
+                        default -> raw;
+                    };
+                } catch (RuntimeException e) {
+                    return handleConversionError(e, raw, typeName, colName);
+                }
+            };
+        }
+        return converters;
+    }
+
     /** Reads and validates the header line. Returns parsed file header columns. */
     public List<String> readHeader() throws IOException {
-        String header = reader.readLine();
+        String header = source.nextLine();
         if (header == null) {
             throw new IOException("CSV file is empty – expected header line");
         }
@@ -234,14 +290,14 @@ LOGGER.warn(msg);
 
     @Override
     public void close() throws IOException {
-        reader.close();
+        source.close();
     }
 
     // ─── Internal ───────────────────────────────────────────────────
 
     private void prefetch() {
         try {
-            String line = reader.readLine();
+            String line = source.nextLine();
             if (line == null) {
                 finished = true;
                 return;
@@ -251,7 +307,7 @@ LOGGER.warn(msg);
             StringBuilder sb = new StringBuilder(line);
             boolean inQuotes = scanQuotes(sb, 0, false);
             while (inQuotes) {
-                String more = reader.readLine();
+                String more = source.nextLine();
                 if (more == null) {
                     unterminatedRow = true;
                     break;
@@ -294,19 +350,20 @@ LOGGER.warn(msg);
     }
 
     private Object[] parseDataLineArray(String line) {
-        List<ParsedCsvField> raw = parseDataFields(line);
-        if (raw.size() > columns.size() && !extraFieldsWarned) {
+        DataFields raw = parseDataFields(line);
+        if (raw.values.size() > columns.size() && !extraFieldsWarned) {
             extraFieldsWarned = true;
             LOGGER.warn(contextPrefix() + "line " + currentRowLine
-                    + ": row has " + raw.size() + " fields but schema expects " + columns.size()
+                    + ": row has " + raw.values.size() + " fields but schema expects " + columns.size()
                     + " - ignoring extra fields");
         }
         Object[] values = new Object[columns.size()];
         for (int i = 0; i < columns.size(); i++) {
             int fileIdx = columnMapping[i];
-            ParsedCsvField field = (fileIdx >= 0 && fileIdx < raw.size())
-                    ? raw.get(fileIdx) : new ParsedCsvField("", false);
-            values[i] = convertValue(field.value(), field.quoted(), columns.get(i));
+            boolean present = fileIdx >= 0 && fileIdx < raw.values.size();
+            String field = present ? raw.values.get(fileIdx) : "";
+            boolean quoted = present && raw.isQuoted(fileIdx);
+            values[i] = convertValue(field, quoted, i);
         }
         if (rowSkipped) {
             rowSkipped = false;
@@ -320,21 +377,35 @@ LOGGER.warn(msg);
      * double-quote quoting and {@code ""} escaped quotes.
      */
     public static List<String> parseLine(String line) {
-        List<String> fields = new ArrayList<>();
-        for (ParsedCsvField f : parseDataFields(line)) {
-            fields.add(f.value());
-        }
-        return fields;
+        return parseDataFields(line).values;
     }
 
-    /** A raw field parsed from a CSV line together with its quoting flag. */
-    record ParsedCsvField(String value, boolean quoted) {}
+    /**
+     * Raw fields parsed from a CSV line: the unquoted values plus a parallel
+     * quoted-flag array indexing the same positions (a plain boolean[] instead
+     * of a per-field boxed record avoids needless allocation on the hot path).
+     */
+    private static final class DataFields {
+        final List<String> values;
+        private final boolean[] quoted;
 
-    private static List<ParsedCsvField> parseDataFields(String line) {
-        List<ParsedCsvField> fields = new ArrayList<>();
+        DataFields(List<String> values, boolean[] quoted) {
+            this.values = values;
+            this.quoted = quoted;
+        }
+
+        boolean isQuoted(int index) {
+            return quoted != null && index < quoted.length && quoted[index];
+        }
+    }
+
+    private static DataFields parseDataFields(String line) {
+        List<String> fields = new ArrayList<>();
+        boolean[] quoted = null;
         StringBuilder sb = new StringBuilder();
         boolean inQuotes = false;
         boolean fieldQuoted = false;
+        int fieldCount = 0;
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
             if (inQuotes) {
@@ -353,19 +424,37 @@ LOGGER.warn(msg);
                     inQuotes = true;
                     fieldQuoted = true;
                 } else if (c == ',') {
-                    fields.add(new ParsedCsvField(sb.toString(), fieldQuoted));
-                    sb.setLength(0);
+                    if (fieldQuoted) {
+                        quoted = markQuoted(quoted, fieldCount);
+                    }
+                    fieldCount++;
                     fieldQuoted = false;
+                    fields.add(sb.toString());
+                    sb.setLength(0);
                 } else {
                     sb.append(c);
                 }
             }
         }
-        fields.add(new ParsedCsvField(sb.toString(), fieldQuoted));
-        return fields;
+        if (fieldQuoted) {
+            quoted = markQuoted(quoted, fieldCount);
+        }
+        fields.add(sb.toString());
+        return new DataFields(fields, quoted);
     }
 
-    private Object convertValue(String raw, boolean quoted, String colName) {
+    private static boolean[] markQuoted(boolean[] quoted, int index) {
+        if (quoted == null) {
+            quoted = new boolean[8];
+        }
+        if (index >= quoted.length) {
+            quoted = java.util.Arrays.copyOf(quoted, Math.max(quoted.length * 2, index + 1));
+        }
+        quoted[index] = true;
+        return quoted;
+    }
+
+    private Object convertValue(String raw, boolean quoted, int columnIdx) {
         if (sentinelMode) {
             if (raw.isEmpty()) {
                 return quoted ? "" : null;
@@ -373,26 +462,7 @@ LOGGER.warn(msg);
         } else if (raw.isEmpty()) {
             return null;
         }
-        Class<?> type = columnTypes.get(colName);
-        if (type == null) {
-            return raw;
-        }
-        try {
-            return switch (type.getSimpleName()) {
-                case "Long" -> Long.parseLong(raw);
-                case "Integer" -> Integer.parseInt(raw);
-                case "Double" -> Double.parseDouble(raw);
-                case "Float" -> Float.parseFloat(raw);
-                case "BigDecimal" -> new BigDecimal(raw);
-                case "Boolean" -> DelimitedRowReader.parseBooleanStrict(raw);
-                case "LocalDate" -> LocalDate.parse(raw);
-                case "LocalDateTime" -> LocalDateTime.parse(raw);
-                case "UUID" -> UUID.fromString(raw);
-                default -> raw;
-            };
-        } catch (RuntimeException e) {
-            return handleConversionError(e, raw, type.getSimpleName(), colName);
-        }
+        return converters[columnIdx].apply(raw);
     }
 
     /**

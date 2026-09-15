@@ -324,7 +324,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
                 boolean append = baseFile.exists();
                 try (FileOutputStream fos = new FileOutputStream(baseFile, append);
                      OutputStreamWriter osw = new OutputStreamWriter(fos, StorageConfig.getCharset());
-                     Writer bw = new java.io.BufferedWriter(osw);
+                     Writer bw = new java.io.BufferedWriter(osw, StorageConfig.bufferSize());
                      JsonlRowWriter jsonlWriter = new JsonlRowWriter(bw, sharedSchemaManager, config)) {
                     for (int i = 0; i < pendingNew.size(); i++) {
                         Object[] row = pendingNew.get(i);

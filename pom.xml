@@ -112,6 +112,7 @@
                         <include>**/ReaderCorrectnessTest.java</include>
                         <include>**/StorageLoadModeTest.java</include>
                         <include>**/StorageArrayRepresentationTest.java</include>
+                        <include>**/DelimitedIoPerfTest.java</include>
                         <include>**/ConcurrentSaveTest.java</include>
                         <include>**/CsvStorageAdvancedTest.java</include>
                         <include>**/TsvStorageAdvancedTest.java</include>
@@ -192,6 +193,7 @@
                                 <include>**/ReaderCorrectnessTest.java</include>
                                 <include>**/StorageLoadModeTest.java</include>
                                 <include>**/StorageArrayRepresentationTest.java</include>
+                                <include>**/DelimitedIoPerfTest.java</include>
                                 <include>**/ConcurrentSaveTest.java</include>
                                 <include>**/CsvStorageAdvancedTest.java</include>
                                 <include>**/TsvStorageAdvancedTest.java</include>

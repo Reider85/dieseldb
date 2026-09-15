@@ -749,6 +749,10 @@ public abstract class DelimitedIndexManager {
      * @throws IOException on I/O errors
      */
     public List<Map<String, Object>> loadFromFileParallel(String filePath) throws IOException {
+        return toMaps(loadFromFileParallelArrays(filePath));
+    }
+
+    public List<Object[]> loadFromFileParallelArrays(String filePath) throws IOException {
         File file = new File(filePath);
         if (!file.exists() || !file.isFile()) {
             return List.of();
@@ -756,7 +760,7 @@ public abstract class DelimitedIndexManager {
         CompressionFactory.ResolvedDelimitedFile ref =
                 CompressionFactory.resolveActual(file, configPrefix + ".compression.codec");
         if (ref.compressed()) {
-            return loadFromFileSequential(ref.file().getPath());
+            return loadFromFileSequentialArrays(ref.file().getPath());
         }
         file = ref.file();
         LineIndex lineIndex = preScan(file);
@@ -765,19 +769,19 @@ public abstract class DelimitedIndexManager {
             return List.of();
         }
         if (totalRows < parallelReadThreshold) {
-            return loadFromFileSequential(filePath);
+            return loadFromFileSequentialArrays(filePath);
         }
         if (lineIndex.hasMultiLineRows) {
-            return loadFromFileSequential(filePath);
+            return loadFromFileSequentialArrays(filePath);
         }
         if (totalRows > Integer.MAX_VALUE) {
-            return loadFromFileSequential(filePath);
+            return loadFromFileSequentialArrays(filePath);
         }
         int[] columnMapping = readHeaderMapping(file);
         long[] offsets = lineIndex.dataLineOffsets;
         int partitions = Math.min(READ_POOL.getParallelism(),
                 (int) Math.min((totalRows + blockSize - 1) / blockSize, Integer.MAX_VALUE));
-        List<Callable<List<Map<String, Object>>>> tasks = new ArrayList<>(partitions);
+        List<Callable<List<Object[]>>> tasks = new ArrayList<>(partitions);
         for (int p = 0; p < partitions; p++) {
             long startLine = (totalRows * p) / partitions;
             long endLine = (totalRows * (p + 1)) / partitions;
@@ -789,9 +793,9 @@ public abstract class DelimitedIndexManager {
             long firstDataLine = startLine + 2;
             tasks.add(new ByteRangeTask(file, byteStart, byteEnd, firstDataLine, columnMapping));
         }
-        List<Map<String, Object>> result = new ArrayList<>((int) Math.min(totalRows, Integer.MAX_VALUE));
+        List<Object[]> result = new ArrayList<>((int) Math.min(totalRows, Integer.MAX_VALUE));
         try {
-            for (Future<List<Map<String, Object>>> future : READ_POOL.invokeAll(tasks)) {
+            for (Future<List<Object[]>> future : READ_POOL.invokeAll(tasks)) {
                 result.addAll(future.get());
             }
         } catch (InterruptedException e) {
@@ -803,20 +807,33 @@ public abstract class DelimitedIndexManager {
         return result;
     }
 
-    /** Reads the whole delimited file with a single sequential pass. */
-    public List<Map<String, Object>> loadFromFileSequential(String filePath) throws IOException {
+    /**
+     * Reads the whole delimited file with a single sequential pass. Uses the
+     * byte fast path: the file (or decompressed stream) is read fully, decoded
+     * once and split into physical lines before the rows are decoded.
+     */
+    public List<Object[]> loadFromFileSequentialArrays(String filePath) throws IOException {
         File file = new File(filePath);
         if (!file.exists() || !file.isFile()) {
             return List.of();
         }
         CompressionFactory.ResolvedDelimitedFile ref =
                 CompressionFactory.resolveActual(file, configPrefix + ".compression.codec");
-        try (BufferedReader bufferedReader = CompressionFactory.openDelimitedReader(
-                ref.file(), ref.codec(), StorageConfig.getCharset());
-             DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
-            reader.readHeader();
-            return reader.readAll();
+        return DelimitedContent.readAllArrays(ref.file(), ref.codec(), columns, columnTypes,
+                rowReaderFactory, StorageConfig.getCharset());
+    }
+
+    /** Reads the whole delimited file with a single sequential pass. */
+    public List<Map<String, Object>> loadFromFileSequential(String filePath) throws IOException {
+        return toMaps(loadFromFileSequentialArrays(filePath));
+    }
+
+    private List<Map<String, Object>> toMaps(List<Object[]> arrays) {
+        List<Map<String, Object>> maps = new ArrayList<>(arrays.size());
+        for (Object[] array : arrays) {
+            maps.add(rowColumns.toMap(array));
         }
+        return maps;
     }
 
     /**
@@ -935,7 +952,7 @@ public abstract class DelimitedIndexManager {
      */
     private int[] readHeaderMapping(File file) throws IOException {
         try (BufferedReader bufferedReader = StorageConfig.newReader(file);
-             DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
+             DelimitedRowReader reader = rowReaderFactory.create(LineSource.over(bufferedReader), columns, columnTypes)) {
             reader.readHeader();
             int[] mapping = reader.columnMapping();
             if (mapping == null) {
@@ -1105,7 +1122,7 @@ public abstract class DelimitedIndexManager {
      * line is ever re-read from the file start. The header-to-schema column
      * mapping is parsed once by the main thread and shared by all partitions.
      */
-    private final class ByteRangeTask implements Callable<List<Map<String, Object>>> {
+    private final class ByteRangeTask implements Callable<List<Object[]>> {
         private final File file;
         private final long byteStart;
         private final long byteEnd;
@@ -1121,7 +1138,7 @@ public abstract class DelimitedIndexManager {
         }
 
         @Override
-        public List<Map<String, Object>> call() {
+        public List<Object[]> call() {
             try (FileChannel channel = FileChannel.open(file.toPath())) {
                 long span = byteEnd - byteStart;
                 if (span > Integer.MAX_VALUE) {
@@ -1139,11 +1156,12 @@ public abstract class DelimitedIndexManager {
                 }
                 try (BufferedReader bufferedReader = new BufferedReader(
                         new InputStreamReader(new ByteArrayInputStream(chunk, 0, position), StorageConfig.getCharset()));
-                     DelimitedRowReader reader = rowReaderFactory.create(bufferedReader, columns, columnTypes)) {
+                     DelimitedRowReader reader = rowReaderFactory.create(LineSource.over(bufferedReader),
+                             columns, columnTypes)) {
                     reader.initPartition(columnMapping, firstDataLine);
-                    List<Map<String, Object>> blockRows = new ArrayList<>();
+                    List<Object[]> blockRows = new ArrayList<>();
                     while (reader.hasNext()) {
-                        Map<String, Object> row = reader.next();
+                        Object[] row = reader.nextArray();
                         if (row != null) {
                             blockRows.add(row);
                         }

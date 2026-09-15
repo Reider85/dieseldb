@@ -162,6 +162,18 @@ public final class CompressionFactory {
     }
 
     /**
+     * Opens an input stream over a delimited file, transparently decompressing
+     * with the given codec when it is not {@code none}.
+     */
+    static InputStream openDelimitedInputStream(File file, CompressionCodec codec) throws IOException {
+        InputStream in = new BufferedInputStream(Files.newInputStream(file.toPath()));
+        if (codec != null && !codec.isNone()) {
+            in = codec.wrapInputStream(in);
+        }
+        return in;
+    }
+
+    /**
      * Opens a buffered reader over a delimited file, transparently
      * decompressing with the given codec when it is not {@code none}. The
      * decoder is configured with {@link CodingErrorAction#REPORT} (matching
@@ -170,14 +182,11 @@ public final class CompressionFactory {
      */
     static BufferedReader openDelimitedReader(File file, CompressionCodec codec, Charset charset)
             throws IOException {
-        InputStream in = new BufferedInputStream(Files.newInputStream(file.toPath()));
-        if (codec != null && !codec.isNone()) {
-            in = codec.wrapInputStream(in);
-        }
+        InputStream in = openDelimitedInputStream(file, codec);
         CharsetDecoder decoder = charset.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT);
-        return new BufferedReader(new InputStreamReader(in, decoder));
+        return new BufferedReader(new InputStreamReader(in, decoder), StorageConfig.bufferSize());
     }
 
     /**

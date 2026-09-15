@@ -31,6 +31,34 @@ public interface DelimitedRowReader extends Iterator<Map<String, Object>>, AutoC
     List<Map<String, Object>> readAll() throws IOException;
 
     /**
+     * Reads every remaining row of the underlying stream into compact Object[]
+     * arrays (the representation the readers produce natively), closing the
+     * reader. Returns {@code null} rows are skipped (the
+     * {@code storage.load.error.mode = skip_row} policy).
+     *
+     * @return the decoded rows in file order
+     * @throws IOException on I/O errors
+     */
+    default List<Object[]> readAllArrays() throws IOException {
+        List<Object[]> rows = new java.util.ArrayList<>();
+        while (hasNext()) {
+            Object[] row = nextArray();
+            if (row != null) {
+                rows.add(row);
+            }
+        }
+        close();
+        return rows;
+    }
+
+    /**
+     * Reads the next row into a compact Object[] whose slot {@code i} holds the
+     * value of schema column {@code i}. Returns {@code null} when the whole row
+     * was skipped by the {@code storage.load.error.mode} policy.
+     */
+    Object[] nextArray();
+
+    /**
      * Returns the 1-based physical line number on which the last consumed row
      * started. The header line is line 1; the first data row starts at line 2.
      * For CSV multi-line quoted fields, the returned line number reflects the

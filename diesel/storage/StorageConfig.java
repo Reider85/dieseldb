@@ -5,9 +5,12 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Properties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +36,9 @@ final class StorageConfig {
 
     private static final String CHARSET_KEY = "storage.charset";
     private static final String DEFAULT_CHARSET = StandardCharsets.UTF_8.name();
+
+    private static final String BUFFER_SIZE_KEY = "storage.buffer.size";
+    private static final int DEFAULT_BUFFER_SIZE = 65536;
 
     private static final Properties ROOT_PROPS = loadRootProps();
 
@@ -80,9 +86,20 @@ final class StorageConfig {
         }
     }
 
+    /**
+     * Returns the configured character-buffer size (in chars, default 65536)
+     * used by all buffered delimited readers and writers. Applied to
+     * {@link #newReader}/{@link #newWriter}, {@link AtomicFileWriter} text
+     * output, compressed-writer buffers and {@link CompressionFactory#openDelimitedReader}.
+     */
+    static int bufferSize() {
+        return getInt(BUFFER_SIZE_KEY, DEFAULT_BUFFER_SIZE);
+    }
+
     /** Opens a buffered reader over the given path using the configured charset. */
     static BufferedReader newReader(Path path) throws IOException {
-        return java.nio.file.Files.newBufferedReader(path, getCharset());
+        return new BufferedReader(new InputStreamReader(
+                java.nio.file.Files.newInputStream(path), getCharset()), bufferSize());
     }
 
     /** Opens a buffered reader over the given file using the configured charset. */
@@ -92,7 +109,10 @@ final class StorageConfig {
 
     /** Opens a buffered writer to the given path using the configured charset. */
     static BufferedWriter newWriter(Path path) throws IOException {
-        return java.nio.file.Files.newBufferedWriter(path, getCharset());
+        return new BufferedWriter(new OutputStreamWriter(
+                java.nio.file.Files.newOutputStream(path,
+                        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
+                getCharset()), bufferSize());
     }
 
     /** Opens a buffered writer to the given file using the configured charset. */

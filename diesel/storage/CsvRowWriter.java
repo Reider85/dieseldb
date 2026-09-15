@@ -19,29 +19,50 @@ public class CsvRowWriter implements AutoCloseable {
 
     private final BufferedWriter writer;
     private final List<String> columns;
+    private final boolean sentinelMode;
+    private final boolean[] needsScan;
     private final StringBuilder sb = new StringBuilder(256);
+    private final StringBuilder batch = new StringBuilder(BATCH_LIMIT);
+
+    private static final int BATCH_LIMIT = 16384;
 
     /**
      * @param writer  the underlying character-output stream
      * @param columns the ordered column names (written as header)
      */
     public CsvRowWriter(BufferedWriter writer, List<String> columns) {
+        this(writer, columns, null);
+    }
+
+    /**
+     * @param writer      the underlying character-output stream
+     * @param columns     the ordered column names (written as header)
+     * @param columnTypes column name to expected Java type, used to inline the
+     *                    formatting of non-String columns (null or {@code String}
+     *                    columns still run the full escape scan)
+     */
+    public CsvRowWriter(BufferedWriter writer, List<String> columns, Map<String, Class<?>> columnTypes) {
         this.writer = writer;
         this.columns = columns;
+        this.sentinelMode = TsvRowWriter.isSentinelMode();
+        this.needsScan = new boolean[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            Class<?> type = columnTypes == null ? null : columnTypes.get(columns.get(i));
+            needsScan[i] = type == null || type == String.class;
+        }
     }
 
     /** Writes the header line (column names separated by commas). */
     public void writeHeader() throws IOException {
-        boolean sentinel = TsvRowWriter.isSentinelMode();
         sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append(',');
             }
-            sb.append(escapeValue(columns.get(i), sentinel));
+            sb.append(escapeValue(columns.get(i), sentinelMode));
         }
-        writer.write(sb.toString());
-        writer.write('\n');
+        sb.append('\n');
+        batch.append(sb);
     }
 
     /** Writes a single data row.
@@ -49,16 +70,14 @@ public class CsvRowWriter implements AutoCloseable {
      * @param row the column-to-value map
      */
     public void writeRow(Map<String, Object> row) throws IOException {
-        boolean sentinel = TsvRowWriter.isSentinelMode();
         sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append(',');
             }
-            sb.append(escapeValue(row.get(columns.get(i)), sentinel));
+            appendCsvValue(row == null ? null : row.get(columns.get(i)), i);
         }
-        writer.write(sb.toString());
-        writer.write('\n');
+        appendRowAndFlush();
     }
 
     /**
@@ -69,25 +88,53 @@ public class CsvRowWriter implements AutoCloseable {
      * @param row the ordered values aligned with the columns
      */
     public void writeRow(Object[] row) throws IOException {
-        boolean sentinel = TsvRowWriter.isSentinelMode();
         sb.setLength(0);
         for (int i = 0; i < columns.size(); i++) {
             if (i > 0) {
                 sb.append(',');
             }
-            sb.append(escapeValue(row == null || i >= row.length ? null : row[i], sentinel));
+            appendCsvValue(row == null || i >= row.length ? null : row[i], i);
         }
-        writer.write(sb.toString());
-        writer.write('\n');
+        appendRowAndFlush();
+    }
+
+    private void appendRowAndFlush() throws IOException {
+        sb.append('\n');
+        batch.append(sb);
+        if (batch.length() > BATCH_LIMIT) {
+            flushBatch();
+        }
+    }
+
+    private void appendCsvValue(Object value, int columnIdx) {
+        if (value == null) {
+            return;
+        }
+        if (needsScan[columnIdx]) {
+            sb.append(escapeValue(value, sentinelMode));
+        } else if (value instanceof BigDecimal bd) {
+            sb.append(bd.toPlainString());
+        } else {
+            sb.append(value.toString());
+        }
+    }
+
+    private void flushBatch() throws IOException {
+        if (batch.length() > 0) {
+            writer.write(batch.toString());
+            batch.setLength(0);
+        }
     }
 
     /** Flushes buffered output. */
     public void flush() throws IOException {
+        flushBatch();
         writer.flush();
     }
 
     /** Closes the underlying writer. */
     public void close() throws IOException {
+        flushBatch();
         writer.close();
     }
 
