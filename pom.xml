@@ -128,6 +128,7 @@
 <include>**/JsonlAppendModeTest.java</include>
       <include>**/JsonlDeterministicSerializationTest.java</include>
       <include>**/JsonlCompressionTest.java</include>
+      <include>**/JsonlIndexTest.java</include>
                                  </includes>
                        <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
@@ -210,6 +211,7 @@
   <include>**/JsonlAppendModeTest.java</include>
   <include>**/JsonlDeterministicSerializationTest.java</include>
   <include>**/JsonlCompressionTest.java</include>
+  <include>**/JsonlIndexTest.java</include>
                              </includes>
                              <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
                             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>

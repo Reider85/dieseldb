@@ -84,7 +84,9 @@ import diesel.storage.json.JsonStreams;
  * .jsonl; inserts preserve stable row ids (no repositioning of later rows is
  * ever implied by the engine); {@link #beginBulkUpdate()}/{@link #endBulkUpdate()}
  * (prompt 35) and the storage-level sync hooks are wired like the delimited
- * backends (they no-op here until an index manager exists, prompt 53);
+ * backends; the JSONL index (prompt 53) is maintained by a
+ * {@link JsonlIndexManager} with stable rowIds and a persistable
+ * {@code <table>.idx} sidecar;
  * logging uses slf4j (prompt 37); UTF-8 and {@code \n} are fixed (prompt 29);
  * the engine calls files under the table write lock (prompt 37).
  *
@@ -106,7 +108,15 @@ public class JsonlRowStorage extends AbstractRowStorage {
     /** JSONL compression level config key (prompt 52, ZSTD: 1..22, default 3). */
     private static final String COMPRESSION_LEVEL_KEY = "jsonl.compression.level";
 
+    /** JSONL index sidecar suffix (prompt 53): {@code <table>.idx}. */
+    public static final String INDEX_FILE_SUFFIX = ".idx";
+
     protected final List<Object[]> rows = new ArrayList<>();
+    /**
+     * The stable-rowId index manager for this JSONL storage (prompt 53), created
+     * lazily on first use; {@code null} until something touches the index.
+     */
+    private JsonlIndexManager jsonlIndexManager;
     private RowArrays rowColumns;
     private final JsonParserConfig config;
     private JsonlSchemaManager sharedSchemaManager;
@@ -233,6 +243,42 @@ public class JsonlRowStorage extends AbstractRowStorage {
         checkAutoCompact();
     }
 
+    // ─── Index sync hooks (prompt 53) ───────────────────────────────
+
+    /** Mirrors an append-only insert into the JSONL index manager. */
+    @Override
+    protected void syncIndexAppend(Object[] row, int rowIndex) {
+        jsonlIndex().appendRow(row, rowIndex);
+    }
+
+    /** Mirrors a position-shifted insert into the JSONL index manager. */
+    @Override
+    protected void syncIndexInsert(Object[] row, int rowIndex) {
+        jsonlIndex().insertAt(rowIndex, row);
+    }
+
+    /** Mirrors an index-stable update (same row index) into the JSONL index manager. */
+    @Override
+    protected void syncIndexUpdate(Object[] oldRow, int rowIndex, Object[] newRow) {
+        jsonlIndex().updateRow(oldRow, rowIndex, newRow);
+    }
+
+    /** Mirrors a delete into the JSONL index manager (stable-rowId tombstone). */
+    @Override
+    protected void syncIndexDelete(int rowIndex) {
+        jsonlIndex().deleteRow(rowIndex);
+    }
+
+    /**
+     * Wholesale row replacement (e.g. compaction's {@link #setRows}): the JSONL
+     * index manager adopts the storage's rows and rebuilds or defers per its
+     * bulk-update state.
+     */
+    @Override
+    protected void syncIndexBulkFromArrays(List<Object[]> data) {
+        jsonlIndex().markDirty(data, getPrimaryKeyColumn());
+    }
+
     private static boolean[] allPresent(int size) {
         boolean[] present = new boolean[size];
         Arrays.fill(present, true);
@@ -283,6 +329,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             }
             LOGGER.info("JsonlRowStorage {} saved JSONL (rewrite) to {} with {} rows",
                     tableName, fileName, rows.size());
+            persistIndexAfterSave();
         } catch (IOException e) {
             LOGGER.error("Failed to save JSONL for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to JSONL file: " + fileName, e);
@@ -404,6 +451,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             LOGGER.info("JsonlRowStorage {} saved JSONL (append) to {} with {} base + {} new rows, {} deletions",
                     tableName, fileName, deltaManager.getBaseFileLineCount(),
                     pendingNew.size(), deltaManager.getDeletedBaseLines().size());
+            persistIndexAfterSave();
         } catch (IOException e) {
             LOGGER.error("Failed to save JSONL (append) for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to JSONL file: " + fileName, e);
@@ -415,6 +463,41 @@ public class JsonlRowStorage extends AbstractRowStorage {
      */
     private static void jsonlRowWriterWrite(JsonlRowWriter writer, Object[] row, boolean[] present) throws IOException {
         writer.writeRow(row, present);
+    }
+
+    // ─── Index sidecar sync (prompt 53) ─────────────────────────────
+
+    /**
+     * Runs at the end of every load path: aligns the index manager with the
+     * schema the load adopted and re-synchronises it against the persisted
+     * {@code <table>.idx} sidecar (adopt when fresh, otherwise rebuild and
+     * re-create every previously persisted index column). A no-op is NOT
+     * involved: without a primary key or index columns the manager rebuilds an
+     * empty index, which keeps the row/position mapping consistent for later
+     * incremental inserts.
+     */
+    private void syncIndexAfterLoad() {
+        JsonlIndexManager manager = jsonlIndex();
+        manager.adoptSchema(new ArrayList<>(columns));
+        String idxPath = resolveFilePath(INDEX_FILE_SUFFIX);
+        String dataPath = resolveJsonlFile().file().getPath();
+        manager.syncFromDisk(idxPath, dataPath, rows, getPrimaryKeyColumn());
+    }
+
+    /**
+     * Persists the index sidecar after a successful save (rewrite, append or
+     * compaction). Skipped for tables without any maintained index; a failed
+     * sidecar write is logged and never fails the save.
+     */
+    private void persistIndexAfterSave() {
+        if (jsonlIndexManager == null) {
+            return;
+        }
+        try {
+            jsonlIndexManager.persist(resolveFilePath(INDEX_FILE_SUFFIX), resolveJsonlFile().file().getPath());
+        } catch (IOException e) {
+            LOGGER.warn("Failed to write JSONL index sidecar for {}: {}", tableName, e.getMessage());
+        }
     }
 
     @Override
@@ -443,7 +526,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
                         fileInitialized = true;
                         LOGGER.info("JsonlRowStorage {} loaded serialised from {} with {} rows",
                                 tableName, tableFile, rows.size());
-                        syncIndexBulkFromArrays(rows);
+                        syncIndexAfterLoad();
                         return;
                     } catch (Exception e) {
                         rows.clear();
@@ -515,7 +598,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
             LOGGER.info("JsonlRowStorage {} loaded from {} with {} rows",
                     tableName, file.getPath(), rows.size());
-            syncIndexBulkFromArrays(rows);
+            syncIndexAfterLoad();
             if (plan.writeSidecar()) {
                 writeSchemaSidecar();
             }
@@ -553,7 +636,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             // delta file so a later-recovered base still applies it.
             LOGGER.info("JsonlRowStorage {} loaded with no base; {} deletions deferred",
                     tableName, deltaManager.getDeletedBaseLines().size());
-            syncIndexBulkFromArrays(rows);
+            syncIndexAfterLoad();
         } catch (Exception e) {
             rows.clear();
             rows.addAll(previous);
@@ -862,5 +945,74 @@ public class JsonlRowStorage extends AbstractRowStorage {
     /** Returns the delta manager (null in REWRITE mode, prompt 49). */
     public JsonlDeltaManager getDeltaManager() {
         return deltaManager;
+    }
+
+    // ─── Index (prompt 53) ─────────────────────────────────────────
+
+    /** Lazily creates the JSONL index manager (prompt 53). */
+    private JsonlIndexManager jsonlIndex() {
+        if (jsonlIndexManager == null) {
+            jsonlIndexManager = new JsonlIndexManager(tableName, new ArrayList<>(columns), config);
+        }
+        return jsonlIndexManager;
+    }
+
+    /** Returns the JSONL index manager (prompt 53), creating it lazily if absent. */
+    public JsonlIndexManager getJsonlIndexManager() {
+        return jsonlIndexManager != null ? jsonlIndexManager : jsonlIndex();
+    }
+
+    /** Returns the column names / dot-paths that have a maintained index. */
+    public List<String> getIndexColumns() {
+        return jsonlIndexManager == null ? List.of() : jsonlIndexManager.getIndexColumns();
+    }
+
+    /**
+     * Fast primary-key lookup (prompt 53).
+     *
+     * @param key the primary-key value
+     * @return matching row indexes, or an empty list when absent
+     */
+    public List<Integer> searchByPrimaryKey(Object key) {
+        return jsonlIndexManager == null ? List.of() : jsonlIndexManager.searchByPrimaryKey(key);
+    }
+
+    /**
+     * Equality search over the primary-key or a secondary/nested index (prompt 53).
+     *
+     * @param column the column or dot-path to search (case-insensitive)
+     * @param key    the value to look up
+     * @return matching row indexes, or an empty list when no index exists
+     */
+    public List<Integer> search(String column, Object key) {
+        return jsonlIndexManager == null ? List.of() : jsonlIndexManager.search(column, key);
+    }
+
+    /**
+     * Inclusive range search over an indexed column (prompt 53).
+     *
+     * @param column the column or dot-path to search (case-insensitive)
+     * @param low    inclusive lower bound, or {@code null} for open-ended
+     * @param high   inclusive upper bound, or {@code null} for open-ended
+     * @return matching row indexes, or an empty list when no index exists
+     */
+    public List<Integer> rangeSearch(String column, Object low, Object high) {
+        return jsonlIndexManager == null ? List.of() : jsonlIndexManager.rangeSearch(column, low, high);
+    }
+
+    @Override
+    public void setPrimaryKeyColumn(String primaryKeyColumn) {
+        super.setPrimaryKeyColumn(primaryKeyColumn);
+        jsonlIndex().setPrimaryKeyColumn(primaryKeyColumn);
+    }
+
+    @Override
+    public void beginBulkUpdate() {
+        jsonlIndex().beginBulkUpdate();
+    }
+
+    @Override
+    public void endBulkUpdate() {
+        jsonlIndex().endBulkUpdate();
     }
 }

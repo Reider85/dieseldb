@@ -1,5 +1,8 @@
 ﻿# Changelog
 
+## 3.0.101
+Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
+
 ## 3.0.100
 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
 
