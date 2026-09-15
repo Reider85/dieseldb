@@ -1,55 +1,61 @@
-﻿3.0.100 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
+﻿# Changelog
 
-Changes:
-- diesel/storage/JsonlRowStorage.java: wired the shared CompressionCodec/CompressionFactory (Prompt 39) into JSONL storage. saveRewriteMode() routes to saveRewriteCompressed() when jsonl.compression.codec != none: AtomicFileWriter binary channel + codec.wrapOutputStream + CompressionFactory.nonClosing wrapper (mirrors CsvRowStorage.saveCsvCompressed); saveRewritePlain() keeps the byte-identical plain .jsonl path for codec=none. saveAppendMode() falls back to saveRewriteMode() with an INFO log when codec != none (frame-based codecs cannot append). loadFromFile() resolves the actual file+codec via new resolveJsonlFile() (CompressionFactory.resolveActual: suffix detection .jsonl/.zst/.lz4/.snappy, plain fallback, codec change leaves earlier files readable, idempotent base-name detection) and reads through CompressionFactory.openDelimitedReader(); repairTruncatedAppend() guarded by ref.codec().isNone() (RandomAccessFile cannot address compressed bytes). planSchemaForLoad(File, CompressionCodec) / infer(File, CompressionCodec) are codec-aware; writeSchemaSidecar() stamps the actual (possibly compressed) file. New config keys jsonl.compression.codec (none|zstd|lz4|snappy, default zstd) and jsonl.compression.level (ZSTD 1-22, default 3, clamped) resolved sysprop -> config.properties -> code default via CompressionFactory.resolveLeveled(); config.properties defaults to codec=none to keep existing tests unchanged.
-- src/test/java/diesel/JsonlCompressionTest.java (new, 16 tests): round-trip across all codecs; none keeps plain format byte-identical; transparent read of compressed file with codec=none and plain file with compression enabled; configured suffix wins over stale plain; codec change leaves earlier file readable; special chars survive compression (P51); null semantics survive compression (P47); unknown codec rejected (IllegalArgumentException); ZSTD level clamping + invalid-level fallback; sysprop overrides config.properties; append with codec != none falls back to rewrite; append with none keeps delta sidecar only on deletions; compressed sizes >=4x; save/load timing measurement; schema inference reads a compressed (zstd) file in hybrid mode.
-- config.properties: jsonl.compression.codec = none, jsonl.compression.level = 3.
-- pom.xml: JsonlCompressionTest registered in both surefire <includes> blocks.
+## 3.0.100
+Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
 
-Verification: quick suite (mvn test -DskipLargeTests) 448/0/0/7 BUILD SUCCESS; full suite (4GB heap, @LargeTest) 448/0/0/0 BUILD SUCCESS; JsonlCompressionTest 16/16 green. Compressed sizes on 500 repetitive rows (plain 119230 B): zstd 1756 B (~68x), lz4 5300 B (~22x), snappy 11596 B (~10x) - all >=4x. Load timing 5000 rows (avg of 3): zstd 18ms vs plain 143ms (sequential ZSTD read not slower); save zstd 434ms vs plain 328ms. compare-timing.sh timing146 vs baseline timing.md exit 0 (0 regressions). Measurements documented in KNOWN_LIMITATIONS.md section 10. Profile check skipped - compression task without JOIN/hash join/performance wording.
+## 3.0.99
+Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
 
-3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
+## 3.0.98
+Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
 
-Changes:
-- diesel/storage/DelimitedRowReader.java: new static baseParser(String typeName) returns a precompiled Function<String,Object> (Long::parseLong, Integer::parseInt, Double::parseDouble, Float::parseFloat, BigDecimal::new, parseBooleanStrict, LocalDate::parse, LocalDateTime::parse, UUID::fromString; null for unknown/String) so both delimited readers share one typed-parser source; added imports and the parseBooleanStrict host already lives here.
-- diesel/storage/TsvRowReader.java: buildConverters() delegates to a new typeParser(typeName, colName); non-String cells parse the raw token directly via baseParser (no unescape on the typed hot path - unescape kept only for String/unknown cells), sentinel/empty-value checks hoisted from the per-cell lambda into convertValue; unused imports dropped.
-- diesel/storage/CsvRowReader.java: buildConverters() delegates to typeParser (String/unknown -> identity, typed -> precompiled method refs); the per-cell switch (typeName) removed; unused imports dropped.
+## 3.0.97
+Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
 
-Verification: quick suite (mvn test -DskipLargeTests) 432/0/0/7 BUILD SUCCESS; full suite (4GB heap, @LargeTest) 432/0/0/0 BUILD SUCCESS; DelimitedIoPerfTest (200k rows x 6 cols) [DELIM-IO] writeCsv=133ms writeTsv=140ms loadCsvSeq=491ms loadCsvPar=297ms loadTsvSeq=454ms loadTsvPar=306ms (within 30s ceilings + seq<=par*4+500ms guard). Manual heavy-query check of timing124 vs the pre-change timing123 (compare-timing.sh awk mis-parses the markdown rows, so the >=100ms set was compared directly): only complex-subquery moved 172.3->163.1ms (0.95x, no regression). TsvCsvBenchmark single runs are too noisy on this machine to quote a reliable delta (before: READ CSV 26.60/TSV 13.15; after 3-run sweep: READ CSV 23.4-29.5/TSV 15.4-17.7), so the storage-path [DELIM-IO] numbers above are the trusted gate. Profile check skipped - no JOIN/hash join/performance wording, no make/check-profile target; make/changelog unavailable so the entry + PROMPT_STATUS update were done manually.
+## 3.0.96
+Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
 
-3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
+## 3.0.95
+Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
 
-Changes:
-- diesel/storage/LineSource.java (new, public): single-line abstraction over BufferedReader or a decoded List<String>, wraps from-line reads so plain files stream straight off a whole-file split.
-- diesel/storage/DelimitedContent.java (new): whole-file fast path - readAllBytes, decode with the same CodingErrorAction.REPORT charset decoder as openDelimitedReader (malformed bytes fail loudly naming the file), splitLines replicating BufferedReader.readLine() boundary semantics (\n, \r\n, lone \r, no phantom trailing line), and readAllArrays streaming rows through a DelimitedRowReader.
-- diesel/storage/CsvRowReader.java / TsvRowReader.java: new LineSource-based constructors + RowReaderFactory binding (index-based Function<String,Object>[] converters built per schema, skipping the per-field column-name Map lookups); DataFields record (List<String> values + boolean[] quoted) replaces ParsedCsvField; prefetch/readHeader/close go through the source; buffered-reader constructors kept (delegate via LineSource.over).
-- diesel/storage/DelimitedRowReader.java: abstract Object[] nextArray() + default readAllArrays() (streams hasNext/nextArray, skips null rows, closes).
-- diesel/storage/DelimitedIndexManager.java: loadFromFileParallelArrays/loadFromFileSequentialArrays added; sequential uses DelimitedContent.readAllArrays, parallel ByteRangeTask now yields List<Object[]> via nextArray(); Map-based loadFromFileParallel/Sequential kept, delegating via toMaps using rowColumns.toMap.
-- diesel/storage/CsvRowWriter.java / TsvRowWriter.java: 3-arg ctor (BufferedWriter, columns, columnTypes) computes boolean[] needsScan (true only for null/String columns) - typed primitives (Long/Integer/BigDecimal/Boolean) append unescaped and bypass the per-value escape scan; sentinelMode cached; a StringBuilder batch (16384 rows) amortizes BufferedWriter writes; writeRow(Map/Object[]) route through the batch; flush()/close() flush it. Output stays byte-identical to the pre-batch writers.
-- diesel/storage/CsvRowStorage.java / TsvRowStorage.java: plain loadCsv/loadTsv and loadFromFile(boolean parallel) switch to the byte fast path (readAllBytes -> decode -> splitLines -> LineSource) and to the Arrays index-manager loads; rollback to previous rows preserved on failure.
-- diesel/storage/StorageConfig.java: new bufferSize() (system property storage.buffer.size defaults to 65536) applied to AtomicFileWriter.openText, newReader/newWriter and the compressed-writer BufferedWrappers; config.properties documents storage.buffer.size = 65536.
-- diesel/storage/CompressionFactory.java: openDelimitedInputStream added; openDelimitedReader uses StorageConfig.bufferSize().
-- src/test/java/diesel/DelimitedIoPerfTest.java (new): 200k-row x 6-col @LargeTest perf gate (direct writer + storage sequential/parallel loads, [DELIM-IO] timings, 30s ceilings, seq<=par*4+500ms guard) + a non-large round-trip correctness test (writer output reloads through both storages). Registered in pom.xml default + ci surefire includes.
+## 3.0.94
+Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type
 
-Verification: quick suite (mvn test -DskipLargeTests) 432/0/0/7 BUILD SUCCESS; full suite (4GB heap, @LargeTest) 432/0/0/0 BUILD SUCCESS including DelimitedIoPerfTest; TsvCsvBenchmark (10k rows x 5 cols, avg 5) before -> after: WRITE CSV 14.28 -> 11.89 ms, WRITE TSV 11.12 -> 8.96 ms, READ CSV 15.36 -> 14.95 ms, READ TSV 10.04 -> 9.54 ms (escaped-value micro-bench too: escapeValue tab/backslash CSV 27.52/33.49 ms stays ~3x cheaper than TSV 92.75/118.64 because needsScan now skips the scan for typed columns). CharsetEncodingTest/CompressionTest/StorageArrayRepresentationTest/CsvTsvHeaderMappingTest still byte-identical after the writer change. Profile check skipped - no JOIN/hash join/performance wording in this storage-only task; make/changelog targets unavailable on this machine so the changelog entry + PROMPT_STATUS update were done manually.
+## 3.0.93
+Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
 
-3.0.88 Prompt 46 - JSONL integration into the storage architecture and inheritance of the shared infrastructure
+## 3.0.92
+Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
 
-Changes:
-- diesel/storage/StorageFactory.java: the jsonl storage type was already wired to JsonlRowStorage from prompt 40 (verify-only this prompt - creates by type from configuration with zero Table/Database changes).
-- diesel/storage/JsonlRowStorage.java: the shared crash-safe infrastructure is already inherited end-to-end (verify-only this prompt): saves go through the common AtomicFileWriter (temp + fsync + atomic rename, prompt 30) so an interrupted write cannot truncate the previous valid .jsonl and an orphan .tmp is reported on load; rows are kept as compact Object[] (slot i = schema column i) with Map materialisation only at the scan/insert/update API boundary via the shared package-private RowArrays (prompt 36); beginBulkUpdate()/endBulkUpdate() (prompt 35) and the storage-level syncIndex* hooks are wired exactly like the delimited backends (no-op until JsonlIndexManager lands in prompt 53); logging uses slf4j (prompt 37); UTF-8 and the \n separator are fixed (prompt 29); saveToFile is invoked by Table.saveToFile() under tableLock.writeLock() (prompt 37, Table.java:2188-2199). The class javadoc carries the prompt-46 "inherited debt" checklist with the prompt 24-39 reference per item, each closed by an existing test.
-- Verification: quick suite (mvn test -DskipLargeTests) 370/0/0/6; full suite (4GB heap, @LargeTest) 370/0/0/0 BUILD SUCCESS. No code changes this prompt - prompt 46's acceptance criteria (general RowStorage contract tests pass with the JSONL backend; crash mid-save never corrupts the previous .jsonl) are already covered by JsonlStorageTest (22 tests: interrupted-save keeps-previous-file, corrupt-file rollback, StorageFactory jsonl creation, Database-level INSERT/SELECT with diesel.storage.type=jsonl and no Table special-casing) plus the prompt 41/44/45 suites (JsonlSchemaProjectionTest 27, JsonlSchemaModeTest 19, JsonlNestedModeTest 10). Profile check skipped - prompt 46 has no JOIN / hash join / performance wording (strict condition); make/changelog/timing targets are not available on this machine, so the gate ran as the raw Maven full suite and the changelog entry was appended manually.
+## 3.0.91
+Prompt 48 - JSONL load-error diagnostics and garbage tolerance
 
-3.0.92 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type
+## 3.0.90
+Fix RegexRobustnessTest: table alias detection and unquoteQualifiedIdentifier for quoted identifiers
 
-Changes:
-- src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion
-- diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files
-- Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
+## 3.0.89
+Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct
 
-3.0.93 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
+## 3.0.88
+Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance
 
-Changes:
-- diesel/storage/JsonlRowWriter.java: new writeObjectMapSorted() method sorts nested-object keys alphabetically before writing (prompt 51 deterministic key order); the original writeObjectMap() (unsorted, preserves LinkedHashMap iteration order) is retained for the FLATTEN-mode top-level row where the LinkedHashMap is built in deterministic schema-column order; writeValue(Map) delegates to writeObjectMapSorted() for nested Map values; added import java.util.Arrays
-- src/test/java/diesel/JsonlDeterministicSerializationTest.java (new, 15 tests): doubleWriteProducesIdenticalBytes; bigDecimalPreservesTrailingZeros (Jackson: 100.50 stays 100.50); bigIntegerNoExponent; unicodeStringWrittenAsUtf8; controlCharactersAreEscaped; booleanAndNullLiteralsExact; nestedObjectKeysSortedAlphabetically; nestedHashMapKeysStillSorted; arrayOrderPreserved; fullRowAllTypesDeterministic; noByteOrderMark; lineEndingIsLfNotCrlf; jacksonBackendDeterministic; gsonBackendDeterministic; nestedObjectWithMixedTypesDeterministic. Registered in pom.xml default + ci surefire includes.
-- src/test/java/diesel/JsonlStorageTest.java: updated storageNestedColumnRoundTrip expected value to match deterministic nested-key alphabetical order (age before name)
+## 3.0.87
+Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
+
+## 3.0.86
+Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
+
+## 3.0.85
+Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
+
+## 3.0.84
+Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
+
+## 3.0.83
+Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
+
+## 3.0.82
+Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
+
+## 3.0.81
+Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable

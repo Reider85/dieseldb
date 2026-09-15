@@ -139,6 +139,32 @@ public class TsvRowReader implements DelimitedRowReader {
         };
     }
 
+    /**
+     * Fast whole-file load: reads the file bytes in one shot, decodes them once
+     * with the REPORT charset decoder (same semantics as
+     * {@link CompressionFactory#openDelimitedReader}), splits the physical
+     * lines exactly like {@link java.io.BufferedReader#readLine()} and streams
+     * every data row through this reader's parse pipeline. Returned rows are
+     * compact {@code Object[]} arrays indexed by schema column position.
+     *
+     * <p>This is the path actually used by {@link TsvRowStorage#loadFromFile}
+     * and {@link DelimitedIndexManager#loadFromFileSequentialArrays}; exposing
+     * it on the reader lets micro-benchmarks exercise the byte fast path
+     * without instantiating a full storage.
+     *
+     * @param file        the plain (uncompressed) TSV file
+     * @param columns     the ordered column names
+     * @param columnTypes column name to expected Java type
+     * @return the decoded rows in file order (skipped rows are omitted)
+     */
+    public static List<Object[]> loadFast(File file, List<String> columns,
+                                         Map<String, Class<?>> columnTypes) throws IOException {
+        CompressionFactory.ResolvedDelimitedFile ref =
+                CompressionFactory.resolveActual(file, "tsv.compression.codec");
+        return DelimitedContent.readAllArrays(ref.file(), ref.codec(), columns,
+                columnTypes, TsvRowReader::new, StorageConfig.getCharset());
+    }
+
     /** Reads and validates the header line. Returns parsed file header columns. */
     public List<String> readHeader() throws IOException {
         String header = source.nextLine();
@@ -308,21 +334,27 @@ LOGGER.warn(msg);
         if (len == 0) {
             return new String[]{""};
         }
-        int count = 1;
-        for (int i = 0; i < len; i++) {
-            if (line.charAt(i) == '\t') {
-                count++;
+        // Count tabs using the intrinsified String.indexOf(int, int) — HotSpot
+        // turns this into a vector scan, so the first pass over the line runs
+        // at memory bandwidth rather than char-by-char.
+        int tabCount = 0;
+        int i = 0;
+        while (true) {
+            int next = line.indexOf('\t', i);
+            if (next < 0) {
+                break;
             }
+            tabCount++;
+            i = next + 1;
         }
-        String[] result = new String[count];
+        String[] result = new String[tabCount + 1];
         int start = 0;
-        int idx = 0;
-        for (int i = 0; i <= len; i++) {
-            if (i == len || line.charAt(i) == '\t') {
-                result[idx++] = line.substring(start, i);
-                start = i + 1;
-            }
+        for (int ri = 0; ri < tabCount; ri++) {
+            int next = line.indexOf('\t', start);
+            result[ri] = line.substring(start, next);
+            start = next + 1;
         }
+        result[tabCount] = line.substring(start);
         return result;
     }
 

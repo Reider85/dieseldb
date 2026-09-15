@@ -5,6 +5,11 @@ import java.util.*;
 /**
  * Micro-benchmark: compare CSV vs TSV read/write for the same data.
  * Tests 10 000 rows x 5 columns.
+ *
+ * <p>Reports both the legacy streaming read path (BufferedReader + CsvRowReader)
+ * and the byte fast path ({@link CsvRowReader#loadFast} / {@link TsvRowReader#loadFast}
+ * — readAllBytes → decode → splitLines → LineSource) so the gain from the
+ * intrinsified indexOf+substring parser vs the char-by-char parser is visible.
  */
 public class TsvCsvBenchmark {
 
@@ -57,7 +62,7 @@ public class TsvCsvBenchmark {
         double tsvWriteMs = tsvWriteTotal / 1e6 / RUNS;
 
         // === READ BENCHMARK ===
-        // CSV read
+        // CSV read - streaming path (BufferedReader + CsvRowReader)
         for (int i = 0; i < WARMUP; i++) readCsv(csvFile, columns, types);
         long csvReadTotal = 0;
         for (int i = 0; i < RUNS; i++) {
@@ -67,7 +72,17 @@ public class TsvCsvBenchmark {
         }
         double csvReadMs = csvReadTotal / 1e6 / RUNS;
 
-        // TSV read
+        // CSV read - byte fast path (readAllBytes → decode → splitLines → LineSource)
+        for (int i = 0; i < WARMUP; i++) readCsvFast(csvFile, columns, types);
+        long csvReadFastTotal = 0;
+        for (int i = 0; i < RUNS; i++) {
+            long t0 = System.nanoTime();
+            readCsvFast(csvFile, columns, types);
+            csvReadFastTotal += System.nanoTime() - t0;
+        }
+        double csvReadFastMs = csvReadFastTotal / 1e6 / RUNS;
+
+        // TSV read - streaming path
         for (int i = 0; i < WARMUP; i++) readTsv(tsvFile, columns, types);
         long tsvReadTotal = 0;
         for (int i = 0; i < RUNS; i++) {
@@ -77,11 +92,25 @@ public class TsvCsvBenchmark {
         }
         double tsvReadMs = tsvReadTotal / 1e6 / RUNS;
 
+        // TSV read - byte fast path
+        for (int i = 0; i < WARMUP; i++) readTsvFast(tsvFile, columns, types);
+        long tsvReadFastTotal = 0;
+        for (int i = 0; i < RUNS; i++) {
+            long t0 = System.nanoTime();
+            readTsvFast(tsvFile, columns, types);
+            tsvReadFastTotal += System.nanoTime() - t0;
+        }
+        double tsvReadFastMs = tsvReadFastTotal / 1e6 / RUNS;
+
         System.out.println("=== BENCHMARK: " + ROWS + " rows x " + columns.size() + " cols, avg of " + RUNS + " runs ===");
         System.out.printf("WRITE  CSV: %8.2f ms%n", csvWriteMs);
         System.out.printf("WRITE  TSV: %8.2f ms  (ratio: %.2fx)%n", tsvWriteMs, tsvWriteMs / csvWriteMs);
-        System.out.printf("READ   CSV: %8.2f ms%n", csvReadMs);
-        System.out.printf("READ   TSV: %8.2f ms  (ratio: %.2fx)%n", tsvReadMs, tsvReadMs / csvReadMs);
+        System.out.printf("READ   CSV (streaming BufferedReader): %8.2f ms%n", csvReadMs);
+        System.out.printf("READ   CSV (byte fast path loadFast):    %8.2f ms  (speedup: %.2fx)%n",
+                csvReadFastMs, csvReadMs / csvReadFastMs);
+        System.out.printf("READ   TSV (streaming BufferedReader): %8.2f ms%n", tsvReadMs);
+        System.out.printf("READ   TSV (byte fast path loadFast):    %8.2f ms  (speedup: %.2fx)%n",
+                tsvReadFastMs, tsvReadMs / tsvReadFastMs);
 
         // unescape-only micro-benchmark
         String[] testValues = {"User_12345", "12345", "1000.5", "Some info string for row 42", "tab\there", "back\\slash"};
@@ -144,5 +173,13 @@ public class TsvCsvBenchmark {
             r.readHeader();
             return r.readAll();
         }
+    }
+
+    static List<Object[]> readCsvFast(File f, List<String> cols, Map<String, Class<?>> types) throws Exception {
+        return CsvRowReader.loadFast(f, cols, types);
+    }
+
+    static List<Object[]> readTsvFast(File f, List<String> cols, Map<String, Class<?>> types) throws Exception {
+        return TsvRowReader.loadFast(f, cols, types);
     }
 }

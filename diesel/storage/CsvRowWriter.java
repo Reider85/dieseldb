@@ -112,6 +112,21 @@ public class CsvRowWriter implements AutoCloseable {
         }
         if (needsScan[columnIdx]) {
             sb.append(escapeValue(value, sentinelMode));
+            return;
+        }
+        // Typed primitive columns are formatted directly into the builder's
+        // char[] via the intrinsified StringBuilder.append(long/int/double/float)
+        // paths — HotSpot lowers these to Long.getIntegerString / FD.toString
+        // + getChars without allocating an intermediate String (which the
+        // previous value.toString() + sb.append(String) chain always did).
+        if (value instanceof Long l) {
+            sb.append(l.longValue());
+        } else if (value instanceof Integer n) {
+            sb.append(n.intValue());
+        } else if (value instanceof Double d) {
+            sb.append(d.doubleValue());
+        } else if (value instanceof Float f) {
+            sb.append(f.floatValue());
         } else if (value instanceof BigDecimal bd) {
             sb.append(bd.toPlainString());
         } else {
@@ -167,14 +182,15 @@ public class CsvRowWriter implements AutoCloseable {
         if (sentinelMode && raw.isEmpty()) {
             return "\"\"";
         }
-        boolean needsQuoting = false;
-        for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            if (c == ',' || c == '"' || c == '\n' || c == '\r') {
-                needsQuoting = true;
-                break;
-            }
-        }
+        // Intrinsified indexOf scans — HotSpot lowers these to vector scans over
+        // the underlying char[] rather than per-char branching, so the
+        // needsQuoting decision is now memory-bandwidth-bound instead of
+        // ALU-bound. On typical short fields without special chars all four
+        // indexOf calls return -1 in a single SIMD pass.
+        boolean needsQuoting = raw.indexOf(',') >= 0
+                || raw.indexOf('"') >= 0
+                || raw.indexOf('\n') >= 0
+                || raw.indexOf('\r') >= 0;
         if (!needsQuoting) {
             return raw;
         }
