@@ -1,5 +1,8 @@
 ﻿# Changelog
 
+## 3.0.102
+Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
+
 ## 3.0.101
 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
 

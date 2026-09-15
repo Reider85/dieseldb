@@ -391,8 +391,7 @@ public class DatabaseServer {
                             String.valueOf(e.getMessage())
                     });
             try {
-                out.writeObject("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.");
-                out.flush();
+                sendSerializedResult("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.");
             } catch (IOException io) {
                 LOGGER.log(Level.SEVERE, "Error sending OOM response to client: {0}", io.getMessage());
             }
@@ -525,8 +524,7 @@ public class DatabaseServer {
             }
 
             if (!(input instanceof QueryMessage qm)) {
-                out.writeObject("Error: Invalid query message");
-                out.flush();
+                sendSerializedResult("Error: Invalid query message");
                 return true;
             }
 
@@ -548,8 +546,7 @@ public class DatabaseServer {
             } catch (OutOfMemoryError e) {
                 handleOutOfMemory(query, e);
             } catch (Exception e) {
-                out.writeObject(ErrorMessages.ERROR_PREFIX + e.getMessage());
-                out.flush();
+                sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
                 LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
                         new Object[]{query, e.getMessage()});
             }
