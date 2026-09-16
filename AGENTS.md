@@ -1,7 +1,6 @@
-                                                                     ```markdown
 # AGENTS.md
 
-DieselDB: an experimental file-persisted SQL database in Java (package-private engine, ~39 classes in `diesel/`), driven prompt-by-prompt from `prompt2.md` (stage-1, 100 prompts).  
+DieselDB: an experimental file-persisted SQL database in Java (package-private engine, ~39 classes in `diesel/`), driven prompt-by-prompt from `prompt3.md` (stage-1, 100 prompts).  
 Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Reider85/dieseldb.git`.
 
 ---
@@ -11,7 +10,7 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 **Workflow for each prompt:**
 
 1. Read `PROMPT_STATUS.md` → select next TODO with highest priority.
-2. Read `prompt2.md` → find detailed prompt description.
+2. Read `prompt3.md` → find detailed prompt description.
 3. Implement changes.
 4. **Run quick (fast) tests first** – this catches trivial errors early, saving time on the heavy suite:
    ```bash
@@ -80,6 +79,43 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
   ```
   Re-run `make timing` **ONLY AFTER** the isolated test passes. This saves minutes on heavy workloads.
 - The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` will automatically ignore sub-11ms micro-queries and only treat degradation >20% on **heavy (>100ms)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
+
+---
+
+## Test-Impact Analysis (TIA) — test mapping script
+
+`scripts/tia.ps1` + `scripts/tia-mapping.txt` map changed source files (via `git diff`) to the JUnit 5 `@Tag` buckets they impact, then recommend the Maven profiles to run. Use it to avoid re-running the whole suite after a small change.
+
+**How to run (from repo root, Windows):**
+
+| Command | What it does |
+|---|---|
+| `make tia` | Dry run: prints changed files, recommended tags and profiles |
+| `make tia-run` | TIA, then sequentially runs each recommended profile (`mvn -B clean test -P <profile>`) |
+| `powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1` | Direct call, compares against `origin/main...HEAD` |
+| `powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1 HEAD~1` | Compare against the previous commit |
+| `powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1 main..feature` | Compare two branches |
+| `powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1 --tags` | Print recommended tags only (for CI integration) |
+| `powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1 --run HEAD~1` | Recommend, then execute the impacted profiles |
+
+- **Exit codes:** `0` = success (or nothing to run), `1` = mapping file missing or a recommended profile failed.
+- **Requires:** `git` (the Makefile targets invoke PowerShell: `powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1`; on Linux use `pwsh` or port the script to bash).
+- The default ref `origin/main...HEAD` requires `origin/main` to be fetched: `git fetch origin main` if the diff comes back empty.
+
+**Mapping file (`scripts/tia-mapping.txt`):** one rule per line, TAB-separated:
+
+```
+<source path glob> <TAB> <tag>[,<tag>...]
+```
+
+- Glob examples: `diesel/storage/*.java`, `diesel/*Message.java`
+- Tags are the JUnit 5 tags: `smoke, query, index` → `fast`; `query-full, storage` → `core`; `concurrency` → `concurrency`; `network` → `network`; `perf` → `perf`
+- Special values: `pom.xml` → `all` (every profile); tag `none` = no tests
+- **Keep it up to date:** when you add a new source file under `diesel/`, add a mapping line for it, otherwise TIA will report "no tests to run" for changes in that file.
+
+**Caution:** do NOT run `mvn test -Dgroups="..."` without a profile — the default surefire config excludes all tests, so 0 tests execute. Always use the profile commands the script prints (`mvn -B clean test -P <profile>`) or run via `make tia-run`.
+
+**Recommended workflow:** implement changes → `make tia` → run the recommended profiles (or `make tia-run`) → then continue with the normal acceptance gate.
 
 ---
 
