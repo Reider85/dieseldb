@@ -10,4 +10,5 @@ data/
 logs/
 
 # Benchmark timings
-timing/
+timing/*
+!timing/timing.md

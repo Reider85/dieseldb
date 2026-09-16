@@ -6,6 +6,7 @@
 JAVA_HOME ?= /usr/lib/jvm/java-21-openjdk-amd64
 MVN ?= mvn
 MVN_PATH ?= $(shell which mvn)
+PY ?= python3
 
 .PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean help check-timing tia tia-run
 
@@ -55,19 +56,17 @@ all-tests:
 		$(MVN) -B clean test -P $$p || exit 1; \
 	done
 
-## Run timing tests and compare with baseline
+## Full acceptance gate: large profile (4GB heap) + timing compare vs baseline
 timing:
-	@echo "Running timing tests..."
-	$(MVN) -Ddiesel.largeTests=true -Dtest.heap=4g test
-	@echo "Comparing with baseline (timing/timing.md)..."
+	@echo "Running acceptance gate: large profile (600x600 joins, 4GB heap)..."
+	$(MVN) -B clean test -P large
+	$(PY) scripts/collect-timing.py
 	@if [ -f timing/timing.md ]; then \
-		if [ -f timing/timingN.md ]; then \
-			./compare-timing.sh timing/timing.md timing/timingN.md; \
-		else \
-			echo "Warning: timing/timingN.md not found"; \
-		fi; \
+		./compare-timing.sh timing/timing.md timing/timingN.md; \
 	else \
-		echo "Warning: timing/timing.md baseline not found"; \
+		echo "Baseline timing/timing.md not found - creating it from this run."; \
+		cp timing/timingN.md timing/timing.md; \
+		echo "Baseline created. Re-run 'make timing' to compare against it."; \
 	fi
 
 ## Compare timing results (usage: make compare-timing BASE=timing/timing.md NEW=timing/timingN.md)
