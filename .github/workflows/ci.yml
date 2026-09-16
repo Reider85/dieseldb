@@ -2,45 +2,130 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Profile to run (only used for manual trigger; nightly uses matrix)'
+        type: choice
+        options: [fast, core, concurrency, network, perf, large, all]
+        required: false
+        default: fast
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.profile }}
+  cancel-in-progress: true
 
 jobs:
-  ci:
+  pr-gate:
+    name: ${{ matrix.profile }}
     runs-on: ubuntu-24.04
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [fast, core, concurrency, network]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v4
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
           cache: maven
-      
-      - name: Build and run tests with CI profile
-        run: mvn -B clean verify -P ci
-      
-      - name: Performance regression check
-        run: mvn -B -P ci -Dtest=PerformanceRegressionTest test
-      
+
+      - name: Build and run tests
+        run: mvn -B clean test -P ${{ matrix.profile }}
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ matrix.profile }}
+          path: target/surefire-reports/
+          retention-days: 7
+
+  nightly:
+    name: nightly-${{ matrix.profile }}
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [perf, large]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Run ${{ matrix.profile }} tests
+        run: mvn -B clean test -P ${{ matrix.profile }}
+
       - name: Upload performance history
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: performance-history
-          path: analytics/performance_history.csv
-          retention-days: 7
-      
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
+          name: nightly-${{ matrix.profile }}-artifacts
+          path: |
+            analytics/performance_history.csv
+            analytics/regression_baseline.md
+            analytics/benchmark_report.md
+            target/surefire-reports/
+          retention-days: 30
+
+  manual:
+    name: manual-${{ inputs.profile }}
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Run ${{ inputs.profile }} profile
+        run: mvn -B clean test -P ${{ inputs.profile }}
+
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-reports
+          name: manual-${{ inputs.profile }}-reports
           path: target/surefire-reports/
-          retention-days: 7
+
+  release-gate:
+    name: all-tests
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Build and run ALL tests
+        run: mvn -B clean verify -P all
+
+      - name: Upload release JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-jar
+          path: target/*.jar
+          retention-days: 30
