@@ -12,3 +12,6 @@ logs/
 # Benchmark timings
 timing/*
 !timing/timing.md
+
+# Maven build cache
+.mvn/build-cache/
