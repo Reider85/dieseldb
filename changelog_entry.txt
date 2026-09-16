@@ -1,33 +1,10 @@
-﻿3.1.18 Prompt 54 - JSONL parallel read via byte-offset pre-scan
+﻿3.1.19 fix(build-cache): register config.properties as checksum input
 
-New public diesel/storage/JsonlParallelLoader: one byte-level pass splits
-physical lines exactly like BufferedReader.readLine (\n, \r\n, lone \r),
-detects BOM and blank lines, records every data-line start offset into a
-LineIndex cached by path+mtime+size. Plain-text loads are partitioned into
-ByteRangeTask ranges over those offsets, read concurrently on a daemon
-ForkJoinPool and merged deterministically in file order. Each partition has
-a thread-confined JsonlSchemaManager and returns its nestedColumnIndexes;
-loadParallel unions them so JsonlRowStorage replays the nested-JSON holder
-marks onto the shared schema manager (prevents double-encoding on save).
-Fallbacks to the sequential reader: compressed files, files below
-jsonl.parallel.read.threshold (sysprop -> config.properties -> default
-10000), and > Integer.MAX_VALUE lines.
+.mvn/maven-build-cache-config.xml: added <input><global><includes>
+<include>config.properties</include> so edits to config.properties
+invalidate the Maven build cache instead of silently restoring a cached
+build and skipping surefire:test.
 
-- JsonlRowReader: initPartition(long firstDataLine, boolean atFileStart),
-  setSuppressSkipSummary(boolean) so per-partition skip WARNINGs collapse
-  into one merged summary; sequential behaviour unchanged.
-- JsonlIndexManager: loadFromFileParallelArrays(...), cached preScan(File),
-  parallelReadThreshold().
-- JsonlRowStorage: parallel branch when the codec is none, all-true presence
-  fallback, nested-mark replay into sharedSchemaManager.
-- config.properties: jsonl.parallel.read.threshold = 10000.
-- New JsonlParallelLoadTest (7 fast tests + @LargeTest 1M rows).
-
-Verification: Prompt-54 tests 8/8 pass; 1M-row acceptance seq=3311ms vs
-par=2162ms (1.55x on 4 cores). -P all 1233 tests with only 2 pre-existing
-environment perf failures (PerformanceRegressionTest, RegexPerformance
-BenchmarkTest) and -P large with only DelimitedIoPerfTest (all CPU-bound
-thresholds set on faster hardware; JSONL code untouched). Profile check
-skipped (no JOIN/hash join/performance wording). make/changelog/timing
-targets unavailable on this machine, gate ran as raw Maven; entry appended
-manually.
+Verification: fast profile PASS, input files 219 -> 222, cache miss after
+config change forces a real test run. Changelog entry appended manually
+(make unavailable on this machine).

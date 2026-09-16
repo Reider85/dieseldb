@@ -8,5 +8,12 @@
         <enabled>true</enabled>
         <remote enabled="false"/>
     </configuration>
+    <input>
+        <global>
+            <includes>
+                <include>config.properties</include>
+            </includes>
+        </global>
+    </input>
 
 </cache>
