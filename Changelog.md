@@ -2964,4 +2964,4 @@ Changes:
 3.1.12 chore: test profile migration changelog entry
 3.1.13 AGENTS.md
 3.1.14 opencodeignore
-
+3.1.15 analytics
