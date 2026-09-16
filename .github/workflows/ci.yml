@@ -21,6 +21,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ──────── TIA: run only impacted profiles on PR ────────
+  pr-gate-tia:
+    name: tia-impact
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history: needed for git diff vs base branch
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Detect impacted profiles
+        id: tia
+        run: |
+          PROFILES=$(./scripts/tia.sh --profiles "origin/${{ github.base_ref }}...HEAD")
+          echo "profiles=$PROFILES" >> "$GITHUB_OUTPUT"
+          echo "Impacted profiles: $PROFILES"
+
+      - name: Run impacted profiles
+        if: steps.tia.outputs.profiles != ''
+        run: |
+          for p in ${{ steps.tia.outputs.profiles }}; do
+            echo "--- $p ---"
+            mvn -B clean test -P "$p" || exit 1
+          done
+
+      - name: Nothing to run
+        if: steps.tia.outputs.profiles == ''
+        run: echo "No impacted test buckets - skipping test run"
+
+      - name: Upload TIA test reports
+        if: always() && steps.tia.outputs.profiles != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-tia
+          path: target/surefire-reports/
+          retention-days: 7
+
   pr-gate:
     name: ${{ matrix.profile }}
     runs-on: ubuntu-24.04
