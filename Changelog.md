@@ -2920,3 +2920,45 @@ Changes:
 3.0.101 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
 3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
 3.0.103 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
+
+---
+## Test Profile Migration (2026-09-16 20:33:43)
+
+**Branch:** chore/test-profiles-migration
+**Commit:** c3ec76b
+
+### Changes
+- Replaced flat surefire <includes> with 7 Maven profiles: fast, core, concurrency, network, perf, large, all
+- Default mvn test now runs 0 tests (profile mandatory)
+- GitHub Actions split into 4-job PR-gate matrix + nightly + release-gate
+- 90 test classes annotated with JUnit 5 @Tag (smoke/query/index/query-full/storage/concurrency/network/perf)
+- Surefire switched from <includes> to <groups> (JUnit 5 native tag filtering)
+- TIA scripts: scripts/tia.ps1 + scripts/tia-mapping.txt
+- AllTestsSampleTest gated behind diesel.runAllTestsSample system property
+- Makefile updated with profile-specific targets
+
+### Profile Validation
+| Profile | Tests | Status |
+|---------|-------|--------|
+| fast | 178 | PASS |
+| core | 974 | PASS |
+| concurrency | 7 | PASS |
+| network | 50 | PASS |
+| perf | 17 | PASS |
+
+### Skipped
+- Maven Build Cache: maven-build-cache-extension 1.0.0 incompatible with Maven 3.9.9
+
+3.1.0 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
+3.1.1 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
+3.1.2 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
+3.1.3 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
+3.1.4 chore(test): step 2 - replace default surefire includes with empty excludes
+3.1.5 chore(test): step 3 - add 7 new Maven profiles (fast/core/concurrency/network/perf/large/all)
+3.1.6 ci: step 4 - split single job into 4-job PR-gate matrix + nightly + release-gate
+3.1.7 chore(test): step 5 - gate AllTestsSampleTest behind diesel.runAllTestsSample property
+3.1.8 chore(test): step 6 - annotate 90 test classes with @Tag (smoke/query/index/query-full/storage/concurrency/network/perf)
+3.1.9 chore(test): step 7 - switch surefire from <includes> to JUnit 5 <groups>
+3.1.10 feat(tia): step 8 - test-impact analysis (PowerShell + git)
+3.1.11 build: step 10 - update Makefile targets for new profile system
+3.1.12 chore: test profile migration changelog entry
