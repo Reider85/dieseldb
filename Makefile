@@ -7,7 +7,7 @@ JAVA_HOME ?= /usr/lib/jvm/java-21-openjdk-amd64
 MVN ?= mvn
 MVN_PATH ?= $(shell which mvn)
 
-.PHONY: all build test quick-test large-test timing profile clean help check-timing tia tia-run
+.PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean help check-timing tia tia-run
 
 # Default target
 all: build
@@ -17,20 +17,43 @@ build:
 	@echo "Building DieselDB..."
 	"$(JAVA_HOME)/bin/java" -jar "$(MVN_PATH)" package -DskipTests
 
-## Run unit tests (fast, no @LargeTest)
+## Run fast profile: smoke + index + query (<30s)
 test:
-	@echo "Running unit tests..."
-	$(MVN) -Ptest test
+	@echo "Running fast profile (smoke + index + query)..."
+	$(MVN) -B clean test -P fast
 
-## Run quick tests (all small test classes, no @LargeTest, -Xmx512m)
-quick-test:
-	@echo "Running quick tests (all small classes, no @LargeTest)..."
-	$(MVN) test -DskipLargeTests
+## Run core profile: full query + storage (2-4 min)
+test-core:
+	@echo "Running core profile..."
+	$(MVN) -B clean test -P core
 
-## Run large tests (requires more heap)
+## Run network profile: server + sockets
+test-network:
+	@echo "Running network profile..."
+	$(MVN) -B clean test -P network
+
+## Run concurrency profile: txn + threads
+test-concurrency:
+	@echo "Running concurrency profile..."
+	$(MVN) -B clean test -P concurrency
+
+## Run perf profile: benchmarks
+test-perf:
+	@echo "Running perf profile..."
+	$(MVN) -B clean test -P perf
+
+## Run large profile: @LargeTest (4GB heap)
 large-test:
-	@echo "Running @LargeTest tests..."
-	$(MVN) -Ptest -Ddiesel.largeTests=true -Dtest.heap=4g test
+	@echo "Running large profile (@LargeTest)..."
+	$(MVN) -B clean test -P large
+
+## Run ALL profiles sequentially (release gate)
+all-tests:
+	@echo "Running ALL profiles sequentially..."
+	for p in fast core concurrency network perf large; do \
+		echo "--- $$p ---"; \
+		$(MVN) -B clean test -P $$p || exit 1; \
+	done
 
 ## Run timing tests and compare with baseline
 timing:
@@ -105,21 +128,22 @@ help:
 	@echo "DieselDB Makefile - Quick Reference"
 	@echo ""
 	@echo "Targets:"
-	@echo "  make build          - Build project (package)"
-	@echo "  make test           - Run unit tests (fast)"
-	@echo "  make large-test     - Run @LargeTest tests (4GB heap)"
-	@echo "  make timing         - Run timing tests + compare"
-	@echo "  make check-timing   - Check for regressions (>20% fail)"
-	@echo "  make profile        - Run profiler"
-	@echo "  make clean          - Remove build artifacts"
-	@echo "  make help           - Show this help"
+	@echo "  make build              - Build project (package, skip tests)"
+	@echo "  make test               - Fast profile: smoke + index + query (<30s)"
+	@echo "  make test-core          - Core profile: query + storage (2-4 min)"
+	@echo "  make test-network       - Network profile: server + sockets (1-2 min)"
+	@echo "  make test-concurrency   - Concurrency profile: txn + threads (<30s)"
+	@echo "  make test-perf          - Performance profile: benchmarks (2-3 min)"
+	@echo "  make large-test         - Large profile: @LargeTest tests (3-8 min, 4GB heap)"
+	@echo "  make all-tests          - Run ALL profiles sequentially (release gate)"
+	@echo "  make tia                - Test-impact analysis: recommend profiles"
+	@echo "  make tia-run            - TIA + run recommended profiles"
+	@echo "  make timing             - Run timing tests + compare"
+	@echo "  make check-timing       - Check for regressions (>20% fail)"
+	@echo "  make profile            - Run profiler"
+	@echo "  make clean              - Remove build artifacts"
+	@echo "  make help               - Show this help"
 	@echo ""
 	@echo "Variables:"
 	@echo "  JAVA_HOME=/path/to/java"
 	@echo "  MVN=/path/to/mvn"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make build"
-	@echo "  make test"
-	@echo "  make timing"
-	@echo "  make check-timing BASE=timing/timing.md NEW=timing/timingN.md"
