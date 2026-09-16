@@ -89,48 +89,12 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
-                    <includes>
-                        <include>**/AllTestsSampleTest.java</include>
-                        <include>**/QuantitativeTest.java</include>
-                        <include>**/AbstractDieselTest.java</include>
-                        <include>**/AdvancedQueryTest.java</include>
-                        <include>**/AliasesQueryTest.java</include>
-                        <include>**/GroupByQueryTest.java</include>
-                        <include>**/InQueryTest.java</include>
-                        <include>**/JoinQueryTest.java</include>
-                        <include>**/LikeQueryTest.java</include>
-                        <include>**/OrderByQueryTest.java</include>
-                        <include>**/PerformanceQueryTest.java</include>
-                        <include>**/PerformanceRegressionTest.java</include>
-                        <include>**/SubqueryQueryTest.java</include>
-                        <include>**/NullSafetyQueryTest.java</include>
-                        <include>**/CsvIndexManagerTest.java</include>
-                        <include>**/CsvTsvHeaderMappingTest.java</include>
-                        <include>**/LoadErrorHandlingTest.java</include>
-                        <include>**/CharsetEncodingTest.java</include>
-                        <include>**/AtomicFileWriteTest.java</include>
-                        <include>**/ReaderCorrectnessTest.java</include>
-                        <include>**/StorageLoadModeTest.java</include>
-                        <include>**/StorageArrayRepresentationTest.java</include>
-                        <include>**/DelimitedIoPerfTest.java</include>
-                        <include>**/ConcurrentSaveTest.java</include>
-                        <include>**/CsvStorageAdvancedTest.java</include>
-                        <include>**/TsvStorageAdvancedTest.java</include>
-                        <include>**/CompressionTest.java</include>
-<include>**/JsonlStorageTest.java</include>
-                         <include>**/JsonlSchemaProjectionTest.java</include>
-                         <include>**/JsonlSchemaModeTest.java</include>
-                         <include>**/JsonlNestedModeTest.java</include>
-   <include>**/JsonlTypeMapperTest.java</include>
-<include>**/JsonStreamAbstractionTest.java</include>
-<include>**/JsonlNullSemanticsTest.java</include>
-    <include>**/JsonlLoadDiagnosticsTest.java</include>
-<include>**/JsonlAppendModeTest.java</include>
-      <include>**/JsonlDeterministicSerializationTest.java</include>
-      <include>**/JsonlCompressionTest.java</include>
-      <include>**/JsonlIndexTest.java</include>
-                                 </includes>
-                       <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
+                    <!-- By default, no tests run.
+                         Choose a profile explicitly: -P fast | core | concurrency | network | perf | large | all -->
+                    <excludes>
+                        <exclude>**/*.java</exclude>
+                    </excludes>
+                    <argLine>-Xmx${test.heap} --add-modules=jdk.incubator.vector</argLine>
                     <systemPropertyVariables>
                         <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
                     </systemPropertyVariables>
