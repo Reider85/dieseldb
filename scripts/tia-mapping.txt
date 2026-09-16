@@ -50,7 +50,9 @@ diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network
 diesel/PreparedStatement.java		network
+diesel/CliRepl.java			network
 diesel/*Message.java			network
+diesel/*Exception.java			query,query-full
 diesel/CompressionHandshakeMessage.java	network
 diesel/CompressionHandshakeResponse.java	network
 diesel/Transaction.java			concurrency

@@ -158,7 +158,7 @@ $profiles | ForEach-Object { Write-Host "  - $_" }
 Write-Host ""
 
 Write-Host "=== Commands ==="
-Write-Host "  mvn -B clean test -Dgroups=`"$tagsSorted`""
+Write-Host "  (do NOT use 'mvn -Dgroups=...' without -P: default surefire excludes all tests)"
 foreach ($p in $profiles) {
     Write-Host "  mvn -B clean test -P $p"
 }

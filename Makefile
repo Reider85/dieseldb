@@ -8,6 +8,12 @@ MVN ?= mvn
 MVN_PATH ?= $(shell which mvn)
 PY ?= python3
 
+ifeq ($(OS),Windows_NT)
+TIA = powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1
+else
+TIA = ./scripts/tia.sh
+endif
+
 .PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean help check-timing tia tia-run
 
 # Default target
@@ -115,12 +121,12 @@ check-timing:
 ## Test-impact analysis: show recommended profiles
 tia:
 	@echo "Running test-impact analysis..."
-	@powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1
+	@$(TIA)
 
 ## TIA + auto-run recommended profiles
 tia-run:
 	@echo "Running TIA + impacted tests..."
-	@powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1 -Run
+	@$(TIA) --run
 
 ## Show help
 help:
