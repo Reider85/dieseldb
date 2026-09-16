@@ -5,6 +5,7 @@ import diesel.storage.JsonlRowWriter;
 import diesel.storage.JsonlSchemaManager;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedWriter;
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * unicode escapes); (5) control characters are escaped; (6) no BOM or
  * platform line endings leak into the output.
  */
+@Tag("storage")
 class JsonlDeterministicSerializationTest {
 
     @TempDir

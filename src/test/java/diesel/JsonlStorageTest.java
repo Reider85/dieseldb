@@ -6,6 +6,7 @@ import diesel.storage.JsonlRowWriter;
 import diesel.storage.StorageFactory;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
@@ -26,6 +27,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("storage")
 class JsonlStorageTest {
 
     @TempDir

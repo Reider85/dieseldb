@@ -3,6 +3,7 @@ package diesel;
 import diesel.Database;
 import diesel.QueryParser;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and asserts the wall-clock cost stays within a generous bound so a
  * catastrophic-backtracking regression in the parsing regexes would be caught.
  */
+@Tag("perf")
 public class RegexPerformanceBenchmarkTest {
 
     private static final String[] QUERIES = new String[]{

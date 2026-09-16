@@ -3,6 +3,7 @@ package diesel;
 import diesel.Database;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("storage")
 public class PersistenceTest {
     private static final Logger LOGGER = Logger.getLogger(PersistenceTest.class.getName());
     private static final String TABLE = "PERSIST_TEST";

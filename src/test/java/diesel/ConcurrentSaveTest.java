@@ -2,6 +2,7 @@ package diesel;
 
 import diesel.storage.CsvRowStorage;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -26,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * temp+rename pattern (Prompt 30) guarantees the target always ends up as one
  * complete, uncorrupted snapshot.
  */
+@Tag("concurrency")
 class ConcurrentSaveTest {
 
     @TempDir

@@ -3,6 +3,7 @@ package diesel;
 import diesel.Database;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,6 +18,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.io.*;
 
+@Tag("perf")
 public class PerformanceTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(PerformanceTest.class);
     private static final int RECORD_COUNT = 10;

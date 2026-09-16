@@ -1,12 +1,14 @@
 package diesel;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("query-full")
 class BulkInsertTest {
 
     private Database database;

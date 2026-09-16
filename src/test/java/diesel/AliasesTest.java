@@ -3,6 +3,7 @@ package diesel;
 import diesel.Database;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.math.RoundingMode;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
+@Tag("query-full")
 public class AliasesTest {
 
     private static final int RECORD_COUNT = 10;

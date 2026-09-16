@@ -3,6 +3,7 @@ package diesel;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * index lookups match post-bulk expectations.
  */
 @Timeout(60)
+@Tag("perf")
 class StorageBulkUpdateTest {
 
     @TempDir

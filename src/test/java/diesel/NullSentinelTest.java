@@ -5,6 +5,7 @@ import diesel.storage.CsvRowWriter;
 import diesel.storage.TsvRowReader;
 import diesel.storage.TsvRowWriter;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -26,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Prompt 26: distinguishing NULL from the empty string in CSV/TSV.
  * Mode is selected via {@code storage.null.representation = legacy | sentinel}.
  */
+@Tag("storage")
 class NullSentinelTest {
 
     @TempDir

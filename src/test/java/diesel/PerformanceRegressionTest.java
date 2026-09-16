@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
@@ -23,6 +24,7 @@ import java.util.logging.Logger;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@Tag("perf")
 public class PerformanceRegressionTest extends AbstractDieselTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceRegressionTest.class.getName());
 

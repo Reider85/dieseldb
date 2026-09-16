@@ -6,10 +6,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
+@Tag("query-full")
 public class LikeTest {
 
     private static final int RECORD_COUNT = 10;

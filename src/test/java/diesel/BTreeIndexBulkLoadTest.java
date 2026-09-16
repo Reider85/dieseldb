@@ -1,12 +1,14 @@
 package diesel;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("index")
 public class BTreeIndexBulkLoadTest {
 
     @Test

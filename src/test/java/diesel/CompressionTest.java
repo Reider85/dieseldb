@@ -4,6 +4,7 @@ import diesel.storage.CompressionFactory;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -33,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the sequential-read fallback for compressed files, level clamping and the
  * ≥3x size reduction requirement on repetitive data.
  */
+@Tag("storage")
 class CompressionTest {
 
     @TempDir

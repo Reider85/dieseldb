@@ -3,6 +3,7 @@ package diesel;
 import diesel.storage.CsvRowReader;
 import diesel.storage.DelimitedByteParser;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests for {@link DelimitedByteParser}: RFC 4180 edge cases, type-specific
  * parsing, byte-identical output vs legacy reader, and allocation assertions.
  */
+@Tag("storage")
 class DelimitedByteParserTest {
 
     @TempDir

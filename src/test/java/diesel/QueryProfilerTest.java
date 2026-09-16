@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the slow-query threshold behaviour, the JMX MBean exposure and that the
  * ORDER BY sort phase is only charged to queries that actually sort.
  */
+@Tag("query-full")
 public class QueryProfilerTest {
 
     private Database database;

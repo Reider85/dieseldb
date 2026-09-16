@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -14,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * - Covering index stores extra column values
  * - EXPLAIN reports covering index usage
  */
+@Tag("index")
 public class CoveringIndexTest {
 
     private Database database;

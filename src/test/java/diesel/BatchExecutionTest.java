@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -14,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * This tests the optimization where index updates are deferred until the end
  * of the batch, improving performance for bulk operations.
  */
+@Tag("query-full")
 class BatchExecutionTest {
 
     private Database database;

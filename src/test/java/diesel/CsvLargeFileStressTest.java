@@ -3,6 +3,7 @@ package diesel;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.DelimitedByteParser;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedWriter;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * correctly with large datasets without requiring excessive CI time.
  * For true 500MB+ testing, run manually with increased heap.
  */
+@Tag("storage")
 class CsvLargeFileStressTest {
 
     @TempDir

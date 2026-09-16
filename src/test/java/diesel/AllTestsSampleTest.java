@@ -3,6 +3,7 @@ package diesel;
 import diesel.Database;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -45,6 +46,7 @@ import java.util.zip.GZIPInputStream;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @EnabledIfSystemProperty(named = "diesel.runAllTestsSample", matches = "true")
+@Tag("network")
 public class AllTestsSampleTest {
     private static final Logger LOGGER = Logger.getLogger(AllTestsSampleTest.class.getName());
     private static final int RECORD_COUNT = 100;

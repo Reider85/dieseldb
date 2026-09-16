@@ -6,6 +6,7 @@ import diesel.storage.AtomicFileWriter;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * write never truncates the previous valid file, and a leftover {@code .tmp}
  * next to a missing target is reported as a WARNING on load.
  */
+@Tag("storage")
 class AtomicFileWriteTest {
 
     @TempDir

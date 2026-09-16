@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -14,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * - Multi-condition AND intersection uses multiple indexes
  * - EXPLAIN reports correct index usage
  */
+@Tag("index")
 public class WhereIndexTest {
 
     private Database database;

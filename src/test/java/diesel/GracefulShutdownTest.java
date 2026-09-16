@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Timeout;
 
 import java.io.BufferedReader;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+@Tag("network")
 public class GracefulShutdownTest {
     private static final Logger LOGGER = Logger.getLogger(GracefulShutdownTest.class.getName());
 

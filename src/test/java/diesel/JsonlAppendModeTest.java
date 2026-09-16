@@ -4,6 +4,7 @@ import diesel.storage.JsonlDeltaManager;
 import diesel.storage.JsonlRowStorage;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
@@ -28,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * repaired with its missing newline) on load. Auto-compaction triggers when
  * the delta ratio crosses {@code jsonl.compaction.threshold}.
  */
+@Tag("storage")
 class JsonlAppendModeTest {
 
     @TempDir

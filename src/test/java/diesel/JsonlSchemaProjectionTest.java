@@ -6,6 +6,7 @@ import diesel.storage.JsonlRowWriter;
 import diesel.storage.JsonlSchemaManager;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
@@ -33,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (dot-notation) extraction and the schema sidecar file
  * ({@code <name>.schema.json}).
  */
+@Tag("storage")
 class JsonlSchemaProjectionTest {
 
     @TempDir

@@ -6,12 +6,14 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("query-full")
 public class AdvancedTest {
 
     private static final int RECORD_COUNT = 10;

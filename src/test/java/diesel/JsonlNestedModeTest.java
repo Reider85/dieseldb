@@ -4,6 +4,7 @@ import diesel.storage.JsonlRowStorage;
 import diesel.storage.JsonlSchemaManager;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Prompt 45 - JSONL nested structures: storage rules, dot-path resolution and
  * SQL glue for both {@code jsonl.nested.mode} values.
  */
+@Tag("storage")
 class JsonlNestedModeTest {
 
     @TempDir

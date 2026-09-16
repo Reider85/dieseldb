@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -22,6 +23,7 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("network")
 public class ServerConnectionLimitTest {
     private static final Logger LOGGER = Logger.getLogger(ServerConnectionLimitTest.class.getName());
     private DatabaseServer server;

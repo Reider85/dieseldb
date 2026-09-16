@@ -5,6 +5,7 @@ import diesel.storage.JsonlRowReader;
 import diesel.storage.JsonlRowStorage;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
@@ -26,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * non-object / truncated-last-line tolerance, and the final WARNING with the
  * skipped-row count.
  */
+@Tag("storage")
 class JsonlLoadDiagnosticsTest {
 
     @TempDir

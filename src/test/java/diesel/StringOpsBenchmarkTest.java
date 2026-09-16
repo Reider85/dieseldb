@@ -3,6 +3,7 @@ package diesel;
 import diesel.CharOps;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.util.regex.Pattern;
 
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and must stay under an absolute bound) so machine noise cannot flake the
  * suite while a real regression would still be caught.
  */
+@Tag("perf")
 public class StringOpsBenchmarkTest {
 
     private static final String[] IDENTIFIER_SAMPLES = {

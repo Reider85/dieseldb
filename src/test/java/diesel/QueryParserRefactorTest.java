@@ -3,10 +3,12 @@ package diesel;
 import diesel.Database;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+@Tag("smoke")
 public class QueryParserRefactorTest {
 
     private Database database;

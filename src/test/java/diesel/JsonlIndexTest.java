@@ -4,6 +4,7 @@ import diesel.storage.JsonlIndexManager;
 import diesel.storage.JsonlRowStorage;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
@@ -28,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * otherwise), append-mode semantics (prompt 49) and deferred bulk updates
  * (prompt 35).
  */
+@Tag("storage")
 class JsonlIndexTest {
 
     @TempDir

@@ -7,6 +7,7 @@ import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowReader;
 import diesel.storage.TsvRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Prompt 31: reader correctness fixes - strict boolean parsing, extra-field
  * warning, and defensive insert copies.
  */
+@Tag("storage")
 class ReaderCorrectnessTest {
 
     @TempDir

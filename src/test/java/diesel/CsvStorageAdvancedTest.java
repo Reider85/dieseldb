@@ -5,6 +5,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import diesel.storage.AtomicFileWriter;
 import diesel.storage.CsvRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * boolean parsing and extra-fields warnings (31), broken-.table fallback (32),
  * parallel-vs-sequential read equality (34) and deferred bulk deletes (35).
  */
+@Tag("storage")
 class CsvStorageAdvancedTest {
 
     @TempDir

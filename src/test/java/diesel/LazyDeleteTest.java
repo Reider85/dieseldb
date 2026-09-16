@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("query-full")
 public class LazyDeleteTest {
 
     private static final int RECORD_COUNT = 200;

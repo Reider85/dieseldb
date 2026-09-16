@@ -3,6 +3,7 @@ package diesel;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the delimited file. The optional {@code csv.table.mirror} / {@code tsv.table.mirror}
  * settings disable the secondary .table write on save.
  */
+@Tag("storage")
 class StorageLoadModeTest {
 
     @TempDir

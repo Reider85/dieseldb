@@ -5,6 +5,7 @@ import diesel.storage.CsvRowStorage;
 import diesel.storage.CsvRowWriter;
 import diesel.storage.DelimitedIndexManager;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedWriter;
@@ -26,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * format-agnostic {@link DelimitedIndexManager} driven through
  * {@link CsvIndexManager} and integrated into {@link CsvRowStorage}.
  */
+@Tag("storage")
 class CsvIndexManagerTest {
 
     @TempDir

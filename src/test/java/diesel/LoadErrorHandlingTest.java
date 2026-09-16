@@ -4,6 +4,7 @@ import diesel.storage.CsvRowReader;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowReader;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Prompt 27: load error handling with file:line:column diagnostics.
  * Mode is selected via {@code storage.load.error.mode = fail | skip_row | skip_value}.
  */
+@Tag("storage")
 class LoadErrorHandlingTest {
 
     @TempDir

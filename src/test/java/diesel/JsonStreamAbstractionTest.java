@@ -9,6 +9,7 @@ import diesel.storage.json.JsonStreamGenerator;
 import diesel.storage.json.JsonStreamParser;
 import diesel.storage.json.JsonStreams;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -38,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * with {@code file:line} diagnostics; (4) lenient JSON (NaN/Infinity/comments)
  * is always an error on both backends.
  */
+@Tag("storage")
 class JsonStreamAbstractionTest {
 
     // ── Architecture guard (no JSON library below the json package) ──────

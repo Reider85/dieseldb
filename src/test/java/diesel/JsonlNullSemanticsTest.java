@@ -5,6 +5,7 @@ import diesel.storage.JsonlRowStorage;
 import diesel.storage.JsonlRowWriter;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
@@ -31,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * null, {@code error} fails the row). The per-row presence mask keeps all three
  * states distinct through a load→save round trip.
  */
+@Tag("storage")
 class JsonlNullSemanticsTest {
 
     @TempDir

@@ -2,6 +2,7 @@ package diesel;
 
 import diesel.storage.DelimitedByteParser;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Verifies that the byte[] parser reduces intermediate String allocations
  * compared to the String-based baseline.
  */
+@Tag("perf")
 class AllocationProfileTest {
 
     @TempDir

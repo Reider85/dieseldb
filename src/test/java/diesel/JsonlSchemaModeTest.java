@@ -5,6 +5,7 @@ import diesel.storage.JsonlRowStorage;
 import diesel.storage.JsonlSchemaManager;
 import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * fail-fast with {@code file:line:field} coordinates and typo detection with
  * a nearest-column edit-distance hint.
  */
+@Tag("storage")
 class JsonlSchemaModeTest {
 
     @TempDir

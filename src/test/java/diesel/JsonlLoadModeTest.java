@@ -2,6 +2,7 @@ package diesel;
 
 import diesel.storage.JsonlRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * checks and automatic fallback from a broken .table to the .jsonl file.
  * Also verifies the optional {@code jsonl.table.mirror} toggle.
  */
+@Tag("storage")
 class JsonlLoadModeTest {
 
     @TempDir

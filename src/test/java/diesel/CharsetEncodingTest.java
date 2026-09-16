@@ -3,6 +3,7 @@ package diesel;
 import diesel.storage.CsvRowStorage;
 import diesel.storage.TsvRowStorage;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (default UTF-8) with {@code \n} line separators, regardless of the platform's
  * default charset and line separator.
  */
+@Tag("storage")
 class CharsetEncodingTest {
 
     @TempDir

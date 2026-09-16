@@ -6,6 +6,7 @@ import diesel.storage.json.JsonEvent;
 import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonTypeMapper;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * the {@code jsonl.type.coercion} strict/lenient mode, ISO-8601/UUID/boolean
  * string conversions and the write-side 2^53 guard.
  */
+@Tag("storage")
 class JsonlTypeMapperTest {
 
     @TempDir

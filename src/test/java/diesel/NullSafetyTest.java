@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * DML value converters must tolerate a {@code columnTypes} lookup that misses
  * the column.
  */
+@Tag("smoke")
 public class NullSafetyTest {
 
     private static final String TABLE = "NULLSAFE_T";

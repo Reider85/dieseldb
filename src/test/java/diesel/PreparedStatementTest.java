@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * execution time, template-scoped LRU caching of the parsed AST, the Database
  * API, and the client/server wire protocol round-trip.
  */
+@Tag("network")
 public class PreparedStatementTest {
 
     private Database database;

@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
  * tokenization that ends exactly at the end of the string (the previously
  * dead "<end>" ternary branch).
  */
+@Tag("smoke")
 public class DeadCodeRemovalTest {
 
     private static final String TABLE = "DEADCODE_T";
