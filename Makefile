@@ -7,7 +7,7 @@ JAVA_HOME ?= /usr/lib/jvm/java-21-openjdk-amd64
 MVN ?= mvn
 MVN_PATH ?= $(shell which mvn)
 
-.PHONY: all build test quick-test large-test timing profile clean help check-timing
+.PHONY: all build test quick-test large-test timing profile clean help check-timing tia tia-run
 
 # Default target
 all: build
@@ -89,6 +89,16 @@ check-timing:
 	} \
 	END {if(fail) exit 1}' timing/timing.md timing/timingN.md
 	@echo "Timing check passed (no regressions >20%)"
+
+## Test-impact analysis: show recommended profiles
+tia:
+	@echo "Running test-impact analysis..."
+	@powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1
+
+## TIA + auto-run recommended profiles
+tia-run:
+	@echo "Running TIA + impacted tests..."
+	@powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1 -Run
 
 ## Show help
 help:

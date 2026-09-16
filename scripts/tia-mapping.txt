@@ -1,0 +1,72 @@
+# Mapping: changed source -> test buckets to run
+# Format: <source path glob> <TAB> <tag> [<TAB> <specific test class>]
+#
+# If source-list has multiple matches, all tags are summed.
+# Usage: .\scripts\tia.ps1 [ref]
+#   ref default = origin/main...HEAD
+
+diesel/SqlLexer.java			smoke,query
+diesel/SqlKeywords.java			smoke,query
+diesel/SqlParsingUtils.java		smoke,query
+diesel/QueryParser.java			smoke,query,query-full
+diesel/ParseContext.java		smoke,query
+diesel/SubqueryParser.java		query,query-full
+diesel/Query.java			query,query-full
+diesel/SelectQuery.java			query,query-full
+diesel/InsertQuery.java			query,query-full
+diesel/UpdateQuery.java			query,query-full,network
+diesel/DeleteQuery.java			query,query-full
+diesel/BatchQuery.java			query,query-full
+diesel/TransactionQuery.java		concurrency
+diesel/BeginTransactionQuery.java	concurrency
+diesel/CommitTransactionQuery.java	concurrency
+diesel/RollbackTransactionQuery.java	concurrency
+diesel/SetAutoCommitQuery.java		concurrency
+diesel/SetIsolationLevelQuery.java	concurrency
+diesel/QueryExecutor.java		query,query-full
+diesel/QueryOptimizer.java		query,query-full
+diesel/QueryCache.java			query,query-full
+diesel/QueryProfiler.java		query,query-full
+diesel/ConditionEvaluator.java		query,query-full
+diesel/ThreeValuedLogic.java		query,query-full
+diesel/AggregateFunctions.java		query,query-full
+diesel/CharOps.java			perf
+diesel/Table.java			query,query-full
+diesel/Sequence.java			query,query-full
+diesel/BloomFilter.java			query,query-full
+diesel/BTreeIndex.java			index,query-full
+diesel/BTreeClusteredIndex.java		index,query-full
+diesel/CompositeBTreeIndex.java		index,query-full
+diesel/CoveringBTreeIndex.java		index,query-full
+diesel/HashIndex.java			index,query-full
+diesel/UniqueIndex.java			index,query-full
+diesel/Database.java			smoke,query,query-full,storage,concurrency,network
+diesel/DieselDatabase.java		smoke,query,query-full,storage,concurrency,network
+diesel/TableStorage.java		storage,query-full
+diesel/ConfigLoader.java		storage
+diesel/storage/*.java			storage
+diesel/storage/json/*.java		storage
+diesel/DatabaseServer.java		network
+diesel/DatabaseClient.java		network
+diesel/Cursor.java			network
+diesel/PreparedStatement.java		network
+diesel/*Message.java			network
+diesel/CompressionHandshakeMessage.java	network
+diesel/CompressionHandshakeResponse.java	network
+diesel/Transaction.java			concurrency
+diesel/TransactionException.java	concurrency
+diesel/AnalyzeTableQuery.java		query-full
+diesel/ExplainQuery.java		query-full
+diesel/CreateTableQuery.java		query,query-full
+diesel/CreateIndexQuery.java		index,query-full
+diesel/CreateIndexQueryBase.java	index,query-full
+diesel/CreateCompositeIndexQuery.java	index,query-full
+diesel/CreateCoveringIndexQuery.java	index,query-full
+diesel/CreateHashIndexQuery.java	index,query-full
+diesel/CreateUniqueIndexQuery.java	index,query-full
+diesel/CreateUniqueClusteredIndexQuery.java	index,query-full
+diesel/ErrorMessages.java		query,query-full
+diesel/MessageConstants.java		network
+pom.xml					all
+.github/workflows/ci.yml		none
+Makefile				none
