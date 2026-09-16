@@ -1,0 +1,42 @@
+# Build output
+target/
+
+# Runtime database files
+data/
+
+# Application logs
+logs/
+*.log
+*.log.gz
+
+# Benchmark timings / results
+timing/
+
+# VCS internals
+.git/
+
+# IDE
+.idea/
+*.iml
+
+# Other AI-agent state (plans, caches, configs)
+.kilo/
+.mimocode/
+.codebuddy/
+.qwen/
+
+# Large bundled benchmark binaries
+reorder_test.csv.lz4
+reorder_test.csv.zst
+
+# Analytics files already excluded from git
+analytics/sonaranalytics7.md
+analytics/sonar-prompt.md
+
+# Transient workflow / scratch files
+changelog_entry.txt
+commit_msg*.txt
+commits.txt
+temp_*.txt
+classpath.txt
+new_entries.md
