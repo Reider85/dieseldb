@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.ConsoleHandler;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -75,6 +76,96 @@ class QueryParser {
     private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_]\\w*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
     private static final String QUALIFIED_IDENTIFIER_PATTERN = IDENTIFIER_PATTERN + "(?:\\." + IDENTIFIER_PATTERN + ")*+";
+
+    // Precompiled patterns (hoisted from per-call sites to cut parse overhead).
+    private static final Pattern SET_AUTOCOMMIT_PATTERN = Pattern.compile("^SET\\s+(?:SESSION\\s+)?AUTOCOMMIT\\s*(?:=\\s*|\\s+)(ON|OFF|TRUE|FALSE|1|0)\\s*;?$");
+    private static final Pattern QUOTED_IDENTIFIER_REGEX = Pattern.compile(QUOTED_IDENTIFIER_PATTERN);
+    private static final Pattern MAIN_QUOTED_STRING_PATTERN = Pattern.compile("(?i)'[^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+'", Pattern.DOTALL);
+    private static final Pattern OPEN_PAREN_REGEX = Pattern.compile("\\(");
+    private static final Pattern CLOSE_PAREN_REGEX = Pattern.compile("\\)");
+    private static final Pattern FROM_KEYWORD_PATTERN = Pattern.compile("(?i)\\bFROM\\b");
+    private static final Pattern WORD_TOKEN_PATTERN = Pattern.compile("\\S+");
+    private static final Pattern SELECT_AGG_PATTERN = Pattern.compile(
+            ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "COUNT|MIN|MAX|AVG|SUM)\\s*+\\(\\s*+(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\([^()]*+\\))\\s*+\\)(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$");
+    private static final Pattern SELECT_COLUMN_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
+    private static final Pattern SELECT_SUBQUERY_PATTERN = Pattern.compile("(?i)^\\(\\s*SELECT\\s+[^()]*+\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
+    private static final Pattern JOIN_CLAUSE_PATTERN = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|(?:LEFT|RIGHT)\\s+(?:INNER|OUTER)\\s+JOIN|FULL\\s+OUTER\\s+JOIN)\\s+");
+    private static final Pattern TABLE_CLAUSE_TRUNCATOR_PATTERN = Pattern.compile("(?i)\\b(?:WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT|OFFSET|HAVING)\\b");
+    private static final Pattern JOIN_PART_CLAUSE_PATTERN = Pattern.compile("(?i)\\s+(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|$)\\b");
+    private static final Pattern ORDER_BY_LIMIT_PATTERN = Pattern.compile("(?i)\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?|OFFSET\\s+\\d+)\\s*$", Pattern.DOTALL);
+    private static final Pattern LIMIT_VALUE_PATTERN = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+\\d+)|(?:\\s*;\\s*)?\\s*$)");
+    private static final Pattern OFFSET_TAIL_PATTERN = Pattern.compile("(?i)\\s+OFFSET\\s+(\\d+)");
+    private static final Pattern OFFSET_VALUE_PATTERN = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
+    private static final Map<String, Pattern> CLAUSE_SCAN_PATTERN_CACHE = new ConcurrentHashMap<>();
+    private static final Pattern CLAUSE_QUOTED_STRING_PATTERN = Pattern.compile("'([^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+)'");
+    private static final Pattern ON_KEYWORD_PATTERN = Pattern.compile("(?i)\\bON\\b");
+    private static final Pattern ORDER_BY_ITEM_PATTERN = Pattern.compile("(?i)^\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(ASC|DESC)?\\s*$");
+    private static final Pattern GROUP_BY_COLUMN_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*+SELECT\\s++[^()]*+\\))$", Pattern.DOTALL);
+    private static final Pattern CLAUSE_BOUNDARY_PATTERN = Pattern.compile("(?i)\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY)\\b");
+    private static final List<Map.Entry<String, Pattern>> TOKEN_PATTERNS = List.of(
+            Map.entry("Quoted String", Pattern.compile("'(?:''|\\\\.|[^'\\\\])*+'")),
+            Map.entry(MessageConstants.TOKEN_LIKE_CONDITION,
+                    Pattern.compile("(?i)" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*+'")),
+            Map.entry("SubQuery",
+                    Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\(\\s*SELECT\\s+[^)]+\\)")),
+            Map.entry("In Condition",
+                    Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\([^)]+\\)")),
+            Map.entry("Null Condition",
+                    Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")),
+            Map.entry("Comparison String Condition",
+                    Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*+')")),
+            Map.entry("Comparison Number Condition",
+                    Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(\\d+(?:\\.\\d+)?)")),
+            Map.entry("Comparison Column Condition",
+                    Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(=|>|<|>=|<=|!=|<>)\\s*+(" + QUALIFIED_IDENTIFIER_PATTERN + ")")),
+            Map.entry(MessageConstants.TOKEN_LOGICAL_OPERATOR, Pattern.compile("(?i)\\b(AND|OR)\\b")),
+            Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")),
+            Map.entry("Invalid Token",
+                    Pattern.compile("(?i)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*+(?:=|>|<|>=|<=|!=|<>)\\s*+)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*+(?:NOT\\s++)?(?:LIKE|IN|IS)\\b)(?!'(?:''|\\\\.|[^'\\\\])*+')(?!" + QUOTED_IDENTIFIER_PATTERN + ")[^\\s()'\"]++"))
+    );
+    private static final Pattern LIKE_TOKEN_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:''|\\\\.|[^'\\\\])*+')");
+    private static final Pattern NEXT_TOKEN_PATTERN = Pattern.compile(
+            "(?s)(?:'(?:''|\\\\.|[^'\\\\])*+'|"
+                    + "\\((?:[^()']++|'(?:''|\\\\.|[^'\\\\])*+')*+\\)|"
+                    + "[^\\s()']++)");
+    private static final Pattern CONDITION_LIKE_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT LIKE)\\s*('(?:''|[^'])*+')");
+    private static final Pattern IN_CONDITION_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$");
+    private static final Pattern IS_NULL_CONDITION_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
+    private static final Pattern SUBQUERY_COMPARISON_PATTERN = Pattern.compile(
+            ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*+\\((SELECT\\s++[^)]*+)\\)$",
+            Pattern.DOTALL);
+    private static final Pattern RIGHT_PART_COLUMN_PATTERN = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
+    private static final Pattern RIGHT_PART_CLAUSE_PATTERN = Pattern.compile(
+            "\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|AND|OR)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern HAVING_AGGREGATE_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "COUNT|MIN|MAX|AVG|SUM)\\s*+\\(\\s*+(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\([^()]*+\\))\\s*+\\)(?:\\s++AS\\s++(" + IDENTIFIER_PATTERN + "))?$");
+    private static final Pattern SUBQUERY_LOOKAHEAD_PATTERN = Pattern.compile("\\s*\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SUBQUERY_STRUCTURE_PATTERN = Pattern.compile(
+            "\\s*\\(\\s*SELECT\\s+[^()]*+\\s+FROM\\s+[^()]*+\\s*\\)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    private static final String[] COMPARISON_OPERATORS = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
+    private static final Pattern[] COMPARISON_OPERATOR_PATTERNS = compileComparisonOperatorPatterns(COMPARISON_OPERATORS);
+    private static final String[] HAVING_OPERATORS = {"=", "!=", "<>", ">=", "<=", "<", ">"};
+    private static final Pattern[] HAVING_OPERATOR_PATTERNS = compileHavingOperatorPatterns(HAVING_OPERATORS);
+
+    private static Pattern[] compileComparisonOperatorPatterns(String[] operators) {
+        Pattern[] result = new Pattern[operators.length];
+        for (int j = 0; j < operators.length; j++) {
+            String op = operators[j];
+            String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
+            result[j] = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
+        }
+        return result;
+    }
+
+    private static Pattern[] compileHavingOperatorPatterns(String[] operators) {
+        Pattern[] result = new Pattern[operators.length];
+        for (int j = 0; j < operators.length; j++) {
+            result[j] = Pattern.compile("(?i)\\s+" + Pattern.quote(operators[j]) + "\\s+");
+        }
+        return result;
+    }
 
     enum Operator {
         EQUALS, NOT_EQUALS, LESS_THAN, GREATER_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN_OR_EQUALS,
@@ -985,7 +1076,7 @@ class QueryParser {
      * AUTOCOMMIT command.
      */
     private Query<String> parseSetAutoCommitQuery(String normalized) {
-        Matcher matcher = Pattern.compile("^SET\\s+(?:SESSION\\s+)?AUTOCOMMIT\\s*(?:=\\s*|\\s+)(ON|OFF|TRUE|FALSE|1|0)\\s*;?$").matcher(normalized);
+        Matcher matcher = SET_AUTOCOMMIT_PATTERN.matcher(normalized);
         if (!matcher.matches()) {
             return null;
         }
@@ -1340,12 +1431,12 @@ class QueryParser {
     }
 
     private MainFromTokenInfo matchMainFromToken(String query, int currentPos) {
-        Pattern quotedStringPattern = Pattern.compile("(?i)'[^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+'", Pattern.DOTALL);
-        Pattern quotedIdentifierPattern = Pattern.compile("\"[^\"]*\"");
-        Pattern openParenPattern = Pattern.compile("\\(");
-        Pattern closeParenPattern = Pattern.compile("\\)");
-        Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\b");
-        Pattern wordPattern = Pattern.compile("\\S+");
+        Pattern quotedStringPattern = MAIN_QUOTED_STRING_PATTERN;
+        Pattern quotedIdentifierPattern = QUOTED_IDENTIFIER_REGEX;
+        Pattern openParenPattern = OPEN_PAREN_REGEX;
+        Pattern closeParenPattern = CLOSE_PAREN_REGEX;
+        Pattern fromPattern = FROM_KEYWORD_PATTERN;
+        Pattern wordPattern = WORD_TOKEN_PATTERN;
 
         Matcher qsMatcher = quotedStringPattern.matcher(query).region(currentPos, query.length());
         Matcher qiMatcher = quotedIdentifierPattern.matcher(query).region(currentPos, query.length());
@@ -1462,10 +1553,9 @@ class QueryParser {
         List<SubQuery> subQueries = new ArrayList<>();
         Map<String, String> columnAliases = new HashMap<>();
 
-        Pattern aggPattern = Pattern.compile(
-                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "COUNT|MIN|MAX|AVG|SUM)\\s*+\\(\\s*+(\\*|" + QUALIFIED_IDENTIFIER_PATTERN + "|\\([^()]*+\\))\\s*+\\)(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s+(?:AS\\s+)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*SELECT\\s+[^()]*+\\)\\s*(?:AS\\s+(" + IDENTIFIER_PATTERN + "))?\\s*$");
+        Pattern aggPattern = SELECT_AGG_PATTERN;
+        Pattern columnPattern = SELECT_COLUMN_PATTERN;
+        Pattern subQueryPattern = SELECT_SUBQUERY_PATTERN;
 
         for (String item : selectItems) {
             String trimmedItem = item.trim();
@@ -1564,7 +1654,7 @@ class QueryParser {
         String tableAlias = null;
         Map<String, String> tableAliases = new HashMap<>();
 
-        Pattern joinPattern = Pattern.compile("(?i)\\s*(JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|(?:LEFT|RIGHT)\\s+(?:INNER|OUTER)\\s+JOIN|FULL\\s+OUTER\\s+JOIN)\\s+");
+        Pattern joinPattern = JOIN_CLAUSE_PATTERN;
         Matcher joinMatcher = joinPattern.matcher(tableAndJoins);
         List<String> joinParts = new ArrayList<>();
         int lastEnd = 0;
@@ -1576,7 +1666,7 @@ class QueryParser {
         joinParts.add(tableAndJoins.substring(lastEnd).trim());
 
         String mainTablePart = joinParts.get(0).trim();
-        Matcher clauseTruncator = Pattern.compile("(?i)\\b(?:WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT|OFFSET|HAVING)\\b").matcher(mainTablePart);
+        Matcher clauseTruncator = TABLE_CLAUSE_TRUNCATOR_PATTERN.matcher(mainTablePart);
         if (clauseTruncator.find()) {
             mainTablePart = mainTablePart.substring(0, clauseTruncator.start()).trim();
         }
@@ -1626,7 +1716,7 @@ class QueryParser {
             List<Condition> onConditions = new ArrayList<>();
 
             // Обновляем разделение joinPart
-            Pattern clausePattern = Pattern.compile("(?i)\\s+(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|$)\\b");
+            Pattern clausePattern = JOIN_PART_CLAUSE_PATTERN;
             Matcher clauseMatcher = clausePattern.matcher(joinPart);
             String onClausePart = joinPart;
             if (clauseMatcher.find()) {
@@ -1864,8 +1954,7 @@ class QueryParser {
             Map<String, Class<?>> combinedColumnTypes, Map<String, String> tableAliases,
             Map<String, String> columnAliases, List<SubQuery> subQueries) {
         String orderByClause = text.substring(orderByIndex + 8).trim();
-        Pattern orderByLimitPattern = Pattern.compile(
-                "(?i)\\s*(?:LIMIT\\s+\\d+(?:\\s+OFFSET\\s+\\d+)?|OFFSET\\s+\\d+)\\s*$", Pattern.DOTALL);
+        Pattern orderByLimitPattern = ORDER_BY_LIMIT_PATTERN;
         Matcher orderByLimitMatcher = orderByLimitPattern.matcher(orderByClause);
         if (orderByLimitMatcher.find()) {
             orderByClause = orderByClause.substring(0, orderByLimitMatcher.start()).trim();
@@ -1877,14 +1966,14 @@ class QueryParser {
 
     private ParsedLimitOffset extractLimit(String text, int limitIndex) {
         String afterLimit = text.substring(limitIndex + 5).trim();
-        Pattern limitPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+\\d+)|(?:\\s*;\\s*)?\\s*$)");
+        Pattern limitPattern = LIMIT_VALUE_PATTERN;
         Matcher limitMatcher = limitPattern.matcher(afterLimit);
         if (!limitMatcher.find()) {
             throw new IllegalArgumentException("Недопустимый формат LIMIT: " + afterLimit);
         }
         Integer limitVal = Integer.parseInt(limitMatcher.group(1));
         Integer offsetVal = null;
-        Pattern offsetTailPattern = Pattern.compile("(?i)\\s+OFFSET\\s+(\\d+)");
+        Pattern offsetTailPattern = OFFSET_TAIL_PATTERN;
         Matcher offsetTailMatcher = offsetTailPattern.matcher(afterLimit);
         if (offsetTailMatcher.find()) {
             offsetVal = Integer.parseInt(offsetTailMatcher.group(1));
@@ -1894,7 +1983,7 @@ class QueryParser {
 
     private Integer extractOffset(String text, int offsetIndex) {
         String afterOffset = text.substring(offsetIndex + 6).trim();
-        Pattern offsetPattern = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
+        Pattern offsetPattern = OFFSET_VALUE_PATTERN;
         Matcher offsetMatcher = offsetPattern.matcher(afterOffset);
         if (!offsetMatcher.find()) {
             throw new IllegalArgumentException("Недопустимый формат OFFSET: " + afterOffset);
@@ -1914,7 +2003,8 @@ class QueryParser {
         int lastClauseIndex = -1;
         int currentPos = 0;
         boolean inQuotes = false;
-        Pattern clausePattern = Pattern.compile("\\b" + Pattern.quote(clause.toUpperCase()) + "\\b");
+        Pattern clausePattern = CLAUSE_SCAN_PATTERN_CACHE.computeIfAbsent(clause.toUpperCase(),
+                k -> Pattern.compile("\\b" + Pattern.quote(k) + "\\b"));
 
         while (currentPos < query.length()) {
             ClauseScanToken token = matchClauseScanToken(query, currentPos, clausePattern);
@@ -1956,10 +2046,10 @@ class QueryParser {
     }
 
     private ClauseScanToken matchClauseScanToken(String query, int currentPos, Pattern clausePattern) {
-        Matcher quotedStringMatcher = Pattern.compile("'([^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+)'")
+        Matcher quotedStringMatcher = CLAUSE_QUOTED_STRING_PATTERN
                 .matcher(query).region(currentPos, query.length());
-        Matcher openParenMatcher = Pattern.compile("\\(").matcher(query).region(currentPos, query.length());
-        Matcher closeParenMatcher = Pattern.compile("\\)").matcher(query).region(currentPos, query.length());
+        Matcher openParenMatcher = OPEN_PAREN_REGEX.matcher(query).region(currentPos, query.length());
+        Matcher closeParenMatcher = CLOSE_PAREN_REGEX.matcher(query).region(currentPos, query.length());
         Matcher clauseMatcher = clausePattern.matcher(query.toUpperCase()).region(currentPos, query.length());
 
         if (quotedStringMatcher.lookingAt()) {
@@ -1986,7 +2076,7 @@ class QueryParser {
      private int findOnClausePosition(String joinPart) {
          boolean[] inQuotes = {false};
          int[] parenDepth = {0};
-         Pattern onPattern = Pattern.compile("(?i)\\bON\\b");
+         Pattern onPattern = ON_KEYWORD_PATTERN;
          int[] onIndex = {-1};
          IntStream.range(0, joinPart.length()).forEach(i -> {
              char c = joinPart.charAt(i);
@@ -2033,7 +2123,7 @@ class QueryParser {
                                                  List<SubQuery> subQueries) {
         List<OrderByInfo> orderBy = new ArrayList<>();
         String[] orderItems = orderByClause.split(",");
-        Pattern orderPattern = Pattern.compile("(?i)^\\s*(" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(ASC|DESC)?\\s*$");
+        Pattern orderPattern = ORDER_BY_ITEM_PATTERN;
 
         for (String item : orderItems) {
             String trimmedItem = item.trim();
@@ -2155,7 +2245,7 @@ class QueryParser {
                                             Map<String, String> columnAliases, Map<String, String> groupBySubQueries) {
         List<String> groupBy = new ArrayList<>();
         List<String> items = splitSelectItems(groupByClause);
-        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*+SELECT\\s++[^()]*+\\))$", Pattern.DOTALL);
+        Pattern columnPattern = GROUP_BY_COLUMN_PATTERN;
 
         for (String item : items) {
             String trimmedItem = item.trim();
@@ -2516,7 +2606,7 @@ class QueryParser {
 
     // Обрезает строку до ключевых слов
     private String trimToClause(String conditionStr) {
-        Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY)\\b");
+        Pattern clausePattern = CLAUSE_BOUNDARY_PATTERN;
         Matcher clauseMatcher = clausePattern.matcher(conditionStr);
         if (clauseMatcher.find()) {
             return conditionStr.substring(0, clauseMatcher.start()).trim();
@@ -2567,46 +2657,7 @@ class QueryParser {
     }
 
     private List<Map.Entry<String, Pattern>> buildTokenPatterns() {
-        List<Map.Entry<String, Pattern>> patterns = new ArrayList<>();
-
-        // 1. Строковые литералы (в кавычках)
-        patterns.add(Map.entry("Quoted String", Pattern.compile("'(?:''|\\\\.|[^'\\\\])*+'")));
-
-        // 2. Условия LIKE и NOT LIKE
-        patterns.add(Map.entry(MessageConstants.TOKEN_LIKE_CONDITION,
-                Pattern.compile("(?i)" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*+'")));
-
-        // 3. Подзапросы
-        patterns.add(Map.entry("SubQuery",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\(\\s*SELECT\\s+[^)]+\\)")));
-
-        // 4. Условия IN
-        patterns.add(Map.entry("In Condition",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?IN\\s*\\([^)]+\\)")));
-
-        // 5. Условия NULL
-        patterns.add(Map.entry("Null Condition",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*IS\\s*(NOT\\s+)?NULL\\b")));
-
-        // 6. Условия сравнения (строки, числа, столбцы)
-        patterns.add(Map.entry("Comparison String Condition",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*('(?:''|\\\\.|[^'\\\\])*+')")));
-        patterns.add(Map.entry("Comparison Number Condition",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(=|>|<|>=|<=|!=|<>)\\s*(\\d+(?:\\.\\d+)?)")));
-        patterns.add(Map.entry("Comparison Column Condition",
-                Pattern.compile(ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(=|>|<|>=|<=|!=|<>)\\s*+(" + QUALIFIED_IDENTIFIER_PATTERN + ")")));
-
-        // 7. Логические операторы
-        patterns.add(Map.entry(MessageConstants.TOKEN_LOGICAL_OPERATOR, Pattern.compile("(?i)\\b(AND|OR)\\b")));
-
-        // 8. Ключевое слово NOT (отрицание условия)
-        patterns.add(Map.entry("NOT Keyword", Pattern.compile("(?i)\\bNOT\\b")));
-
-        // 9. Некорректные токены (исключая строковые литералы и quoted-идентификаторы)
-        patterns.add(Map.entry("Invalid Token",
-                Pattern.compile("(?i)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*+(?:=|>|<|>=|<=|!=|<>)\\s*+)(?!" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*+(?:NOT\\s++)?(?:LIKE|IN|IS)\\b)(?!'(?:''|\\\\.|[^'\\\\])*+')(?!" + QUOTED_IDENTIFIER_PATTERN + ")[^\\s()'\"]++")));
-
-        return patterns;
+        return TOKEN_PATTERNS;
     }
 
     private record TokenMatchResult(boolean handled, boolean matched, int nextPos, String tokenValue, String patternName) {}
@@ -2661,9 +2712,7 @@ class QueryParser {
 
     private void processMatchedToken(String matchedToken, String matchedPatternName, int currentPos, List<Token> tokens) {
         if (matchedPatternName.equals(MessageConstants.TOKEN_LIKE_CONDITION)) {
-            Matcher likeMatcher = Pattern.compile(
-                            ErrorMessages.CASE_INSENSITIVE_GROUP_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(NOT\\s*)?LIKE\\s*('(?:''|\\\\.|[^'\\\\])*+')")
-                    .matcher(matchedToken);
+            Matcher likeMatcher = LIKE_TOKEN_PATTERN.matcher(matchedToken);
             if (likeMatcher.matches()) {
                 String pattern = likeMatcher.group(3);
                 if (!pattern.endsWith("'")) {
@@ -2792,11 +2841,7 @@ class QueryParser {
         // Improved regex pattern to better handle nested parentheses and subqueries
         // Possessive quantifiers (++/*+) keep matching linear on deeply nested
         // parentheses and on backslash-heavy strings (java:S5998).
-        Pattern tokenPattern = Pattern.compile(
-                "(?s)(?:'(?:''|\\\\.|[^'\\\\])*+'|" +              // Match quoted strings
-                        "\\((?:[^()']++|'(?:''|\\\\.|[^'\\\\])*+')*+\\)|" +   // Match balanced parentheses (including nested ones)
-                        "[^\\s()']++)"                               // Match other tokens
-        );
+        Pattern tokenPattern = NEXT_TOKEN_PATTERN;
 
         // Find tokens starting from the given index
         Matcher matcher = tokenPattern.matcher(conditionStr.substring(startIndex));
@@ -2835,7 +2880,7 @@ class QueryParser {
         }
 
         // Проверка на корректность шаблона LIKE
-        Pattern likePattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*(LIKE|NOT LIKE)\\s*('(?:''|[^'])*+')");
+        Pattern likePattern = CONDITION_LIKE_PATTERN;
         Matcher likeMatcher = likePattern.matcher(normalizedCondStr);
         if (likeMatcher.matches()) {
             String column = unquoteQualifiedIdentifier(likeMatcher.group(1).trim());
@@ -2874,12 +2919,12 @@ class QueryParser {
     }
 
     private boolean isInCondition(String condStr) {
-        Pattern inPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$");
+        Pattern inPattern = IN_CONDITION_PATTERN;
         return inPattern.matcher(condStr).matches();
     }
 
     private Condition parseInCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
-        Pattern inPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$");
+        Pattern inPattern = IN_CONDITION_PATTERN;
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
             throw new IllegalArgumentException("Invalid IN condition format: " + condStr);
@@ -2953,14 +2998,14 @@ class QueryParser {
     }
 
     private boolean isNullCondition(String condStr) {
-        Pattern isNullPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
+        Pattern isNullPattern = IS_NULL_CONDITION_PATTERN;
         return isNullPattern.matcher(condStr).matches();
     }
 
     private Condition parseNullCondition(String condStr, String defaultTableName, Map<String, Class<?>> combinedColumnTypes,
                                          Map<String, String> tableAliases, Map<String, String> columnAliases,
                                          String conjunction, boolean not) {
-        Pattern isNullPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+IS\\s+(NOT\\s+)?NULL\\b");
+        Pattern isNullPattern = IS_NULL_CONDITION_PATTERN;
         Matcher isNullMatcher = isNullPattern.matcher(condStr);
         isNullMatcher.matches();
         String column = unquoteQualifiedIdentifier(isNullMatcher.group(1).trim());
@@ -2972,18 +3017,12 @@ class QueryParser {
     }
 
     private boolean isSubQueryCondition(String condStr) {
-        Pattern subQueryPattern = Pattern.compile(
-                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*+\\((SELECT\\s++[^)]*+)\\)$",
-                Pattern.DOTALL
-        );
+        Pattern subQueryPattern = SUBQUERY_COMPARISON_PATTERN;
         return subQueryPattern.matcher(condStr).matches();
     }
 
     private Condition parseSubQueryCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
-        Pattern subQueryPattern = Pattern.compile(
-                ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + ")\\s*+(=|!=|<>|>=|<=|<|>|LIKE|NOT LIKE)\\s*+\\((SELECT\\s++[^)]*+)\\)$",
-                Pattern.DOTALL
-        );
+        Pattern subQueryPattern = SUBQUERY_COMPARISON_PATTERN;
         Matcher subQueryMatcher = subQueryPattern.matcher(condStr);
         subQueryMatcher.matches();
         String column = unquoteQualifiedIdentifier(subQueryMatcher.group(1).trim());
@@ -3016,8 +3055,7 @@ class QueryParser {
     private Condition parseComparisonCondition(String condStr, ParseContext ctx,
                                                String conjunction, boolean not) {
         LOGGER.log(Level.FINEST, "Parsing comparison condition: {0}", condStr);
-        String[] operators = {"!=", "<>", ">=", "<=", "=", "<", ">", "\\bLIKE\\b", "\\bNOT LIKE\\b"};
-        OperatorInfo operatorInfo = findOperator(condStr, operators);
+        OperatorInfo operatorInfo = findOperator(condStr, COMPARISON_OPERATOR_PATTERNS);
         if (operatorInfo == null) {
             LOGGER.log(Level.SEVERE, "No valid operator found in condition: {0}", condStr);
             throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + condStr + "'");
@@ -3055,7 +3093,7 @@ class QueryParser {
     private record RightPart(String column, Object value) {}
 
     private RightPart parseRightPart(String rightPart, String actualColumn, ParseContext ctx) {
-        Pattern columnPattern = Pattern.compile("(?i)^" + QUALIFIED_IDENTIFIER_PATTERN + "$");
+        Pattern columnPattern = RIGHT_PART_COLUMN_PATTERN;
         String upperRightPart = rightPart.toUpperCase();
 
         if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
@@ -3100,7 +3138,7 @@ class QueryParser {
                 .findFirst()
                 .orElse(column);
     }
-    private OperatorInfo findOperator(String condStr, String[] operators) {
+    private OperatorInfo findOperator(String condStr, Pattern[] operatorPatterns) {
         int parenDepth = 0;
         boolean inQuotes = false;
         int subQueryStart = -1;
@@ -3121,7 +3159,7 @@ class QueryParser {
                         subQueryStart = -1;
                     }
                 } else if (canMatchOperator(parenDepth, subQueryStart, i, condStr.length())) {
-                    OperatorInfo opInfo = tryMatchOperatorAt(condStr, i, operators);
+                    OperatorInfo opInfo = tryMatchOperatorAt(condStr, i, operatorPatterns);
                     if (opInfo != null) {
                         return opInfo;
                     }
@@ -3140,10 +3178,8 @@ class QueryParser {
         return parenDepth == 0 && subQueryStart == -1 && i < length - 1;
     }
 
-    private OperatorInfo tryMatchOperatorAt(String condStr, int i, String[] operators) {
-        for (String op : operators) {
-            String patternStr = op.startsWith("\\b") ? "\\b" + op.substring(2, op.length() - 2) + "\\b" : Pattern.quote(op);
-            Pattern opPattern = Pattern.compile("(?i)" + patternStr + "(?=\\s|$|[^\\s])");
+    private OperatorInfo tryMatchOperatorAt(String condStr, int i, Pattern[] operatorPatterns) {
+        for (Pattern opPattern : operatorPatterns) {
             Matcher opMatcher = opPattern.matcher(condStr.substring(i));
             if (opMatcher.lookingAt()) {
                 String remaining = condStr.substring(i + opMatcher.group().length()).trim();
@@ -3156,10 +3192,7 @@ class QueryParser {
     }
 
     private String trimRightPart(String rightPart) {
-        Pattern keywordPattern = Pattern.compile(
-                "\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY|AND|OR)\\b",
-                Pattern.CASE_INSENSITIVE
-        );
+        Pattern keywordPattern = RIGHT_PART_CLAUSE_PATTERN;
         Matcher keywordMatcher = keywordPattern.matcher(rightPart);
         if (keywordMatcher.find()) {
             return rightPart.substring(0, keywordMatcher.start()).trim();
@@ -3370,12 +3403,12 @@ class QueryParser {
     private record HavingOperatorMatch(String selectedOperator, int operatorIndex) {}
 
     private HavingOperatorMatch findHavingOperator(String condStr) {
-        String[] operators = {"=", "!=", "<>", ">=", "<=", "<", ">"};
-        for (String op : operators) {
-            Pattern opPattern = Pattern.compile("(?i)\\s+" + Pattern.quote(op) + "\\s+");
-            Matcher opMatcher = opPattern.matcher(" " + condStr + " ");
+        Pattern[] operatorPatterns = HAVING_OPERATOR_PATTERNS;
+        String[] operators = HAVING_OPERATORS;
+        for (int j = 0; j < operators.length; j++) {
+            Matcher opMatcher = operatorPatterns[j].matcher(" " + condStr + " ");
             if (opMatcher.find()) {
-                return new HavingOperatorMatch(op, opMatcher.start());
+                return new HavingOperatorMatch(operators[j], opMatcher.start());
             }
         }
         return new HavingOperatorMatch(null, -1);
@@ -3392,7 +3425,7 @@ class QueryParser {
     }
 
     private AggregateFunction parseHavingAggregateFromText(String leftPart, ParseContext ctx) {
-        Pattern aggPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "COUNT|MIN|MAX|AVG|SUM)\\s*+\\(\\s*+(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\([^()]*+\\))\\s*+\\)(?:\\s++AS\\s++(" + IDENTIFIER_PATTERN + "))?$");
+        Pattern aggPattern = HAVING_AGGREGATE_PATTERN;
         Matcher aggMatcher = aggPattern.matcher(leftPart);
         if (!aggMatcher.matches()) {
             throw new IllegalArgumentException("Invalid HAVING condition: left side must be an aggregate function: " + leftPart);
@@ -3466,7 +3499,7 @@ class QueryParser {
     }
 
     private void logSubqueryCheck(String str, int startIndex) {
-        Pattern subQueryPattern = Pattern.compile("\\s*\\(\\s*SELECT\\b", Pattern.CASE_INSENSITIVE);
+        Pattern subQueryPattern = SUBQUERY_LOOKAHEAD_PATTERN;
         String fromStart = startIndex + 7 < str.length() ? str.substring(startIndex, startIndex + 7) : "";
         if (!subQueryPattern.matcher(fromStart).lookingAt()) {
             LOGGER.log(Level.FINE, "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
@@ -3484,10 +3517,7 @@ class QueryParser {
 
     private void validateSubqueryStructure(String str, int startIndex, int endIndex) {
         String subQueryStr = str.substring(startIndex, endIndex + 1);
-        Pattern selectPattern = Pattern.compile(
-                "\\s*\\(\\s*SELECT\\s+[^()]*+\\s+FROM\\s+[^()]*+\\s*\\)",
-                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
-        );
+        Pattern selectPattern = SUBQUERY_STRUCTURE_PATTERN;
         if (!selectPattern.matcher(subQueryStr).matches()) {
             LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
         }

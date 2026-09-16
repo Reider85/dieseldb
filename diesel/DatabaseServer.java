@@ -31,6 +31,8 @@ public class DatabaseServer {
             if (val != null) poolSize = Integer.parseInt(val.trim());
             String val2 = props.getProperty("server.queue.capacity");
             if (val2 != null) queueCapacity = Integer.parseInt(val2.trim());
+            String val3 = props.getProperty("server.backlog");
+            if (val3 != null) backlog = Integer.parseInt(val3.trim());
         } catch (Exception ignored) {}
     }
 
@@ -38,6 +40,7 @@ public class DatabaseServer {
     private static final String CONFIG_FILE = ErrorMessages.CONFIG_FILE;
     private static int poolSize = 100;
     private static int queueCapacity = 100;
+    private static int backlog = 512;
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
@@ -142,7 +145,7 @@ public class DatabaseServer {
         running = true;
         database.loadTablesFromDisk();
         try {
-            serverSocket = new ServerSocket(port);
+            serverSocket = new ServerSocket(port, backlog);
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
 
             while (running) {

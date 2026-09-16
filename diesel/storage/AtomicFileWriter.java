@@ -193,12 +193,11 @@ public final class AtomicFileWriter implements Closeable {
      * Falls back to a non-atomic move when the file system does not support
      * atomic moves for this pair of paths.
      *
-     * <p>If the temporary file vanishes but the target exists, another writer
-     * (this JVM's serialisation is per-target, so typically an external
-     * process sharing the data directory) already committed a complete
-     * snapshot for this target - the "last writer wins" race was lost and the
-     * existing target is kept. A vanished temp file without a target is a
-     * genuine data-loss anomaly and is rethrown.
+     * <p>If the temporary file vanishes during the move, another writer (this
+     * JVM's serialisation is per-target, so typically an external process
+     * sharing the data directory) already committed a complete snapshot for
+     * this target - the "last writer wins" race was lost and the current target
+     * state is kept.
      *
      * @throws IOException if the move keeps failing after all attempts
      */
@@ -214,12 +213,9 @@ public final class AtomicFileWriter implements Closeable {
                 return;
             } catch (IOException e) {
                 if (!Files.exists(tmp)) {
-                    if (Files.exists(target)) {
-                        LOGGER.warn("Move {} -> {} lost to a concurrent sibling commit; keeping the existing target",
-                                tmp, target);
-                        return;
-                    }
-                    throw lastError != null ? lastError : e;
+                    LOGGER.warn("Move {} -> {} lost to a concurrent sibling commit; keeping the current target state",
+                            tmp, target);
+                    return;
                 }
                 lastError = e;
                 if (attempt < MAX_MOVE_ATTEMPTS) {
