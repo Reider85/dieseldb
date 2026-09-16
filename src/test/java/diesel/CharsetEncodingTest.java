@@ -181,4 +181,114 @@ class CharsetEncodingTest {
             System.clearProperty("storage.charset");
         }
     }
+
+    // ── Non-UTF-8 charset round-trip tests (verify byte[] parser fallback path) ──
+
+    @Test
+    void csvRoundTripIso88595() throws Exception {
+        String prev = System.getProperty("storage.charset");
+        System.setProperty("storage.charset", "ISO-8859-5");
+        try {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("NAME", "Привет");
+            row.put("AGE", 25);
+            row.put("CITY", "Москва");
+
+            CsvRowStorage storage = new CsvRowStorage("ENC_ISO88595", SCHEMA, TYPES);
+            storage.setDataDir(tempDir.toString());
+            storage.open();
+            storage.insert(row);
+            storage.saveToFile("ENC_ISO88595");
+            storage.close();
+
+            CsvRowStorage loaded = new CsvRowStorage("ENC_ISO88595", SCHEMA, TYPES);
+            loaded.setDataDir(tempDir.toString());
+            loaded.open();
+            loaded.loadFromFile("ENC_ISO88595");
+
+            List<Map<String, Object>> rows = loaded.scan();
+            assertEquals(1, rows.size());
+            assertEquals("Привет", rows.get(0).get("NAME"));
+            assertEquals("Москва", rows.get(0).get("CITY"));
+            loaded.close();
+        } finally {
+            if (prev == null) {
+                System.clearProperty("storage.charset");
+            } else {
+                System.setProperty("storage.charset", prev);
+            }
+        }
+    }
+
+    @Test
+    void csvRoundTripUtf16() throws Exception {
+        String prev = System.getProperty("storage.charset");
+        System.setProperty("storage.charset", "UTF-16");
+        try {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("NAME", "Привет мир 💾");
+            row.put("AGE", 42);
+            row.put("CITY", "Токио");
+
+            CsvRowStorage storage = new CsvRowStorage("ENC_UTF16", SCHEMA, TYPES);
+            storage.setDataDir(tempDir.toString());
+            storage.open();
+            storage.insert(row);
+            storage.saveToFile("ENC_UTF16");
+            storage.close();
+
+            CsvRowStorage loaded = new CsvRowStorage("ENC_UTF16", SCHEMA, TYPES);
+            loaded.setDataDir(tempDir.toString());
+            loaded.open();
+            loaded.loadFromFile("ENC_UTF16");
+
+            List<Map<String, Object>> rows = loaded.scan();
+            assertEquals(1, rows.size());
+            assertEquals("Привет мир 💾", rows.get(0).get("NAME"));
+            assertEquals("Токио", rows.get(0).get("CITY"));
+            loaded.close();
+        } finally {
+            if (prev == null) {
+                System.clearProperty("storage.charset");
+            } else {
+                System.setProperty("storage.charset", prev);
+            }
+        }
+    }
+
+    @Test
+    void tsvRoundTripIso88595() throws Exception {
+        String prev = System.getProperty("storage.charset");
+        System.setProperty("storage.charset", "ISO-8859-5");
+        try {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("NAME", "Привет");
+            row.put("AGE", 25);
+            row.put("CITY", "Москва");
+
+            TsvRowStorage storage = new TsvRowStorage("ENC_ISO88595_TSV", SCHEMA, TYPES);
+            storage.setDataDir(tempDir.toString());
+            storage.open();
+            storage.insert(row);
+            storage.saveToFile("ENC_ISO88595_TSV");
+            storage.close();
+
+            TsvRowStorage loaded = new TsvRowStorage("ENC_ISO88595_TSV", SCHEMA, TYPES);
+            loaded.setDataDir(tempDir.toString());
+            loaded.open();
+            loaded.loadFromFile("ENC_ISO88595_TSV");
+
+            List<Map<String, Object>> rows = loaded.scan();
+            assertEquals(1, rows.size());
+            assertEquals("Привет", rows.get(0).get("NAME"));
+            assertEquals("Москва", rows.get(0).get("CITY"));
+            loaded.close();
+        } finally {
+            if (prev == null) {
+                System.clearProperty("storage.charset");
+            } else {
+                System.setProperty("storage.charset", prev);
+            }
+        }
+    }
 }

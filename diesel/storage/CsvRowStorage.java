@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -216,25 +218,33 @@ public class CsvRowStorage extends AbstractRowStorage {
         List<Object[]> previous = new ArrayList<>(rows);
         try {
             byte[] bytes = DelimitedContent.readAllBytes(file, ref.codec());
-            String text = DelimitedContent.decode(bytes, StorageConfig.getCharset(), file);
-            List<String> lines = DelimitedContent.splitLines(text);
-            try (LineSource source = LineSource.over(lines);
-                 CsvRowReader csvReader = new CsvRowReader(source, columns, columnTypes, file.getPath())) {
-                csvReader.readHeader();
-                List<Object[]> loaded = new ArrayList<>();
-                while (csvReader.hasNext()) {
-                    Object[] row = csvReader.nextArray();
-                    if (row != null) {
-                        loaded.add(row);
+            Charset charset = StorageConfig.getCharset();
+            List<Object[]> loaded;
+            if (isByteFastPathCompatible(charset)) {
+                loaded = DelimitedByteParser.parse(bytes, charset, columns, columnTypes,
+                        (byte) ',', (byte) '"', file.getPath());
+            } else {
+                // Fallback for non-ASCII-compatible charsets (UTF-16, etc.)
+                String text = DelimitedContent.decode(bytes, charset, file);
+                List<String> lines = DelimitedContent.splitLines(text);
+                try (LineSource source = LineSource.over(lines);
+                     CsvRowReader csvReader = new CsvRowReader(source, columns, columnTypes, file.getPath())) {
+                    csvReader.readHeader();
+                    loaded = new ArrayList<>();
+                    while (csvReader.hasNext()) {
+                        Object[] row = csvReader.nextArray();
+                        if (row != null) {
+                            loaded.add(row);
+                        }
                     }
                 }
-                rows.clear();
-                rows.addAll(loaded);
-                fileInitialized = true;
-                LOGGER.info("CsvRowStorage {} loaded CSV from {} with {} rows",
-                        tableName, file.getPath(), rows.size());
-                syncIndexBulkFromArrays(rows);
             }
+            rows.clear();
+            rows.addAll(loaded);
+            fileInitialized = true;
+            LOGGER.info("CsvRowStorage {} loaded CSV from {} with {} rows",
+                    tableName, file.getPath(), rows.size());
+            syncIndexBulkFromArrays(rows);
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
@@ -244,6 +254,17 @@ public class CsvRowStorage extends AbstractRowStorage {
             rows.addAll(previous);
             throw new DieselIOException("Failed to load table from CSV file: " + file.getPath(), e);
         }
+    }
+
+    /**
+     * Returns true if the charset is compatible with the byte[] fast path.
+     * UTF-8, US-ASCII, and ISO-8859-1 are single-byte compatible (ASCII-only
+     * detection happens inside the parser for UTF-8).
+     */
+    static boolean isByteFastPathCompatible(Charset cs) {
+        return cs == StandardCharsets.US_ASCII
+                || cs == StandardCharsets.ISO_8859_1
+                || cs == StandardCharsets.UTF_8;
     }
 
     // ─── Serialised .table persistence ──────────────────────────────

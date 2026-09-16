@@ -9,6 +9,8 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -819,8 +821,24 @@ public abstract class DelimitedIndexManager {
         }
         CompressionFactory.ResolvedDelimitedFile ref =
                 CompressionFactory.resolveActual(file, configPrefix + ".compression.codec");
+        Charset charset = StorageConfig.getCharset();
+        // Use byte[] fast path only for CSV (not TSV, which has backslash escaping and sentinel mode)
+        if (isByteFastPathCompatible(charset) && !ref.compressed() && !configPrefix.startsWith("tsv")) {
+            byte[] bytes = DelimitedContent.readAllBytes(ref.file(), ref.codec());
+            return DelimitedByteParser.parse(bytes, charset, columns, columnTypes,
+                    (byte) ',', (byte) '"', file.getPath());
+        }
         return DelimitedContent.readAllArrays(ref.file(), ref.codec(), columns, columnTypes,
-                rowReaderFactory, StorageConfig.getCharset());
+                rowReaderFactory, charset);
+    }
+
+    /**
+     * Returns true if the charset is compatible with the byte[] fast path.
+     */
+    private static boolean isByteFastPathCompatible(Charset cs) {
+        return cs == StandardCharsets.US_ASCII
+                || cs == StandardCharsets.ISO_8859_1
+                || cs == StandardCharsets.UTF_8;
     }
 
     /** Reads the whole delimited file with a single sequential pass. */
@@ -1154,8 +1172,14 @@ public abstract class DelimitedIndexManager {
                     }
                     position += n;
                 }
+                Charset charset = StorageConfig.getCharset();
+                if (isByteFastPathCompatible(charset) && !configPrefix.startsWith("tsv")) {
+                    return DelimitedByteParser.parseRange(chunk, 0, position, charset,
+                            columns, columnTypes, columnMapping, firstDataLine,
+                            (byte) ',', (byte) '"', file.getPath());
+                }
                 try (BufferedReader bufferedReader = new BufferedReader(
-                        new InputStreamReader(new ByteArrayInputStream(chunk, 0, position), StorageConfig.getCharset()));
+                        new InputStreamReader(new ByteArrayInputStream(chunk, 0, position), charset));
                      DelimitedRowReader reader = rowReaderFactory.create(LineSource.over(bufferedReader),
                              columns, columnTypes)) {
                     reader.initPartition(columnMapping, firstDataLine);

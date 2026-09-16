@@ -1,0 +1,5 @@
+3.0.94 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type
+
+- src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion
+- diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files
+- Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl

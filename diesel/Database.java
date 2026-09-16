@@ -1211,6 +1211,12 @@ class Database {
             try {
                 Table table = Table.loadFromFile(this, tableName);
                 if (table != null) {
+                    Table existing = tables.get(tableName);
+                    if (existing != null && table.getSequences().isEmpty() && !existing.getSequences().isEmpty()) {
+                        table.getSequences().putAll(existing.getSequences());
+                        LOGGER.log(Level.FINE, "Preserved {0} sequences from in-memory table {1}",
+                                new Object[]{existing.getSequences().size(), tableName});
+                    }
                     tables.put(tableName, table);
                     LOGGER.log(Level.INFO, "Loaded table {0} from disk with {1} rows",
                             new Object[]{tableName, table.getLiveRowCount()});
