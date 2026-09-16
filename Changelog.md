@@ -2965,3 +2965,4 @@ Changes:
 3.1.13 AGENTS.md
 3.1.14 opencodeignore
 3.1.15 analytics
+3.1.16 fix(test-profiles-audit): 8 fixes after migration audit — tag 3 orphan tests (Csv/TsvStorage→storage, RegexRobustness→perf), repair make timing (large profile + collect-timing.py + tracked baseline), make test/ci alias profiles functional, add tia.sh bash port + --profiles mode, add pr-gate-tia CI job, enable Maven Build Cache, fix make build target + CI concurrency group, update AGENTS.md
