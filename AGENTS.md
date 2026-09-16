@@ -14,16 +14,17 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 3. Implement changes.
 4. **Run quick (fast) tests first** – this catches trivial errors early, saving time on the heavy suite:
    ```bash
-   make quick-test
+   make test
    ```
-   (This runs `mvn test -DskipLargeTests` – all unit tests except `@LargeTest`.)  
+   (This runs the **fast** profile: `mvn -B clean test -P fast` – smoke + index + query tags, <30s.)  
    If it fails, fix and repeat until it passes **before** moving to the full acceptance gate. **Max 3 fix attempts** — if still failing, stop and report.
 
 5. Run **full acceptance gate** (includes heavy joins) with `make timing` – this automatically:
   - Builds the project
-  - Runs the full test suite with `@LargeTest` and 4GB heap
-  - Generates a new timing file (`timing/timingN.md`)
+  - Runs the **large** profile (`@LargeTest`, 600x600 joins, 4GB heap)
+  - Collects per-test times from surefire reports into `timing/timingN.md`
   - Compares it against the baseline `timing/timing.md` **and fails if real degradation** (see below)
+  - For a full release run of ALL profiles use `make all-tests`.
 
 6. **Profile check (Strict Condition):** Look at the current task description in `prompt2.md`. If the description does **NOT** contain the words "JOIN", "hash join", or "performance" — **SKIP this step entirely**. Otherwise, run:
    ```bash
@@ -71,11 +72,13 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 
 ## Tests
 
-- **Quick test** – `make quick-test` (or `mvn test -DskipLargeTests`) runs only fast unit tests (excluding `@LargeTest`). **Use this as a first filter** before the heavy acceptance gate.
-- **Full acceptance gate** – `make timing` runs all tests (including `@LargeTest`) with 4GB heap, records timings, and compares to the baseline. This is the **required** gate before commit.
+- **Fast profile** – `make test` (= `mvn -B clean test -P fast`, tags: smoke, query, index) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate.
+- **Other profiles:** `make test-core` (query-full, storage), `make test-concurrency` (concurrency), `make test-network` (network), `make test-perf` (perf), `make large-test` (large, 4GB heap).
+- **Full release gate** – `make all-tests` runs all 6 profiles sequentially. This is the **required** gate before commit.
+- **TIA** – `make tia` (recommend profiles) / `make tia-run` (recommend + run).
 - **Isolation Rule for Failures:** If `make timing` fails, DO NOT immediately re-run `make timing`. Find the exact failing test name in the log. Fix the code and run ONLY that specific test:
   ```bash
-  $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; mvn test -Dtest=TestClassName#methodName
+  $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; mvn test -P <profile> -Dtest=TestClassName#methodName
   ```
   Re-run `make timing` **ONLY AFTER** the isolated test passes. This saves minutes on heavy workloads.
 - The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` will automatically ignore sub-11ms micro-queries and only treat degradation >20% on **heavy (>100ms)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
@@ -122,8 +125,8 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 ## Timing regression check (fully automated)
 
 - `make timing`:
-  1. Builds and runs the full test suite (including two 600x600 ORDER BY joins).
-  2. Generates `timing/timingN.md` in the `timing/` folder.
+  1. Runs the large profile (including two 600x600 ORDER BY joins).
+  2. `scripts/collect-timing.py` builds `timing/timingN.md` from surefire reports.
   3. Executes `compare-timing.sh timing/timing.md timing/timingN.md` – this script:
   - Compares each query’s time.
   - **Ignores** any query whose baseline is <11 ms (machine noise).
@@ -159,14 +162,15 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 
 - **Max fix attempts: 3** — if quick tests or isolated tests fail 3 times in a row, stop and report to the user
 - **Timeouts on long commands** — always use `bash` timeout parameter:
-  - Quick tests (`mvn test -DskipLargeTests`): 10 min max
-  - Full suite (`make timing` / `mvn test` with 4GB): 30 min max
+  - Quick tests (`make test`): 5 min max
+  - `make timing` (large, 4GB): 30 min max
+  - `make all-tests`: 40 min max
   - ProfileMain: 15 min max
 - **Never run from agent context** — these commands block forever:
   - `start-server.bat` / `start-server.sh` (long-running TCP server)
   - `start-client.bat` / `start-client.sh` (interactive REPL)
 - **Isolation rule cap** — max 3 attempts on the isolated test; if still failing, stop and report
-- **Missing make targets** — `make quick-test`, `make changelog`, `make check-profile` may not exist in the Makefile. If `make` fails, fall back to raw Maven commands as shown in the Tests section above
+- **Missing make targets** — `make changelog`, `make check-profile` may not exist in the Makefile. If `make` fails, fall back to raw Maven commands as shown in the Tests section above. `make quick-test` has been removed — use `make test`.
 
 ## Subagent Discipline
 
