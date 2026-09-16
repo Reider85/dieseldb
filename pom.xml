@@ -15,6 +15,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <test.heap>512m</test.heap>
         <diesel.largeTests>false</diesel.largeTests>
+        <surefire.groups></surefire.groups>
+        <surefire.excludedGroups>large</surefire.excludedGroups>
     </properties>
 
     <dependencies>
@@ -114,6 +116,8 @@
             <id>fast</id>
             <properties>
                 <test.heap>512m</test.heap>
+                <surefire.groups>smoke, query, index</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -121,34 +125,8 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <excludes combine.self="override"/>
-                            <includes>
-                                <!-- Smoke -->
-                                <include>**/DatabaseSmokeTest.java</include>
-                                <include>**/Phase0IntegrationTest.java</include>
-                                <include>**/QueryParserRefactorTest.java</include>
-                                <include>**/SelectQueryRefactorTest.java</include>
-                                <include>**/NullSafetyTest.java</include>
-                                <include>**/DeadCodeRemovalTest.java</include>
-                                <!-- Indexing (pure CPU) -->
-                                <include>**/BTreeIndexBulkLoadTest.java</include>
-                                <include>**/BTreeClusteredIndexBulkLoadTest.java</include>
-                                <include>**/CompositeIndexTest.java</include>
-                                <include>**/CoveringIndexTest.java</include>
-                                <include>**/WhereIndexTest.java</include>
-                                <include>**/AutoWhereIndexTest.java</include>
-                                <include>**/AutoJoinIndexTest.java</include>
-                                <!-- 10 in-memory *QueryTest -->
-                                <include>**/AdvancedQueryTest.java</include>
-                                <include>**/AliasesQueryTest.java</include>
-                                <include>**/GroupByQueryTest.java</include>
-                                <include>**/InQueryTest.java</include>
-                                <include>**/JoinQueryTest.java</include>
-                                <include>**/LikeQueryTest.java</include>
-                                <include>**/OrderByQueryTest.java</include>
-                                <include>**/PerformanceQueryTest.java</include>
-                                <include>**/SubqueryQueryTest.java</include>
-                                <include>**/NullSafetyQueryTest.java</include>
-                            </includes>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
                             <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
@@ -165,6 +143,8 @@
             <id>core</id>
             <properties>
                 <test.heap>1g</test.heap>
+                <surefire.groups>query-full, storage</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -172,45 +152,8 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <excludes combine.self="override"/>
-                            <includes>
-                                <!-- Full query logic -->
-                                <include>**/AdvancedTest.java</include>
-                                <include>**/AliasesTest.java</include>
-                                <include>**/GroupByTest.java</include>
-                                <include>**/JoinTest.java</include>
-                                <include>**/InTest.java</include>
-                                <include>**/LikeTest.java</include>
-                                <include>**/OrderByTest.java</include>
-                                <include>**/SubqueriesTest.java</include>
-                                <include>**/LazyDeleteTest.java</include>
-                                <include>**/LimitOffsetTest.java</include>
-                                <include>**/UpdateTest.java</include>
-                                <include>**/BatchExecutionTest.java</include>
-                                <include>**/BatchQueryTest.java</include>
-                                <include>**/BulkInsertTest.java</include>
-                                <include>**/ExplainTest.java</include>
-                                <include>**/QueryOptimizerTest.java</include>
-                                <include>**/QueryCacheTest.java</include>
-                                <include>**/QueryProfilerTest.java</include>
-                                <include>**/AnalyzeTableTest.java</include>
-                                <include>**/MaxResultRowsTest.java</include>
-                                <include>**/HashJoinMemoryTest.java</include>
-                                <include>**/ParallelIndexScanTest.java</include>
-                                <!-- Full storage I/O -->
-                                <include>**/Csv*Test.java</include>
-                                <include>**/Tsv*Test.java</include>
-                                <include>**/Jsonl*Test.java</include>
-                                <include>**/JsonStreamAbstractionTest.java</include>
-                                <include>**/AtomicFileWriteTest.java</include>
-                                <include>**/CompressionTest.java</include>
-                                <include>**/PersistenceTest.java</include>
-                                <include>**/LoadErrorHandlingTest.java</include>
-                                <include>**/CharsetEncodingTest.java</include>
-                                <include>**/StorageLoadModeTest.java</include>
-                                <include>**/StorageArrayRepresentationTest.java</include>
-                                <include>**/ReaderCorrectnessTest.java</include>
-                                <include>**/NullSentinelTest.java</include>
-                            </includes>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
                             <reuseForks>false</reuseForks>
                             <parallel>classes</parallel>
@@ -227,6 +170,8 @@
             <id>concurrency</id>
             <properties>
                 <test.heap>1g</test.heap>
+                <surefire.groups>concurrency</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -234,11 +179,8 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <excludes combine.self="override"/>
-                            <includes>
-                                <include>**/ConcurrentSaveTest.java</include>
-                                <include>**/ConcurrentConflictTest.java</include>
-                                <include>**/CopyOnWriteIsolationTest.java</include>
-                            </includes>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -253,6 +195,8 @@
             <id>network</id>
             <properties>
                 <test.heap>1g</test.heap>
+                <surefire.groups>network</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -260,15 +204,8 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <excludes combine.self="override"/>
-                            <includes>
-                                <include>**/ServerConnectionLimitTest.java</include>
-                                <include>**/SocketTimeoutTest.java</include>
-                                <include>**/GracefulShutdownTest.java</include>
-                                <include>**/OomHandlingTest.java</include>
-                                <include>**/CursorTest.java</include>
-                                <include>**/PreparedStatementTest.java</include>
-                                <include>**/AllTestsSampleTest.java</include>
-                            </includes>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -287,6 +224,8 @@
             <id>perf</id>
             <properties>
                 <test.heap>2g</test.heap>
+                <surefire.groups>perf</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -294,14 +233,8 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <excludes combine.self="override"/>
-                            <includes>
-                                <include>**/PerformanceTest.java</include>
-                                <include>**/PerformanceRegressionTest.java</include>
-                                <include>**/StringOpsBenchmarkTest.java</include>
-                                <include>**/RegexPerformanceBenchmarkTest.java</include>
-                                <include>**/RegexRobustnessTest.java</include>
-                                <include>**/StorageBulkUpdateTest.java</include>
-                            </includes>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx2g --add-modules=jdk.incubator.vector</argLine>
@@ -317,6 +250,8 @@
             <properties>
                 <diesel.largeTests>true</diesel.largeTests>
                 <test.heap>4g</test.heap>
+                <surefire.groups>large</surefire.groups>
+                <surefire.excludedGroups></surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -324,13 +259,8 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <excludes combine.self="override"/>
-                            <includes>
-                                <include>**/QuantitativeTest.java</include>
-                                <include>**/DelimitedIoPerfTest.java</include>
-                                <include>**/AllTestsSampleTest.java</include>
-                                <include>**/StorageArrayRepresentationTest.java</include>
-                            </includes>
-                            <groups>large</groups>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx4g --add-modules=jdk.incubator.vector</argLine>
@@ -347,18 +277,18 @@
         <!-- ============ ALL: release gate (aggregate) ============ -->
         <profile>
             <id>all</id>
+            <properties>
+                <surefire.groups>smoke, query, index, query-full, storage, concurrency, network, perf</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
+            </properties>
             <build>
                 <plugins>
                     <plugin>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <excludes combine.self="override"/>
-                            <includes>
-                                <include>**/*Test.java</include>
-                            </includes>
-                            <excludes>
-                                <exclude>**/AllTestsSampleTest.java</exclude>
-                            </excludes>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
                             <reuseForks>false</reuseForks>
                             <parallel>classes</parallel>
@@ -370,93 +300,19 @@
             </build>
         </profile>
 
-        <!-- OLD PROFILES (preserved temporarily) - will be removed in step 7 -->
+        <!-- Backward-compatible aliases for old profiles -->
         <profile>
             <id>test</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-surefire-plugin</artifactId>
-                        <configuration>
-                            <includes>
-                                <include>**/*Test.java</include>
-                            </includes>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
+            <properties>
+                <surefire.groups>smoke, query, index</surefire.groups>
+            </properties>
         </profile>
 
         <profile>
             <id>ci</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-surefire-plugin</artifactId>
-                        <configuration>
-                            <includes>
-                                <include>**/AllTestsSampleTest.java</include>
-                                <include>**/QuantitativeTest.java</include>
-                                <include>**/AbstractDieselTest.java</include>
-                                <include>**/AdvancedQueryTest.java</include>
-                                <include>**/AliasesQueryTest.java</include>
-                                <include>**/GroupByQueryTest.java</include>
-                                <include>**/InQueryTest.java</include>
-                                <include>**/JoinQueryTest.java</include>
-                                <include>**/LikeQueryTest.java</include>
-                                <include>**/OrderByQueryTest.java</include>
-                                <include>**/PerformanceQueryTest.java</include>
-                                <include>**/PerformanceRegressionTest.java</include>
-                                <include>**/SubqueryQueryTest.java</include>
-                                <include>**/NullSafetyQueryTest.java</include>
-                                <include>**/CsvIndexManagerTest.java</include>
-                                <include>**/CsvTsvHeaderMappingTest.java</include>
-                                <include>**/LoadErrorHandlingTest.java</include>
-                                <include>**/CharsetEncodingTest.java</include>
-                                <include>**/AtomicFileWriteTest.java</include>
-                                <include>**/ReaderCorrectnessTest.java</include>
-                                <include>**/StorageLoadModeTest.java</include>
-                                <include>**/StorageArrayRepresentationTest.java</include>
-                                <include>**/DelimitedIoPerfTest.java</include>
-                                <include>**/ConcurrentSaveTest.java</include>
-                                <include>**/CsvStorageAdvancedTest.java</include>
-                                <include>**/TsvStorageAdvancedTest.java</include>
-                                <include>**/CompressionTest.java</include>
-                                <include>**/JsonlStorageTest.java</include>
-                                <include>**/JsonlSchemaProjectionTest.java</include>
-                                <include>**/JsonlSchemaModeTest.java</include>
-                                <include>**/JsonlNestedModeTest.java</include>
-                                <include>**/JsonlTypeMapperTest.java</include>
-                                <include>**/JsonStreamAbstractionTest.java</include>
-                                <include>**/JsonlNullSemanticsTest.java</include>
-                                <include>**/JsonlLoadDiagnosticsTest.java</include>
-                                <include>**/JsonlAppendModeTest.java</include>
-                                <include>**/JsonlDeterministicSerializationTest.java</include>
-                                <include>**/JsonlCompressionTest.java</include>
-                                <include>**/JsonlIndexTest.java</include>
-                            </includes>
-                            <argLine>-Xmx${test.heap} -Djava.awt.headless=true</argLine>
-                            <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
-                            <forkCount>1</forkCount>
-                            <reuseForks>false</reuseForks>
-                        </configuration>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-jar-plugin</artifactId>
-                        <version>3.3.0</version>
-                        <configuration>
-                            <archive>
-                                <manifest>
-                                    <mainClass>com.dieseldb.DatabaseServer</mainClass>
-                                </manifest>
-                            </archive>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
+            <properties>
+                <surefire.groups>smoke, query, index, query-full, storage, concurrency, network</surefire.groups>
+            </properties>
         </profile>
     </profiles>
 
