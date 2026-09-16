@@ -112,6 +112,8 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private boolean unknownFieldWarned;
     private boolean duplicateFieldWarned;
     private boolean unresolvedProjectionWarned;
+    /** Suppresses the per-reader final skipped-row WARNING (parallel partitions, prompt 54). */
+    private boolean suppressSkipSummary;
     /** Rows skipped so far by the {@code jsonl.load.error.mode=skip_row} policy (prompt 48). */
     private long skippedRowCount;
     private boolean skipRowWarningEmitted;
@@ -700,6 +702,39 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     }
 
     /**
+     * Prepares this reader to decode rows from a byte-offset partition of a
+     * JSONL file (prompt 54 parallel read). JSONL has no header and no
+     * multi-line rows, so only the line numbering and the BOM policy need to
+     * be seeded: the next physical line read is reported as
+     * {@code firstDataLine}. The UTF-8 BOM is only stripped when the partition
+     * starts at the very first physical line of the file ({@code atFileStart}),
+     * so a legitimate {@code \uFEFF} character in a later line is never
+     * silently removed.
+     *
+     * @param firstDataLine the 1-based absolute physical line of the
+     *                      partition's first line
+     * @param atFileStart   whether the partition begins at the file's first
+     *                      physical line (BOM handling applies)
+     */
+    public void initPartition(long firstDataLine, boolean atFileStart) {
+        this.lineNumber = firstDataLine - 1;
+        this.lastRowLine = 0;
+        this.firstLine = atFileStart;
+    }
+
+    /**
+     * Suppresses the single final skipped-row WARNING emitted at end of file.
+     * Used by the parallel loader (prompt 54), which aggregates the skipped
+     * counts of all partitions into one summary instead of one warning per
+     * partition.
+     *
+     * @param suppress whether to suppress this reader's final summary warning
+     */
+    public void setSuppressSkipSummary(boolean suppress) {
+        this.suppressSkipSummary = suppress;
+    }
+
+    /**
      * Returns the number of rows skipped under the {@code jsonl.load.error.mode=skip_row}
      * policy (prompt 48) since this reader was created. In {@code fail} mode
      * this stays {@code 0}.
@@ -977,7 +1012,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
 
     /** Emits the single final WARNING with the total skipped-row count (prompt 48). */
     private void emitSkipRowSummary() {
-        if (skippedRowCount > 0 && !skipRowWarningEmitted) {
+        if (skippedRowCount > 0 && !skipRowWarningEmitted && !suppressSkipSummary) {
             skipRowWarningEmitted = true;
             LOGGER.warn("{} JSONL load skipped {} malformed line(s) (jsonl.load.error.mode=skip_row)",
                     contextPrefix(), skippedRowCount);

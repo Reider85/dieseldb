@@ -1,26 +1,33 @@
-﻿## Test Profile Migration (2026-09-16 20:33:43)
+﻿3.1.18 Prompt 54 - JSONL parallel read via byte-offset pre-scan
 
-**Branch:** chore/test-profiles-migration
-**Commit:** c3ec76b
+New public diesel/storage/JsonlParallelLoader: one byte-level pass splits
+physical lines exactly like BufferedReader.readLine (\n, \r\n, lone \r),
+detects BOM and blank lines, records every data-line start offset into a
+LineIndex cached by path+mtime+size. Plain-text loads are partitioned into
+ByteRangeTask ranges over those offsets, read concurrently on a daemon
+ForkJoinPool and merged deterministically in file order. Each partition has
+a thread-confined JsonlSchemaManager and returns its nestedColumnIndexes;
+loadParallel unions them so JsonlRowStorage replays the nested-JSON holder
+marks onto the shared schema manager (prevents double-encoding on save).
+Fallbacks to the sequential reader: compressed files, files below
+jsonl.parallel.read.threshold (sysprop -> config.properties -> default
+10000), and > Integer.MAX_VALUE lines.
 
-### Changes
-- Replaced flat surefire <includes> with 7 Maven profiles: fast, core, concurrency, network, perf, large, all
-- Default mvn test now runs 0 tests (profile mandatory)
-- GitHub Actions split into 4-job PR-gate matrix + nightly + release-gate
-- 90 test classes annotated with JUnit 5 @Tag (smoke/query/index/query-full/storage/concurrency/network/perf)
-- Surefire switched from <includes> to <groups> (JUnit 5 native tag filtering)
-- TIA scripts: scripts/tia.ps1 + scripts/tia-mapping.txt
-- AllTestsSampleTest gated behind diesel.runAllTestsSample system property
-- Makefile updated with profile-specific targets
+- JsonlRowReader: initPartition(long firstDataLine, boolean atFileStart),
+  setSuppressSkipSummary(boolean) so per-partition skip WARNINGs collapse
+  into one merged summary; sequential behaviour unchanged.
+- JsonlIndexManager: loadFromFileParallelArrays(...), cached preScan(File),
+  parallelReadThreshold().
+- JsonlRowStorage: parallel branch when the codec is none, all-true presence
+  fallback, nested-mark replay into sharedSchemaManager.
+- config.properties: jsonl.parallel.read.threshold = 10000.
+- New JsonlParallelLoadTest (7 fast tests + @LargeTest 1M rows).
 
-### Profile Validation
-| Profile | Tests | Status |
-|---------|-------|--------|
-| fast | 178 | PASS |
-| core | 974 | PASS |
-| concurrency | 7 | PASS |
-| network | 50 | PASS |
-| perf | 17 | PASS |
-
-### Skipped
-- Maven Build Cache: maven-build-cache-extension 1.0.0 incompatible with Maven 3.9.9
+Verification: Prompt-54 tests 8/8 pass; 1M-row acceptance seq=3311ms vs
+par=2162ms (1.55x on 4 cores). -P all 1233 tests with only 2 pre-existing
+environment perf failures (PerformanceRegressionTest, RegexPerformance
+BenchmarkTest) and -P large with only DelimitedIoPerfTest (all CPU-bound
+thresholds set on faster hardware; JSONL code untouched). Profile check
+skipped (no JOIN/hash join/performance wording). make/changelog/timing
+targets unavailable on this machine, gate ran as raw Maven; entry appended
+manually.

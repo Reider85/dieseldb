@@ -13,11 +13,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.ErrorMessages;
 import diesel.storage.json.JsonPathResolver;
 import diesel.storage.json.JsonParserConfig;
 
@@ -97,6 +99,13 @@ public final class JsonlIndexManager {
     /** Tombstone compaction threshold: auto-compact when deleted/live exceeds this. */
     private static final double COMPACTION_THRESHOLD = 0.25;
 
+    /** JSONL parallel read config key (prompt 54): min data lines to parallelize. */
+    private static final String PARALLEL_READ_THRESHOLD_KEY = "jsonl.parallel.read.threshold";
+
+    private static final long DEFAULT_PARALLEL_READ_THRESHOLD = 10_000L;
+
+    private static final Properties ROOT_CONFIG = loadRootConfig();
+
     private final String tableName;
     private final JsonParserConfig config;
     private List<String> columns;
@@ -119,6 +128,11 @@ public final class JsonlIndexManager {
     private boolean bulkMode;
     private boolean bulkDirty;
     private boolean loadedFromSidecar;
+
+    /** Cached byte pre-scan of the JSONL data file (prompt 54), guarded by the
+     * owning table's lock like the delimited manager's; volatile copy-on-write
+     * so parallel readers observe one consistent snapshot. */
+    private volatile JsonlParallelLoader.LineIndexCache lineIndexCache;
 
     /**
      * @param tableName the table name
@@ -563,6 +577,97 @@ public final class JsonlIndexManager {
     /** Returns the next rowId that will be assigned. */
     public long getNextRowId() {
         return nextRowId;
+    }
+
+    // ─── Parallel read (prompt 54) ───────────────────────────────────
+
+    /**
+     * Reads a JSONL data file through the byte-offset parallel loader
+     * ({@link JsonlParallelLoader}) when beneficial, or returns {@code null}
+     * so the caller falls back to its sequential path.
+     * <ul>
+     * <li>only plain (uncompressed) files are parallelized - compressed JSONL
+     * is frame-based and not byte-addressable (see
+     * {@link JsonlParallelLoader}); the caller never passes those here;</li>
+     * <li>the file is pre-scanned once (one byte pass) and the result is cached
+     * until the file's mtime/size changes (prompt 34 contract);</li>
+     * <li>below {@code jsonl.parallel.read.threshold} data lines or above
+     * {@link Integer#MAX_VALUE} the method returns {@code null} (sequential is
+     * cheaper);</li>
+     * <li>a missing/empty file also returns {@code null}.</li>
+     * </ul>
+     *
+     * @param file        the plain {@code .jsonl} data file
+     * @param columns     the ordered schema column names to read against
+     * @param columnTypes column name to expected Java type
+     * @param config      the streaming JSON configuration
+     * @return the loaded rows and presence flags in file order, or
+     *         {@code null} when the parallel path was not taken
+     * @throws IOException on I/O errors
+     */
+    public JsonlParallelLoader.JsonlLoadResult loadFromFileParallelArrays(
+            File file, List<String> columns, Map<String, Class<?>> columnTypes,
+            JsonParserConfig config) throws IOException {
+        if (file == null || !file.exists() || !file.isFile()) {
+            return null;
+        }
+        JsonlParallelLoader.LineIndex index = preScan(file);
+        long totalDataLines = index.dataLineCount();
+        if (totalDataLines == 0 || totalDataLines < parallelReadThreshold()
+                || totalDataLines > Integer.MAX_VALUE) {
+            return null;
+        }
+        return JsonlParallelLoader.loadParallel(file, index, columns, columnTypes, config,
+                StorageConfig.getCharset());
+    }
+
+    /** Returns the cached pre-scan for the file, re-scanning only on mtime/size change. */
+    private JsonlParallelLoader.LineIndex preScan(File file) throws IOException {
+        JsonlParallelLoader.LineIndexCache cached = lineIndexCache;
+        if (cached != null && cached.matches(file)) {
+            return cached.index;
+        }
+        JsonlParallelLoader.LineIndex index = JsonlParallelLoader.preScan(file, StorageConfig.getCharset());
+        try {
+            lineIndexCache = new JsonlParallelLoader.LineIndexCache(
+                    file.getAbsolutePath(), file.lastModified(), file.length(), index);
+        } catch (SecurityException ignored) {
+        }
+        return index;
+    }
+
+    /** Resolves {@code jsonl.parallel.read.threshold}: sysprop > config.properties > default. */
+    private long parallelReadThreshold() {
+        String override = System.getProperty(PARALLEL_READ_THRESHOLD_KEY);
+        if (override != null) {
+            try {
+                return Long.parseLong(override.trim());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        String configured = ROOT_CONFIG.getProperty(PARALLEL_READ_THRESHOLD_KEY);
+        if (configured != null) {
+            try {
+                return Long.parseLong(configured.trim());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return DEFAULT_PARALLEL_READ_THRESHOLD;
+    }
+
+    private static Properties loadRootConfig() {
+        Properties props = new Properties();
+        try {
+            File configFile = new File(ErrorMessages.CONFIG_FILE);
+            if (configFile.exists()) {
+                try (FileInputStream fis = new FileInputStream(configFile)) {
+                    props.load(fis);
+                }
+            }
+        } catch (Exception ignored) {
+            LOGGER.debug("Config error for JsonlIndexManager, using defaults: {}", ignored.getMessage());
+        }
+        return props;
     }
 
     // ─── Internal helpers ───────────────────────────────────────────────

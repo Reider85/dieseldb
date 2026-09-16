@@ -569,16 +569,47 @@ public class JsonlRowStorage extends AbstractRowStorage {
             List<Object[]> loaded = new ArrayList<>();
             List<boolean[]> loadedPresence = new ArrayList<>();
             int lineCount = 0;
-            try (BufferedReader br = CompressionFactory.openDelimitedReader(file, ref.codec(), StorageConfig.getCharset());
-                 JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
-                         file.getPath(), config)) {
-                while (jsonlReader.hasNext()) {
-                    Object[] row = jsonlReader.nextArray();
-                    if (row != null) {
-                        loaded.add(row);
-                        boolean[] present = jsonlReader.getLastRowPresent();
+            boolean parallelApplied = false;
+            if (ref.codec().isNone()) {
+                // Prompt 54: byte-offset parallel read for plain files. The
+                // loader pre-scans once (cached by mtime/size), parallelizes only
+                // above jsonl.parallel.read.threshold, and returns null to fall
+                // back to the sequential path below. Compressed JSONL is
+                // frame-based and never byte-addressable, so it stays sequential.
+                JsonlParallelLoader.JsonlLoadResult parallel = jsonlIndex()
+                        .loadFromFileParallelArrays(file, plan.columns(), plan.columnTypes(), config);
+                if (parallel != null && parallel.rows() != null) {
+                    parallelApplied = true;
+                    List<boolean[]> presence = parallel.presence();
+                    for (int i = 0; i < parallel.rows().size(); i++) {
+                        loaded.add(parallel.rows().get(i));
+                        boolean[] present = presence != null && i < presence.size() ? presence.get(i) : null;
                         loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
-                        lineCount++;
+                    }
+                    lineCount = loaded.size();
+                    // Partition readers mark nested-JSON holder columns on their
+                    // own schema managers (thread-confined); replay the union
+                    // onto the shared manager so a save re-embeds nested
+                    // structures instead of writing them as plain strings.
+                    if (parallel.nestedColumnIndexes() != null) {
+                        for (int columnIndex : parallel.nestedColumnIndexes()) {
+                            sharedSchemaManager.markNestedJson(columnIndex);
+                        }
+                    }
+                }
+            }
+            if (!parallelApplied) {
+                try (BufferedReader br = CompressionFactory.openDelimitedReader(file, ref.codec(), StorageConfig.getCharset());
+                     JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
+                             file.getPath(), config)) {
+                    while (jsonlReader.hasNext()) {
+                        Object[] row = jsonlReader.nextArray();
+                        if (row != null) {
+                            loaded.add(row);
+                            boolean[] present = jsonlReader.getLastRowPresent();
+                            loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
+                            lineCount++;
+                        }
                     }
                 }
             }
