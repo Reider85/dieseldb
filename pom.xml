@@ -272,6 +272,10 @@
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
+                                <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
+                            </systemPropertyVariables>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -330,6 +334,10 @@
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx4g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
+                                <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
+                            </systemPropertyVariables>
                         </configuration>
                     </plugin>
                 </plugins>

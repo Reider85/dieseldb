@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -43,6 +44,7 @@ import java.util.zip.GZIPInputStream;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@EnabledIfSystemProperty(named = "diesel.runAllTestsSample", matches = "true")
 public class AllTestsSampleTest {
     private static final Logger LOGGER = Logger.getLogger(AllTestsSampleTest.class.getName());
     private static final int RECORD_COUNT = 100;
