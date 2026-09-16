@@ -59,6 +59,8 @@ CsvStorageAdvancedTest	storage
 CsvIndexManagerTest	storage
 CsvTsvHeaderMappingTest	storage
 TsvStorageAdvancedTest	storage
+CsvStorageTest	storage
+TsvStorageTest	storage
 JsonStreamAbstractionTest	storage
 JsonlStorageTest	storage
 JsonlSchemaProjectionTest	storage
