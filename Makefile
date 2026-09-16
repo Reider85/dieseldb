@@ -22,7 +22,7 @@ all: build
 ## Build the project
 build:
 	@echo "Building DieselDB..."
-	"$(JAVA_HOME)/bin/java" -jar "$(MVN_PATH)" package -DskipTests
+	$(MVN) -B package -DskipTests
 
 ## Run fast profile: smoke + index + query (<30s)
 test:

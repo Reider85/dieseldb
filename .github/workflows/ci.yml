@@ -17,7 +17,7 @@ on:
         default: fast
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.profile }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.profile || github.event_name }}
   cancel-in-progress: true
 
 jobs:
