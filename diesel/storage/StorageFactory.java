@@ -5,6 +5,8 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.storage.avro.AvroRowStorage;
+
 /**
  * Factory for creating {@link RowStorage} implementations by type name.
  * The storage type is configured via {@code storage.type} in
@@ -15,6 +17,7 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code csv} &mdash; {@link CsvRowStorage}</li>
  *   <li>{@code tsv} &mdash; {@link TsvRowStorage}</li>
  *   <li>{@code jsonl} &mdash; {@link JsonlRowStorage}</li>
+ *   <li>{@code avro} &mdash; {@link diesel.storage.avro.AvroRowStorage}</li>
  * </ul>
  */
 public final class StorageFactory {
@@ -51,6 +54,10 @@ public final class StorageFactory {
             case "jsonl" -> {
                 LOGGER.debug("Creating JsonlRowStorage for table {}", tableName);
                 yield new JsonlRowStorage(tableName, columns, columnTypes);
+            }
+            case "avro" -> {
+                LOGGER.debug("Creating AvroRowStorage for table {}", tableName);
+                yield new AvroRowStorage(tableName, columns, columnTypes);
             }
             default -> {
                 LOGGER.debug("Creating InMemoryRowStorage for table {}", tableName);

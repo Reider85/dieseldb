@@ -3145,3 +3145,36 @@ Verification: fast profile 178/0/0 BUILD SUCCESS; core profile 1110/0/0
 BUILD SUCCESS (AvroSchemaTest 52/52 green). Profile check skipped (no
 JOIN/hash join/performance wording in prompt 58). make/changelog unavailable
 on this machine — entry appended manually.
+
+---
+
+Prompt 59 (Section 2 AVRO) DONE (2026-09-17) — AvroRowStorage base class:
+RowStorage implementation for Avro data files. New
+`diesel/storage/avro/AvroRowStorage` extends AbstractRowStorage: compact
+`List<Object[]>` rows with local column-index Map (avoids package-private
+RowArrays), full CRUD (scan/insert/insertAt/update/delete/setRows) with
+AbstractRowStorage index-sync hooks, `saveToFile` writes Avro data files via
+DataFileWriter through AtomicFileWriter (crash-safe temp+rename, Prompt 30)
+using a non-closing OutputStream wrapper so the channel stays open for
+fsync; `loadFromFile` reads via DataFileReader, resolving the schema from
+the .avsc sidecar first then falling back to the data-file header.
+Row<->GenericRecord conversion handles all 14 DieselDB scalar types:
+String, Integer, Long, Short, Byte, Float, Double, Boolean, BigDecimal
+(Avro decimal logical type with scale-aware encode/decode —
+`setScale(avroScale)` on write, `new BigDecimal(unscaled, scale)` on
+read), LocalDate (date logical type, epoch-day int), LocalDateTime
+(timestamp-millis logical type, epoch-millis long), UUID (uuid logical
+type, String), Character (String), byte[] (bytes). All fields written as
+nullable unions `["null", type]` via `buildNullableSchema` so Java nulls
+round-trip correctly. Registered `"avro"` case in `StorageFactory`.
+`config.properties` documents `storage.type = avro`. New
+`AvroRowStorageTest` (14 tests @Tag("storage")): insert+scan, insertAt,
+update, delete, setRows, save/load round-trip (all scalar types), empty
+table, load nonexistent, null values (all-null row), StorageFactory
+integration, multiple save/load cycles, file existence check, 1000-row
+large set. Registered in `scripts/tia-mapping.txt` (existing rule:
+`diesel/storage/avro/*.java → storage`). Verification: fast 178/0/0;
+core 1124/0/0 (AvroRowStorageTest 14/14, AvroSchemaTest 52/52);
+large 13/0/0 BUILD SUCCESS. Profile check skipped (no JOIN/hash
+join/performance wording in prompt 59). make/changelog unavailable —
+entry appended manually.

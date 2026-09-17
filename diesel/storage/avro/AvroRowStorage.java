@@ -1,0 +1,538 @@
+package diesel.storage.avro;
+
+import java.io.File;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.UUID;
+
+import org.apache.avro.Schema;
+import org.apache.avro.file.DataFileReader;
+import org.apache.avro.file.DataFileWriter;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericDatumReader;
+import org.apache.avro.generic.GenericDatumWriter;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.io.DatumWriter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.OutputStream;
+
+import diesel.DieselIOException;
+import diesel.storage.AbstractRowStorage;
+import diesel.storage.AtomicFileWriter;
+import diesel.storage.RowStorage;
+
+/**
+ * Avro-backed implementation of {@link RowStorage}. Rows are kept in an
+ * in-memory compact {@code Object[]} buffer and persisted as Avro data files
+ * ({@code .avro}). Schema management is delegated to {@link AvroSchemaManager}
+ * and type conversions to {@link AvroTypeMapper}.
+ *
+ * <p>Each {@code saveToFile} writes the Avro data file via
+ * {@link AtomicFileWriter} (crash-safe temp+rename) and the schema sidecar
+ * ({@code .avsc}) via {@link AvroSchemaManager}. {@code loadFromFile} reads
+ * the Avro data file and rebuilds the in-memory rows.
+ *
+ * @since Prompt 59
+ */
+public class AvroRowStorage extends AbstractRowStorage {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(AvroRowStorage.class);
+
+    private static final String AVRO_EXTENSION = ".avro";
+    private static final String AVRO_PATH_KEY = "avro.path";
+    private static final String DEFAULT_AVRO_PATH = "data/avro";
+
+    protected final List<Object[]> rows = new ArrayList<>();
+    private final List<String> colNames;
+    private final Map<String, Integer> colIndex;
+    private boolean fileInitialized;
+
+    public AvroRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
+        super(tableName, columns, columnTypes);
+        this.colNames = List.copyOf(columns);
+        this.colIndex = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < columns.size(); i++) {
+            colIndex.put(columns.get(i), i);
+        }
+    }
+
+    public boolean isFileInitialized() {
+        return fileInitialized;
+    }
+
+    public void setFileInitialized(boolean fileInitialized) {
+        this.fileInitialized = fileInitialized;
+    }
+
+    private Object[] fromMap(Map<String, Object> row) {
+        Object[] values = new Object[colNames.size()];
+        if (row == null) return values;
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            Integer idx = colIndex.get(entry.getKey());
+            if (idx != null) values[idx] = entry.getValue();
+        }
+        return values;
+    }
+
+    private Map<String, Object> toMap(Object[] row) {
+        Map<String, Object> map = new HashMap<>(Math.max(colNames.size() * 2, 4));
+        for (int i = 0; i < colNames.size() && row != null && i < row.length; i++) {
+            map.put(colNames.get(i), row[i]);
+        }
+        return map;
+    }
+
+    // ─── RowStorage lifecycle ───────────────────────────────────────
+
+    @Override
+    public void open() { }
+
+    @Override
+    public void close() { }
+
+    @Override
+    public List<Map<String, Object>> scan() {
+        List<Map<String, Object>> result = new ArrayList<>(rows.size());
+        for (Object[] row : rows) {
+            result.add(toMap(row));
+        }
+        return result;
+    }
+
+    @Override
+    public void insert(Map<String, Object> row) {
+        Object[] arr = fromMap(row);
+        rows.add(arr);
+        syncIndexAppend(arr, rows.size() - 1);
+    }
+
+    @Override
+    public void insertAt(int rowIndex, Map<String, Object> row) {
+        Object[] arr = fromMap(row);
+        rows.add(rowIndex, arr);
+        syncIndexInsert(arr, rowIndex);
+    }
+
+    @Override
+    public void update(int rowIndex, Map<String, Object> row) {
+        Object[] oldRow = rows.get(rowIndex);
+        Object[] newRow = fromMap(row);
+        rows.set(rowIndex, newRow);
+        syncIndexUpdate(oldRow, rowIndex, newRow);
+    }
+
+    @Override
+    public void delete(int rowIndex) {
+        rows.remove(rowIndex);
+        syncIndexDelete(rowIndex);
+    }
+
+    @Override
+    public void setRows(List<Map<String, Object>> newRows) {
+        rows.clear();
+        for (Map<String, Object> row : newRows) {
+            rows.add(fromMap(row));
+        }
+        syncIndexBulkFromArrays(rows);
+    }
+
+    // ─── Persistence ────────────────────────────────────────────────
+
+    @Override
+    public void saveToFile(String tableName) {
+        Schema schema = buildNullableSchema(tableName, columns, columnTypes);
+        File avroFile = new File(resolveAvroFilePath());
+        try {
+            File parent = avroFile.getParentFile();
+            if (parent != null) parent.mkdirs();
+            writeAvroFile(avroFile, schema);
+            writeSchemaSidecar(tableName, schema);
+            fileInitialized = true;
+            LOGGER.info("AvroRowStorage {} saved Avro to {} with {} rows",
+                    tableName, avroFile.getPath(), rows.size());
+        } catch (IOException e) {
+            throw new DieselIOException("Failed to save table to Avro file: " + avroFile.getPath(), e);
+        }
+    }
+
+    @Override
+    public void loadFromFile(String tableName) {
+        File avroFile = new File(resolveAvroFilePath());
+        if (!avroFile.exists()) {
+            LOGGER.info("Avro file {} not found for storage {}", avroFile.getPath(), tableName);
+            return;
+        }
+        List<Object[]> previous = new ArrayList<>(rows);
+        try {
+            List<Object[]> loaded = readAvroFile(avroFile, tableName);
+            rows.clear();
+            rows.addAll(loaded);
+            fileInitialized = true;
+            LOGGER.info("AvroRowStorage {} loaded Avro from {} with {} rows",
+                    tableName, avroFile.getPath(), rows.size());
+            syncIndexBulkFromArrays(rows);
+        } catch (DieselIOException e) {
+            rows.clear();
+            rows.addAll(previous);
+            throw e;
+        } catch (IOException e) {
+            rows.clear();
+            rows.addAll(previous);
+            throw new DieselIOException("Failed to load table from Avro file: " + avroFile.getPath(), e);
+        }
+    }
+
+    // ─── Avro file I/O ──────────────────────────────────────────────
+
+    private void writeAvroFile(File target, Schema schema) throws IOException {
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(target)) {
+            DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
+            OutputStream nonClosing = new OutputStream() {
+                private final OutputStream delegate = afw.outputStream();
+                @Override public void write(int b) throws IOException { delegate.write(b); }
+                @Override public void write(byte[] b, int off, int len) throws IOException { delegate.write(b, off, len); }
+                @Override public void flush() throws IOException { delegate.flush(); }
+                @Override public void close() { /* no-op: AtomicFileWriter owns the channel */ }
+            };
+            DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter);
+            try {
+                dataFileWriter.create(schema, nonClosing);
+                for (Object[] row : rows) {
+                    GenericRecord record = toRecord(row, schema);
+                    dataFileWriter.append(record);
+                }
+                dataFileWriter.flush();
+            } finally {
+                dataFileWriter.close();
+            }
+            afw.commit();
+        }
+    }
+
+    private List<Object[]> readAvroFile(File file, String tableName) throws IOException {
+        Schema schema;
+        File sidecarFile = new File(resolveAvroFilePath()).toPath()
+                .resolveSibling(AvroSchemaManager.sanitizeName(tableName) + AvroSchemaManager.AVSC_EXTENSION).toFile();
+        if (sidecarFile.exists()) {
+            schema = AvroSchemaManager.readSchemaFile(sidecarFile.toPath());
+        } else {
+            GenericDatumReader<GenericRecord> dr = new GenericDatumReader<>();
+            DataFileReader<GenericRecord> dfr = new DataFileReader<>(file, dr);
+            try {
+                schema = dfr.getSchema();
+            } finally {
+                dfr.close();
+            }
+        }
+
+        List<Object[]> loaded = new ArrayList<>();
+        GenericDatumReader<GenericRecord> datumReader = new GenericDatumReader<>(schema);
+        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(file, datumReader);
+        try {
+            while (dataFileReader.hasNext()) {
+                GenericRecord record = dataFileReader.next();
+                Object[] row = fromRecord(record, columns, columnTypes);
+                loaded.add(row);
+            }
+        } finally {
+            dataFileReader.close();
+        }
+        return loaded;
+    }
+
+    private void writeSchemaSidecar(String tableName, Schema schema) throws IOException {
+        File avroFile = new File(resolveAvroFilePath());
+        Path sidecarPath = avroFile.toPath().resolveSibling(AvroSchemaManager.sanitizeName(tableName) + AvroSchemaManager.AVSC_EXTENSION);
+        AvroSchemaManager.writeSchemaFile(schema, sidecarPath);
+    }
+
+    // ─── File path resolution ───────────────────────────────────────
+
+    /**
+     * Builds an Avro RECORD schema with all fields wrapped in nullable unions
+     * ({@code ["null", type]}) so that Java {@code null} values are supported.
+     */
+    private static Schema buildNullableSchema(String tableName, List<String> columns,
+                                               Map<String, Class<?>> columnTypes) {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("Table name must not be blank");
+        }
+        if (columns == null || columns.isEmpty()) {
+            throw new IllegalArgumentException("Column list must not be empty for table: " + tableName);
+        }
+
+        String avroName = AvroSchemaManager.sanitizeName(tableName);
+        List<Schema.Field> fields = new ArrayList<>(columns.size());
+
+        for (String col : columns) {
+            Class<?> javaType = null;
+            for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
+                if (e.getKey().equalsIgnoreCase(col)) {
+                    javaType = e.getValue();
+                    break;
+                }
+            }
+            if (javaType == null) {
+                throw new IllegalArgumentException("No type defined for column: " + col + " in table: " + tableName);
+            }
+            Schema baseSchema = AvroTypeMapper.toAvroSchema(javaType, col);
+            Schema nullableSchema = AvroTypeMapper.nullableOf(baseSchema);
+            Schema.Field field = new Schema.Field(col, nullableSchema, null, null);
+            fields.add(field);
+        }
+
+        Schema record = Schema.createRecord(avroName,
+                "DieselDB table: " + tableName,
+                "diesel.avro",
+                false);
+        record.setFields(fields);
+        return record;
+    }
+
+    private String resolveAvroFilePath() {
+        if (dataDir != null && !dataDir.isBlank()) {
+            return dataDir + File.separator + tableName + AVRO_EXTENSION;
+        }
+        String avroDir = System.getProperty(AVRO_PATH_KEY);
+        if (avroDir == null || avroDir.isBlank()) {
+            avroDir = resolveConfigValue(AVRO_PATH_KEY, DEFAULT_AVRO_PATH);
+        }
+        return avroDir + File.separator + tableName + AVRO_EXTENSION;
+    }
+
+    private static String resolveConfigValue(String key, String defaultValue) {
+        String userDir = System.getProperty("user.dir", ".");
+        File configFile = new File(userDir, "config.properties");
+        if (configFile.exists()) {
+            try {
+                var props = new java.util.Properties();
+                try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
+                    props.load(in);
+                }
+                String val = props.getProperty(key);
+                if (val != null && !val.isBlank()) return val;
+            } catch (IOException ignored) { }
+        }
+        return defaultValue;
+    }
+
+    // ─── Row <-> GenericRecord conversion ───────────────────────────
+
+    static GenericRecord toRecord(Object[] row, Schema schema) {
+        GenericRecord record = new GenericData.Record(schema);
+        List<Schema.Field> fields = schema.getFields();
+        for (int i = 0; i < fields.size() && i < row.length; i++) {
+            Schema.Field field = fields.get(i);
+            Object value = row[i];
+            record.put(field.name(), toAvroValue(value, field.schema()));
+        }
+        return record;
+    }
+
+    static Object[] fromRecord(GenericRecord record, List<String> columns,
+                                 Map<String, Class<?>> columnTypes) {
+        Object[] row = new Object[columns.size()];
+        Schema schema = record.getSchema();
+        for (int i = 0; i < columns.size(); i++) {
+            String col = columns.get(i);
+            Object avroValue = record.get(col);
+            Class<?> targetType = resolveType(col, columnTypes);
+            Schema.Field field = schema.getField(col);
+            row[i] = fromAvroValue(avroValue, targetType, field != null ? field.schema() : null);
+        }
+        return row;
+    }
+
+    // ─── Value conversion helpers ───────────────────────────────────
+
+    private static Object toAvroValue(Object value, Schema fieldSchema) {
+        if (value == null) return null;
+        if (fieldSchema.getType() == Schema.Type.UNION) {
+            for (Schema branch : fieldSchema.getTypes()) {
+                if (branch.getType() != Schema.Type.NULL) {
+                    return toAvroValue(value, branch);
+                }
+            }
+            return null;
+        }
+        if (fieldSchema.getLogicalType() != null) {
+            return switch (fieldSchema.getLogicalType().getName()) {
+                case "decimal" -> {
+                    BigDecimal bd = (value instanceof BigDecimal) ? (BigDecimal) value : new BigDecimal(value.toString());
+                    int avroScale = 18; // default from AvroTypeMapper
+                    if (fieldSchema.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
+                        avroScale = d.getScale();
+                    }
+                    BigDecimal scaled = bd.setScale(avroScale, java.math.RoundingMode.HALF_UP);
+                    yield ByteBuffer.wrap(scaled.unscaledValue().toByteArray());
+                }
+                case "date" -> {
+                    LocalDate ld = (value instanceof LocalDate) ? (LocalDate) value : LocalDate.parse(value.toString());
+                    yield (int) ld.toEpochDay();
+                }
+                case "timestamp-millis", "timestamp-micros" -> {
+                    LocalDateTime ldt = (value instanceof LocalDateTime) ? (LocalDateTime) value
+                            : LocalDateTime.parse(value.toString());
+                    yield ldt.toInstant(ZoneOffset.UTC).toEpochMilli();
+                }
+                case "uuid" -> value.toString();
+                default -> value;
+            };
+        }
+        return switch (fieldSchema.getType()) {
+            case STRING -> value.toString();
+            case INT -> {
+                if (value instanceof Number n) yield n.intValue();
+                yield Integer.parseInt(value.toString());
+            }
+            case LONG -> {
+                if (value instanceof Number n) yield n.longValue();
+                yield Long.parseLong(value.toString());
+            }
+            case FLOAT -> {
+                if (value instanceof Number n) yield n.floatValue();
+                yield Float.parseFloat(value.toString());
+            }
+            case DOUBLE -> {
+                if (value instanceof Number n) yield n.doubleValue();
+                yield Double.parseDouble(value.toString());
+            }
+            case BOOLEAN -> {
+                if (value instanceof Boolean b) yield b;
+                yield Boolean.parseBoolean(value.toString());
+            }
+            case BYTES -> {
+                if (value instanceof byte[] ba) yield ByteBuffer.wrap(ba);
+                if (value instanceof ByteBuffer bb) yield bb;
+                yield ByteBuffer.wrap(value.toString().getBytes());
+            }
+            default -> value;
+        };
+    }
+
+    private static Object fromAvroValue(Object avroValue, Class<?> targetType, Schema fieldSchema) {
+        if (avroValue == null || targetType == null) return avroValue;
+        if (avroValue instanceof ByteBuffer bb) {
+            if (targetType == BigDecimal.class) {
+                int scale = 18; // default
+                if (fieldSchema != null) {
+                    Schema base = fieldSchema.getType() == Schema.Type.UNION
+                            ? fieldSchema.getTypes().stream()
+                                .filter(s -> s.getType() != Schema.Type.NULL)
+                                .findFirst().orElse(fieldSchema)
+                            : fieldSchema;
+                    if (base.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
+                        scale = d.getScale();
+                    }
+                }
+                return new BigDecimal(new BigInteger(bb.array()), scale).stripTrailingZeros();
+            }
+            if (targetType == byte[].class) {
+                byte[] arr = new byte[bb.remaining()];
+                bb.get(arr);
+                bb.rewind();
+                return arr;
+            }
+        }
+        return switch (targetType.getSimpleName()) {
+            case "String" -> avroValue.toString();
+            case "Integer" -> {
+                if (avroValue instanceof Integer i) yield i;
+                if (avroValue instanceof Number n) yield n.intValue();
+                yield Integer.parseInt(avroValue.toString());
+            }
+            case "Long" -> {
+                if (avroValue instanceof Long l) yield l;
+                if (avroValue instanceof Number n) yield n.longValue();
+                yield Long.parseLong(avroValue.toString());
+            }
+            case "Short" -> {
+                if (avroValue instanceof Number n) yield n.shortValue();
+                yield Short.parseShort(avroValue.toString());
+            }
+            case "Byte" -> {
+                if (avroValue instanceof Number n) yield n.byteValue();
+                yield Byte.parseByte(avroValue.toString());
+            }
+            case "Float" -> {
+                if (avroValue instanceof Float f) yield f;
+                if (avroValue instanceof Number n) yield n.floatValue();
+                yield Float.parseFloat(avroValue.toString());
+            }
+            case "Double" -> {
+                if (avroValue instanceof Double d) yield d;
+                if (avroValue instanceof Number n) yield n.doubleValue();
+                yield Double.parseDouble(avroValue.toString());
+            }
+            case "Boolean" -> {
+                if (avroValue instanceof Boolean b) yield b;
+                yield Boolean.parseBoolean(avroValue.toString());
+            }
+            case "BigDecimal" -> {
+                if (avroValue instanceof BigDecimal bd) yield bd;
+                yield new BigDecimal(avroValue.toString());
+            }
+            case "LocalDate" -> {
+                if (avroValue instanceof LocalDate ld) yield ld;
+                if (avroValue instanceof Integer i) yield LocalDate.ofEpochDay(i);
+                yield LocalDate.parse(avroValue.toString());
+            }
+            case "LocalDateTime" -> {
+                if (avroValue instanceof LocalDateTime ldt) yield ldt;
+                if (avroValue instanceof Long l) yield Instant.ofEpochMilli(l).atZone(ZoneOffset.UTC).toLocalDateTime();
+                yield LocalDateTime.parse(avroValue.toString());
+            }
+            case "UUID" -> {
+                if (avroValue instanceof UUID u) yield u;
+                yield UUID.fromString(avroValue.toString());
+            }
+            case "Character" -> {
+                String s = avroValue.toString();
+                yield s.isEmpty() ? '\0' : s.charAt(0);
+            }
+            case "byte[]" -> {
+                if (avroValue instanceof byte[] ba) yield ba;
+                if (avroValue instanceof ByteBuffer bbuf) {
+                    byte[] arr = new byte[bbuf.remaining()];
+                    bbuf.get(arr);
+                    yield arr;
+                }
+                yield avroValue.toString().getBytes();
+            }
+            default -> avroValue;
+        };
+    }
+
+    private static Class<?> resolveType(String col, Map<String, Class<?>> columnTypes) {
+        if (columnTypes instanceof TreeMap && ((TreeMap<?, ?>) columnTypes).comparator() != null) {
+            return columnTypes.get(col);
+        }
+        for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(col)) {
+                return e.getValue();
+            }
+        }
+        return null;
+    }
+
+    // ─── Accessors ──────────────────────────────────────────────────
+
+    public List<Object[]> getInternalRows() {
+        return rows;
+    }
+}
