@@ -77,6 +77,8 @@ JsonlLoadModeTest	storage
 JsonlBlockManagerTest	storage
 JsonlLazyLoadTest	storage
 JsonlProjectionPushdownTest	storage
+JsonlStorageAdvancedTest	storage
+JsonlPropertyTest	storage
 CsvLargeFileStressTest	storage
 DelimitedByteParserTest	storage
 ConcurrentSaveTest	concurrency
