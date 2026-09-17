@@ -1,4 +1,4 @@
-﻿0.0.1 simple database only select
+﻿﻿0.0.1 simple database only select
 0.0.2 logging
 0.0.3 query logging
 0.0.4 INSERT
@@ -2969,3 +2969,52 @@ Changes:
 3.1.17 Fix 3 failing tests: (1) RegexPerformanceBenchmarkTest.benchmarkParse10kQueries -- hoist all per-call Pattern.compile calls in QueryParser into static final Pattern fields (incl. TOKEN_PATTERNS List.of, COMPARISON/HAVING operator Pattern arrays, clause-pattern ConcurrentHashMap cache); 9996 parses 52011ms -> 3001ms (17x); suppress FINEST/FINE log noise from diesel/QueryParser/SelectQueryParser/ConditionParser loggers in the test setUp; (2) InTest DieselIOException 'Failed to save table to CSV file' -- AtomicFileWriter.moveWithRetries treats a vanished .tmp as benign last-writer-wins (WARN + return, no throw) and DROP TABLE no longer races stale .tmp; (3) ServerConnectionLimitTest Connection refused -- DatabaseServer binds ServerSocket with backlog=512 (config server.backlog). Verification: fast 178/0/0, perf isolated RegexPerformanceBenchmarkTest PASS (3001ms), core PASS (InTest), network PASS (ServerConnectionLimitTest; SEVERE client-handler noise expected), large 8/0/0 BUILD SUCCESS, collect-timing -> timingN.md, compare-timing exit 0 (baseline markdown-table format mismatch -> all rows NEW TEST, heavy >=100ms set manually stable: DelimitedIoPerf baselines 142.3s/135.3s, joins 0.17s/0.15s/0.03s). Profile check skipped (no JOIN/hash join/performance wording); make unavailable, entry appended manually.
 3.1.18 Prompt 54 - JSONL parallel read via byte-offset pre-scan (JsonlParallelLoader: LineIndex/LineIndexCache + ByteRangeTask partitions + deterministic file-order merge + compressed/below-jsonl.parallel.read.threshold/Integer.MAX_VALUE fallbacks + nested-column union carried to JsonlIndexManager; JsonlRowReader initPartition/setSuppressSkipSummary; JsonlRowStorage parallel branch replays nested marks into shared JsonlSchemaManager; config jsonl.parallel.read.threshold=10000; JsonlParallelLoadTest 7 fast + @LargeTest 1M rows seq=3311ms par=2162ms on 4 cores)
 3.1.19 fix(build-cache): register config.properties as checksum input (.mvn/maven-build-cache-config.xml <input><global><includes><include>config.properties</include>) so edits to config.properties invalidate the Maven build cache instead of silently restoring a cached build and skipping surefire:test. Verification: fast profile PASS, input files 219 -> 222, cache miss after config change forces real test run. Changelog entry appended manually (make unavailable on this machine).
+3.1.20 Prompt 55 - JSONL lazy block loading + projection pushdown
+
+New public diesel/storage/JsonlBlockManager: real byte-range blocks over the
+Prompt-54 pre-scan (block b = jsonl.block.rows data lines, default 1000).
+getBlock reads only its FileChannel range and streams it through a
+JsonlRowReader seeded by initPartition(firstDataLine, atFileStart); the
+access-order LRU (jsonl.block.cache.blocks, default 16) evicts for real and
+a miss triggers an actual range read. Optional per-block typed-column
+min/max stats are collected on full reads (zone-map scaffold). A whole-file
+buffer retained by the pre-scan serves both block slices and a parallel
+projection sweep (per-block parse on the common pool, deterministic
+file-order merge).
+
+Projection pushdown in JsonlRowReader skips unrequested field subtrees at
+the token level: subtreeNeeded(path, idx) = (idx != null &&
+neededByColumn[idx]) || prefixNeeded(path), used by parseCurrentRow and
+walkObjectFlat. STRICT-mode parity is preserved (an unknown scalar is still
+reported); nextArray always parses the full row.
+
+- JsonParserConfig: jsonl.lazy.blocks (default false), jsonl.block.rows
+  (default 1000), jsonl.block.cache.blocks (default 16) + builder/getters.
+- JsonlRowStorage: deferred load (lazyDeferred), ensureMaterialized() on any
+  classic access, readProjected/readProjectedArrays, guards so lazy and full
+  modes are identical by construction (deferred implies no mutation, disk is
+  truth). Append mode and compressed files never defer. External
+  append/mutation changes the pre-scan stamp (mtime/size) so blocks re-scan
+  and stale data is never returned.
+- JsonlParallelLoader: preScanKeepBytes(File, Charset) + LineIndex.fileBytes()
+  so blocks/sweep share one cached buffer; preScan delegates with
+  keepBytes=false (existing callers unchanged).
+- JsonlIndexManager: package-private preScan, invalidateLineIndexCache().
+- config.properties: jsonl.lazy.blocks / jsonl.block.rows /
+  jsonl.block.cache.blocks documented.
+- New tests: JsonlBlockManagerTest (10), JsonlLazyLoadTest (10),
+  JsonlProjectionPushdownTest (6 + @LargeTest perf); registered in
+  tag-mapping.tsv under storage.
+
+Verification: core storage 26/26 green; fast profile 178/0/0. Acceptance
+criterion (SELECT 3 of 42 columns on 20k x 40-col rows) full=390ms
+projected=119ms => 3.28x (>= 2x required; logged [JSONL-LAZY] perf). Lazy
+and full modes return identical rows, including flatten dot-columns and
+external-append visibility. -P large passes every @LargeTest except
+DelimitedIoPerfTest.csvTsvIoPerformance (TSV sequential load 106-111s vs a
+100s ceiling; machine has 4 logical cores and ~8.8GB free with background
+sync/browser load, CSV/TSV code untouched by this JSONL-only diff) - treated
+as a known environment-perf flake per the user's decision. Profile check
+skipped (no JOIN/hash join/performance wording in the prompt 55 task
+description); make/python/timing targets unavailable on this machine, gate
+ran as raw Maven commands and the entry was appended manually.

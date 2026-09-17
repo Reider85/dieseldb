@@ -121,17 +121,25 @@ public final class JsonlParallelLoader {
         final int blankLineCount;
         /** Whether the file starts with a UTF-8 BOM (EF BB BF). */
         final boolean bom;
+        /** Whole-file byte buffer from the scan, or {@code null} when not retained. */
+        private final byte[] fileBytes;
 
-        LineIndex(long[] dataOffsets, long[] dataLineNumbers, int blankLineCount, boolean bom) {
+        LineIndex(long[] dataOffsets, long[] dataLineNumbers, int blankLineCount, boolean bom, byte[] fileBytes) {
             this.dataOffsets = dataOffsets;
             this.dataLineNumbers = dataLineNumbers;
             this.blankLineCount = blankLineCount;
             this.bom = bom;
+            this.fileBytes = fileBytes;
         }
 
         /** Returns the number of non-blank (data) lines. */
         public int dataLineCount() {
             return dataOffsets.length;
+        }
+
+        /** The whole-file byte buffer produced by this scan, or {@code null} when not retained. */
+        public byte[] fileBytes() {
+            return fileBytes;
         }
     }
 
@@ -170,6 +178,19 @@ public final class JsonlParallelLoader {
      * until the file's mtime or size changes.
      */
     public static LineIndex preScan(File file, Charset charset) throws IOException {
+        return scan(file, charset, false);
+    }
+
+    /**
+     * Like {@link #preScan(File, Charset)}, but the scanned whole-file byte
+     * buffer is retained on the returned {@link LineIndex} so block readers can
+     * slice column projections without re-reading the file (prompt 55).
+     */
+    public static LineIndex preScanKeepBytes(File file, Charset charset) throws IOException {
+        return scan(file, charset, true);
+    }
+
+    private static LineIndex scan(File file, Charset charset, boolean keepBytes) throws IOException {
         byte[] bytes;
         try (InputStream in = new java.io.BufferedInputStream(new FileInputStream(file))) {
             bytes = in.readAllBytes();
@@ -227,7 +248,7 @@ public final class JsonlParallelLoader {
         }
         long[] trimmedOffsets = count == offsets.length ? offsets : java.util.Arrays.copyOf(offsets, count);
         long[] trimmedLines = count == lineNumbers.length ? lineNumbers : java.util.Arrays.copyOf(lineNumbers, count);
-        return new LineIndex(trimmedOffsets, trimmedLines, blankCount, bom);
+        return new LineIndex(trimmedOffsets, trimmedLines, blankCount, bom, keepBytes ? bytes : null);
     }
 
     /**

@@ -14,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -136,6 +138,24 @@ public class JsonlRowStorage extends AbstractRowStorage {
     /** Delta manager for append mode; null in rewrite mode (prompt 49). */
     private JsonlDeltaManager deltaManager;
 
+    /** Lazy block manager (prompt 55): byte-range reads over the base JSONL
+     *  file when {@code jsonl.lazy.blocks=true} defers the full parse. */
+    private JsonlBlockManager blockManager;
+
+    /** True while this storage is in the deferred (not-yet-materialised) lazy
+     *  state: {@link #rows}/{@link #rowPresence} are empty and reads go through
+     *  {@link #blockManager}. Every classic row access first runs
+     *  {@link #ensureMaterialized()}, so the disk is the only read source and
+     *  remains consistent with any earlier deferred reads (no mutations are
+     *  possible without materialising first). */
+    private boolean lazyDeferred;
+
+    /** The base file captured for the deferred state, so
+     *  {@link #ensureMaterialized()} can replay the full load exactly. */
+    private File deferredFile;
+    private CompressionCodec deferredCodec;
+    private SchemaPlan deferredPlan;
+
     public JsonlRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         this(tableName, columns, columnTypes, JsonParserConfig.defaults());
     }
@@ -185,6 +205,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public List<Map<String, Object>> scan() {
+        ensureMaterialized();
         List<Map<String, Object>> result = new ArrayList<>(rows.size());
         for (Object[] row : rows) {
             result.add(rowColumns.toMap(row));
@@ -194,6 +215,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void insert(Map<String, Object> row) {
+        ensureMaterialized();
         Object[] arr = rowColumns.fromMap(row);
         rows.add(arr);
         boolean[] present = allPresent(rowColumns.size());
@@ -206,6 +228,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void insertAt(int rowIndex, Map<String, Object> row) {
+        ensureMaterialized();
         Object[] arr = rowColumns.fromMap(row);
         rows.add(rowIndex, arr);
         boolean[] present = allPresent(rowColumns.size());
@@ -218,6 +241,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void update(int rowIndex, Map<String, Object> row) {
+        ensureMaterialized();
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = rowColumns.fromMap(row);
         if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
@@ -234,6 +258,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void delete(int rowIndex) {
+        ensureMaterialized();
         if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
             deltaManager.onDelete(rowIndex, rows);
         }
@@ -289,6 +314,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void saveToFile(String tableName) {
+        ensureMaterialized();
         if (writeMode == JsonParserConfig.WriteMode.APPEND) {
             saveAppendMode(tableName);
         } else {
@@ -502,6 +528,9 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void loadFromFile(String tableName) {
+        // A fresh load replaces the previous state wholesale; release any
+        // deferred lazy blocks so the file-based path below starts clean.
+        dropDeferredState();
         CompressionFactory.ResolvedDelimitedFile ref = resolveJsonlFile();
         String jsonlFile = ref.file().getPath();
         String tableFile = resolveFilePath(ErrorMessages.TABLE_EXTENSION);
@@ -566,78 +595,21 @@ public class JsonlRowStorage extends AbstractRowStorage {
             }
             SchemaPlan plan = planSchemaForLoad(file, ref.codec());
             sharedSchemaManager = new JsonlSchemaManager(plan.columns(), plan.columnTypes(), config);
-            List<Object[]> loaded = new ArrayList<>();
-            List<boolean[]> loadedPresence = new ArrayList<>();
-            int lineCount = 0;
-            boolean parallelApplied = false;
-            if (ref.codec().isNone()) {
-                // Prompt 54: byte-offset parallel read for plain files. The
-                // loader pre-scans once (cached by mtime/size), parallelizes only
-                // above jsonl.parallel.read.threshold, and returns null to fall
-                // back to the sequential path below. Compressed JSONL is
-                // frame-based and never byte-addressable, so it stays sequential.
-                JsonlParallelLoader.JsonlLoadResult parallel = jsonlIndex()
-                        .loadFromFileParallelArrays(file, plan.columns(), plan.columnTypes(), config);
-                if (parallel != null && parallel.rows() != null) {
-                    parallelApplied = true;
-                    List<boolean[]> presence = parallel.presence();
-                    for (int i = 0; i < parallel.rows().size(); i++) {
-                        loaded.add(parallel.rows().get(i));
-                        boolean[] present = presence != null && i < presence.size() ? presence.get(i) : null;
-                        loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
-                    }
-                    lineCount = loaded.size();
-                    // Partition readers mark nested-JSON holder columns on their
-                    // own schema managers (thread-confined); replay the union
-                    // onto the shared manager so a save re-embeds nested
-                    // structures instead of writing them as plain strings.
-                    if (parallel.nestedColumnIndexes() != null) {
-                        for (int columnIndex : parallel.nestedColumnIndexes()) {
-                            sharedSchemaManager.markNestedJson(columnIndex);
-                        }
-                    }
-                }
-            }
-            if (!parallelApplied) {
-                try (BufferedReader br = CompressionFactory.openDelimitedReader(file, ref.codec(), StorageConfig.getCharset());
-                     JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
-                             file.getPath(), config)) {
-                    while (jsonlReader.hasNext()) {
-                        Object[] row = jsonlReader.nextArray();
-                        if (row != null) {
-                            loaded.add(row);
-                            boolean[] present = jsonlReader.getLastRowPresent();
-                            loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
-                            lineCount++;
-                        }
-                    }
-                }
-            }
-            adoptSchema(plan);
-            rows.clear();
-            rows.addAll(loaded);
-            rowPresence.clear();
-            rowPresence.addAll(loadedPresence);
-            fileInitialized = true;
-
-            // In append mode, apply delta on top of the base
-            if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
-                String deltaPath = resolveFilePath(JsonlDeltaManager.DELTA_FILE_SUFFIX);
-                deltaManager.onLoad(loaded, loadedPresence, lineCount);
-                applyDelta(deltaPath);
-            }
-
-            LOGGER.info("JsonlRowStorage {} loaded from {} with {} rows",
-                    tableName, file.getPath(), rows.size());
-            syncIndexAfterLoad();
-            if (plan.writeSidecar()) {
-                writeSchemaSidecar();
+            // Prompt 55: quicken projected SELECTs by deferring the full parse.
+            // When the base file is plain, has a known schema and lazy blocks are
+            // enabled, the rows stay unparsed; readProjected() then serves the
+            // request block-by-block from disk. Any classic row access (scan,
+            // insert, save, ...) materialises the full load as if nothing had
+            // been deferred, so results stay identical.
+            if (!tryLazyDefer(file, ref.codec(), plan)) {
+                gatherAndCommit(file, ref.codec(), plan);
             }
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
             rowPresence.clear();
             rowPresence.addAll(previousPresence);
+            dropDeferredState();
             sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
             throw e;
         } catch (IOException e) {
@@ -645,9 +617,174 @@ public class JsonlRowStorage extends AbstractRowStorage {
             rows.addAll(previous);
             rowPresence.clear();
             rowPresence.addAll(previousPresence);
+            dropDeferredState();
             sharedSchemaManager = new JsonlSchemaManager(new ArrayList<>(columns), copyTypes(columnTypes), config);
             throw new DieselIOException("Failed to load table from JSONL file: " + file.getPath(), e);
         }
+    }
+
+    /**
+     * Plain load path shared by {@link #loadFromFile(String)} and lazy
+     * materialisation: parses the base file (parallel byte-range reader for
+     * plain files, sequential otherwise), adopts the schema and commits the rows
+     * (prompt 54/55). Also applies the append delta and re-syncs the index.
+     */
+    private void gatherAndCommit(File file, CompressionCodec codec, SchemaPlan plan) throws IOException {
+        List<Object[]> loaded = new ArrayList<>();
+        List<boolean[]> loadedPresence = new ArrayList<>();
+        int lineCount = 0;
+        boolean parallelApplied = false;
+        if (codec.isNone()) {
+            // Prompt 54: byte-offset parallel read for plain files. The
+            // loader pre-scans once (cached by mtime/size), parallelizes only
+            // above jsonl.parallel.read.threshold, and returns null to fall
+            // back to the sequential path below. Compressed JSONL is
+            // frame-based and never byte-addressable, so it stays sequential.
+            JsonlParallelLoader.JsonlLoadResult parallel = jsonlIndex()
+                    .loadFromFileParallelArrays(file, plan.columns(), plan.columnTypes(), config);
+            if (parallel != null && parallel.rows() != null) {
+                parallelApplied = true;
+                List<boolean[]> presence = parallel.presence();
+                for (int i = 0; i < parallel.rows().size(); i++) {
+                    loaded.add(parallel.rows().get(i));
+                    boolean[] present = presence != null && i < presence.size() ? presence.get(i) : null;
+                    loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
+                }
+                lineCount = loaded.size();
+                // Partition readers mark nested-JSON holder columns on their
+                // own schema managers (thread-confined); replay the union
+                // onto the shared manager so a save re-embeds nested
+                // structures instead of writing them as plain strings.
+                if (parallel.nestedColumnIndexes() != null) {
+                    for (int columnIndex : parallel.nestedColumnIndexes()) {
+                        sharedSchemaManager.markNestedJson(columnIndex);
+                    }
+                }
+            }
+        }
+        if (!parallelApplied) {
+            try (BufferedReader br = CompressionFactory.openDelimitedReader(file, codec, StorageConfig.getCharset());
+                 JsonlRowReader jsonlReader = new JsonlRowReader(br, sharedSchemaManager,
+                         file.getPath(), config)) {
+                while (jsonlReader.hasNext()) {
+                    Object[] row = jsonlReader.nextArray();
+                    if (row != null) {
+                        loaded.add(row);
+                        boolean[] present = jsonlReader.getLastRowPresent();
+                        loadedPresence.add(present != null ? present : allPresent(plan.columns().size()));
+                        lineCount++;
+                    }
+                }
+            }
+        }
+        adoptSchema(plan);
+        rows.clear();
+        rows.addAll(loaded);
+        rowPresence.clear();
+        rowPresence.addAll(loadedPresence);
+        fileInitialized = true;
+
+        // In append mode, apply delta on top of the base
+        if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
+            String deltaPath = resolveFilePath(JsonlDeltaManager.DELTA_FILE_SUFFIX);
+            deltaManager.onLoad(loaded, loadedPresence, lineCount);
+            applyDelta(deltaPath);
+        }
+
+        LOGGER.info("JsonlRowStorage {} loaded from {} with {} rows",
+                tableName, file.getPath(), rows.size());
+        syncIndexAfterLoad();
+        if (plan.writeSidecar()) {
+            writeSchemaSidecar();
+        }
+    }
+
+    /**
+     * Attempts to enter the lazy deferred state (prompt 55): accepts only a
+     * plain, unindexed schema'd base file in REWRITE mode. Returns
+     * {@code true} when the storage is left deferred (rows empty, reads served
+     * from {@link #blockManager}); {@code false} means the caller must fall
+     * back to {@link #gatherAndCommit}.
+     */
+    private boolean tryLazyDefer(File file, CompressionCodec codec, SchemaPlan plan) {
+        if (!config.lazyBlocks()) {
+            return false;
+        }
+        if (writeMode == JsonParserConfig.WriteMode.APPEND) {
+            return false;
+        }
+        if (!codec.isNone()) {
+            return false;
+        }
+        if (!file.exists() || plan.columns().isEmpty()) {
+            return false;
+        }
+        try {
+            JsonlBlockManager manager = new JsonlBlockManager(
+                    file, plan.columns(), plan.columnTypes(), config, sharedSchemaManager);
+            long dataLines = manager.dataLineCount();
+            adoptSchema(plan);
+            dropDeferredState();
+            this.blockManager = manager;
+            this.lazyDeferred = true;
+            this.deferredFile = file;
+            this.deferredCodec = codec;
+            this.deferredPlan = plan;
+            fileInitialized = true;
+            // Rows are empty in the deferred state; the index sidecar stays as
+            // persisted on disk and is re-adopted only once the rows are
+            // materialised (any index use forces materialisation first).
+            LOGGER.info("[JSONL-LAZY] JsonlRowStorage {} deferred load of {} ({} data lines, {} columns, {} schema)",
+                    tableName, file.getPath(), dataLines, plan.columns().size(), config.schemaMode().name());
+            if (plan.writeSidecar()) {
+                writeSchemaSidecar();
+            }
+            return true;
+        } catch (IOException | RuntimeException e) {
+            // Keep the plan-based shared schema manager: the caller falls back
+            // to gatherAndCommit with the same plan.
+            dropDeferredState();
+            LOGGER.warn("[JSONL-LAZY] JsonlRowStorage {} lazy defer rejected ({}), falling back to full load",
+                    tableName, e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Materialises a deferred lazy load by replaying the full parse, releasing
+     * the block manager and any cached disk blocks. Idempotent: no-op when the
+     * storage is not in the deferred state.
+     */
+    private void ensureMaterialized() {
+        if (!lazyDeferred) {
+            return;
+        }
+        File file = deferredFile;
+        CompressionCodec codec = deferredCodec;
+        SchemaPlan plan = deferredPlan;
+        boolean wasDeferred = lazyDeferred;
+        dropDeferredState();
+        try {
+            if (wasDeferred) {
+                LOGGER.info("[JSONL-LAZY] JsonlRowStorage {} materialising deferred load of {}",
+                        tableName, file != null ? file.getPath() : "?");
+            }
+            gatherAndCommit(file, codec, plan);
+        } catch (IOException e) {
+            throw new DieselIOException("Failed to materialise lazily-deferred JSONL: " + file.getPath(), e);
+        }
+    }
+
+    /** Clears the deferred flag, releases the block manager and the captured load context. */
+    private void dropDeferredState() {
+        lazyDeferred = false;
+        if (blockManager != null) {
+            blockManager.invalidate();
+        }
+        blockManager = null;
+        deferredFile = null;
+        deferredCodec = null;
+        deferredPlan = null;
     }
 
     /**
@@ -914,11 +1051,13 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     /** Returns the internal row list directly (no copy). */
     public List<Object[]> getInternalRows() {
+        ensureMaterialized();
         return rows;
     }
 
     /** Replaces the internal row list. Used by compaction (prompt 49). */
     public void setRows(List<Map<String, Object>> newRows) {
+        dropDeferredState();
         rows.clear();
         rowPresence.clear();
         for (Map<String, Object> row : newRows) {
@@ -951,12 +1090,14 @@ public class JsonlRowStorage extends AbstractRowStorage {
      * This is equivalent to a full rewrite.
      */
     public void compactJsonl() {
+        ensureMaterialized();
         LOGGER.info("Compacting JSONL for {}: {} rows", tableName, rows.size());
         saveRewriteMode(tableName);
     }
 
     /** Returns the per-row present-column flags (prompt 47), parallel to the internal rows. */
     public List<boolean[]> getRowPresence() {
+        ensureMaterialized();
         return rowPresence;
     }
 
@@ -966,6 +1107,93 @@ public class JsonlRowStorage extends AbstractRowStorage {
         for (boolean[] p : presence) {
             rowPresence.add(p != null ? p.clone() : null);
         }
+    }
+
+    // ─── Projection pushdown reads (prompt 55) ──────────────────────
+
+    /**
+     * Reads a subset of columns (or dot-paths) without materialising the full
+     * row set. In the lazy deferred state the request is served block-by-block
+     * from the base file's byte ranges (real I/O per block, bounded LRU cache);
+     * otherwise the in-memory rows are projected directly. Values are the same
+     * as a full {@link #scan()} restricted to the projection items.
+     *
+     * @param projectColumns the requested columns/dot-paths; unresolvable items
+     *                       are dropped with a single WARNING
+     * @return rows keyed by the original projection item strings
+     */
+    public List<Map<String, Object>> readProjected(Collection<String> projectColumns) throws IOException {
+        List<String> items = new ArrayList<>(projectColumns);
+        List<Object[]> projected = readProjectedArrays(items);
+        List<Map<String, Object>> result = new ArrayList<>(projected.size());
+        for (Object[] values : projected) {
+            Map<String, Object> row = new HashMap<>(Math.max(items.size() * 2, 4));
+            for (int s = 0; s < items.size(); s++) {
+                row.put(items.get(s), values[s]);
+            }
+            result.add(row);
+        }
+        return result;
+    }
+
+    /**
+     * Projection-read variant returning compact arrays aligned with the
+     * resolvable items (see {@link #readProjected(Collection)}).
+     */
+    public List<Object[]> readProjectedArrays(List<String> items) throws IOException {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
+        List<String> resolvable = new ArrayList<>(items.size());
+        for (String item : items) {
+            if (sharedSchemaManager.resolveProjectionItem(item).columnIndex() >= 0) {
+                resolvable.add(item);
+            }
+        }
+        if (resolvable.isEmpty()) {
+            return List.of();
+        }
+        if (lazyDeferred && blockManager != null) {
+            List<Object[]> fromBlocks = blockManager.readAllProjected(resolvable);
+            return fromBlocks == null ? List.of() : fromBlocks;
+        }
+        ensureMaterialized();
+        return projectFromRows(resolvable);
+    }
+
+    /**
+     * Projects the in-memory rows onto the resolvable items, mirroring the
+     * reader's non-flatten extraction: plain columns are copied through,
+     * dot-paths inside a nested-JSON holder column are re-extracted from its
+     * compact JSON text.
+     */
+    private List<Object[]> projectFromRows(List<String> resolvable) {
+        int itemCount = resolvable.size();
+        List<JsonlSchemaManager.ProjectionSlot> slots = new ArrayList<>(itemCount);
+        for (String item : resolvable) {
+            slots.add(sharedSchemaManager.resolveProjectionItem(item));
+        }
+        List<Object[]> out = new ArrayList<>(rows.size());
+        for (Object[] row : rows) {
+            Object[] projected = new Object[itemCount];
+            for (int s = 0; s < itemCount; s++) {
+                JsonlSchemaManager.ProjectionSlot slot = slots.get(s);
+                int idx = slot.columnIndex();
+                if (idx < 0 || idx >= row.length) {
+                    continue;
+                }
+                Object value = row[idx];
+                if (slot.isPlainColumn()) {
+                    projected[s] = value;
+                } else if (value instanceof String text) {
+                    // Dot-path item inside the owning column: re-extract from its
+                    // captured JSON text (scalar text yields null, like the reader).
+                    projected[s] = sharedSchemaManager.extractPathValue(text, slot.segments());
+                }
+            }
+            out.add(projected);
+        }
+        return out;
     }
 
     /** Returns the write mode (prompt 49). */
@@ -990,6 +1218,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     /** Returns the JSONL index manager (prompt 53), creating it lazily if absent. */
     public JsonlIndexManager getJsonlIndexManager() {
+        ensureMaterialized();
         return jsonlIndexManager != null ? jsonlIndexManager : jsonlIndex();
     }
 
@@ -1033,6 +1262,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void setPrimaryKeyColumn(String primaryKeyColumn) {
+        ensureMaterialized();
         super.setPrimaryKeyColumn(primaryKeyColumn);
         jsonlIndex().setPrimaryKeyColumn(primaryKeyColumn);
     }

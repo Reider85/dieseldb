@@ -621,8 +621,12 @@ public final class JsonlIndexManager {
                 StorageConfig.getCharset());
     }
 
-    /** Returns the cached pre-scan for the file, re-scanning only on mtime/size change. */
-    private JsonlParallelLoader.LineIndex preScan(File file) throws IOException {
+    /**
+     * Returns the cached pre-scan for the file, re-scanning only on mtime/size
+     * change. Package-visible so {@link JsonlBlockManager} (prompt 55) shares
+     * the same byte-offset scan instead of running a second full-file pass.
+     */
+    JsonlParallelLoader.LineIndex preScan(File file) throws IOException {
         JsonlParallelLoader.LineIndexCache cached = lineIndexCache;
         if (cached != null && cached.matches(file)) {
             return cached.index;
@@ -634,6 +638,16 @@ public final class JsonlIndexManager {
         } catch (SecurityException ignored) {
         }
         return index;
+    }
+
+    /**
+     * Drops the cached byte-offset pre-scan so the next {@link #preScan(File)}
+     * re-scans the file. Explicit discarding is only needed after an append or
+     * compaction rewrite inside the same storage session (the stamp would also
+     * self-heal on the next mtime/size mismatch).
+     */
+    public void invalidateLineIndexCache() {
+        lineIndexCache = null;
     }
 
     /** Resolves {@code jsonl.parallel.read.threshold}: sysprop > config.properties > default. */

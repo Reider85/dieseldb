@@ -102,6 +102,16 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private final JsonTypeMapper typeMapper;
     private List<JsonlSchemaManager.ProjectionSlot> projectionSlots;
     private boolean[] neededByColumn;
+    /** Case-insensitive dot/array prefixes that must be descended in FLATTEN mode
+     *  when a projection is active (prompt 55): e.g. {@code user} and
+     *  {@code user.address} for a projected {@code user.address.city}, or
+     *  {@code tags} for projected {@code tags[0]} expand columns. */
+    private java.util.Set<String> neededPrefixes;
+    /** True while {@link #parseCurrentRow}/{@link #walkObjectFlat} may prune
+     *  non-projected subtrees at the token level. Only ever set inside
+     *  {@link #nextProjected()} FLATTEN reads; {@link #nextArray()} always parses
+     *  the full row. */
+    private boolean projectionPushdown;
     private long parsedFieldCount;
     private long skippedFieldCount;
     private JsonStreamParser parser;
@@ -271,7 +281,13 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             Object[] row = new Object[columns.size()];
             boolean[] seen = new boolean[columns.size()];
             try {
-                parseCurrentRow(p, row, seen);
+                boolean oldPushdown = projectionPushdown;
+                projectionPushdown = false;
+                try {
+                    parseCurrentRow(p, row, seen);
+                } finally {
+                    projectionPushdown = oldPushdown;
+                }
             } catch (IOException e) {
                 closeQuietly(p);
                 parser = null;
@@ -325,6 +341,14 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             if (valueToken == null) {
                 throw new DieselIOException(contextPrefix() + "line " + lastRowLine
                         + ": malformed JSON record: missing value for field '" + field + "'", null);
+            }
+            if (flatten && projectionPushdown && !subtreeNeeded(field, idx)) {
+                if (idx == null && !isContainerPath(field)) {
+                    handleUnknownField(field);
+                }
+                skipValue(p, valueToken);
+                skippedFieldCount++;
+                continue;
             }
             if (flatten && valueToken == JsonEvent.START_OBJECT && isContainerPath(field)) {
                 walkObjectFlat(p, row, seen, field);
@@ -393,6 +417,11 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             }
             String full = path + "." + child;
             Integer childIdx = indexByName.get(full);
+            if (projectionPushdown && !subtreeNeeded(full, childIdx)) {
+                skipValue(p, childValue);
+                skippedFieldCount++;
+                continue;
+            }
             if (childValue == JsonEvent.START_OBJECT) {
                 if (isContainerPath(full)) {
                     walkObjectFlat(p, row, seen, full);
@@ -510,10 +539,12 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         if (items == null || items.isEmpty()) {
             projectionSlots = null;
             neededByColumn = null;
+            neededPrefixes = null;
             return;
         }
         List<JsonlSchemaManager.ProjectionSlot> slots = new ArrayList<>();
         boolean[] needed = new boolean[columns.size()];
+        java.util.Set<String> prefixes = new java.util.HashSet<>();
         for (String item : items) {
             JsonlSchemaManager.ProjectionSlot slot = schema.resolveProjectionItem(item);
             if (slot.columnIndex() < 0) {
@@ -521,10 +552,41 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                 continue;
             }
             needed[slot.columnIndex()] = true;
+            addNeededPrefixes(columns.get(slot.columnIndex()), prefixes);
             slots.add(slot);
         }
         projectionSlots = slots.isEmpty() ? null : slots;
         neededByColumn = slots.isEmpty() ? null : needed;
+        neededPrefixes = (slots.isEmpty() || prefixes.isEmpty()) ? null : java.util.Set.copyOf(prefixes);
+    }
+
+    /**
+     * Registers every FLATTEN container that must be kept to reach projected
+     * leaves (prompt 55): the dot-prefixes of a projected dotted column
+     * ({@code user.address.city} -> {@code user}, {@code user.address}) and the
+     * base name of a projected array-expand column ({@code tags[0]} -> {@code tags}).
+     */
+    private static void addNeededPrefixes(String column, java.util.Set<String> prefixes) {
+        String lower = column.toLowerCase(Locale.ROOT);
+        int bracket = lower.indexOf('[');
+        if (bracket > 0) {
+            prefixes.add(lower.substring(0, bracket));
+        }
+        int dot = lower.indexOf('.');
+        while (dot > 0) {
+            prefixes.add(lower.substring(0, dot));
+            dot = lower.indexOf('.', dot + 1);
+        }
+    }
+
+    /** Whether a projected FLATTEN read must keep the subtree at {@code path}. */
+    private boolean subtreeNeeded(String path, Integer columnIndex) {
+        if (columnIndex != null) {
+            if (neededByColumn != null && neededByColumn[columnIndex]) {
+                return true;
+            }
+        }
+        return neededPrefixes != null && neededPrefixes.contains(path.toLowerCase(Locale.ROOT));
     }
 
     /** Returns the current projection items in output order (column names or dot paths). */
@@ -568,11 +630,18 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             try {
                 if (config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
                     // FLATTEN mode must parse nested containers to reach the leaf
-                    // columns; dot-path items resolve to exact leaf columns, so the
-                    // full-row parse still honours the requested columns.
+                    // columns; dot-path items resolve to exact leaf columns. With
+                    // projection pushdown (prompt 55) subtrees that hold no needed
+                    // leaf are skipped at the token level instead of being parsed
+                    // and converted.
                     Object[] fullRow = new Object[columns.size()];
                     boolean[] seenFull = new boolean[columns.size()];
-                    parseCurrentRow(p, fullRow, seenFull);
+                    projectionPushdown = true;
+                    try {
+                        parseCurrentRow(p, fullRow, seenFull);
+                    } finally {
+                        projectionPushdown = false;
+                    }
                     lastRowPresent = seenFull;
                     for (int s = 0; s < slots; s++) {
                         JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);

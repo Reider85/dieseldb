@@ -67,6 +67,16 @@ import java.util.Properties;
  * aborts the load with {@code file:line}/field diagnostics,
  * {@link LoadErrorMode#SKIP_ROW} logs the coordinates, skips the row and lets
  * the load continue (a final WARNING reports the skipped-row count).
+ *
+ * <p>The lazy-block policy (prompt 55) decides how
+ * {@link diesel.storage.JsonlRowStorage} loads a plain (uncompressed) JSONL
+ * file: {@code jsonl.lazy.blocks = true} defers the full parse and makes rows
+ * available block-by-block through {@link diesel.storage.JsonlBlockManager}
+ * (real byte-offset ranges from the prompt-54 pre-scan, LRU-evicted); any
+ * classic access (scan/DML/save) materialises the full row list on first use,
+ * so results are identical to the eager mode. The block size
+ * ({@code jsonl.block.rows}, default 1000) and the LRU capacity
+ * ({@code jsonl.block.cache.blocks}, default 16) bound the block manager.
  */
 public final class JsonParserConfig {
 
@@ -75,6 +85,12 @@ public final class JsonParserConfig {
 
     /** Maximum length of a single JSON string value (default, prompt 42). */
     public static final int DEFAULT_MAX_STRING_LENGTH = 1_000_000;
+
+    /** Default number of data lines per lazy block (prompt 55). */
+    public static final int DEFAULT_BLOCK_ROWS = 1000;
+
+    /** Default LRU capacity in blocks (prompt 55). */
+    public static final int DEFAULT_BLOCK_CACHE_BLOCKS = 16;
 
     /** Supported streaming JSON backends. */
     public enum Backend { JACKSON, GSON }
@@ -132,6 +148,9 @@ public final class JsonParserConfig {
     private final LoadErrorMode loadErrorMode;
     private final WriteMode writeMode;
     private final double compactionThreshold;
+    private final boolean lazyBlocks;
+    private final int blockRows;
+    private final int blockCacheBlocks;
 
     private JsonParserConfig(Builder builder) {
         this.maxNestingDepth = builder.maxNestingDepth;
@@ -146,6 +165,9 @@ public final class JsonParserConfig {
         this.loadErrorMode = builder.loadErrorMode;
         this.writeMode = builder.writeMode;
         this.compactionThreshold = builder.compactionThreshold;
+        this.lazyBlocks = builder.lazyBlocks;
+        this.blockRows = builder.blockRows;
+        this.blockCacheBlocks = builder.blockCacheBlocks;
     }
 
     /** Returns the default configuration (strict, depth 64, 1MB strings, Jackson backend). */
@@ -214,6 +236,21 @@ public final class JsonParserConfig {
         return compactionThreshold;
     }
 
+    /** Returns whether lazy block loading is enabled (false by default, prompt 55). */
+    public boolean lazyBlocks() {
+        return lazyBlocks;
+    }
+
+    /** Returns the number of data lines per lazy block (1000 by default, prompt 55). */
+    public int blockRows() {
+        return blockRows;
+    }
+
+    /** Returns the LRU capacity of the lazy block cache (16 blocks by default, prompt 55). */
+    public int blockCacheBlocks() {
+        return blockCacheBlocks;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -235,6 +272,9 @@ public final class JsonParserConfig {
         private LoadErrorMode loadErrorMode = readLoadErrorModeProperty();
         private WriteMode writeMode = readWriteModeProperty();
         private double compactionThreshold = readDoubleProperty("jsonl.compaction.threshold", 0.3);
+        private boolean lazyBlocks = readBooleanProperty("jsonl.lazy.blocks", false);
+        private int blockRows = readIntProperty("jsonl.block.rows", DEFAULT_BLOCK_ROWS);
+        private int blockCacheBlocks = readIntProperty("jsonl.block.cache.blocks", DEFAULT_BLOCK_CACHE_BLOCKS);
 
         private static int readIntProperty(String key, int fallback) {
             String value = readString(key, null);
@@ -247,6 +287,21 @@ public final class JsonParserConfig {
             } catch (NumberFormatException e) {
                 return fallback;
             }
+        }
+
+        private static boolean readBooleanProperty(String key, boolean fallback) {
+            String value = readString(key, null);
+            if (value == null) {
+                return fallback;
+            }
+            String trimmed = value.trim();
+            if ("true".equalsIgnoreCase(trimmed)) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(trimmed)) {
+                return false;
+            }
+            return fallback;
         }
 
         private static String readString(String key, String fallback) {
@@ -436,6 +491,24 @@ public final class JsonParserConfig {
             return this;
         }
 
+        /** Sets lazy block loading (prompt 55); invalid values reset to the default. */
+        public Builder lazyBlocks(boolean lazyBlocks) {
+            this.lazyBlocks = lazyBlocks;
+            return this;
+        }
+
+        /** Sets the number of data lines per lazy block (prompt 55); non-positive resets to 1000. */
+        public Builder blockRows(int blockRows) {
+            this.blockRows = blockRows > 0 ? blockRows : DEFAULT_BLOCK_ROWS;
+            return this;
+        }
+
+        /** Sets the LRU capacity of the lazy block cache (prompt 55); non-positive resets to 16. */
+        public Builder blockCacheBlocks(int blockCacheBlocks) {
+            this.blockCacheBlocks = blockCacheBlocks > 0 ? blockCacheBlocks : DEFAULT_BLOCK_CACHE_BLOCKS;
+            return this;
+        }
+
         public JsonParserConfig build() {
             return new JsonParserConfig(this);
         }
@@ -460,6 +533,9 @@ public final class JsonParserConfig {
                 && missingField == other.missingField
                 && loadErrorMode == other.loadErrorMode
                 && writeMode == other.writeMode
+                && lazyBlocks == other.lazyBlocks
+                && blockRows == other.blockRows
+                && blockCacheBlocks == other.blockCacheBlocks
                 && Double.compare(compactionThreshold, other.compactionThreshold) == 0;
     }
 
@@ -467,6 +543,7 @@ public final class JsonParserConfig {
     public int hashCode() {
         return Objects.hash(maxNestingDepth, maxStringLength, backend, duplicateKeys, coercion, schemaMode,
                 nestedMode, arrayColumns, missingField, loadErrorMode, writeMode,
+                lazyBlocks, blockRows, blockCacheBlocks,
                 Double.hashCode(compactionThreshold));
     }
 
@@ -483,6 +560,9 @@ public final class JsonParserConfig {
                 + ", missingField=" + missingField
                 + ", loadErrorMode=" + loadErrorMode
                 + ", writeMode=" + writeMode
-                + ", compactionThreshold=" + compactionThreshold + '}';
+                + ", compactionThreshold=" + compactionThreshold
+                + ", lazyBlocks=" + lazyBlocks
+                + ", blockRows=" + blockRows
+                + ", blockCacheBlocks=" + blockCacheBlocks + '}';
     }
 }
