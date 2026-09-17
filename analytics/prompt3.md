@@ -1179,6 +1179,7 @@ B. Удалить слой:
 
 ### Промпт 58: AVRO хранилище - схема и типы данных
 **Приоритет: HIGH**
+**Статус: ✅ ВЫПОЛНЕН**
 
 **Задача:**
 1. Определи映射 SQL типов DieselDB в типы AVRO
@@ -2225,7 +2226,7 @@ B. Удалить слой:
 | 22-23 | TSV хранилище | Section 1 | ⬜ TODO | HIGH |
 | 24-39 | Улучшения CSV/TSV-хранилищ (код-ревью) | Section 1a | ⬜ TODO | HIGH |
 | 40-56 | JSONL хранилище (база, абстракции, надёжность, скорость) | Section 1b | ⬜ TODO | HIGH |
-| 57-96 | AVRO хранилище (40 промптов) | Section 2 | ⬜ TODO | HIGH |
+| 57-96 | AVRO хранилище (40 промптов) | Section 2 | ⬜ TODO (P58 ✅) | HIGH |
 | 97-112 | Diesel mechanisms (WAL, recovery, etc.) | Section 3 | ⬜ TODO | CRITICAL |
 | 113-131 | Дополнительные SQL возможности | Section 4 | ⬜ TODO | MEDIUM |
 
