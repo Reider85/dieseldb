@@ -160,7 +160,7 @@ public class AvroRowStorage extends AbstractRowStorage {
         try {
             File parent = avroFile.getParentFile();
             if (parent != null) parent.mkdirs();
-            writeAvroFile(avroFile, schema);
+            writeAvroFileEfficient(avroFile, schema);
             writeSchemaSidecar(tableName, schema);
             fileInitialized = true;
             LOGGER.info("AvroRowStorage {} saved Avro to {} with {} rows",
@@ -198,6 +198,22 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     // ─── Avro file I/O ──────────────────────────────────────────────
+
+    private void writeAvroFileEfficient(File target, Schema schema) throws IOException {
+        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(target)) {
+            AvroDataFileWriter dataFileWriter = new AvroDataFileWriter(columns, columnTypes, target);
+            try {
+                for (Object[] row : rows) {
+                    Map<String, Object> rowMap = toMap(row);
+                    dataFileWriter.writeRow(rowMap);
+                }
+                dataFileWriter.flush();
+            } finally {
+                dataFileWriter.close();
+            }
+            afw.commit();
+        }
+    }
 
     private void writeAvroFile(File target, Schema schema) throws IOException {
         try (AtomicFileWriter afw = AtomicFileWriter.openBinary(target)) {
@@ -531,8 +547,8 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     // ─── Accessors ──────────────────────────────────────────────────
-
     public List<Object[]> getInternalRows() {
         return rows;
     }
+
 }
