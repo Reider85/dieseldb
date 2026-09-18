@@ -8,30 +8,36 @@ import java.util.Locale;
 
 /**
  * Maps the configured AVRO codec name and level to a concrete Avro
- * {@link CodecFactory} (Prompt 62).
+ * {@link CodecFactory} (Prompt 62, enhanced in Prompt 65 with deflate level optimization).
  *
  * <p>The mapping uses Avro 1.12's public static factory methods, so no Avro
  * internals are reached reflectively:
  * <ul>
  *   <li>{@code null} → {@link CodecFactory#nullCodec()}</li>
- *   <li>{@code deflate} → {@link CodecFactory#deflateCodec(int)} (level clamped 0..9)</li>
+ *   <li>{@code deflate} → {@link DeflateLevelConfig#newCodec(int)} (level clamped 1..9 with adaptive selection)</li>
  *   <li>{@code snappy} → {@link SnappyOptimizedCodec#newCodec()} (optimized with buffer sizing and caching)</li>
  *   <li>{@code zstandard} → {@link ZStandardCodec#newCodec(int)} (level clamped 1..22)</li>
  *   <li>{@code bzip2} → {@link CodecFactory#bzip2Codec()} (no level)</li>
  * </ul>
  *
  * <p>A level of {@code -1} (or {@code AvroCompressionConfig#DEFAULT_LEVEL})
- * resolves to the Avro codec's built-in default for the level-bearing codecs
- * (deflate {@code -1}, zstandard {@code 3}). Snappy has no level parameter.
+ * resolves to the codec's built-in default:
+ * <ul>
+ *   <li>deflate: {@link DeflateLevelConfig#DEFAULT_LEVEL} (3, balanced speed/ratio)</li>
+ *   <li>zstandard: {@link ZStandardCodec#DEFAULT_LEVEL} (3)</li>
+ *   <li>snappy/bzip2/null: no level parameter</li>
+ * </ul>
  *
- * @since Prompt 62
+ * <p>Prompt 65 enhances deflate compression with intelligent level selection (1-9 range),
+ * compressor caching, and adaptive strategies based on data characteristics.
+ *
+ * @since Prompt 62 (enhanced in Prompt 65)
  */
 public final class AvroCodecFactory {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AvroCodecFactory.class);
 
-    private static final int DEFLATE_MIN_LEVEL = 0;
-    private static final int DEFLATE_MAX_LEVEL = 9;
+    // Deflate levels use 1-9 range (Prompt 65) instead of 0-9 for clearer semantics
 
     private AvroCodecFactory() {
         throw new AssertionError("No instances");
@@ -53,7 +59,7 @@ public final class AvroCodecFactory {
             case "null" -> CodecFactory.nullCodec();
             case "snappy" -> SnappyOptimizedCodec.newCodec();
             case "bzip2" -> CodecFactory.bzip2Codec();
-            case "deflate" -> CodecFactory.deflateCodec(resolveDeflateLevel(level));
+            case "deflate" -> DeflateLevelConfig.newCodec(level);
             case "zstandard" -> ZStandardCodec.newCodec(level);
             default -> throw new IllegalArgumentException(
                     "Unknown AVRO compression codec '" + codec + "' (expected: null, deflate, snappy, zstandard, bzip2)");
@@ -61,23 +67,10 @@ public final class AvroCodecFactory {
     }
 
     /**
-     * Resolves the deflate level: {@code -1} maps to the Avro/JDK default,
-     * out-of-range values are clamped to {@code [0, 9]}, and unparsable values
-     * fall back to {@code -1}.
+     * Resolves the deflate level using DeflateLevelConfig (Prompt 65).
+     * Level range is 1-9 with -1 mapping to the default level (3).
      */
     static int resolveDeflateLevel(int level) {
-        return clamp(level, DEFLATE_MIN_LEVEL, DEFLATE_MAX_LEVEL, "deflate", -1);
-    }
-
-    private static int clamp(int level, int min, int max, String codec, int defaultValue) {
-        if (level == AvroCompressionConfig.DEFAULT_LEVEL) {
-            return defaultValue;
-        }
-        if (level < min || level > max) {
-            LOGGER.warn("AVRO {} level {} is outside the valid range [{}, {}], clamping",
-                    codec, level, min, max);
-            return Math.max(min, Math.min(max, level));
-        }
-        return level;
+        return DeflateLevelConfig.resolveLevel(level);
     }
 }

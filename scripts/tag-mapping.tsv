@@ -98,3 +98,5 @@ RegexPerformanceBenchmarkTest	perf
 RegexRobustnessTest	perf
 StorageBulkUpdateTest	perf
 AllocationProfileTest	perf
+DeflateLevelConfigTest	storage
+DeflateCompressionBenchmarkTest	storage
