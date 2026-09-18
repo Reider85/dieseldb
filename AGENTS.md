@@ -32,9 +32,14 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
    ```
    *Check exit code only: 1 = failure, 0 = success.*
 
-7. Create changelog entry: `make changelog "short description of changes"` – this script auto-appends test results, timing summary, and profile numbers (if profile was run). You only provide the one-sentence description.
+7. Create changelog entry: `make changelog DESC="short description of changes"` – this script:
+   - Reads the last commit's version prefix (e.g. `3.1.32` from `3.1.32 fix(build-cache): ...`)
+   - Auto-increments the patch number (e.g. `3.1.33`)
+   - Appends `3.1.33 <description>` to `Changelog.md`
+   - Creates `changelog_entry.txt` with the full versioned message for git commit
+   - You only provide the one-sentence description; the version prefix is calculated automatically.
 
-8. Commit with `git commit -F changelog_entry.txt` (the script creates this file).
+8. Commit with `git commit -F changelog_entry.txt` (the script creates this file with `X.Y.Z description`).
 
 9. Update `PROMPT_STATUS.md` → mark as DONE.
 
@@ -190,11 +195,13 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 ## Changelog automation
 
-- Use `make changelog "your change description"` – for example:
+- Use `make changelog DESC="your change description"` – for example:
   ```bash
-  make changelog "Fix JOIN OR OOM by implementing hash join spilling"
+  make changelog DESC="Fix JOIN OR OOM by implementing hash join spilling"
   ```
-  This script auto-appends test results, timing summary, and profile numbers (if profile was run) to `Changelog.md` and creates `changelog_entry.txt` for the commit message.
+  This script auto-appends the versioned entry to `Changelog.md` and creates `changelog_entry.txt` for the commit message.
+
+- The version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`). No manual versioning needed.
 
 ---
 

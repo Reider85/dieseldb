@@ -14,7 +14,7 @@ else
 TIA = ./scripts/tia.sh
 endif
 
-.PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run
+.PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run changelog
 
 # Default target
 all: build
@@ -23,6 +23,16 @@ all: build
 build:
 	@echo "Building DieselDB..."
 	$(MVN) -B package -DskipTests
+
+## Create changelog entry with auto-incrementing version prefix
+## Usage: make changelog "short description"
+changelog:
+	@if [ -z "$(DESC)" ]; then \
+		echo "Usage: make changelog DESC=\"description\""; \
+		echo "  or: make changelog \"description\" (requires DESC variable)"; \
+		exit 1; \
+	fi
+	powershell -ExecutionPolicy Bypass -File ./scripts/commit-and-changelog.ps1 "$(DESC)"
 
 ## Run fast profile: smoke + index + query (<30s)
 test:
@@ -162,6 +172,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  make build              - Build project (package, skip tests)"
+	@echo "  make changelog          - Create changelog entry with auto version prefix"
 	@echo "  make test               - Fast profile: smoke + index + query (<30s)"
 	@echo "  make test-core          - Core profile: query + storage (2-4 min)"
 	@echo "  make test-network       - Network profile: server + sockets (1-2 min)"
