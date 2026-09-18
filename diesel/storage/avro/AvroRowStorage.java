@@ -19,10 +19,8 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 import org.apache.avro.Schema;
-import org.apache.avro.file.DataFileReader;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericData;
-import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.generic.GenericDatumWriter;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.io.DatumWriter;
@@ -241,34 +239,28 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     private List<Object[]> readAvroFile(File file, String tableName) throws IOException {
-        Schema schema;
         File sidecarFile = new File(resolveAvroFilePath()).toPath()
                 .resolveSibling(AvroSchemaManager.sanitizeName(tableName) + AvroSchemaManager.AVSC_EXTENSION).toFile();
+        AvroDataFileReader reader;
         if (sidecarFile.exists()) {
-            schema = AvroSchemaManager.readSchemaFile(sidecarFile.toPath());
+            Schema sidecarSchema = AvroSchemaManager.readSchemaFile(sidecarFile.toPath());
+            reader = new AvroDataFileReader(file, sidecarSchema);
+            if (!reader.isReaderSchemaCompatible()) {
+                LOGGER.debug("Sidecar schema {} shares no record name with the header schema of {}; doing a full read",
+                        sidecarFile.getPath(), file.getPath());
+                reader.close();
+                reader = new AvroDataFileReader(file);
+            }
         } else {
-            GenericDatumReader<GenericRecord> dr = new GenericDatumReader<>();
-            DataFileReader<GenericRecord> dfr = new DataFileReader<>(file, dr);
-            try {
-                schema = dfr.getSchema();
-            } finally {
-                dfr.close();
-            }
+            reader = new AvroDataFileReader(file);
         }
-
-        List<Object[]> loaded = new ArrayList<>();
-        GenericDatumReader<GenericRecord> datumReader = new GenericDatumReader<>(schema);
-        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(file, datumReader);
-        try {
-            while (dataFileReader.hasNext()) {
-                GenericRecord record = dataFileReader.next();
-                Object[] row = fromRecord(record, columns, columnTypes);
-                loaded.add(row);
+        try (AvroReadIterator iterator = new AvroReadIterator(reader, columns, columnTypes)) {
+            List<Object[]> loaded = new ArrayList<>();
+            while (iterator.hasNext()) {
+                loaded.add(iterator.next());
             }
-        } finally {
-            dataFileReader.close();
+            return loaded;
         }
-        return loaded;
     }
 
     private void writeSchemaSidecar(String tableName, Schema schema) throws IOException {

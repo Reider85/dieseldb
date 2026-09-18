@@ -3176,5 +3176,51 @@ large set. Registered in `scripts/tia-mapping.txt` (existing rule:
 `diesel/storage/avro/*.java → storage`). Verification: fast 178/0/0;
 core 1124/0/0 (AvroRowStorageTest 14/14, AvroSchemaTest 52/52);
 large 13/0/0 BUILD SUCCESS. Profile check skipped (no JOIN/hash
-join/performance wording in prompt 59). make/changelog unavailable —
+join/performance wording in prompt 59). make/changelog unavailable -
 entry appended manually.
+
+---
+
+Prompt 61 (Section 2 AVRO) DONE (2026-09-18) - AVRO storage data reading
+functionality. New `diesel/storage/avro/AvroDataFileReader` (low-level
+reader): header parsed via CountingInputStream + directBinaryDecoder so
+headerEndPos is deterministic; block-at-a-time streaming that never holds
+the whole file in memory (loadNextBlock per block, blockCount rows per
+block, sync-marker verification, byte-level seek to any recorded block
+boundary via seekToSyncMarker), numBlocksTotal / getNumBlocksRead
+tracking, any fixed block size, codecs created reflectively
+(CodecFactory.createInstance() is protected in avro 1.12). Projection
+pushdown: buildProjectionSchema keeps only the requested fields (uses
+`new Schema.Field(name, schema)` - avro 1.12 has no 1-arg Field copy
+ctor) and the GenericDatumReader is always seeded with the writer schema
+as its reader schema base (reader==writer, otherwise getResolver NPEs);
+when a sidecar .avsc disagrees with the file header
+(isReaderSchemaCompatible false) the header schema wins and the
+projection is re-derived from it, falling back to a WARN + full read.
+New `diesel/storage/avro/AvroReadIterator` (Iterator<Object[]> +
+Iterable + Closeable): delegates hasNext/next to the reader (IOException
+-> UncheckedIOException), streaming nextBatch(max) converts rows through
+AvroRowStorage.fromRecord, close() closes the reader.
+`AvroRowStorage.readAvroFile` refactored onto the new reader + iterator
+(no sidecar -> plain header-schema full read; incompatible sidecar ->
+WARN + full-read fallback). config.properties documents the new
+`avro.parallel.read.threshold = 10000` block (reader/iterator
+primitives). New `AvroDataFileReaderTest` (8 tests @Tag("storage"),
+covered by the existing `diesel/storage/avro/*.java` -> storage rule in
+scripts/tia-mapping.txt): sequential full read incl. header-only/empty
+file (graceful EOF), iterator streaming 66000 rows across 2 blocks (64MB
+blocks, 65536 rows), nextBatch batching, countBlocks + sync-marker seek
+round-trip, projection reads only the requested columns, unknown
+projection column falls back to full read with WARN, complex types
+round-trip (decimal 1000.50 scale 18, date, timestamp-millis, uuid,
+array, map - written directly via raw DataFileWriter with pre-converted
+logical-type values, bypassing the broken Prompt-60 write path), non-Avro
+file rejected with a clear error. Verification: isolated
+AvroDataFileReaderTest 8/8 green; fast 178/0/0 BUILD SUCCESS; core 1132
+run / 0 fail / 7 errors - each of the 7 a pre-existing Prompt-60
+AvroRowStorageTest write-path failure (DataFileWriter.append
+ClassCastException BigDecimal->bytes, NPE on null non-nullable field,
+0-byte file from AtomicFileWriter misuse on empty-table save), no new
+regressions from Prompt 61. Profile check skipped (no JOIN/hash
+join/performance wording in prompt 61). make/changelog unavailable on
+this machine - entry appended manually.
