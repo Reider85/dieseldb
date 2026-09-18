@@ -1,6 +1,7 @@
 package diesel.storage.avro;
 
 import org.apache.avro.Schema;
+import org.apache.avro.file.CodecFactory;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericDatumWriter;
 import org.apache.avro.generic.GenericRecord;
@@ -24,18 +25,35 @@ public class AvroDataFileWriter {
     private int bytesWritten = 0;
 
     public AvroDataFileWriter(List<String> columns, Map<String, Class<?>> columnTypes, File outputFile) throws IOException {
+        this(columns, columnTypes, outputFile, CodecFactory.nullCodec());
+    }
+
+    /**
+     * Creates a writer producing an Avro object-container file compressed with
+     * the given codec factory ({@link CodecFactory#nullCodec()} disables
+     * compression). The codec is recorded in the file header, so the reader
+     * decodes the file transparently regardless of this setting.
+     *
+     * @param codec the Avro codec factory (may be {@code null}; falls back to
+     *              no compression)
+     */
+    public AvroDataFileWriter(List<String> columns, Map<String, Class<?>> columnTypes, File outputFile,
+                              CodecFactory codec) throws IOException {
         this.outputFile = outputFile;
         this.schema = AvroSchemaManager.buildTableSchema("temp", columns, columnTypes);
         this.datumWriter = new GenericDatumWriter<>(schema);
         this.dataFileWriter = new DataFileWriter<>(datumWriter);
         this.blockSize = 67108864; // 64MB default
-        
+
         // Initialize sync buffer
         this.syncBuffer = ByteBuffer.allocate(16);
         syncBuffer.putLong(System.currentTimeMillis());
         syncBuffer.putLong(0); // Sync marker version
         syncBuffer.flip();
-        
+
+        if (codec != null) {
+            dataFileWriter.setCodec(codec);
+        }
         dataFileWriter.create(schema, outputFile);
     }
 

@@ -198,12 +198,28 @@ public class AvroRowStorage extends AbstractRowStorage {
     // ─── Avro file I/O ──────────────────────────────────────────────
 
     private void writeAvroFileEfficient(File target, Schema schema) throws IOException {
+        AvroCompressionConfig compression = AvroCompressionConfig.resolve();
+        String effectiveCodec = compression.effectiveCodec(rows);
+        org.apache.avro.file.CodecFactory codecFactory =
+                AvroCodecFactory.factory(effectiveCodec, compression.level());
         try (AtomicFileWriter afw = AtomicFileWriter.openBinary(target)) {
-            AvroDataFileWriter dataFileWriter = new AvroDataFileWriter(columns, columnTypes, target);
+            DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
+            OutputStream nonClosing = new OutputStream() {
+                private final OutputStream delegate = afw.outputStream();
+                @Override public void write(int b) throws IOException { delegate.write(b); }
+                @Override public void write(byte[] b, int off, int len) throws IOException { delegate.write(b, off, len); }
+                @Override public void flush() throws IOException { delegate.flush(); }
+                @Override public void close() { /* no-op: AtomicFileWriter owns the channel */ }
+            };
+            DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter);
+            if (codecFactory != null) {
+                dataFileWriter.setCodec(codecFactory);
+            }
             try {
+                dataFileWriter.create(schema, nonClosing);
                 for (Object[] row : rows) {
-                    Map<String, Object> rowMap = toMap(row);
-                    dataFileWriter.writeRow(rowMap);
+                    GenericRecord record = toRecord(row, schema);
+                    dataFileWriter.append(record);
                 }
                 dataFileWriter.flush();
             } finally {
