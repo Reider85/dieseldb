@@ -16,7 +16,7 @@ import java.util.Locale;
  *   <li>{@code null} → {@link CodecFactory#nullCodec()}</li>
  *   <li>{@code deflate} → {@link CodecFactory#deflateCodec(int)} (level clamped 0..9)</li>
  *   <li>{@code snappy} → {@link CodecFactory#snappyCodec()} (no level)</li>
- *   <li>{@code zstandard} → {@link CodecFactory#zstandardCodec(int)} (level clamped 1..22)</li>
+ *   <li>{@code zstandard} → {@link ZStandardCodec#newCodec(int)} (level clamped 1..22)</li>
  *   <li>{@code bzip2} → {@link CodecFactory#bzip2Codec()} (no level)</li>
  * </ul>
  *
@@ -32,8 +32,6 @@ public final class AvroCodecFactory {
 
     private static final int DEFLATE_MIN_LEVEL = 0;
     private static final int DEFLATE_MAX_LEVEL = 9;
-    private static final int ZSTD_MIN_LEVEL = 1;
-    private static final int ZSTD_MAX_LEVEL = 22;
 
     private AvroCodecFactory() {
         throw new AssertionError("No instances");
@@ -56,7 +54,7 @@ public final class AvroCodecFactory {
             case "snappy" -> CodecFactory.snappyCodec();
             case "bzip2" -> CodecFactory.bzip2Codec();
             case "deflate" -> CodecFactory.deflateCodec(resolveDeflateLevel(level));
-            case "zstandard" -> CodecFactory.zstandardCodec(resolveZstandardLevel(level));
+            case "zstandard" -> ZStandardCodec.newCodec(level);
             default -> throw new IllegalArgumentException(
                     "Unknown AVRO compression codec '" + codec + "' (expected: null, deflate, snappy, zstandard, bzip2)");
         };
@@ -69,14 +67,6 @@ public final class AvroCodecFactory {
      */
     static int resolveDeflateLevel(int level) {
         return clamp(level, DEFLATE_MIN_LEVEL, DEFLATE_MAX_LEVEL, "deflate", -1);
-    }
-
-    /**
-     * Resolves the zstandard level: {@code -1} maps to the Avro default (3),
-     * out-of-range values are clamped to {@code [1, 22]}.
-     */
-    static int resolveZstandardLevel(int level) {
-        return clamp(level, ZSTD_MIN_LEVEL, ZSTD_MAX_LEVEL, "zstandard", CodecFactory.DEFAULT_ZSTANDARD_LEVEL);
     }
 
     private static int clamp(int level, int min, int max, String codec, int defaultValue) {

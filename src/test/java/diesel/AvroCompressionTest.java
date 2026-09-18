@@ -5,6 +5,7 @@ import diesel.storage.avro.AvroCompressionConfig;
 import diesel.storage.avro.AvroDataFileReader;
 import diesel.storage.avro.AvroDataFileWriter;
 import diesel.storage.avro.AvroRowStorage;
+import diesel.storage.avro.ZStandardCodec;
 import org.apache.avro.file.CodecFactory;
 import org.apache.avro.generic.GenericRecord;
 import org.junit.jupiter.api.AfterEach;
@@ -158,6 +159,49 @@ class AvroCompressionTest {
         assertThrows(IllegalArgumentException.class, AvroCompressionConfig::resolve);
         assertThrows(IllegalArgumentException.class, () -> AvroCodecFactory.factory("gzip", -1));
         assertThrows(IllegalArgumentException.class, () -> AvroCodecFactory.factory("", -1));
+    }
+
+    // ─── ZStandard codec (Prompt 63) ────────────────────────────────
+
+    @Test
+    void zstandardCodecExposesLevelRange() {
+        assertEquals("zstandard", ZStandardCodec.CODEC_NAME);
+        assertEquals(1, ZStandardCodec.MIN_LEVEL);
+        assertEquals(22, ZStandardCodec.MAX_LEVEL);
+        assertEquals(CodecFactory.DEFAULT_ZSTANDARD_LEVEL, ZStandardCodec.DEFAULT_LEVEL);
+        CodecFactory factory = ZStandardCodec.newCodec(-1);
+        assertNotNull(factory);
+        assertTrue(factory.toString().startsWith("zstandard"),
+                "zstandard factory toString() = " + factory);
+    }
+
+    @Test
+    void zstandardResolveLevelClamps() {
+        assertEquals(3, ZStandardCodec.resolveLevel(-1));
+        assertEquals(1, ZStandardCodec.resolveLevel(0));
+        assertEquals(22, ZStandardCodec.resolveLevel(99));
+        assertEquals(7, ZStandardCodec.resolveLevel(7));
+        assertEquals(1, ZStandardCodec.resolveLevel(ZStandardCodec.MIN_LEVEL));
+        assertEquals(22, ZStandardCodec.resolveLevel(ZStandardCodec.MAX_LEVEL));
+    }
+
+    @Test
+    void zstandardLevelsRoundTrip() throws IOException {
+        for (int level : new int[]{1, 3, 19, 22, -1}) {
+            File f = writeRows("zstd_level_" + level, "zstandard", rows(5000), level);
+            assertEquals("zstandard", readCodec(f),
+                    "level " + level + " header codec");
+            try (AvroDataFileReader r = new AvroDataFileReader(f)) {
+                assertEquals(5000, countRecords(r), "level " + level + " row count");
+            }
+        }
+    }
+
+    @Test
+    void zstandardFactoryDelegatesToZStandardCodec() {
+        assertEquals(
+                ZStandardCodec.newCodec(10).toString(),
+                AvroCodecFactory.factory("zstandard", 10).toString());
     }
 
     @Test
