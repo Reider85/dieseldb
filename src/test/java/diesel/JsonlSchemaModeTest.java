@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * a nearest-column edit-distance hint.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlSchemaModeTest {
 
     @TempDir

@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and that append mode / compressed codecs never defer.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlLazyLoadTest {
 
     private static final String LAZY_KEY = "jsonl.lazy.blocks";

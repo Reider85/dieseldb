@@ -74,6 +74,34 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 
 - **Fast profile** – `make test` (= `mvn -B clean test -P fast`, tags: smoke, query, index) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate.
 - **Other profiles:** `make test-core` (query-full, storage), `make test-concurrency` (concurrency), `make test-network` (network), `make test-perf` (perf), `make large-test` (large, 4GB heap).
+- **Format-specific storage profiles:** When `storage.type` is set in `config.properties` (or via `-Ddiesel.storage.type=`), only tests matching that format run. The `@StorageType` annotation gates format-specific test classes.
+
+| Profile | Command | What it runs |
+|---------|---------|-------------|
+| `storage-csv` | `make test-storage-csv` | Only CSV storage tests |
+| `storage-tsv` | `make test-storage-tsv` | Only TSV storage tests |
+| `storage-jsonl` | `make test-storage-jsonl` | Only JSONL storage tests |
+| `storage-avro` | `make test-storage-avro` | Only AVRO storage tests |
+
+**How it works:** Each profile sets `diesel.storage.type` as a system property. JUnit 5's `@StorageType` annotation (custom, in `diesel/StorageType.java`) checks this property at test-discovery time and disables classes whose declared type doesn't match. For example, `@StorageType("avro")` on `AvroCompressionTest` means that test only runs when `diesel.storage.type=avro`.
+
+**Manually overriding storage.type for tests:**
+```bash
+# Run only AVRO storage tests (bypasses Makefile):
+$env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-3.9.6\bin\mvn.cmd" -B clean test -P core -Ddiesel.storage.type=avro
+
+# Run only CSV storage tests:
+$env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-3.9.6\bin\mvn.cmd" -B clean test -P core -Ddiesel.storage.type=csv
+```
+
+**Test class annotations:**
+- `@StorageType("avro")` — Avro tests (4 classes): AvroCompressionTest, AvroDataFileReaderTest, AvroRowStorageTest, AvroSchemaTest
+- `@StorageType("jsonl")` — JSONL tests (17 classes): all `Jsonl*Test` files
+- `@StorageType("csv")` — CSV tests (4 classes): CsvIndexManagerTest, CsvLargeFileStressTest, CsvStorageAdvancedTest, CsvStorageTest
+- `@StorageType("tsv")` — TSV tests (2 classes): TsvStorageAdvancedTest, TsvStorageTest
+- `@StorageType({"jsonl","csv"})` — Cross-format tests (2 classes): JsonlLoadModeTest, StorageLoadModeTest
+- `@StorageType({"csv","tsv"})` — Delimited tests (4 classes): CharsetEncodingTest, CompressionTest, AtomicFileWriteTest, CsvTsvHeaderMappingTest
+- `@StorageType({"avro","csv","tsv","jsonl"})` — Codec/cross tests (5 classes): SnappyOptimizedCodecTest, SnappyOptimizationBenchmark, DelimitedByteParserTest, ReaderCorrectnessTest, JsonStreamAbstractionTest
 - **Full release gate** – `make all-tests` runs all 6 profiles sequentially. This is the **required** gate before commit.
 - **TIA** – `make tia` (recommend profiles) / `make tia-run` (recommend + run).
 - **Isolation Rule for Failures:** If `make timing` fails, DO NOT immediately re-run `make timing`. Find the exact failing test name in the log. Fix the code and run ONLY that specific test:

@@ -386,6 +386,124 @@
                 </plugins>
             </build>
         </profile>
+
+        <!-- ============ STORAGE TYPE PROFILES ============ -->
+        <!-- Run format-specific storage tests only for the given type.
+             Usage: mvn -B clean test -P storage-csv
+             The @StorageType annotation on each test class decides
+             which tests are enabled based on diesel.storage.type. -->
+
+        <profile>
+            <id>storage-csv</id>
+            <properties>
+                <surefire.groups>storage</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                            <forkCount>2</forkCount>
+                            <reuseForks>false</reuseForks>
+                            <parallel>classes</parallel>
+                            <threadCountClasses>2</threadCountClasses>
+                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.storage.type>csv</diesel.storage.type>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>storage-tsv</id>
+            <properties>
+                <surefire.groups>storage</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                            <forkCount>2</forkCount>
+                            <reuseForks>false</reuseForks>
+                            <parallel>classes</parallel>
+                            <threadCountClasses>2</threadCountClasses>
+                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.storage.type>tsv</diesel.storage.type>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>storage-jsonl</id>
+            <properties>
+                <surefire.groups>storage</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                            <forkCount>2</forkCount>
+                            <reuseForks>false</reuseForks>
+                            <parallel>classes</parallel>
+                            <threadCountClasses>2</threadCountClasses>
+                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.storage.type>jsonl</diesel.storage.type>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>storage-avro</id>
+            <properties>
+                <surefire.groups>storage</surefire.groups>
+                <surefire.excludedGroups>large</surefire.excludedGroups>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                            <groups>${surefire.groups}</groups>
+                            <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                            <forkCount>2</forkCount>
+                            <reuseForks>false</reuseForks>
+                            <parallel>classes</parallel>
+                            <threadCountClasses>2</threadCountClasses>
+                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.storage.type>avro</diesel.storage.type>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 
 </project>

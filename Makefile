@@ -54,6 +54,23 @@ large-test:
 	@echo "Running large profile (@LargeTest)..."
 	$(MVN) -B clean test -P large
 
+## Run format-specific storage tests (only tests matching diesel.storage.type run)
+test-storage-csv:
+	@echo "Running CSV storage tests..."
+	$(MVN) -B clean test -P storage-csv
+
+test-storage-tsv:
+	@echo "Running TSV storage tests..."
+	$(MVN) -B clean test -P storage-tsv
+
+test-storage-jsonl:
+	@echo "Running JSONL storage tests..."
+	$(MVN) -B clean test -P storage-jsonl
+
+test-storage-avro:
+	@echo "Running AVRO storage tests..."
+	$(MVN) -B clean test -P storage-avro
+
 ## Run ALL profiles sequentially (release gate)
 all-tests:
 	@echo "Running ALL profiles sequentially..."

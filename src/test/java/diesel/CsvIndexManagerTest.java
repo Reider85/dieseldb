@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link CsvIndexManager} and integrated into {@link CsvRowStorage}.
  */
 @Tag("storage")
+@StorageType("csv")
 class CsvIndexManagerTest {
 
     @TempDir

@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * platform line endings leak into the output.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlDeterministicSerializationTest {
 
     @TempDir

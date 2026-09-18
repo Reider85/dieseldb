@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * default charset and line separator.
  */
 @Tag("storage")
+@StorageType({"csv", "tsv"})
 class CharsetEncodingTest {
 
     @TempDir

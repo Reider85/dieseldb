@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * the delta ratio crosses {@code jsonl.compaction.threshold}.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlAppendModeTest {
 
     @TempDir

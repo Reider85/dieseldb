@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * next to a missing target is reported as a WARNING on load.
  */
 @Tag("storage")
+@StorageType({"csv", "tsv"})
 class AtomicFileWriteTest {
 
     @TempDir

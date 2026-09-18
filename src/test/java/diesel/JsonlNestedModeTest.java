@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * SQL glue for both {@code jsonl.nested.mode} values.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlNestedModeTest {
 
     @TempDir

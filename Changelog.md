@@ -2833,3 +2833,4 @@ Changes:
 3.1.28 Prompt 63 (Section 2 AVRO): ZStandard codec class for Avro compression
 3.1.29 Prompt 64: AVRO сжатие - Snappy оптимизация - полная реализация
 3.1.30 Add make clean-test-cache for clearing test cache only (surefire reports, build cache, test classes)
+3.1.31 Prompt 65: Storage-type test gating - format-specific tests depend on diesel.storage.type via @StorageType annotation + StorageTypeCondition (JUnit 5 ExecutionCondition); 38 test classes annotated (Avro/JSONL/CSV/TSV/cross-format); 4 Maven profiles (storage-csv/tsv/jsonl/avro) + Makefile targets; bug fixes: AvroCompressionTest null-codec reference file, JsonlLoadModeTest compression codec pinning; AGENTS.md + TIA mapping updated. Fast 178/0/0, storage-csv 644 tests (392 skipped) BUILD SUCCESS.

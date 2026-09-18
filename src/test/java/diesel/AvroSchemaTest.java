@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * schema building, .avsc file I/O, and compatibility validation.
  */
 @Tag("storage")
+@StorageType("avro")
 class AvroSchemaTest {
 
     @TempDir

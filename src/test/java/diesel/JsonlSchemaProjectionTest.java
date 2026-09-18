@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * ({@code <name>.schema.json}).
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlSchemaProjectionTest {
 
     @TempDir

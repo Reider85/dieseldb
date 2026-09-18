@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * size selection, caching, benchmarking, and performance recommendations.
  */
 @Tag("storage")
+@StorageType("avro")
 class AvroCompressionTest {
 
     private static final String[] PROP_KEYS = {
@@ -649,9 +650,23 @@ class AvroCompressionTest {
             data.add(r);
         }
 
+        // Write uncompressed (null codec) reference file for compression ratio check
+        File nullFile = new File(tempDir.toFile(), "snappy_bench_null.avro");
+        AvroDataFileWriter nw = new AvroDataFileWriter(
+                simpleCols(), simpleTypes(), nullFile, AvroCodecFactory.factory("null", -1));
+        try {
+            for (Map<String, Object> row : data) {
+                nw.writeRow(row);
+            }
+            nw.flush();
+        } finally {
+            nw.close();
+        }
+        long nullBytes = nullFile.length();
+        assertTrue(nullBytes > 0, "Null-codec reference file must exist");
+
         StringBuilder report = new StringBuilder("[SNAPPY-BENCH] rows=" + rows);
-        long nullBytes = 0;
-        
+
         for (int bufferSize : SnappyOptimizedCodec.BENCHMARK_SIZES) {
             File f = new File(tempDir.toFile(), "snappy_bench_" + bufferSize + ".avro");
             
@@ -678,9 +693,6 @@ class AvroCompressionTest {
             assertEquals(rows, seen);
 
             long bytes = f.length();
-            if (bufferSize == 8192) { // Reference size
-                nullBytes = bytes;
-            }
             
             report.append(String.format(Locale.ROOT,
                     " size=%d:write=%dms read=%dms bytes=%d", bufferSize, writeMs, readMs, bytes));
@@ -692,8 +704,7 @@ class AvroCompressionTest {
         String reportStr = report.toString();
         System.out.println(reportStr);
         
-        // Verify compression ratio
-        assertTrue(nullBytes > 0, "Reference file must exist");
+        // Verify compression ratio: snappy 8192 should compress >= 1.5x vs null
         long compressedBytes = new File(tempDir.toFile(), "snappy_bench_8192.avro").length();
         assertTrue(nullBytes / (double) compressedBytes >= 1.5,
                 "Snappy should compress repetitive data >=1.5x (null=" + nullBytes + ", snappy=" + compressedBytes + ")");

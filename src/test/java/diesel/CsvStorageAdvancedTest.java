@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * parallel-vs-sequential read equality (34) and deferred bulk deletes (35).
  */
 @Tag("storage")
+@StorageType("csv")
 class CsvStorageAdvancedTest {
 
     @TempDir

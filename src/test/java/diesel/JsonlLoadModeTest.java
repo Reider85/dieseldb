@@ -25,22 +25,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Also verifies the optional {@code jsonl.table.mirror} toggle.
  */
 @Tag("storage")
+@StorageType({"jsonl", "csv"})
 class JsonlLoadModeTest {
 
     @TempDir
     Path tempDir;
 
     private String prevJsonlLoadMode;
+    private String prevCsvCompressionCodec;
 
     @BeforeEach
     void pinDefaults() {
         prevJsonlLoadMode = System.getProperty("jsonl.load.mode");
         System.setProperty("jsonl.load.mode", "file");
+        prevCsvCompressionCodec = System.getProperty("csv.compression.codec");
+        System.setProperty("csv.compression.codec", "none");
     }
 
     @AfterEach
     void clearProperties() {
         restoreOrClear("jsonl.load.mode", prevJsonlLoadMode);
+        restoreOrClear("csv.compression.codec", prevCsvCompressionCodec);
         System.clearProperty("jsonl.table.mirror");
     }
 

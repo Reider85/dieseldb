@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ul>
  */
 @Tag("storage")
+@StorageType({"avro", "csv", "tsv", "jsonl"})
 class SnappyOptimizationBenchmark {
 
     @Test

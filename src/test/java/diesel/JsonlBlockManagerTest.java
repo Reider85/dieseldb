@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * projection alignment and the optional per-block min/max statistics.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlBlockManagerTest {
 
     @TempDir

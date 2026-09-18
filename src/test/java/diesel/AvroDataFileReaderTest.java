@@ -24,6 +24,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Tag("storage")
+@StorageType("avro")
 class AvroDataFileReaderTest {
 
     @TempDir

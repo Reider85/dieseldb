@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (prompt 35).
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlIndexTest {
 
     @TempDir

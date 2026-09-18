@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * end-to-end storage speed-up as a {@code @LargeTest} (20k rows x 40 cols).
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlProjectionPushdownTest {
 
     @TempDir

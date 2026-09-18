@@ -50,6 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * on wide rows, append vs rewrite on 10k inserts) run as {@link LargeTest}s.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlStorageAdvancedTest {
 
     @TempDir

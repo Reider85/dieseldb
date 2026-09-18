@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * string conversions and the write-side 2^53 guard.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlTypeMapperTest {
 
     @TempDir

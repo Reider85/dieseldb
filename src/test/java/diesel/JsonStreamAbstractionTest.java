@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * is always an error on both backends.
  */
 @Tag("storage")
+@StorageType({"avro", "csv", "tsv", "jsonl"})
 class JsonStreamAbstractionTest {
 
     // ── Architecture guard (no JSON library below the json package) ──────

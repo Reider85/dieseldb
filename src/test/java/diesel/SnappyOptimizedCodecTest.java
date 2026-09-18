@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * </ul>
  */
 @Tag("storage")
+@StorageType({"avro", "csv", "tsv", "jsonl"})
 class SnappyOptimizedCodecTest {
 
     private static final String[] PROP_KEYS = {

@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * For true 500MB+ testing, run manually with increased heap.
  */
 @Tag("storage")
+@StorageType("csv")
 class CsvLargeFileStressTest {
 
     @TempDir

@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * zstd-compressed round trip (prompt 52).
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlPropertyTest {
 
     private static final String THRESHOLD_KEY = "jsonl.parallel.read.threshold";

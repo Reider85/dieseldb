@@ -33,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * states distinct through a load→save round trip.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlNullSemanticsTest {
 
     @TempDir

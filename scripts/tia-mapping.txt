@@ -47,6 +47,21 @@ diesel/ConfigLoader.java		storage
 diesel/storage/*.java			storage
 diesel/storage/json/*.java		storage
 diesel/storage/avro/*.java		storage
+
+# Format-specific storage tests (gated by @StorageType + diesel.storage.type)
+# When these source files change, the corresponding format profile should run
+diesel/storage/CsvRowStorage.java	storage-csv
+diesel/storage/CsvIndexManager.java	storage-csv
+diesel/storage/TsvRowStorage.java	storage-tsv
+diesel/storage/TsvIndexManager.java	storage-tsv
+diesel/storage/JsonlRowStorage.java	storage-jsonl
+diesel/storage/avro/AvroRowStorage.java	storage-avro
+diesel/storage/avro/AvroCodecFactory.java	storage-avro
+diesel/storage/avro/AvroCompressionConfig.java	storage-avro
+diesel/storage/avro/AvroDataFileWriter.java	storage-avro
+diesel/storage/avro/AvroDataFileReader.java	storage-avro
+diesel/storage/avro/SnappyOptimizedCodec.java	storage-avro
+diesel/storage/avro/ZStandardCodec.java	storage-avro
 diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network

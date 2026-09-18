@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * parsing, byte-identical output vs legacy reader, and allocation assertions.
  */
 @Tag("storage")
+@StorageType({"avro", "csv", "tsv", "jsonl"})
 class DelimitedByteParserTest {
 
     @TempDir

@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("storage")
+@StorageType("avro")
 class AvroRowStorageTest {
 
     @TempDir

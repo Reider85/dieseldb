@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * settings disable the secondary .table write on save.
  */
 @Tag("storage")
+@StorageType({"jsonl", "csv"})
 class StorageLoadModeTest {
 
     @TempDir

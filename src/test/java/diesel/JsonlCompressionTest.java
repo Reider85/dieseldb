@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * compression and falls back to a full rewrite.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlCompressionTest {
 
     @TempDir

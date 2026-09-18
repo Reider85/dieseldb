@@ -41,6 +41,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * loads faster in parallel on a multi-core machine.
  */
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlParallelLoadTest {
 
     private static final String THRESHOLD_KEY = "jsonl.parallel.read.threshold";

@@ -29,6 +29,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Tag("storage")
+@StorageType({"csv", "tsv"})
 class CsvTsvHeaderMappingTest {
 
     @TempDir

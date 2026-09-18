@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ≥3x size reduction requirement on repetitive data.
  */
 @Tag("storage")
+@StorageType({"csv", "tsv"})
 class CompressionTest {
 
     @TempDir

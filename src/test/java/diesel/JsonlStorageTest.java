@@ -28,6 +28,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Tag("storage")
+@StorageType("jsonl")
 class JsonlStorageTest {
 
     @TempDir

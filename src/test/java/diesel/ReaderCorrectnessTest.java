@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * warning, and defensive insert copies.
  */
 @Tag("storage")
+@StorageType({"avro", "csv", "tsv", "jsonl"})
 class ReaderCorrectnessTest {
 
     @TempDir
