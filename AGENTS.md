@@ -83,6 +83,15 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
   Re-run `make timing` **ONLY AFTER** the isolated test passes. This saves minutes on heavy workloads.
 - The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` will automatically ignore sub-11ms micro-queries and only treat degradation >20% on **heavy (>100ms)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
 
+### Test Cache Cleaning
+
+| Command | What it clears | When to use |
+|---------|---------------|-------------|
+| `make clean-test-cache` | `target/.cache`, `target/surefire-reports/`, `target/test-classes/` | Stale test results, flaky test debugging, before re-running specific tests |
+| `make clean` | Everything above + `target/` + `data/*.csv` + `data/*.table` + logs | Full rebuild, before release |
+
+**Tip:** Use `make clean-test-cache` before `make test` if you suspect stale test cache is causing false passes/failures. It's ~10x faster than `make clean`.
+
 ---
 
 ## Test-Impact Analysis (TIA) — test mapping script

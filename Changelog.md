@@ -1147,26 +1147,6 @@ identical-code band; only >2x deltas are sub-10ms micro-queries, confirmed as no
 timing39->40 at 0.951x); per-query sampling costs one ThreadLocal.get()+Runtime call every 4096 rows. Stand-alone
 profile (600x600 cross joins): 360k-row results at 4440/4297 ms, peak metrics 885 MB / 1.7 GB. Complexity check: no new
 O(n^2)/O(n!) - guards are O(1) per row add.
-2.9.13 prompt 13 OutOfMemoryError handling (DatabaseServer + SelectQuery + OomHandlingTest): a query running out of heap
-no longer kills the client connection with a cryptic exception dump. SelectQuery tracks a per-query peak memory metric:
-a ThreadLocal QueryMemoryTracker reset and sampled at the start of execute(), sampled every MEMORY_SAMPLE_INTERVAL=4096
-rows inside checkResultRowLimit (a bitmask test keeps the hot loops O(1) per row add, no asymptotic change), and sampled
-with the final result size - recording peakBytes (Runtime.totalMemory()-freeMemory(), approximate: uncollected GC
-garbage from previous queries on the same thread can inflate it, documented in javadoc), rowsAtPeak and rowCount,
-exposed via package-private getters getLastQueryPeakMemoryBytes()/getLastQueryRowsAtPeak()/getLastQueryRowCount().
-DatabaseServer.ClientHandler catches OutOfMemoryError ahead of the Exception handler and handleOutOfMemory logs the
-query plus rows produced / peak memory at which row / current heap and cause at SEVERE, then replies exactly 'Error:
-Query exceeded memory limit. Consider adding LIMIT or indexes.' (connection stays open). Added OomHandlingTest (new
-file, 3 tests): selectTracksPeakMemoryMetric (cross join 100x100 -> 10000 rows, peakBytes > 0),
-serverRespondsWithOomMessage (Database subclass throwing OutOfMemoryError, exact client reply asserted),
-oomLogsQueryContext (formatted SEVERE record via MessageFormat - JUL keeps {0} in getMessage() - contains query and '
-rows produced=... peak memory used=...'). All green: OomHandlingTest 3/0, full -Ptest suite 448 tests 0 failures 0
-errors BUILD SUCCESS. Timing reports timing39.md + timing40.md (140 queries, 0 FAIL): no degradation - aggregate 0.965x
-vs the timing.md baseline (128 matched; the two heavy cross-join ORDER BY queries at 0.89x/1.05x inside their documented
-identical-code band; only >2x deltas are sub-10ms micro-queries, confirmed as noise by identical-code calibration
-timing39->40 at 0.951x); per-query sampling costs one ThreadLocal.get()+Runtime call every 4096 rows. Stand-alone
-profile (600x600 cross joins): 360k-row results at 4440/4297 ms, peak metrics 885 MB / 1.7 GB. Complexity check: no new
-O(n^2)/O(n!) - guards are O(1) per row add.
 2.9.11 prompt 11 EXPLAIN for execution-plan analysis (ExplainQuery + SelectQuery + QueryParser + Database + DML
 getters): implemented the EXPLAIN command - 'EXPLAIN SELECT/INSERT/UPDATE/DELETE' renders a textual execution-plan tree
 without executing the statement, and 'EXPLAIN ANALYZE' executes it and appends the actual metrics. New
@@ -1898,14 +1878,14 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    match extractTableName normalization, fixing TableNotFound for lowercase table names (ConcurrentConflictTest,
    CopyOnWriteIsolationTest). Files changed: Table.java (bumpVersion), UpdateQuery.java (bumpVersion after UPDATE).
    Verification: 42/0 BUILD SUCCESS, all 6 previously failing tests pass.
-   2.9.54 prompt 63 instanceof pattern matching (java:S6201) (prompt2.md line 1055): replaced old-style instanceof+cast
+    2.9.55 prompt 63 instanceof pattern matching (java:S6201) (prompt2.md line 1055): replaced old-style instanceof+cast
    with Java 16+ pattern matching for instanceof. ConditionEvaluator.java:103-108 — replaced
    `if (!(rowValue instanceof String) || !(conditionValue instanceof String))` + separate `(String) rowValue` /
    `(String) conditionValue` casts with
    `if (!(rowValue instanceof String rowStr) || !(conditionValue instanceof String condStr))` pattern matching, eliminating
    the explicit cast statements. Note: pom.xml already uses Java 21 (maven.compiler.source/target=21), no change needed.
    Files changed: ConditionEvaluator.java. Verification: quick gate 42/0 BUILD SUCCESS.
-   2.9.55 prompt 64 Eliminate recursive regex patterns (java:S5998) (prompt2.md line 1083): replaced lazy .*? quantifiers
+    2.9.56 prompt 64 Eliminate recursive regex patterns (java:S5998) (prompt2.md line 1083): replaced lazy .*? quantifiers
    with possessive/balanced-parentheses patterns to prevent quadratic backtracking and StackOverflowError risk.
    QueryParser.java: convertLikePatternToRegex() now deduplicates consecutive % before regex conversion;
    extractSequenceDef() helper replaces .*SEQUENCE\\(([^)]+)\\).* regex with indexOf-based extraction;
@@ -1918,7 +1898,7 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    SelectQuery.java: LIKE evaluation deduplicates consecutive % before regex conversion. Files changed: QueryParser.java,
    SubqueryParser.java, SelectQuery.java. Verification: full -Ddiesel.largeTests=true -Dtest.heap=4g test 42/0 BUILD
    SUCCESS; all RegexRobustnessTest (18 tests) pass.
-   2.9.56 prompt 67 Remove unused method parameters (java:S1172) (prompt2.md line 1146): removed 3 genuinely dead
+    2.9.57 prompt 67 Remove unused method parameters (java:S1172) (prompt2.md line 1146): removed 3 genuinely dead
    parameters from private methods/constructors and added @SuppressWarnings("unused") to 14 interface-mandated parameters
    across 8 files. QueryParser.java: removed unused `normalized` param from parseExplainQuery(String original, Database
    database) and updated call site; added @SuppressWarnings("unused") to 10 anonymous QueryParseStrategy.parse()
@@ -1931,12 +1911,12 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    methods (interface-mandated param). Files changed: QueryParser.java, SubqueryParser.java, Table.java,
    BeginTransactionQuery.java, CommitTransactionQuery.java, RollbackTransactionQuery.java, SetAutoCommitQuery.java,
    SetIsolationLevelQuery.java. Verification: full -Ddiesel.largeTests=true -Dtest.heap=4g test 42/0 BUILD SUCCESS.
-   2.9.56 prompt 66 Remove unused imports (java:S1128, prompt2.md line 1127): audited all 75+ Java files (33 source + 45
+    2.9.58 prompt 66 Remove unused imports (java:S1128, prompt2.md line 1127): audited all 75+ Java files (33 source + 45
    test) for unused import statements. Comprehensive scan found 0 unused imports — the 36 issues from the original
    SonarQube report were already resolved by prior prompts (prompt 46 S1128 cleanup and general code modernization). All
    imports verified as actively used in code. No code changes needed. Files changed: none. Verification: mvn compile BUILD
    SUCCESS.
-   2.9.57 prompt 65 Extract repeated string literals into SqlKeywords constants (java:S1192, prompt2.md line 1105): added ~
+    2.9.59 prompt 65 Extract repeated string literals into SqlKeywords constants (java:S1192, prompt2.md line 1105): added ~
    50 new constants to SqlKeywords.java covering single keywords (FROM, INTO, CREATE, INDEX, HASH, UNIQUE, CLUSTERED,
    PRIMARY, KEY, SEQUENCE, IN, IS, INNER, LEFT, RIGHT, OUTER, FULL, CROSS, GROUP, BY, ORDER, DESC, DISTINCT, BEGIN,
    TRANSACTION, COMMIT, ROLLBACK, ISOLATION, LEVEL, AUTOCOMMIT), transaction commands (DELETE_FROM, BEGIN_TRANSACTION,
@@ -2745,7 +2725,6 @@ Changes:
 - src/test/java/diesel/JsonlStorageTest.java: storageNestedColumnRoundTrip now builds the expected nested map with explicit LinkedHashMap insertion order instead of Map.of - Map.of iteration order is JVM-dependent (the JDK currently used iterates "age" before "name"), so the assertion was unreliable; the engine's exact order-preserving round-trip is unaffected.
 - config.properties: storage.type stays csv and csv.compression.codec stays zstd as committed defaults (the configuration this fix targets).
 
-3.0.79 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
 
 Changes:
 - diesel/storage/json/JsonParserConfig.java (new): self-contained config record holding Backend (JACKSON|GSON), maxNestingDepth (default 64), maxStringLength (default 1MB), duplicateKeys mode (FAIL|LAST_WINS); sysprop overrides for all three limits; defaultsFor(Backend) factory
@@ -2768,160 +2747,34 @@ Changes:
 
 
 
-3.0.81 Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable
-3.0.82 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
-3.0.83 Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
-3.0.84 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
-3.0.85 Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
-3.0.86 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
-3.0.87 Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
-3.0.88 Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance (AtomicFileWriter, Object[] rows, deferred bulk rebuild, slf4j, UTF-8, write-lock saves) - verify-only: all items already implemented and closed by JsonlStorageTest plus prompt 41/44/45 suites; quick 370/0/0/6, full suite (4GB, @LargeTest) 370/0/0/0 BUILD SUCCESS
-3.0.89 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
-3.0.90 Fix RegexRobustnessTest: table alias detection in parseTableAndJoins and unquoteQualifiedIdentifier for quoted identifiers - parseTableAndJoins: truncate mainTablePart at SQL clause keywords (WHERE/ORDER BY/etc.) before alias detection so aliases are correctly extracted even without JOINs - unquoteQualifiedIdentifier: skip outer-quote stripping for multi-part quoted identifiers like "table"."col" to prevent mangling individual quoted parts
-3.0.91 Prompt 48 - JSONL load-error diagnostics and garbage tolerance: jsonl.load.error.mode = fail | skip_row, file:line:field diagnostics, BOM/blank-line/non-object/truncated-last-line handling, final WARNING with skipped count - new JsonlLoadDiagnosticsTest (15 tests); quick 396/0/0/6, full suite (4GB, @LargeTest) 396/0/0/0 BUILD SUCCESS
-3.0.92 Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
-3.0.93 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
-3.0.94 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
-3.0.95 Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
-3.0.96 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
-3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
-3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
-3.0.99 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
-3.0.100 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
-3.0.101 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
-3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
-3.0.103 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
 
 
 3.0.80 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
 3.0.81 Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable
-3.0.82 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
-3.0.83 Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
-3.0.84 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
-3.0.85 Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
-3.0.86 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
-3.0.87 Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
-3.0.88 Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance (AtomicFileWriter, Object[] rows, deferred bulk rebuild, slf4j, UTF-8, write-lock saves) - verify-only: all items already implemented and closed by JsonlStorageTest plus prompt 41/44/45 suites; quick 370/0/0/6, full suite (4GB, @LargeTest) 370/0/0/0 BUILD SUCCESS
-3.0.89 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
-3.0.90 Fix RegexRobustnessTest: table alias detection in parseTableAndJoins and unquoteQualifiedIdentifier for quoted identifiers - parseTableAndJoins: truncate mainTablePart at SQL clause keywords (WHERE/ORDER BY/etc.) before alias detection so aliases are correctly extracted even without JOINs - unquoteQualifiedIdentifier: skip outer-quote stripping for multi-part quoted identifiers like "table"."col" to prevent mangling individual quoted parts
-3.0.91 Prompt 48 - JSONL load-error diagnostics and garbage tolerance: jsonl.load.error.mode = fail | skip_row, file:line:field diagnostics, BOM/blank-line/non-object/truncated-last-line handling, final WARNING with skipped count - new JsonlLoadDiagnosticsTest (15 tests); quick 396/0/0/6, full suite (4GB, @LargeTest) 396/0/0/0 BUILD SUCCESS
-3.0.92 Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
-3.0.93 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
-3.0.94 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
-3.0.95 Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
-3.0.96 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
-3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
-3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
-3.0.99 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
+3.0.83 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
+3.0.84 Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
+3.0.85 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
+3.0.86 Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
+3.0.87 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
+3.0.88 Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
+3.0.89 Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance (AtomicFileWriter, Object[] rows, deferred bulk rebuild, slf4j, UTF-8, write-lock saves) - verify-only: all items already implemented and closed by JsonlStorageTest plus prompt 41/44/45 suites; quick 370/0/0/6, full suite (4GB, @LargeTest) 370/0/0/0 BUILD SUCCESS
+3.0.90 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
+3.0.91 Fix RegexRobustnessTest: table alias detection in parseTableAndJoins and unquoteQualifiedIdentifier for quoted identifiers - parseTableAndJoins: truncate mainTablePart at SQL clause keywords (WHERE/ORDER BY/etc.) before alias detection so aliases are correctly extracted even without JOINs - unquoteQualifiedIdentifier: skip outer-quote stripping for multi-part quoted identifiers like "table"."col" to prevent mangling individual quoted parts
+3.0.92 Prompt 48 - JSONL load-error diagnostics and garbage tolerance: jsonl.load.error.mode = fail | skip_row, file:line:field diagnostics, BOM/blank-line/non-object/truncated-last-line handling, final WARNING with skipped count - new JsonlLoadDiagnosticsTest (15 tests); quick 396/0/0/6, full suite (4GB, @LargeTest) 396/0/0/0 BUILD SUCCESS
+3.0.93 Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
+3.0.94 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
+3.0.95 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
+3.0.96 Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
+3.0.97 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
+3.0.98 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
+3.0.99 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
+3.0.101 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
 3.0.100 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
-3.0.101 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
-3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
-3.0.103 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
+3.0.102 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
+3.0.103 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
+3.0.104 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
 
 
-3.0.80 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
-3.0.81 Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable
-3.0.82 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
-3.0.83 Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
-3.0.84 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
-3.0.85 Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
-3.0.86 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
-3.0.87 Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
-3.0.88 Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance (AtomicFileWriter, Object[] rows, deferred bulk rebuild, slf4j, UTF-8, write-lock saves) - verify-only: all items already implemented and closed by JsonlStorageTest plus prompt 41/44/45 suites; quick 370/0/0/6, full suite (4GB, @LargeTest) 370/0/0/0 BUILD SUCCESS
-3.0.89 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
-3.0.90 Fix RegexRobustnessTest: table alias detection in parseTableAndJoins and unquoteQualifiedIdentifier for quoted identifiers - parseTableAndJoins: truncate mainTablePart at SQL clause keywords (WHERE/ORDER BY/etc.) before alias detection so aliases are correctly extracted even without JOINs - unquoteQualifiedIdentifier: skip outer-quote stripping for multi-part quoted identifiers like "table"."col" to prevent mangling individual quoted parts
-3.0.91 Prompt 48 - JSONL load-error diagnostics and garbage tolerance: jsonl.load.error.mode = fail | skip_row, file:line:field diagnostics, BOM/blank-line/non-object/truncated-last-line handling, final WARNING with skipped count - new JsonlLoadDiagnosticsTest (15 tests); quick 396/0/0/6, full suite (4GB, @LargeTest) 396/0/0/0 BUILD SUCCESS
-3.0.92 Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
-3.0.93 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
-3.0.94 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
-3.0.95 Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
-3.0.96 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
-3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
-3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
-3.0.99 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
-3.0.100 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
-3.0.101 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
-3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
-3.0.103 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
-
-
-3.0.80 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
-3.0.81 Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable
-3.0.82 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
-3.0.83 Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
-3.0.84 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
-3.0.85 Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
-3.0.86 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
-3.0.87 Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
-3.0.88 Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance (AtomicFileWriter, Object[] rows, deferred bulk rebuild, slf4j, UTF-8, write-lock saves) - verify-only: all items already implemented and closed by JsonlStorageTest plus prompt 41/44/45 suites; quick 370/0/0/6, full suite (4GB, @LargeTest) 370/0/0/0 BUILD SUCCESS
-3.0.89 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
-3.0.90 Fix RegexRobustnessTest: table alias detection in parseTableAndJoins and unquoteQualifiedIdentifier for quoted identifiers - parseTableAndJoins: truncate mainTablePart at SQL clause keywords (WHERE/ORDER BY/etc.) before alias detection so aliases are correctly extracted even without JOINs - unquoteQualifiedIdentifier: skip outer-quote stripping for multi-part quoted identifiers like "table"."col" to prevent mangling individual quoted parts
-3.0.91 Prompt 48 - JSONL load-error diagnostics and garbage tolerance: jsonl.load.error.mode = fail | skip_row, file:line:field diagnostics, BOM/blank-line/non-object/truncated-last-line handling, final WARNING with skipped count - new JsonlLoadDiagnosticsTest (15 tests); quick 396/0/0/6, full suite (4GB, @LargeTest) 396/0/0/0 BUILD SUCCESS
-3.0.92 Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
-3.0.93 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
-3.0.94 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
-3.0.95 Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
-3.0.96 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
-3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
-3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
-3.0.99 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
-3.0.100 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
-3.0.101 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
-3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
-3.0.103 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
-
-
-3.0.80 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
-3.0.81 Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable
-3.0.82 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
-3.0.83 Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
-3.0.84 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
-3.0.85 Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
-3.0.86 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
-3.0.87 Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
-3.0.88 Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance (AtomicFileWriter, Object[] rows, deferred bulk rebuild, slf4j, UTF-8, write-lock saves) - verify-only: all items already implemented and closed by JsonlStorageTest plus prompt 41/44/45 suites; quick 370/0/0/6, full suite (4GB, @LargeTest) 370/0/0/0 BUILD SUCCESS
-3.0.89 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
-3.0.90 Fix RegexRobustnessTest: table alias detection in parseTableAndJoins and unquoteQualifiedIdentifier for quoted identifiers - parseTableAndJoins: truncate mainTablePart at SQL clause keywords (WHERE/ORDER BY/etc.) before alias detection so aliases are correctly extracted even without JOINs - unquoteQualifiedIdentifier: skip outer-quote stripping for multi-part quoted identifiers like "table"."col" to prevent mangling individual quoted parts
-3.0.91 Prompt 48 - JSONL load-error diagnostics and garbage tolerance: jsonl.load.error.mode = fail | skip_row, file:line:field diagnostics, BOM/blank-line/non-object/truncated-last-line handling, final WARNING with skipped count - new JsonlLoadDiagnosticsTest (15 tests); quick 396/0/0/6, full suite (4GB, @LargeTest) 396/0/0/0 BUILD SUCCESS
-3.0.92 Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
-3.0.93 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
-3.0.94 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
-3.0.95 Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
-3.0.96 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
-3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
-3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
-3.0.99 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
-3.0.100 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
-3.0.101 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
-3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
-3.0.103 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
-
-3.0.80 Prompt 42 - JSON streaming abstraction (unified parser/generator facade, Gson backend, parser limits)
-3.0.81 Fix Windows transient file-lock flake in atomic CSV save: rename retry attempts + backoff cap made configurable
-3.0.82 Prompt 43 - JSONL type mapping (JsonTypeMapper, strict/lenient coercion, 2^53 precision rules)
-3.0.83 Make PersistenceTest storage-type agnostic (fix compressed-delimited DROP test under tsv)
-3.0.84 Prompt 44 - JSONL schema modes (strict/inferred/hybrid), one-pass schema inference, sidecar evolution
-3.0.85 Fix ClassCastException when csv.table.mirror=on + csv.load.mode=auto_mtime
-3.0.86 Fix ServerConnectionLimitTest/SocketTimeoutTest failures + harden server startup against stale/corrupt table files
-3.0.87 Prompt 45 - JSONL nested storage modes (flatten/json_column) and array handling (json/expand), SQL JSON Path support
-3.0.88 Prompt 46 - JSONL storage architecture integration and shared-infrastructure inheritance (AtomicFileWriter, Object[] rows, deferred bulk rebuild, slf4j, UTF-8, write-lock saves) - verify-only: all items already implemented and closed by JsonlStorageTest plus prompt 41/44/45 suites; quick 370/0/0/6, full suite (4GB, @LargeTest) 370/0/0/0 BUILD SUCCESS
-3.0.89 Prompt 47 - JSONL NULL semantics: null vs missing field vs empty string stay distinct across a load->save round trip
-3.0.90 Fix RegexRobustnessTest: table alias detection in parseTableAndJoins and unquoteQualifiedIdentifier for quoted identifiers - parseTableAndJoins: truncate mainTablePart at SQL clause keywords (WHERE/ORDER BY/etc.) before alias detection so aliases are correctly extracted even without JOINs - unquoteQualifiedIdentifier: skip outer-quote stripping for multi-part quoted identifiers like "table"."col" to prevent mangling individual quoted parts
-3.0.91 Prompt 48 - JSONL load-error diagnostics and garbage tolerance: jsonl.load.error.mode = fail | skip_row, file:line:field diagnostics, BOM/blank-line/non-object/truncated-last-line handling, final WARNING with skipped count - new JsonlLoadDiagnosticsTest (15 tests); quick 396/0/0/6, full suite (4GB, @LargeTest) 396/0/0/0 BUILD SUCCESS
-3.0.92 Prompt 49 - JSONL append/rewrite write modes, delta sidecar, auto-compaction, crash-recovery
-3.0.93 Prompt 50 - JSONL load mode: .table vs .jsonl with auto_mtime fast path and optional mirror
-3.0.94 Fix testDropTableDeletesCompressedDelimitedFiles for JSONL storage type - src/test/java/diesel/PersistenceTest.java: delimitedExtension() now handles JsonlRowStorage (returns .jsonl); cleanup() deletes .jsonl + compressed variants; testDropTableDeletesCompressedDelimitedFiles() no longer forces diesel.storage.type=csv, adapts assertions: for compressed CSV/TSV checks .zst file, for JSONL (no compression yet) checks base .jsonl file; testDropTableDeletesFiles() adds .jsonl deletion assertion - diesel/Database.java: deleteTableFiles() adds .jsonl, .jsonl.zst, .jsonl.lz4, .jsonl.snappy to suffix array so DROP TABLE cleans JSONL files - Verification: quick suite (mvn test -DskipLargeTests) 415/0/0/6 BUILD SUCCESS; all PersistenceTest (17) pass with default storage.type=jsonl
-3.0.95 Update PROMPT_STATUS.md: add bug fix note for JSONL test fix
-3.0.96 Prompt 51 - JSONL deterministic serialization (byte-reproducible output)
-3.0.97 Prompt 52 - CSV/TSV read/write I/O fast path (byte-level whole-file load + batched typed writers)
-3.0.98 Prompt 52 follow-up - CSV/TSV reader type-parser precompilation (per-cell switch dropped)
-3.0.99 Prompt 52 - JSONL compression via common CompressionCodec (zstd/lz4/snappy)
-3.0.100 Apply CSV/TSV parser+writer intrinsics patch - indexOf+substring fast path + typed StringBuilder.append on writers + loadFast byte reader path
-3.0.101 Prompt 53 - JSONL indexing: stable row-ids and JsonlIndexManager
-3.0.102 Fix server response protocol consistency for OOM/error paths (sendSerializedResult) and wire failures
-3.0.103 DelimitedByteParser - direct byte[] to Object[] parsing for CSV (no intermediate String rows), ASCII typed fast paths, per-field charset validation, legacy fallback; CsvRowStorage/DelimitedIndexManager wired to fast path; TsvCsvBenchmark rewrite (200k rows, legacy/fast/baseline readers); DelimitedIoPerfTest configurable ceiling + baseline test; CharsetEncodingTest non-UTF8 round-trips; new DelimitedByteParserTest/AllocationProfileTest/CsvLargeFileStressTest
-
----
 ## Test Profile Migration (2026-09-16 20:33:43)
 
 **Branch:** chore/test-profiles-migration
@@ -2970,364 +2823,13 @@ Changes:
 3.1.18 Prompt 54 - JSONL parallel read via byte-offset pre-scan (JsonlParallelLoader: LineIndex/LineIndexCache + ByteRangeTask partitions + deterministic file-order merge + compressed/below-jsonl.parallel.read.threshold/Integer.MAX_VALUE fallbacks + nested-column union carried to JsonlIndexManager; JsonlRowReader initPartition/setSuppressSkipSummary; JsonlRowStorage parallel branch replays nested marks into shared JsonlSchemaManager; config jsonl.parallel.read.threshold=10000; JsonlParallelLoadTest 7 fast + @LargeTest 1M rows seq=3311ms par=2162ms on 4 cores)
 3.1.19 fix(build-cache): register config.properties as checksum input (.mvn/maven-build-cache-config.xml <input><global><includes><include>config.properties</include>) so edits to config.properties invalidate the Maven build cache instead of silently restoring a cached build and skipping surefire:test. Verification: fast profile PASS, input files 219 -> 222, cache miss after config change forces real test run. Changelog entry appended manually (make unavailable on this machine).
 3.1.20 Prompt 55 - JSONL lazy block loading + projection pushdown
-
-New public diesel/storage/JsonlBlockManager: real byte-range blocks over the
-Prompt-54 pre-scan (block b = jsonl.block.rows data lines, default 1000).
-getBlock reads only its FileChannel range and streams it through a
-JsonlRowReader seeded by initPartition(firstDataLine, atFileStart); the
-access-order LRU (jsonl.block.cache.blocks, default 16) evicts for real and
-a miss triggers an actual range read. Optional per-block typed-column
-min/max stats are collected on full reads (zone-map scaffold). A whole-file
-buffer retained by the pre-scan serves both block slices and a parallel
-projection sweep (per-block parse on the common pool, deterministic
-file-order merge).
-
-Projection pushdown in JsonlRowReader skips unrequested field subtrees at
-the token level: subtreeNeeded(path, idx) = (idx != null &&
-neededByColumn[idx]) || prefixNeeded(path), used by parseCurrentRow and
-walkObjectFlat. STRICT-mode parity is preserved (an unknown scalar is still
-reported); nextArray always parses the full row.
-
-- JsonParserConfig: jsonl.lazy.blocks (default false), jsonl.block.rows
-  (default 1000), jsonl.block.cache.blocks (default 16) + builder/getters.
-- JsonlRowStorage: deferred load (lazyDeferred), ensureMaterialized() on any
-  classic access, readProjected/readProjectedArrays, guards so lazy and full
-  modes are identical by construction (deferred implies no mutation, disk is
-  truth). Append mode and compressed files never defer. External
-  append/mutation changes the pre-scan stamp (mtime/size) so blocks re-scan
-  and stale data is never returned.
-- JsonlParallelLoader: preScanKeepBytes(File, Charset) + LineIndex.fileBytes()
-  so blocks/sweep share one cached buffer; preScan delegates with
-  keepBytes=false (existing callers unchanged).
-- JsonlIndexManager: package-private preScan, invalidateLineIndexCache().
-- config.properties: jsonl.lazy.blocks / jsonl.block.rows /
-  jsonl.block.cache.blocks documented.
-- New tests: JsonlBlockManagerTest (10), JsonlLazyLoadTest (10),
-  JsonlProjectionPushdownTest (6 + @LargeTest perf); registered in
-  tag-mapping.tsv under storage.
-
-Verification: core storage 26/26 green; fast profile 178/0/0. Acceptance
-criterion (SELECT 3 of 42 columns on 20k x 40-col rows) full=390ms
-projected=119ms => 3.28x (>= 2x required; logged [JSONL-LAZY] perf). Lazy
-and full modes return identical rows, including flatten dot-columns and
-external-append visibility. -P large passes every @LargeTest except
-DelimitedIoPerfTest.csvTsvIoPerformance (TSV sequential load 106-111s vs a
-100s ceiling; machine has 4 logical cores and ~8.8GB free with background
-sync/browser load, CSV/TSV code untouched by this JSONL-only diff) - treated
-as a known environment-perf flake per the user's decision. Profile check
-skipped (no JOIN/hash join/performance wording in the prompt 55 task
-description); make/python/timing targets unavailable on this machine, gate
-ran as raw Maven commands and the entry was appended manually.
-
 3.1.21 Prompt 56 - JSONL quality gate: negative scenarios, property tests, benchmarks
-
-Two new storage-tagged test classes + benchmark documentation. No production
-code changed.
-
-JsonlStorageAdvancedTest (12 fast + 3 @LargeTest):
-- Prompt 43 (2^53): integer 9007199254740993 rejected in a DOUBLE column
-  (assertThrows DieselIOException, diagnostics name the offending value,
-  failed load rolls back leaving the pre-insert row) but reads exactly in a
-  LONG column.
-- Prompt 44 (HYBRID type change): SCORE int -> "abc" fails with
-  file:line:field diagnostics and rolls back; implicit schema extension
-  keeps the other field values.
-- Prompt 48 (duplicate keys): FAIL mode rejects the load and rolls back with
-  diagnostics naming the duplicated field; LAST_WINS keeps the second value
-  and loads normally (hybrid merge not needed - explicit schema).
-- Prompt 47 (NULL semantics): null vs "" vs missing stay distinct across
-  three load->save cycles (byte-identical after the second cycle).
-- Prompt 45 (nested): depth-3 flatten-with-arrays round trip (a.b.c leaf +
-  a.tags[0], explicit schema); json_column mode captures the nested Map
-  verbatim (raw JSON not re-quoted) and survives a second round trip
-  byte-identically; SQL depth-3 dot-path WHERE + projection on an in-memory
-  FLAT3SQ table.
-- Prompt 49/30 (crash recovery): interrupted rewrite keeps the previous
-  file byte-for-byte, removes the .tmp, and logs the WARN; orphan .tmp is
-  warned on load when the .jsonl is missing; corrupt binary mid-file load
-  fails and rolls back; zero-byte file loads empty.
-- Benchmarks (@LargeTest, diesel.perf.ceiling override):
-  - [JSONL-BENCH-1M] load 1M rows (write+read cycles excluded): csv=1266ms
-    jsonl=54055ms jsonl+zstd=55166ms (JSONL is unoptimized on this box; the
-    bench is a documented measurement, not a requirement).
-  - [JSONL-BENCH-WIDE] 20k x 42-col rows: full=1913ms proj=341ms speedup
-    5.61x (>= 2x required).
-  - [JSONL-BENCH-APPEND] 10x1000 inserts: append=153ms rewrite=620ms =>
-    ~4.1x (>= 2x required).
-
-JsonlPropertyTest (5 property-style tests):
-- randomExoticValuesRoundTripAcrossTypes: 250 rows over 11 exotic literals
-  (Unicode, combining marks, tabs/newlines, quotes/backslash, emoji ZWJ,
-  control chars incl \u0000, \u00A0\u2007\u202F) round-trip verbatim with
-  BigDecimal/Bool typed columns.
-- randomizedParallelLoadEqualsSequentialWithPresence: 3000 rows with mixed
-  names (unicode, empty, null, embedded \n\u2028), forced parallel
-  (jsonl.parallel.read.threshold=1) == sequential, both content and
-  per-row presence equality, and a re-save byte-identity check.
-- randomizedDoubleSaveIsByteIdentical: 500 random BigDecimal rows survive
-  load->save->load->save byte-identically.
-- randomNestedStructuresRoundTripInBothModes: 120 random depth-3 blocks in
-  json_column mode (embedded, not double-encoded; leaf extraction via
-  JsonlSchemaManager.extractPathValue; second round trip byte-identical)
-  and flatten mode (dotted columns re-embedded by the writer).
-- randomExoticValuesSurviveZstdCompression: 400 rows (path-separator +
-  Cyrillic + emoji names) written to .jsonl.zst via
-  CompressionFactory.forName("zstd").wrapOutputStream, loaded with
-  jsonl.compression.codec=zstd, round-trip === wrote.
-
-Registered in scripts/tag-mapping.tsv under storage. Verification: isolated
-17 fast tests 17/0/0; fast profile 178/0/0; core profile 1058/0/0; large
-profile 13/0/0 (600x600 joins + new benchmarks) BUILD SUCCESS with 4GB
-heap; compare-timing exit 0 (timing.md is a legacy markdown table, so rows
-count as NEW TEST - heavy join set compared manually and stable). Profile
-check skipped (prompt 56 is a test-only quality gate; no engine change, no
-JOIN/hash join/performance production code). make/python missing on this
-machine - gate ran as raw Maven commands (mvn -B clean test -P fast/core/
-large), timingN.md generated by a PowerShell reimplementation of
-collect-timing.py, and this entry was appended manually.
-
-0.5.1 Prompt 58: AVRO schema manager and type mapper
-
-New diesel/storage/avro/AvroTypeMapper — bidirectional mapping between
-DieselDB SQL column types (14 Java classes from SqlKeywords) and Apache Avro
-Schema types:
-  STRING      → Type.STRING
-  INTEGER     → Type.INT
-  LONG        → Type.LONG
-  SHORT/BYTE  → Type.INT (Avro has no narrower integer types)
-  FLOAT       → Type.FLOAT
-  DOUBLE      → Type.DOUBLE
-  BIGDECIMAL  → Type.BYTES + LogicalTypes.decimal(38,18)
-  BOOLEAN     → Type.BOOLEAN
-  DATE        → Type.INT + LogicalTypes.date()
-  DATETIME    → Type.LONG + LogicalTypes.timestampMillis()
-  CHAR        → Type.STRING
-  UUID        → Type.STRING + LogicalTypes.uuid()
-
-Additional methods: nullableOf(Class/String) wraps a type into a
-["null", type] UNION; toJavaType(Schema) unwraps UNION+logical types back
-to Java classes; typeName(Class)/typeClass(String) bidirectional name helpers
-matching the SqlKeywords constants; complex type builders: createArray,
-createMap, createEnum, buildRecord.
-
-New diesel/storage/avro/AvroSchemaManager — converts DieselDB table schemas
-to Avro RECORD schemas and manages .avsc sidecar files:
-  buildTableSchema(tableName, columns, columnTypes) → Avro RECORD
-  buildTableSchemaFromTypeNames(tableName, columns, typeNames) → same, from
-    SQL type name strings
-  writeSchemaFile(Schema, Path) / readSchemaFile(Path) — .avsc I/O
-  validateCompatibility(existingSchema, columns, columnTypes) → list of
-    issues (missing column, type mismatch, extra Avro field)
-  resolveSchemaPath(tableName) — uses avro.schema.path config key
-  sanitizeName(name) — table→Avro identifier conversion
-
-New AvroSchemaTest (52 tests, @Tag("storage")):
-  - 12 scalar type mapping tests (STRING, INTEGER, LONG, FLOAT, DOUBLE,
-    BOOLEAN, BIGDECIMAL, DATE, DATETIME, SHORT+BYTE, CHAR, UUID)
-  - 1 unsupported type test
-  - 3 nullable tests (creates union, wraps schema, isNullable detection)
-  - 10 round-trip Java→Avro→Java tests for all scalar + nullable types
-  - 3 type name helper tests (typeName, typeClass, case-insensitive)
-  - 7 schema build tests (creates RECORD, field names match, field types
-    match, all-scalar-types, blank-name throws, empty-columns throws,
-    buildFromTypeNames, unknown-type-name throws)
-  - 4 .avsc file tests (write+read round-trip, create parent dirs,
-    nonexistent file throws, resolveSchemaPath)
-  - 6 compatibility validation tests (identical=empty, missing column,
-    type mismatch, extra Avro field, null schema)
-  - 1 sanitizeName test (special chars, leading digit, null/empty)
-  - 4 complex type tests (array, map, enum, record)
-
-No existing files modified. No changes to pom.xml, config.properties,
-StorageFactory, or any engine code.
-
-Verification: fast profile 178/0/0 BUILD SUCCESS; core profile 1110/0/0
-BUILD SUCCESS (AvroSchemaTest 52/52 green). Profile check skipped (no
-JOIN/hash join/performance wording in prompt 58). make/changelog unavailable
-on this machine — entry appended manually.
-
----
-
-Prompt 59 (Section 2 AVRO) DONE (2026-09-17) — AvroRowStorage base class:
-RowStorage implementation for Avro data files. New
-`diesel/storage/avro/AvroRowStorage` extends AbstractRowStorage: compact
-`List<Object[]>` rows with local column-index Map (avoids package-private
-RowArrays), full CRUD (scan/insert/insertAt/update/delete/setRows) with
-AbstractRowStorage index-sync hooks, `saveToFile` writes Avro data files via
-DataFileWriter through AtomicFileWriter (crash-safe temp+rename, Prompt 30)
-using a non-closing OutputStream wrapper so the channel stays open for
-fsync; `loadFromFile` reads via DataFileReader, resolving the schema from
-the .avsc sidecar first then falling back to the data-file header.
-Row<->GenericRecord conversion handles all 14 DieselDB scalar types:
-String, Integer, Long, Short, Byte, Float, Double, Boolean, BigDecimal
-(Avro decimal logical type with scale-aware encode/decode —
-`setScale(avroScale)` on write, `new BigDecimal(unscaled, scale)` on
-read), LocalDate (date logical type, epoch-day int), LocalDateTime
-(timestamp-millis logical type, epoch-millis long), UUID (uuid logical
-type, String), Character (String), byte[] (bytes). All fields written as
-nullable unions `["null", type]` via `buildNullableSchema` so Java nulls
-round-trip correctly. Registered `"avro"` case in `StorageFactory`.
-`config.properties` documents `storage.type = avro`. New
-`AvroRowStorageTest` (14 tests @Tag("storage")): insert+scan, insertAt,
-update, delete, setRows, save/load round-trip (all scalar types), empty
-table, load nonexistent, null values (all-null row), StorageFactory
-integration, multiple save/load cycles, file existence check, 1000-row
-large set. Registered in `scripts/tia-mapping.txt` (existing rule:
-`diesel/storage/avro/*.java → storage`). Verification: fast 178/0/0;
-core 1124/0/0 (AvroRowStorageTest 14/14, AvroSchemaTest 52/52);
-large 13/0/0 BUILD SUCCESS. Profile check skipped (no JOIN/hash
-join/performance wording in prompt 59). make/changelog unavailable -
-entry appended manually.
-
----
-
-Prompt 61 (Section 2 AVRO) DONE (2026-09-18) - AVRO storage data reading
-functionality. New `diesel/storage/avro/AvroDataFileReader` (low-level
-reader): header parsed via CountingInputStream + directBinaryDecoder so
-headerEndPos is deterministic; block-at-a-time streaming that never holds
-the whole file in memory (loadNextBlock per block, blockCount rows per
-block, sync-marker verification, byte-level seek to any recorded block
-boundary via seekToSyncMarker), numBlocksTotal / getNumBlocksRead
-tracking, any fixed block size, codecs created reflectively
-(CodecFactory.createInstance() is protected in avro 1.12). Projection
-pushdown: buildProjectionSchema keeps only the requested fields (uses
-`new Schema.Field(name, schema)` - avro 1.12 has no 1-arg Field copy
-ctor) and the GenericDatumReader is always seeded with the writer schema
-as its reader schema base (reader==writer, otherwise getResolver NPEs);
-when a sidecar .avsc disagrees with the file header
-(isReaderSchemaCompatible false) the header schema wins and the
-projection is re-derived from it, falling back to a WARN + full read.
-New `diesel/storage/avro/AvroReadIterator` (Iterator<Object[]> +
-Iterable + Closeable): delegates hasNext/next to the reader (IOException
--> UncheckedIOException), streaming nextBatch(max) converts rows through
-AvroRowStorage.fromRecord, close() closes the reader.
-`AvroRowStorage.readAvroFile` refactored onto the new reader + iterator
-(no sidecar -> plain header-schema full read; incompatible sidecar ->
-WARN + full-read fallback). config.properties documents the new
-`avro.parallel.read.threshold = 10000` block (reader/iterator
-primitives). New `AvroDataFileReaderTest` (8 tests @Tag("storage"),
-covered by the existing `diesel/storage/avro/*.java` -> storage rule in
-scripts/tia-mapping.txt): sequential full read incl. header-only/empty
-file (graceful EOF), iterator streaming 66000 rows across 2 blocks (64MB
-blocks, 65536 rows), nextBatch batching, countBlocks + sync-marker seek
-round-trip, projection reads only the requested columns, unknown
-projection column falls back to full read with WARN, complex types
-round-trip (decimal 1000.50 scale 18, date, timestamp-millis, uuid,
-array, map - written directly via raw DataFileWriter with pre-converted
-logical-type values, bypassing the broken Prompt-60 write path), non-Avro
-file rejected with a clear error. Verification: isolated
-AvroDataFileReaderTest 8/8 green; fast 178/0/0 BUILD SUCCESS; core 1132
-run / 0 fail / 7 errors - each of the 7 a pre-existing Prompt-60
-AvroRowStorageTest write-path failure (DataFileWriter.append
-ClassCastException BigDecimal->bytes, NPE on null non-nullable field,
-0-byte file from AtomicFileWriter misuse on empty-table save), no new
-regressions from Prompt 61. Profile check skipped (no JOIN/hash
-join/performance wording in prompt 61). make/changelog unavailable on
-this machine - entry appended manually.
-
----
-
-Prompt 62 (Section 2 AVRO) DONE (2026-09-18) - AVRO compression codec
-configuration. New `diesel/storage/avro/AvroCompressionConfig`
-(immutable `(codec, level, auto, minBytes)`, `resolve()` resolves
-sysprop -> config.properties -> defaults `null` / `-1` / `off` /
-`1_048_576` under keys `avro.compression.codec|level|auto|auto.min.bytes`;
-`effectiveCodec(List<?>)` auto-selects `null` for payloads below the
-auto threshold; `public static estimatedBytes(List<?>)` estimates the
-raw payload size by node count * 64 bytes so the auto threshold applies
-to any call site; unknown codec -> IllegalArgumentException). New
-`diesel/storage/avro/AvroCodecFactory` maps a named codec + level to an
-Avro 1.12 `org.apache.avro.file.CodecFactory`: nullCodec(), deflateCodec
-(level clamp 0..9, -1 -> Avro default), zstandardCodec (clamp 1..22,
--1 -> DEFAULT_ZSTANDARD_LEVEL=3), snappyCodec(), bzip2Codec();
-`CodecFactory.toString()` is `codec` + `-<level>` for deflate/zstandard
-so tests assert a prefix, not equality. `AvroDataFileWriter` gained a
-4-arg ctor overload `(columns, columnTypes, outputFile, CodecFactory)`
-calling `setCodec` before create() - the existing 3-arg ctor delegates
-with nullCodec() so all prior call sites are byte-identical.
-`AvroRowStorage.writeAvroFileEfficient` now resolves the effective
-codec via AvroCompressionConfig/AvroCodecFactory and writes through the
-correct crash-safe path. FIXED a pre-existing Prompt-60/61 write-path
-bug that broke AvroRowStorageTest: writeAvroFileEfficient opened an
-AtomicFileWriter over `target` (writer-side temp `target.tmp`) but
-passed the bare `target` to AvroDataFileWriter, which wrote directly to
-it and then the AtomicFileWriter.commit() renamed the empty `.tmp`
-over `target` (0-byte file -> "Not an Avro data file (bad magic)"); and
-the writer built its own non-nullable schema causing
-ClassCastException BigDecimal->bytes / NPE on null non-nullable fields.
-The method now mirrors the working writeAvroFile pattern: `DataFileWriter`
-+ `GenericDatumWriter` over the nullable table schema, streaming through
-the AtomicFileWriter output stream via a non-closing wrapper so fsync +
-temp+rename commit stays intact, `setCodec(effectiveFactory)`, rows
-appended as GenericRecords via toRecord, flush + commit - all 7
-AvroRowStorageTest errors are now green. config.properties documents the
-new `avro.compression.*` keys (`null` default, codec list, level
-semantics per codec, auto off, auto.min.bytes 1048576). New
-`AvroCompressionTest` (17 functional tests @Tag("storage") in package
-`diesel`, registered under the existing
-`diesel/storage/avro/*.java` -> storage tia-mapping rule) + one
-`@LargeTest benchmarkCodecWriteRead`: factory resolution for all five
-codecs and level clamping (deflate -1/1/9, zstandard -1/1/22, unknown
-codec throws), config defaults, sysprop override, auto-select below and
-above the threshold, storage-level save/load round-trip with each codec
-(header codec tag verified via AvroDataFileReader) and a
-bzip2/ZStandard anti-aliasing check, estimatedBytes, reject-unknown-codec
-propagation, and the 200k-row benchmark printing `[AVRO-BENCH]`
-null 1341ms/383ms/66.3MB vs deflate 704ms/310ms/1.2MB vs snappy
-176ms/150ms/4.4MB vs zstandard 701ms/275ms/0.88MB vs bzip2
-28195ms/1626ms/0.84MB with `[AVRO-BENCH-RATIO] zstd/null=76.1x
-bzip2/null=78.9x`. Verification: isolated AvroCompressionTest 17/0/0 +
-AvroRowStorageTest 14/0/0 + AvroSchemaTest 52/0/0 +
-AvroDataFileReaderTest 8/0/0; fast 178/0/0 BUILD SUCCESS; core
-1149/0/0/0 BUILD SUCCESS (first core run had one unrelated
-JsonlAppendModeTest append-vs-rewrite timing flake at 132ms vs the
-2x-margin bound - passed on immediate isolated re-run and on the full
-re-run); large 14/0/0 BUILD SUCCESS incl. the 2x 600x600 joins and the
-new AVRO benchmark; compare-timing exit 0 (timing.md remains the legacy
-markdown format so per-test rows are NEW TEST - heavy join set manually
-stable). `DelimitedIoPerfTest.csvTsvIoPerformance` (TSV sequential load
-85-111s vs the 100s ceiling on this box) tripped once among large-profile
-runs and once when run isolated right after a heavy full-suite, but was
-green on a clean isolated re-run and on the gate run - the same known
-environment-perf flake already documented in Prompt 55 and 54 (CSV/TSV
-code untouched by this AVRO-only diff). Profile check skipped (prompt 62
-uses benchmark/codec wording, no JOIN/hash join/performance).
-make/changelog/timing/python unavailable on this machine - gate ran as
-raw Maven commands, timingN.md generated by a PowerShell
-reimplementation of collect-timing.py + the compare-timing logic, entry
-appended manually.
-
-Prompt 63 (Section 2 AVRO) DONE (2026-09-18) - AVRO compression with the
-ZStandard codec via a dedicated codec class. New
-`diesel/storage/avro/ZStandardCodec` (final, `@since Prompt 63`): public
-constants `CODEC_NAME = "zstandard"`, `MIN_LEVEL = 1`, `MAX_LEVEL = 22`,
-`DEFAULT_LEVEL = CodecFactory.DEFAULT_ZSTANDARD_LEVEL`, and the static
-factory pair `resolveLevel(int)` (-1 -> codec default; out-of-range 1..22
-clamped with a WARN log) + `newCodec(int)` -> `CodecFactory.zstandardCodec(resolveLevel(level))`.
-Javadoc documents that Avro stores the `zstandard` codec tag in the data-file header
-and decodes ZSTD-compressed blocks automatically on read, so no read-side
-registration is needed. `AvroCodecFactory` now delegates the zstandard case to
-`ZStandardCodec.newCodec(level)` and the duplicated `ZSTD_MIN_LEVEL`/`ZSTD_MAX_LEVEL`
-constants + `resolveZstandardLevel` helper were removed (grep-verified no other
-callers) - behaviour byte-identical, the -1 default still resolves through
-`CodecFactory.DEFAULT_ZSTANDARD_LEVEL`. config.properties compression comment
-updated to reference the dedicated codec class (default level stays -1 = codec
-default). New tests in `AvroCompressionTest` (21 total now, all @Tag("storage")):
-`zstandardCodecExposesLevelRange` (1..22 + CODEC_NAME/DEFAULT_LEVEL bounds),
-`zstandardResolveLevelClamps` (-1 default intact, 0/23/-5 clamped to 1/22/1),
-`zstandardLevelsRoundTrip` (levels 1/3/19/22/-1 x 5000 rows save/load, header
-codec `zstandard` + row count verified), `zstandardFactoryDelegatesToZStandardCodec`
-(AvroCodecFactory falls back to ZStandardCodec for the codec constant). Benchmark
-item already covered by the Prompt-62 `@LargeTest benchmarkCodecWriteRead`
-(200k rows); fresh run this prompt: [AVRO-BENCH] null 1313ms/395ms/69.9MB,
-deflate 639ms/318ms/1.3MB, snappy 242ms/181ms/4.6MB, zstandard 825ms/271ms/0.92MB,
-bzip2 28737ms/1686ms/0.89MB with [AVRO-BENCH-RATIO] zstd/null=76.1x,
-bzip2/null=78.9x - ZSTD remains the best trade-off (largest ratio of the fast
-codecs at 76.1x against null, only bzip2 at 78.9x compresses more at a 35x longer
-write cost). Verification: isolated new tests 4/0/0; fast (smoke,query,index)
-178/0/0 BUILD SUCCESS; core (query-full,storage) 1153/0/0/0 BUILD SUCCESS (ran
-with `-Dmaven.build.cache.enabled=false` to force real surefire execution);
-benchmark test isolated 1/0/0 BUILD SUCCESS under -P large. Profile check skipped
-(prompt 63 uses codec wording, no JOIN/hash join/performance).
-make/changelog/timing targets unavailable - gate ran as raw Maven commands,
-entry appended manually.
+3.1.22 Prompt 57 - AVRO storage project setup: avro 1.12.0 dependency + avro-maven-plugin .avsc codegen; diesel/storage/avro package skeleton + src/main/avro schema dir; avro.* config block; TIA mapping
+3.1.23 Prompt 58: AVRO schema manager and type mapper - bidirectional SQL-to-Avro type mapping for all 14 DieselDB column types, AvroSchemaManager for .avsc sidecar schemas, compatibility validation, and 52 unit tests
+3.1.24 Prompt 59: AvroRowStorage base class
+3.1.25 Prompt 60 (2026-09-18) - AVRO storage data writing functionality
+3.1.26 Prompt 61 (2026-09-18) - AVRO storage data reading functionality
+3.1.27 Prompt 62 (2026-09-18) - AVRO compression codec configuration: new AvroCompressionConfig (avro.compression.codec|level|auto|auto.min.bytes, sysprop->config.properties->defaults, effectiveCodec auto-select below threshold) + AvroCodecFactory (null/deflate/zstandard/snappy/bzip2 -> Avro 1.12 CodecFactory with level clamping); AvroDataFileWriter 4-arg ctor overload with setCodec; AvroRowStorage.writeAvroFileEfficient now resolves the effective codec AND fixes the pre-existing Prompt-60/61 write-path bug (AtomicFileWriter target-vs-tmp misuse -> 0-byte files, non-nullable schema -> BigDecimal ClassCastException/null NPE) by rewriting onto the writeAvroFile DataFileWriter+nullable-schema pattern through the atomic output stream; config.properties documents the new keys; new AvroCompressionTest (17 + @LargeTest benchmark, [AVRO-BENCH] ratio zstd 76.1x bzip2 78.9x). Gates: fast 178/0/0, core 1149/0/0/0, large 14/0/0 BUILD SUCCESS.
+3.1.28 Prompt 63 (Section 2 AVRO): ZStandard codec class for Avro compression
+3.1.29 Prompt 64: AVRO сжатие - Snappy оптимизация - полная реализация
+3.1.30 Add make clean-test-cache for clearing test cache only (surefire reports, build cache, test classes)

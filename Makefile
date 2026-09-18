@@ -14,7 +14,7 @@ else
 TIA = ./scripts/tia.sh
 endif
 
-.PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean help check-timing tia tia-run
+.PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run
 
 # Default target
 all: build
@@ -90,10 +90,16 @@ profile:
 	@echo "Running profiler..."
 	java -Xmx4g -cp target/classes:. ProfileMain
 
+## Clean test cache only (surefire reports, build cache, test classes)
+clean-test-cache:
+	@echo "Cleaning test cache..."
+	rm -rf target/.cache target/surefire-reports target/test-classes
+
 ## Clean build artifacts
 clean:
 	@echo "Cleaning..."
 	$(MVN) clean
+	rm -rf target/.cache
 	rm -f data/*.csv data/*.table *.log timing/timingN.md classpath.txt
 
 ## Check timing regression (fail if degradation > 20%)
@@ -147,6 +153,7 @@ help:
 	@echo "  make check-timing       - Check for regressions (>20% fail)"
 	@echo "  make profile            - Run profiler"
 	@echo "  make clean              - Remove build artifacts"
+	@echo "  make clean-test-cache   - Clean test cache only (surefire, build cache)"
 	@echo "  make help               - Show this help"
 	@echo ""
 	@echo "Variables:"
