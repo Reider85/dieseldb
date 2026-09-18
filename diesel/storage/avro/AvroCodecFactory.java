@@ -15,14 +15,14 @@ import java.util.Locale;
  * <ul>
  *   <li>{@code null} → {@link CodecFactory#nullCodec()}</li>
  *   <li>{@code deflate} → {@link CodecFactory#deflateCodec(int)} (level clamped 0..9)</li>
- *   <li>{@code snappy} → {@link CodecFactory#snappyCodec()} (no level)</li>
+ *   <li>{@code snappy} → {@link SnappyOptimizedCodec#newCodec()} (optimized with buffer sizing and caching)</li>
  *   <li>{@code zstandard} → {@link ZStandardCodec#newCodec(int)} (level clamped 1..22)</li>
  *   <li>{@code bzip2} → {@link CodecFactory#bzip2Codec()} (no level)</li>
  * </ul>
  *
  * <p>A level of {@code -1} (or {@code AvroCompressionConfig#DEFAULT_LEVEL})
  * resolves to the Avro codec's built-in default for the level-bearing codecs
- * (deflate {@code -1}, zstandard {@code 3}).
+ * (deflate {@code -1}, zstandard {@code 3}). Snappy has no level parameter.
  *
  * @since Prompt 62
  */
@@ -51,7 +51,7 @@ public final class AvroCodecFactory {
         String name = codec == null ? "" : codec.trim().toLowerCase(Locale.ROOT);
         return switch (name) {
             case "null" -> CodecFactory.nullCodec();
-            case "snappy" -> CodecFactory.snappyCodec();
+            case "snappy" -> SnappyOptimizedCodec.newCodec();
             case "bzip2" -> CodecFactory.bzip2Codec();
             case "deflate" -> CodecFactory.deflateCodec(resolveDeflateLevel(level));
             case "zstandard" -> ZStandardCodec.newCodec(level);

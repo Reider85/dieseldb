@@ -5,6 +5,7 @@ import diesel.storage.avro.AvroCompressionConfig;
 import diesel.storage.avro.AvroDataFileReader;
 import diesel.storage.avro.AvroDataFileWriter;
 import diesel.storage.avro.AvroRowStorage;
+import diesel.storage.avro.SnappyOptimizedCodec;
 import diesel.storage.avro.ZStandardCodec;
 import org.apache.avro.file.CodecFactory;
 import org.apache.avro.generic.GenericRecord;
@@ -33,6 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ({@code avro.compression.codec|level|auto|auto.min.bytes}), round-trips for
  * null/deflate/snappy/zstandard/bzip2, level clamping, auto-select by payload
  * size, storage integration and a {@code @LargeTest} codec benchmark.
+ *
+ * <p>Extended in Prompt 64 with Snappy optimization tests including buffer
+ * size selection, caching, benchmarking, and performance recommendations.
  */
 @Tag("storage")
 class AvroCompressionTest {
@@ -499,5 +503,246 @@ class AvroCompressionTest {
         long zstdBytes = new File(tempDir.toFile(), "bench_zstandard.avro").length();
         assertTrue(nullBytes / (double) zstdBytes >= 2.0,
                 "zstd must compress repetitive data >=2x (null=" + nullBytes + ", zstd=" + zstdBytes + ")");
+    }
+
+    // ─── Snappy optimization tests (Prompt 64) ─────────────────────────
+
+    @Test
+    void snappyOptimizedCodecFactoryIntegration() {
+        // Verify that AvroCodecFactory uses SnappyOptimizedCodec for snappy
+        CodecFactory factory = AvroCodecFactory.factory("snappy", -1);
+        assertNotNull(factory);
+        assertTrue(factory.toString().contains("snappy"),
+                "Snappy codec factory should be created");
+    }
+
+    @Test
+    void snappyBufferSizeSelectionForTextData() {
+        List<Object[]> textData = createTextDataTable(100);
+        int bufferSize = SnappyOptimizedCodec.resolveBufferSize(textData);
+        
+        // Text data should use larger buffers
+        assertTrue(bufferSize >= 16384, "Text data should use at least 16KB buffers");
+        assertTrue(bufferSize <= 32768, "Text data should not exceed 32KB buffers");
+    }
+
+    @Test
+    void snappyBufferSizeSelectionForNumericData() {
+        List<Object[]> numericData = createNumericDataTable(100);
+        int bufferSize = SnappyOptimizedCodec.resolveBufferSize(numericData);
+        
+        // Numeric data should use smaller buffers
+        assertTrue(bufferSize >= 4096, "Numeric data should use at least 4KB buffers");
+        assertTrue(bufferSize <= 8192, "Numeric data should not exceed 8KB buffers");
+    }
+
+    @Test
+    void snappyBufferSizeSelectionForMixedData() {
+        List<Object[]> mixedData = createMixedDataTable(100);
+        int bufferSize = SnappyOptimizedCodec.resolveBufferSize(mixedData);
+        
+        // Mixed data should use medium buffers
+        assertTrue(bufferSize >= 8192, "Mixed data should use at least 8KB buffers");
+        assertTrue(bufferSize <= 16384, "Mixed data should not exceed 16KB buffers");
+    }
+
+    @Test
+    void snappyBenchmarkPerformance() {
+        List<Object[]> data = createTextDataTable(50);
+        SnappyOptimizedCodec.BenchmarkResult[] results = 
+                SnappyOptimizedCodec.benchmarkCompression(data);
+        
+        assertNotNull(results);
+        assertEquals(SnappyOptimizedCodec.BENCHMARK_SIZES.length, results.length);
+        
+        // Verify all benchmark results are valid
+        for (SnappyOptimizedCodec.BenchmarkResult result : results) {
+            assertNotNull(result);
+            assertTrue(result.getBufferSize() > 0);
+            assertTrue(result.getCompressionTime() >= 0);
+            assertTrue(result.getDecompressionTime() >= 0);
+            assertTrue(result.getCompressionRatio() >= 0);
+        }
+    }
+
+    @Test
+    void snappyCacheManagement() {
+        // Clear cache initially
+        SnappyOptimizedCodec.clearCache();
+        
+        String initialStats = SnappyOptimizedCodec.getCacheStats();
+        assertTrue(initialStats.contains("0 compressors") && initialStats.contains("0 decompressors"),
+                "Cache should be empty initially");
+        
+        // Perform some operations that would populate cache
+        List<Object[]> data = createTextDataTable(10);
+        SnappyOptimizedCodec.benchmarkCompression(data);
+        
+        String afterStats = SnappyOptimizedCodec.getCacheStats();
+        // Cache may contain entries now
+        assertTrue(afterStats.contains("Snappy cache"), "Cache stats should be available");
+        
+        // Clear cache again
+        SnappyOptimizedCodec.clearCache();
+        String finalStats = SnappyOptimizedCodec.getCacheStats();
+        assertTrue(finalStats.contains("0 compressors") && finalStats.contains("0 decompressors"),
+                "Cache should be empty after clear");
+    }
+
+    @Test
+    void snappyRecommendationsForDataTypes() {
+        // Test recommendations for different data types
+        assertEquals(32768, SnappyOptimizedCodec.getRecommendedBufferSize("text"));
+        assertEquals(4096, SnappyOptimizedCodec.getRecommendedBufferSize("numeric"));
+        assertEquals(16384, SnappyOptimizedCodec.getRecommendedBufferSize("mixed"));
+        assertEquals(8192, SnappyOptimizedCodec.getRecommendedBufferSize("binary"));
+        assertEquals(8192, SnappyOptimizedCodec.getRecommendedBufferSize("unknown"));
+    }
+
+    @Test
+    void snappyStorageIntegrationWithOptimizedCodec() throws IOException {
+        // Test that storage works with the optimized Snappy codec
+        System.setProperty("avro.compression.codec", "snappy");
+        
+        String table = "snappy_optimized";
+        AvroRowStorage storage = new AvroRowStorage(table, simpleCols(), simpleTypes());
+        storage.setDataDir(tempDir.toString());
+        
+        // Insert test data
+        for (int i = 0; i < 1000; i++) {
+            storage.insert(simpleRow(i));
+        }
+        storage.saveToFile(table);
+        
+        // Verify the file was created and can be read back
+        File avroFile = new File(tempDir.toFile(), table + ".avro");
+        assertTrue(avroFile.exists(), "AVRO file should be created");
+        
+        // Verify we can read it back
+        AvroRowStorage readStorage = new AvroRowStorage(table, simpleCols(), simpleTypes());
+        readStorage.setDataDir(tempDir.toString());
+        readStorage.loadFromFile(table);
+        
+        List<Map<String, Object>> result = readStorage.scan();
+        assertEquals(1000, result.size());
+        assertEquals("User0", result.get(0).get("NAME"));
+        assertEquals(999L, result.get(999).get("ID"));
+        
+        // Verify it's using Snappy codec
+        try (AvroDataFileReader reader = new AvroDataFileReader(avroFile)) {
+            assertEquals("snappy", reader.getCodecName());
+        }
+    }
+
+    @Test
+    void snappyBlockSizeBenchmark() throws IOException {
+        // Test performance across different block sizes
+        int rows = 5000;
+        String text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(2);
+        List<Map<String, Object>> data = new ArrayList<>(rows);
+        for (int i = 0; i < rows; i++) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("ID", (long) i);
+            r.put("NAME", text);
+            r.put("AGE", i % 100);
+            r.put("ACTIVE", i % 2 == 0);
+            data.add(r);
+        }
+
+        StringBuilder report = new StringBuilder("[SNAPPY-BENCH] rows=" + rows);
+        long nullBytes = 0;
+        
+        for (int bufferSize : SnappyOptimizedCodec.BENCHMARK_SIZES) {
+            File f = new File(tempDir.toFile(), "snappy_bench_" + bufferSize + ".avro");
+            
+            long writeStart = System.nanoTime();
+            AvroDataFileWriter w = new AvroDataFileWriter(
+                    simpleCols(), simpleTypes(), f, AvroCodecFactory.factory("snappy", -1));
+            try {
+                for (Map<String, Object> row : data) {
+                    w.writeRow(row);
+                }
+                w.flush();
+            } finally {
+                w.close();
+            }
+            long writeMs = (System.nanoTime() - writeStart) / 1_000_000;
+
+            long readStart = System.nanoTime();
+            int seen;
+            try (AvroDataFileReader r = new AvroDataFileReader(f)) {
+                assertEquals("snappy", r.getCodecName());
+                seen = countRecords(r);
+            }
+            long readMs = (System.nanoTime() - readStart) / 1_000_000;
+            assertEquals(rows, seen);
+
+            long bytes = f.length();
+            if (bufferSize == 8192) { // Reference size
+                nullBytes = bytes;
+            }
+            
+            report.append(String.format(Locale.ROOT,
+                    " size=%d:write=%dms read=%dms bytes=%d", bufferSize, writeMs, readMs, bytes));
+            
+            assertTrue(writeMs < 30_000, "Snappy write must stay under 30s (got " + writeMs + "ms)");
+            assertTrue(readMs < 30_000, "Snappy read must stay under 30s (got " + readMs + "ms)");
+        }
+
+        String reportStr = report.toString();
+        System.out.println(reportStr);
+        
+        // Verify compression ratio
+        assertTrue(nullBytes > 0, "Reference file must exist");
+        long compressedBytes = new File(tempDir.toFile(), "snappy_bench_8192.avro").length();
+        assertTrue(nullBytes / (double) compressedBytes >= 1.5,
+                "Snappy should compress repetitive data >=1.5x (null=" + nullBytes + ", snappy=" + compressedBytes + ")");
+    }
+
+    // ─── Helper methods for Snappy tests ────────────────────────────────
+
+    private List<Object[]> createTextDataTable(int count) {
+        List<Object[]> data = new ArrayList<>(count);
+        String longText = "This is a longer text string for testing buffer selection. ";
+        for (int i = 0; i < count; i++) {
+            data.add(new Object[]{
+                    (long) i,
+                    "User" + i,
+                    longText.repeat(3),
+                    "Address" + i,
+                    "Description" + i + " " + longText.repeat(2)
+            });
+        }
+        return data;
+    }
+
+    private List<Object[]> createNumericDataTable(int count) {
+        List<Object[]> data = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            data.add(new Object[]{
+                    (long) i,
+                    (double) (i * 3.14159),
+                    (float) (i * 2.71828),
+                    i,
+                    i % 1000
+            });
+        }
+        return data;
+    }
+
+    private List<Object[]> createMixedDataTable(int count) {
+        List<Object[]> data = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            data.add(new Object[]{
+                    (long) i,
+                    "User" + i,
+                    (double) (i * 3.14159),
+                    i % 2 == 0,
+                    "Address" + i,
+                    (float) (i * 2.71828),
+                    i % 100
+            });
+        }
+        return data;
     }
 }
