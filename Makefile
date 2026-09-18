@@ -112,8 +112,13 @@ clean-test-cache:
 	@echo "Cleaning test cache..."
 	rm -rf target/.cache target/surefire-reports target/test-classes
 
+## Clean Maven build cache
+clean-cache:
+	@echo "Cleaning build cache..."
+	rm -rf $(HOME)/.m2/build-cache/v1/com.dieseldb/dieseldb
+
 ## Clean build artifacts
-clean:
+clean: clean-cache
 	@echo "Cleaning..."
 	$(MVN) clean
 	rm -rf target/.cache

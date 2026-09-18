@@ -115,8 +115,11 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 | Command | What it clears | When to use |
 |---------|---------------|-------------|
+| `make clean-cache` | `~/.m2/build-cache/v1/com.dieseldb/dieseldb/` (this project's build cache only) | When build cache returns stale results after config changes |
 | `make clean-test-cache` | `target/.cache`, `target/surefire-reports/`, `target/test-classes/` | Stale test results, flaky test debugging, before re-running specific tests |
-| `make clean` | Everything above + `target/` + `data/*.csv` + `data/*.table` + logs | Full rebuild, before release |
+| `make clean` | Everything above + `target/` + `data/*.csv` + `data/*.table` + logs + build cache | Full rebuild, before release |
+
+**Note:** `mvn clean` also automatically cleans the build cache for this project via `maven-clean-plugin` fileset configuration in `pom.xml`.
 
 **Tip:** Use `make clean-test-cache` before `make test` if you suspect stale test cache is causing false passes/failures. It's ~10x faster than `make clean`.
 
