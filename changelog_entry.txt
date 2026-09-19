@@ -1,1 +1,1 @@
-3.1.35 Prompt 66: BZip2 codec for cold data with block size config and storage tiering
+3.1.36 Prompt 67: AVRO adaptive compression - runtime compression ratio monitoring, auto codec switching, metrics (compressed size, compression/decompression time) and recommendations engine in new AdaptiveCompressionManager (sliding window, per-codec metrics, analyzeDataPattern, BZip2 heuristic fallback) + AdaptiveCompressionManagerTest (25 tests); config.properties avro.adaptive.* keys.
