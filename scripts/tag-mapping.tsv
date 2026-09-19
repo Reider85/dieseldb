@@ -102,3 +102,6 @@ DeflateLevelConfigTest	storage
 DeflateCompressionBenchmarkTest	storage
 BZip2CodecTest	storage
 AdaptiveCompressionManagerTest	storage
+AvroBlockConfigTest	storage
+AvroBlockManagerTest	storage
+AvroWriterBlockMetadataTest	storage

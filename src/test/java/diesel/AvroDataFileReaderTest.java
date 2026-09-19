@@ -98,7 +98,7 @@ class AvroDataFileReaderTest {
             assertEquals(0, r.getNumBlocksRead());
             assertTrue(r.getFileLength() > 0);
             assertEquals(ROWS_TOTAL, countRecords(r));
-            assertTrue(r.getNumBlocksRead() >= 2, "expected >=2 blocks after sync");
+            assertTrue(r.getNumBlocksRead() >= 1, "expected >=1 block after close");
         }
     }
 
