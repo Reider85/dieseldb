@@ -17,7 +17,7 @@ import java.util.Locale;
  *   <li>{@code deflate} → {@link DeflateLevelConfig#newCodec(int)} (level clamped 1..9 with adaptive selection)</li>
  *   <li>{@code snappy} → {@link SnappyOptimizedCodec#newCodec()} (optimized with buffer sizing and caching)</li>
  *   <li>{@code zstandard} → {@link ZStandardCodec#newCodec(int)} (level clamped 1..22)</li>
- *   <li>{@code bzip2} → {@link CodecFactory#bzip2Codec()} (no level)</li>
+ *   <li>{@code bzip2} → {@link BZip2Codec#newCodec(int)} (block size 100–900 KB, optimised for cold data)</li>
  * </ul>
  *
  * <p>A level of {@code -1} (or {@code AvroCompressionConfig#DEFAULT_LEVEL})
@@ -47,9 +47,10 @@ public final class AvroCodecFactory {
      * Builds the Avro {@link CodecFactory} for the given codec name and level.
      *
      * @param codec canonical codec name: {@code null}, {@code deflate},
-     *              {@code snappy}, {@code zstandard} or {@code bzip2}
-     * @param level compression level ({@code -1} = codec default); ignored by
-     *              {@code null}, {@code snappy} and {@code bzip2}
+     *              {@code snappy}, {@code zstandard}, {@code bzip2}
+     * @param level compression level: for bzip2 this is the block size
+     *              in bytes ({@code -1} = default 900_000, range 100_000–900_000);
+     *              ignored by {@code null}, {@code snappy}
      * @return the Avro codec factory for writing
      * @throws IllegalArgumentException when {@code codec} is unsupported
      */
@@ -58,7 +59,7 @@ public final class AvroCodecFactory {
         return switch (name) {
             case "null" -> CodecFactory.nullCodec();
             case "snappy" -> SnappyOptimizedCodec.newCodec();
-            case "bzip2" -> CodecFactory.bzip2Codec();
+            case "bzip2" -> BZip2Codec.newCodec(level);
             case "deflate" -> DeflateLevelConfig.newCodec(level);
             case "zstandard" -> ZStandardCodec.newCodec(level);
             default -> throw new IllegalArgumentException(

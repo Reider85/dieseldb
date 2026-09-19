@@ -1,4 +1,4 @@
-﻿0.0.1 simple database only select
+0.0.1 simple database only select
 0.0.2 logging
 0.0.3 query logging
 0.0.4 INSERT
@@ -2837,3 +2837,5 @@ Changes:
 3.1.32 fix(build-cache): restore .mvn/maven-build-cache-config.xml to register config.properties as global build input so config edits invalidate the Maven build cache; add maven-clean-plugin fileset in pom.xml to auto-clear project build cache (~/.m2/build-cache/v1/com.dieseldb/dieseldb/) on mvn clean; add make clean-cache target; update AGENTS.md cache-cleaning table. Verification: fast 178/0/0 BUILD SUCCESS; mvn clean clears build cache confirmed.
 3.1.33 feat(avro): DeflateLevelConfig adaptive compression level selection + Deflater/Inflater pooling - new diesel/storage/avro/DeflateLevelConfig.java (level range 1-9, default 3, adaptive selection by payload size/type/streaming, Deflater/Inflater pool caching) + AvroCodecFactory updated to delegate to DeflateLevelConfig.newCodec(); config.properties: avro.deflate.adaptive/strategy/cache.compressors/cache.max.size; DeflateLevelConfigTest (14 tests) + DeflateCompressionBenchmarkTest (1 test). Gates: fast 178/0/0, storage 15/0/0 BUILD SUCCESS.
 3.1.34 feat(tooling): commit-and-changelog.ps1 auto-increment version prefix - new scripts/commit-and-changelog.ps1 that reads the last commit version prefix, auto-increments patch, appends entry to Changelog.md, creates changelog_entry.txt for git commit; AGENTS.md and Makefile updated with changelog automation workflow.
+
+3.1.35 Prompt 66: BZip2 codec for cold data with block size config and storage tiering

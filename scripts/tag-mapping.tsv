@@ -100,3 +100,4 @@ StorageBulkUpdateTest	perf
 AllocationProfileTest	perf
 DeflateLevelConfigTest	storage
 DeflateCompressionBenchmarkTest	storage
+BZip2CodecTest	storage

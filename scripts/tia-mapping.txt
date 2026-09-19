@@ -62,6 +62,7 @@ diesel/storage/avro/AvroDataFileWriter.java	storage-avro
 diesel/storage/avro/AvroDataFileReader.java	storage-avro
 diesel/storage/avro/SnappyOptimizedCodec.java	storage-avro
 diesel/storage/avro/ZStandardCodec.java	storage-avro
+diesel/storage/avro/BZip2Codec.java	storage-avro
 diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network
