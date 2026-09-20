@@ -107,3 +107,4 @@ AvroBlockManagerTest	storage
 AvroWriterBlockMetadataTest	storage
 AvroParallelReaderTest	storage
 AvroInputFormatCompatTest	storage
+SchemaEvolutionTest	storage
