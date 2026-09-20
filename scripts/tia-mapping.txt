@@ -60,6 +60,7 @@ diesel/storage/avro/AvroCodecFactory.java	storage-avro
 diesel/storage/avro/AvroCompressionConfig.java	storage-avro
 diesel/storage/avro/AvroDataFileWriter.java	storage-avro
 diesel/storage/avro/AvroDataFileReader.java	storage-avro
+diesel/storage/avro/AvroFileHeader.java	storage-avro
 diesel/storage/avro/SnappyOptimizedCodec.java	storage-avro
 diesel/storage/avro/ZStandardCodec.java	storage-avro
 diesel/storage/avro/BZip2Codec.java	storage-avro

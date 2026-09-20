@@ -112,3 +112,4 @@ SchemaConflictResolverTest	storage
 AvroDataValidatorTest	storage
 AvroUnionHandlerTest	storage
 AvroComplexTypeTest	storage
+AvroFileHeaderTest	storage

@@ -44,6 +44,11 @@ public class AvroDataFileWriter {
 
     public AvroDataFileWriter(List<String> columns, Map<String, Class<?>> columnTypes, File outputFile,
                                  CodecFactory codec, int blockSize) throws IOException {
+        this(columns, columnTypes, outputFile, codec, blockSize, null);
+    }
+
+    public AvroDataFileWriter(List<String> columns, Map<String, Class<?>> columnTypes, File outputFile,
+                                 CodecFactory codec, int blockSize, AvroFileHeader header) throws IOException {
         this.outputFile = outputFile;
         this.schema = AvroSchemaManager.buildTableSchema("temp", columns, columnTypes);
         this.datumWriter = new GenericDatumWriter<>(schema);
@@ -53,6 +58,11 @@ public class AvroDataFileWriter {
         this.syncInterval = cfg.syncInterval();
         if (codec != null) {
             dataFileWriter.setCodec(codec);
+        }
+        if (header != null) {
+            for (Map.Entry<String, byte[]> e : header.toMetaMap().entrySet()) {
+                dataFileWriter.setMeta(e.getKey(), e.getValue());
+            }
         }
         try {
             dataFileWriter.create(schema, new FileOutputStream(outputFile));

@@ -204,6 +204,7 @@ public class AvroRowStorage extends AbstractRowStorage {
         String effectiveCodec = compression.effectiveCodec(rows);
         org.apache.avro.file.CodecFactory codecFactory =
                 AvroCodecFactory.factory(effectiveCodec, compression.level());
+        AvroFileHeader header = buildFileHeader(effectiveCodec, compression.level());
         try (AtomicFileWriter afw = AtomicFileWriter.openBinary(target)) {
             DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
             OutputStream nonClosing = new OutputStream() {
@@ -217,6 +218,9 @@ public class AvroRowStorage extends AbstractRowStorage {
             if (codecFactory != null) {
                 dataFileWriter.setCodec(codecFactory);
             }
+            for (Map.Entry<String, byte[]> e : header.toMetaMap().entrySet()) {
+                dataFileWriter.setMeta(e.getKey(), e.getValue());
+            }
             try {
                 dataFileWriter.create(schema, nonClosing);
                 for (Object[] row : rows) {
@@ -229,6 +233,30 @@ public class AvroRowStorage extends AbstractRowStorage {
             }
             afw.commit();
         }
+    }
+
+    /**
+     * Builds the diesel metadata ({@link AvroFileHeader}) written into the Avro
+     * file header (Prompt 76): engine, database, table name, file-format and
+     * schema versions, creation timestamp and the effective compression
+     * codec/level.
+     */
+    private AvroFileHeader buildFileHeader(String codec, int level) {
+        return AvroFileHeader.builder()
+                .database(resolveDatabaseName())
+                .tableName(AvroSchemaManager.sanitizeName(tableName))
+                .creationTimestamp(java.time.Instant.now())
+                .compressionCodec(codec)
+                .compressionLevel(level)
+                .build();
+    }
+
+    private static String resolveDatabaseName() {
+        String systemValue = System.getProperty("avro.metadata.database");
+        if (systemValue != null && !systemValue.isBlank()) {
+            return systemValue;
+        }
+        return resolveConfigValue("avro.metadata.database", "default");
     }
 
     private void writeAvroFile(File target, Schema schema) throws IOException {
@@ -272,12 +300,31 @@ public class AvroRowStorage extends AbstractRowStorage {
         } else {
             reader = new AvroDataFileReader(file);
         }
+        validateFileHeader(reader.getFileHeader(), file);
         try (AvroReadIterator iterator = new AvroReadIterator(reader, columns, columnTypes)) {
             List<Object[]> loaded = new ArrayList<>();
             while (iterator.hasNext()) {
                 loaded.add(iterator.next());
             }
             return loaded;
+        }
+    }
+
+    /**
+     * Validates the DieselDB metadata parsed from the Avro file header (Prompt 76).
+     * Files written before Prompt 76 carry no DieselDB keys and validate cleanly;
+     * a header from a newer engine, or with corrupted DieselDB metadata, fails the
+     * load with a descriptive {@link DieselIOException}.
+     */
+    private void validateFileHeader(AvroFileHeader header, File file) throws IOException {
+        List<String> problems = header.validate();
+        if (!problems.isEmpty()) {
+            throw new DieselIOException(
+                    "Invalid Avro file header of " + file.getPath() + ": " + String.join("; ", problems),
+                    null);
+        }
+        if (header.hasDieselMetadata()) {
+            LOGGER.debug("Avro file {} header: {}", file.getPath(), header);
         }
     }
 

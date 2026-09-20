@@ -88,6 +88,7 @@ public final class AvroDataFileReader implements Closeable {
     private final Schema readerSchema;
     private final boolean readerSchemaNameCompatible;
     private final Codec codec;
+    private final AvroFileHeader fileHeader;
 
     private final GenericDatumReader<GenericRecord> datumReader;
 
@@ -157,6 +158,7 @@ public final class AvroDataFileReader implements Closeable {
         this.writerSchema = header.writerSchema;
         this.codecName = header.codecName;
         this.syncMarker = header.syncMarker;
+        this.fileHeader = header.fileHeader;
         this.codec = "null".equals(codecName) ? null : createCodec(codecName);
 
         Schema resolved = null;
@@ -197,7 +199,8 @@ public final class AvroDataFileReader implements Closeable {
     /**
      * Parsed head of an Avro object-container file.
      */
-    private record Header(Schema writerSchema, String codecName, byte[] syncMarker, long headerEndPos) { }
+    private record Header(Schema writerSchema, String codecName, byte[] syncMarker,
+                          long headerEndPos, AvroFileHeader fileHeader) { }
 
     private static Header parseHeader(File avroFile) throws IOException {
         try (CountingInputStream cin = new CountingInputStream(new BufferedInputStream(
@@ -237,7 +240,13 @@ public final class AvroDataFileReader implements Closeable {
             if (codecName == null || codecName.isBlank()) {
                 codecName = "null";
             }
-            return new Header(writerSchema, codecName, sync, cin.count);
+            AvroFileHeader fileHeader;
+            try {
+                fileHeader = AvroFileHeader.fromMetaMap(meta);
+            } catch (IllegalArgumentException e) {
+                throw new IOException("Corrupt DieselDB metadata in Avro header of " + avroFile, e);
+            }
+            return new Header(writerSchema, codecName, sync, cin.count, fileHeader);
         }
     }
 
@@ -589,6 +598,17 @@ public final class AvroDataFileReader implements Closeable {
     /** Returns the codec name declared in the file header (e.g. {@code "null"}). */
     public String getCodecName() {
         return codecName;
+    }
+
+    /**
+     * Returns the DieselDB header metadata parsed from the file's metadata map.
+     * For files written before Prompt 76 (which only carry {@code avro.schema} /
+     * {@code avro.codec}) all DieselDB keys fall back to their defaults.
+     *
+     * @return the parsed header metadata (never {@code null})
+     */
+    public AvroFileHeader getFileHeader() {
+        return fileHeader;
     }
 
     /** Returns the absolute path of the backing file. */
