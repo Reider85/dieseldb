@@ -69,6 +69,7 @@ diesel/storage/avro/AvroBlockManager.java	storage-avro
 diesel/storage/avro/AvroInputFormatCompat.java	storage-avro
 diesel/storage/avro/SchemaCompatibilityChecker.java	storage-avro
 diesel/storage/avro/SchemaEvolutionManager.java	storage-avro
+diesel/storage/avro/SchemaConflictResolver.java	storage-avro
 diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network

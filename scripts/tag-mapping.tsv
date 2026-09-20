@@ -108,3 +108,4 @@ AvroWriterBlockMetadataTest	storage
 AvroParallelReaderTest	storage
 AvroInputFormatCompatTest	storage
 SchemaEvolutionTest	storage
+SchemaConflictResolverTest	storage
