@@ -109,3 +109,4 @@ AvroParallelReaderTest	storage
 AvroInputFormatCompatTest	storage
 SchemaEvolutionTest	storage
 SchemaConflictResolverTest	storage
+AvroDataValidatorTest	storage
