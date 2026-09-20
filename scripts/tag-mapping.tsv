@@ -111,3 +111,4 @@ SchemaEvolutionTest	storage
 SchemaConflictResolverTest	storage
 AvroDataValidatorTest	storage
 AvroUnionHandlerTest	storage
+AvroComplexTypeTest	storage

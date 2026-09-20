@@ -445,6 +445,13 @@ public class AvroRowStorage extends AbstractRowStorage {
                 if (value instanceof ByteBuffer bb) yield bb;
                 yield ByteBuffer.wrap(value.toString().getBytes());
             }
+            // Prompt 75 complex types: arrays/maps/records/enums. Fields delegate
+            // back to toAvroValue so nested elements can themselves be nullable
+            // or complex.
+            case ARRAY -> AvroArrayHandler.toAvroArray(value, fieldSchema, AvroRowStorage::toAvroValue);
+            case MAP -> AvroMapHandler.toAvroMap(value, fieldSchema, AvroRowStorage::toAvroValue);
+            case RECORD -> AvroRecordHandler.toAvroRecord(value, fieldSchema, AvroRowStorage::toAvroValue);
+            case ENUM -> AvroEnumHandler.toAvroEnum(value, fieldSchema);
             default -> value;
         };
     }
@@ -454,6 +461,12 @@ public class AvroRowStorage extends AbstractRowStorage {
         AvroUnionHandler.UnionReadValue unionValue =
                 AvroUnionHandler.unwrapForRead(avroValue, fieldSchema);
         Schema base = unionValue.branchSchema();
+        // Prompt 75 complex types: decode from the schema before the scalar
+        // target-type switch, so complex values convert even when the Java
+        // target type is a broad interface (List/Map).
+        if (base != null && isComplexType(base.getType())) {
+            return fromComplexAvroValue(avroValue, base);
+        }
         if (avroValue instanceof ByteBuffer bb) {
             if (targetType == BigDecimal.class) {
                 int scale = 18; // default
@@ -537,6 +550,36 @@ public class AvroRowStorage extends AbstractRowStorage {
             }
             default -> avroValue;
         };
+    }
+
+    private static boolean isComplexType(Schema.Type t) {
+        return t == Schema.Type.ARRAY || t == Schema.Type.MAP || t == Schema.Type.RECORD || t == Schema.Type.ENUM;
+    }
+
+    private static Object fromComplexAvroValue(Object avroValue, Schema base) {
+        return switch (base.getType()) {
+            case ARRAY -> AvroArrayHandler.fromAvroArray(avroValue, base, AvroRowStorage::fromElementAvroValue);
+            case MAP -> AvroMapHandler.fromAvroMap(avroValue, base, AvroRowStorage::fromElementAvroValue);
+            case RECORD -> AvroRecordHandler.fromAvroRecord(avroValue, base, AvroRowStorage::fromElementAvroValue);
+            case ENUM -> avroValue == null ? null : avroValue.toString();
+            default -> avroValue;
+        };
+    }
+
+    private static Object fromElementAvroValue(Object avroValue, Schema fieldSchema) {
+        if (avroValue == null || fieldSchema == null) {
+            return avroValue;
+        }
+        if (fieldSchema.getType() == Schema.Type.UNION) {
+            AvroUnionHandler.UnionReadValue unwrapped =
+                    AvroUnionHandler.unwrapForRead(avroValue, fieldSchema);
+            return fromElementAvroValue(unwrapped.value(), unwrapped.branchSchema());
+        }
+        if (isComplexType(fieldSchema.getType())) {
+            return fromComplexAvroValue(avroValue, fieldSchema);
+        }
+        Class<?> javaType = AvroTypeMapper.toJavaType(fieldSchema);
+        return javaType == null ? avroValue : fromAvroValue(avroValue, javaType, fieldSchema);
     }
 
     private static Class<?> resolveType(String col, Map<String, Class<?>> columnTypes) {

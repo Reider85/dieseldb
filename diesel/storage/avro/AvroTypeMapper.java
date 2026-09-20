@@ -11,6 +11,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -83,6 +85,13 @@ public final class AvroTypeMapper {
             case "Character" -> Schema.create(Schema.Type.STRING);
             case "UUID" -> LogicalTypes.uuid()
                     .addToSchema(Schema.create(Schema.Type.STRING));
+            // Prompt 75 complex types: List/Map columns default to arrays/maps of
+            // nullable strings; callers needing precise element/value types build
+            // the schema with AvroArrayHandler/AvroMapHandler directly.
+            case "List", "ArrayList", "LinkedList", "Collection" ->
+                    AvroArrayHandler.createArraySchema(AvroTypeMapper.nullableOf(Schema.create(Schema.Type.STRING)));
+            case "Map", "HashMap", "LinkedHashMap", "TreeMap" ->
+                    AvroMapHandler.createMapSchema(AvroTypeMapper.nullableOf(Schema.create(Schema.Type.STRING)));
             default -> throw new IllegalArgumentException(
                     "Unsupported DieselDB type for Avro mapping: " + javaType.getName()
                             + " (column: " + columnName + ")");
@@ -157,10 +166,10 @@ public final class AvroTypeMapper {
             case BOOLEAN -> Boolean.class;
             case BYTES -> byte[].class;
             case FIXED -> byte[].class;
-            case RECORD -> null;   // complex type, caller must handle
-            case ARRAY -> null;    // complex type
-            case MAP -> null;      // complex type
-            case ENUM -> String.class; // enums stored as strings in SQL
+            case RECORD -> null;            // complex type, caller must handle
+            case ARRAY -> List.class;       // complex type (Prompt 75)
+            case MAP -> Map.class;          // complex type (Prompt 75)
+            case ENUM -> String.class;      // enums stored as strings in SQL
             case NULL -> null;
             default -> null;
         };
@@ -199,6 +208,9 @@ public final class AvroTypeMapper {
             case "String" -> "STRING";
             case "Character" -> "CHAR";
             case "byte[]" -> "BYTES";
+            // Prompt 75 complex types
+            case "List", "ArrayList", "LinkedList" -> "ARRAY";
+            case "Map", "HashMap", "LinkedHashMap" -> "MAP";
             default -> type.getSimpleName();
         };
     }
@@ -224,6 +236,9 @@ public final class AvroTypeMapper {
             case "DATETIME", "DATETIME_MS" -> LocalDateTime.class;
             case "UUID" -> UUID.class;
             case "CHAR" -> Character.class;
+            // Prompt 75 complex types
+            case "ARRAY" -> List.class;
+            case "MAP" -> Map.class;
             default -> null;
         };
     }
@@ -260,17 +275,19 @@ public final class AvroTypeMapper {
     }
 
     /**
-     * Creates an Avro ARRAY schema for a given element type.
+     * Creates an Avro ARRAY schema for a given element type
+     * (delegated to {@link AvroArrayHandler}).
      */
     public static Schema createArray(Schema elementSchema) {
-        return Schema.createArray(elementSchema);
+        return AvroArrayHandler.createArraySchema(elementSchema);
     }
 
     /**
-     * Creates an Avro MAP schema for a given value type.
+     * Creates an Avro MAP schema for a given value type
+     * (delegated to {@link AvroMapHandler}).
      */
     public static Schema createMap(Schema valueSchema) {
-        return Schema.createMap(valueSchema);
+        return AvroMapHandler.createMapSchema(valueSchema);
     }
 
     /**
@@ -281,6 +298,6 @@ public final class AvroTypeMapper {
      * @param namespace Avro namespace (may be {@code null})
      */
     public static Schema createEnum(String name, java.util.List<String> values, String namespace) {
-        return Schema.createEnum(name, null, namespace, values);
+        return AvroEnumHandler.createEnumSchema(name, values, namespace);
     }
 }

@@ -261,7 +261,17 @@ public final class AvroUnionHandler {
 
     private static boolean valueMatchesBranch(Object value, Schema branch) {
         Schema.Type valueType = primitiveTypeOf(value);
-        return valueType != null && valueType == branch.getType();
+        if (valueType != null && valueType == branch.getType()) {
+            return true;
+        }
+        // Prompt 75 complex types: a CharSequence value can fill an ENUM branch
+        // (validated against the enum symbols) and a Map can fill a RECORD branch,
+        // so nullable complex columns resolve to the correct union branch before
+        // the value is converted.
+        if (branch.getType() == Schema.Type.ENUM && value instanceof CharSequence) {
+            return AvroEnumHandler.isValidSymbol(branch, value.toString());
+        }
+        return branch.getType() == Schema.Type.RECORD && value instanceof Map;
     }
 
     private static Schema.Type primitiveTypeOf(Object value) {
@@ -307,7 +317,8 @@ public final class AvroUnionHandler {
         if (value instanceof Map) {
             return Schema.Type.MAP;
         }
-        if (value instanceof java.util.Collection || value instanceof GenericData.Array) {
+        if (value instanceof java.util.Collection || value instanceof GenericData.Array
+                || value instanceof Object[]) {
             return Schema.Type.ARRAY;
         }
         return null;
