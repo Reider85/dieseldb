@@ -98,13 +98,11 @@ public final class AvroTypeMapper {
     }
 
     /**
-     * Wraps an existing schema into a nullable {@code ["null", schema]} union.
+     * Wraps an existing schema into a nullable {@code ["null", schema]} union with
+     * the NULL branch always first (delegated to {@link AvroUnionHandler}).
      */
     public static Schema nullableOf(Schema base) {
-        return Schema.createUnion(
-                Schema.create(Schema.Type.NULL),
-                base
-        );
+        return AvroUnionHandler.createNullableUnion(base);
     }
 
     // ─── Avro → SQL ────────────────────────────────────────────────
@@ -122,14 +120,9 @@ public final class AvroTypeMapper {
         if (avroSchema == null) {
             return null;
         }
-        // Unwrap UNION: take the first non-null branch
+        // Unwrap UNION: take the first non-null branch (delegated to AvroUnionHandler)
         if (avroSchema.getType() == Schema.Type.UNION) {
-            for (Schema branch : avroSchema.getTypes()) {
-                if (branch.getType() != Schema.Type.NULL) {
-                    return toJavaType(branch);
-                }
-            }
-            return null;
+            return AvroUnionHandler.unwrapNonNullType(avroSchema);
         }
         // Unwrap logical types on primitives
         Schema base = avroSchema.getType() == Schema.Type.RECORD
@@ -176,17 +169,11 @@ public final class AvroTypeMapper {
     // ─── Helpers ────────────────────────────────────────────────────
 
     /**
-     * Checks whether the given Avro schema is a UNION that contains NULL.
+     * Checks whether the given Avro schema is a UNION that contains NULL
+     * (delegated to {@link AvroUnionHandler#isNullableUnion}).
      */
     public static boolean isNullable(Schema schema) {
-        if (schema == null) {
-            return false;
-        }
-        if (schema.getType() == Schema.Type.UNION) {
-            return schema.getTypes().stream()
-                    .anyMatch(s -> s.getType() == Schema.Type.NULL);
-        }
-        return false;
+        return AvroUnionHandler.isNullableUnion(schema);
     }
 
     /**

@@ -37,8 +37,10 @@ import diesel.storage.RowStorage;
 /**
  * Avro-backed implementation of {@link RowStorage}. Rows are kept in an
  * in-memory compact {@code Object[]} buffer and persisted as Avro data files
- * ({@code .avro}). Schema management is delegated to {@link AvroSchemaManager}
- * and type conversions to {@link AvroTypeMapper}.
+ * ({@code .avro}). Schema management is delegated to {@link AvroSchemaManager},
+ * type conversions to {@link AvroTypeMapper} and union handling (nullable
+ * {@code ["null", T]} field schemas, branch resolution, null-first ordering)
+ * to {@link AvroUnionHandler}.
  *
  * <p>Each {@code saveToFile} writes the Avro data file via
  * {@link AtomicFileWriter} (crash-safe temp+rename) and the schema sidecar
@@ -315,7 +317,7 @@ public class AvroRowStorage extends AbstractRowStorage {
                 throw new IllegalArgumentException("No type defined for column: " + col + " in table: " + tableName);
             }
             Schema baseSchema = AvroTypeMapper.toAvroSchema(javaType, col);
-            Schema nullableSchema = AvroTypeMapper.nullableOf(baseSchema);
+            Schema nullableSchema = AvroUnionHandler.createNullableUnion(baseSchema);
             Schema.Field field = new Schema.Field(col, nullableSchema, null, null);
             fields.add(field);
         }
@@ -385,14 +387,12 @@ public class AvroRowStorage extends AbstractRowStorage {
     // ─── Value conversion helpers ───────────────────────────────────
 
     private static Object toAvroValue(Object value, Schema fieldSchema) {
-        if (value == null) return null;
-        if (fieldSchema.getType() == Schema.Type.UNION) {
-            for (Schema branch : fieldSchema.getTypes()) {
-                if (branch.getType() != Schema.Type.NULL) {
-                    return toAvroValue(value, branch);
-                }
-            }
-            return null;
+        return AvroUnionHandler.wrapForWrite(value, fieldSchema, AvroRowStorage::toScalarAvroValue);
+    }
+
+    private static Object toScalarAvroValue(Object value, Schema fieldSchema) {
+        if (value == null || fieldSchema == null) {
+            return value;
         }
         if (fieldSchema.getLogicalType() != null) {
             return switch (fieldSchema.getLogicalType().getName()) {
@@ -451,18 +451,15 @@ public class AvroRowStorage extends AbstractRowStorage {
 
     private static Object fromAvroValue(Object avroValue, Class<?> targetType, Schema fieldSchema) {
         if (avroValue == null || targetType == null) return avroValue;
+        AvroUnionHandler.UnionReadValue unionValue =
+                AvroUnionHandler.unwrapForRead(avroValue, fieldSchema);
+        Schema base = unionValue.branchSchema();
         if (avroValue instanceof ByteBuffer bb) {
             if (targetType == BigDecimal.class) {
                 int scale = 18; // default
-                if (fieldSchema != null) {
-                    Schema base = fieldSchema.getType() == Schema.Type.UNION
-                            ? fieldSchema.getTypes().stream()
-                                .filter(s -> s.getType() != Schema.Type.NULL)
-                                .findFirst().orElse(fieldSchema)
-                            : fieldSchema;
-                    if (base.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
-                        scale = d.getScale();
-                    }
+                if (base != null
+                        && base.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
+                    scale = d.getScale();
                 }
                 return new BigDecimal(new BigInteger(bb.array()), scale).stripTrailingZeros();
             }

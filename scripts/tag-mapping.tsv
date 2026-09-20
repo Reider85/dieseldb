@@ -110,3 +110,4 @@ AvroInputFormatCompatTest	storage
 SchemaEvolutionTest	storage
 SchemaConflictResolverTest	storage
 AvroDataValidatorTest	storage
+AvroUnionHandlerTest	storage
