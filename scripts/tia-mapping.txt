@@ -80,6 +80,8 @@ diesel/storage/avro/AvroMapHandler.java	storage-avro
 diesel/storage/avro/AvroRecordHandler.java	storage-avro
 diesel/storage/avro/AvroEnumHandler.java	storage-avro
 diesel/storage/avro/AvroSyncMarkerManager.java	storage-avro
+diesel/storage/avro/AvroCrashDetector.java	storage-avro
+diesel/storage/avro/AvroRecoveryManager.java	storage-avro
 diesel/storage/avro/AvroBufferConfig.java	storage-avro
 diesel/storage/avro/AvroBufferManager.java	storage-avro
 diesel/storage/avro/AvroObjectPool.java	storage-avro

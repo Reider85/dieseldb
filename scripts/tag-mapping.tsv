@@ -115,3 +115,4 @@ AvroComplexTypeTest	storage
 AvroFileHeaderTest	storage
 AvroObjectPoolTest	storage
 AvroBatchOperatorTest	storage
+AvroRecoveryManagerTest	storage
