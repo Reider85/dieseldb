@@ -86,6 +86,8 @@ diesel/storage/avro/AvroBufferConfig.java	storage-avro
 diesel/storage/avro/AvroBufferManager.java	storage-avro
 diesel/storage/avro/AvroObjectPool.java	storage-avro
 diesel/storage/avro/AvroBatchOperator.java	storage-avro
+diesel/storage/avro/AvroBackupManager.java	storage-avro
+diesel/storage/avro/AvroRestoreManager.java	storage-avro
 diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network

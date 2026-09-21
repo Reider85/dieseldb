@@ -117,3 +117,5 @@ AvroObjectPoolTest	storage
 AvroBatchOperatorTest	storage
 AvroRecoveryManagerTest	storage
 AvroIntegrityCheckerTest	storage
+AvroBackupManagerTest	storage
+AvroRestoreManagerTest	storage
