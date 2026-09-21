@@ -1,1 +1,1 @@
-﻿3.1.53 Prompt 84 (Section 2 AVRO): AVRO backup and restore - AvroBackupManager (full/incremental backup, manifest, pruning) + AvroRestoreManager (restore with CRC validation, point-in-time recovery) + 57 tests
+﻿3.1.54 Prompt 85 (Section 2 AVRO): AVRO primary-key index - AvroPrimaryKeyIndex (TreeMap PK + LRU page cache + sidecar persistence) + AvroRowStorage integration + 39 tests

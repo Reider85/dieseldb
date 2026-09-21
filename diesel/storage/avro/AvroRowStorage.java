@@ -61,6 +61,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     private final List<String> colNames;
     private final Map<String, Integer> colIndex;
     private boolean fileInitialized;
+    private AvroPrimaryKeyIndex primaryKeyIndex;
 
     public AvroRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         super(tableName, columns, columnTypes);
@@ -77,6 +78,50 @@ public class AvroRowStorage extends AbstractRowStorage {
 
     public void setFileInitialized(boolean fileInitialized) {
         this.fileInitialized = fileInitialized;
+    }
+
+    // ─── Primary-key index (Prompt 85) ────────────────────────────
+
+    /**
+     * Sets the primary-key column and builds the
+     * {@link AvroPrimaryKeyIndex} for fast lookups.
+     */
+    @Override
+    public void setPrimaryKeyColumn(String primaryKeyColumn) {
+        super.setPrimaryKeyColumn(primaryKeyColumn);
+        if (primaryKeyColumn != null && !primaryKeyColumn.isBlank()) {
+            primaryKeyIndex = AvroPrimaryKeyIndex.create(colNames, columnTypes);
+            primaryKeyIndex.setPrimaryKeyColumn(primaryKeyColumn, rows);
+            LOGGER.debug("AvroRowStorage {} primary-key index initialized on column '{}'",
+                    tableName, primaryKeyColumn);
+        }
+    }
+
+    /**
+     * Looks up a row by its primary key value.
+     *
+     * @param key the primary-key value
+     * @return the row as a Map, or {@code null} if not found
+     */
+    public Map<String, Object> lookupByPrimaryKey(Object key) {
+        if (primaryKeyIndex == null || !primaryKeyIndex.isEnabled()) return null;
+        Integer idx = primaryKeyIndex.lookup(key);
+        if (idx == null || idx < 0 || idx >= rows.size()) return null;
+        return toMap(rows.get(idx));
+    }
+
+    /**
+     * Returns the primary-key index, or {@code null} if not initialized.
+     */
+    public AvroPrimaryKeyIndex getPrimaryKeyIndex() {
+        return primaryKeyIndex;
+    }
+
+    /**
+     * Returns the raw internal rows (for index page caching).
+     */
+    protected List<Object[]> getRows() {
+        return rows;
     }
 
     private Object[] fromMap(Map<String, Object> row) {
@@ -119,6 +164,9 @@ public class AvroRowStorage extends AbstractRowStorage {
         Object[] arr = fromMap(row);
         rows.add(arr);
         syncIndexAppend(arr, rows.size() - 1);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.insert(arr, rows.size() - 1);
+        }
     }
 
     @Override
@@ -126,6 +174,9 @@ public class AvroRowStorage extends AbstractRowStorage {
         Object[] arr = fromMap(row);
         rows.add(rowIndex, arr);
         syncIndexInsert(arr, rowIndex);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.buildIndex(rows);
+        }
     }
 
     @Override
@@ -134,12 +185,19 @@ public class AvroRowStorage extends AbstractRowStorage {
         Object[] newRow = fromMap(row);
         rows.set(rowIndex, newRow);
         syncIndexUpdate(oldRow, rowIndex, newRow);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.update(oldRow, rowIndex, newRow);
+        }
     }
 
     @Override
     public void delete(int rowIndex) {
+        Object[] row = rows.get(rowIndex);
         rows.remove(rowIndex);
         syncIndexDelete(rowIndex);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.buildIndex(rows);
+        }
     }
 
     @Override
@@ -149,6 +207,9 @@ public class AvroRowStorage extends AbstractRowStorage {
             rows.add(fromMap(row));
         }
         syncIndexBulkFromArrays(rows);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.buildIndex(rows);
+        }
     }
 
     // ─── Persistence ────────────────────────────────────────────────
@@ -162,6 +223,7 @@ public class AvroRowStorage extends AbstractRowStorage {
             if (parent != null) parent.mkdirs();
             writeAvroFileEfficient(avroFile, schema);
             writeSchemaSidecar(tableName, schema);
+            savePrimaryKeySidecar(avroFile);
             fileInitialized = true;
             LOGGER.info("AvroRowStorage {} saved Avro to {} with {} rows",
                     tableName, avroFile.getPath(), rows.size());
@@ -186,6 +248,7 @@ public class AvroRowStorage extends AbstractRowStorage {
             LOGGER.info("AvroRowStorage {} loaded Avro from {} with {} rows",
                     tableName, avroFile.getPath(), rows.size());
             syncIndexBulkFromArrays(rows);
+            loadPrimaryKeySidecar(avroFile);
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
@@ -332,6 +395,31 @@ public class AvroRowStorage extends AbstractRowStorage {
         File avroFile = new File(resolveAvroFilePath());
         Path sidecarPath = avroFile.toPath().resolveSibling(AvroSchemaManager.sanitizeName(tableName) + AvroSchemaManager.AVSC_EXTENSION);
         AvroSchemaManager.writeSchemaFile(schema, sidecarPath);
+    }
+
+    // ─── Primary-key index sidecar (Prompt 85) ────────────────────
+
+    private void savePrimaryKeySidecar(File avroFile) {
+        if (primaryKeyIndex == null || !primaryKeyIndex.isEnabled()) return;
+        try {
+            Path sidecar = AvroPrimaryKeyIndex.sidecarPath(avroFile.toPath());
+            primaryKeyIndex.saveToSidecar(sidecar, avroFile.length(), avroFile.lastModified());
+        } catch (IOException e) {
+            LOGGER.warn("Failed to save primary-key index sidecar: {}", e.getMessage());
+        }
+    }
+
+    private void loadPrimaryKeySidecar(File avroFile) {
+        if (primaryKeyIndex == null || !primaryKeyIndex.isEnabled()) return;
+        Path sidecar = AvroPrimaryKeyIndex.sidecarPath(avroFile.toPath());
+        Map<Object, Integer> loaded = AvroPrimaryKeyIndex.loadFromSidecar(
+                sidecar, avroFile.length(), avroFile.lastModified());
+        if (loaded != null) {
+            LOGGER.debug("AvroRowStorage {} loaded primary-key index sidecar ({} entries)",
+                    tableName, loaded.size());
+        } else {
+            primaryKeyIndex.buildIndex(rows);
+        }
     }
 
     // ─── File path resolution ───────────────────────────────────────

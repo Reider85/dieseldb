@@ -119,3 +119,4 @@ AvroRecoveryManagerTest	storage
 AvroIntegrityCheckerTest	storage
 AvroBackupManagerTest	storage
 AvroRestoreManagerTest	storage
+AvroPrimaryKeyIndexTest	storage
