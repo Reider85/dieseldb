@@ -4,12 +4,14 @@ import diesel.Database;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -19,11 +21,15 @@ public class InTest {
 
     private static final int RECORD_COUNT = 600;
 
+    @TempDir
+    static Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         database.executeQuery("CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);
         database.executeQuery("CREATE UNIQUE INDEX ON USERS (ID)", null);
         database.executeQuery("CREATE INDEX ON USERS (AGE)", null);
