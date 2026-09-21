@@ -114,3 +114,4 @@ AvroUnionHandlerTest	storage
 AvroComplexTypeTest	storage
 AvroFileHeaderTest	storage
 AvroObjectPoolTest	storage
+AvroBatchOperatorTest	storage
