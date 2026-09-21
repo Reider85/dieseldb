@@ -79,6 +79,7 @@ diesel/storage/avro/AvroArrayHandler.java	storage-avro
 diesel/storage/avro/AvroMapHandler.java	storage-avro
 diesel/storage/avro/AvroRecordHandler.java	storage-avro
 diesel/storage/avro/AvroEnumHandler.java	storage-avro
+diesel/storage/avro/AvroSyncMarkerManager.java	storage-avro
 diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network
