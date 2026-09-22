@@ -123,3 +123,4 @@ AvroPrimaryKeyIndexTest	storage
 AvroBloomFilterTest	storage
 AvroDatePartitionerTest	storage
 AvroHashPartitionerTest	storage
+AvroRangePartitionerTest	storage
