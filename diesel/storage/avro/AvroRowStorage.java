@@ -807,6 +807,19 @@ public class AvroRowStorage extends AbstractRowStorage {
         }
     }
 
+    // ─── Avro file accessor (Prompt 91) ─────────────────────────────
+
+    /**
+     * Returns the {@link File} for this table's Avro data file, or
+     * {@code null} if the resolved path does not exist.
+     *
+     * @return the Avro data file, or {@code null}
+     */
+    public File resolveAvroFile() {
+        File f = new File(resolveAvroFilePath());
+        return f.exists() ? f : null;
+    }
+
     // ─── Accessors ──────────────────────────────────────────────────
     public List<Object[]> getInternalRows() {
         return rows;

@@ -12,7 +12,7 @@ diesel/QueryParser.java			smoke,query,query-full
 diesel/ParseContext.java		smoke,query
 diesel/SubqueryParser.java		query,query-full
 diesel/Query.java			query,query-full
-diesel/SelectQuery.java			query,query-full
+diesel/SelectQuery.java			query,query-full,storage-avro
 diesel/InsertQuery.java			query,query-full
 diesel/UpdateQuery.java			query,query-full,network
 diesel/DeleteQuery.java			query,query-full
@@ -94,6 +94,9 @@ diesel/storage/avro/AvroBloomFilter.java	storage-avro
 diesel/storage/avro/AvroDatePartitioner.java	storage-avro
 diesel/storage/avro/AvroHashPartitioner.java	storage-avro
 diesel/storage/avro/AvroRangePartitioner.java	storage-avro
+diesel/storage/avro/AvroQueryExecutor.java	storage-avro
+diesel/storage/avro/AvroQueryConfig.java	storage-avro
+diesel/storage/avro/AvroStatistics.java	storage-avro
 diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network

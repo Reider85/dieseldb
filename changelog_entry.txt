@@ -1,1 +1,1 @@
-3.1.60 Prompt 89 (Section 2 AVRO): AVRO hash partitioning for uniform data distribution - new AvroHashPartitioner with configurable hash column/count/function, and rebalancing when the partition count changes
+3.1.61 Prompt 90 (Section 2 AVRO): AVRO range partitioning - new AvroRangePartitioner with numeric column range boundaries (RangePartitionConfig), Hive-style range=L-U directories, dynamic range split/merge adjustment, and query pruning for ranges

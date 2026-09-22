@@ -31,6 +31,8 @@ import java.util.stream.IntStream;
 
 import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonPathResolver;
+import diesel.storage.avro.AvroQueryExecutor;
+import diesel.storage.avro.AvroRowStorage;
 
 /**
  * Executes a SELECT statement against a table: applies WHERE conditions
@@ -939,11 +941,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             ensureWhereIndexes(table, conditions, mainTableName);
             List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
             if (mainRows == null) {
-                List<Map<String, Object>> rawRows = table.getRows();
-                mainRows = new ArrayList<>(rawRows.size());
-                for (int i = 0; i < rawRows.size(); i++) {
-                    if (!table.isDeleted(i)) {
-                        mainRows.add(rawRows.get(i));
+                // Prompt 91: Avro pushdown — detect Avro-backed tables and use
+                // the optimised path that applies column projection and predicate
+                // pushdown at the Avro binary level.
+                if (table.getStorage() instanceof AvroRowStorage avroStorage) {
+                    mainRows = executeAvroPushdown(avroStorage, table, conditions, combinedColumnTypes);
+                } else {
+                    List<Map<String, Object>> rawRows = table.getRows();
+                    mainRows = new ArrayList<>(rawRows.size());
+                    for (int i = 0; i < rawRows.size(); i++) {
+                        if (!table.isDeleted(i)) {
+                            mainRows.add(rawRows.get(i));
+                        }
                     }
                 }
             }
@@ -2481,6 +2490,273 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
         }
+    }
+
+    // ─── Prompt 91: Avro pushdown ──────────────────────────────────
+
+    /**
+     * Executes a SELECT via the {@link AvroQueryExecutor} when the table is
+     * backed by Avro storage.  Column projection and predicate pushdown are
+     * applied at the Avro binary level so non-matching rows never cross the
+     * Avro→Map boundary.
+     *
+     * @param avroStorage         the Avro row storage instance
+     * @param table               the Table (for schema access)
+     * @param conditions          WHERE conditions (may be {@code null})
+     * @param combinedColumnTypes column→type map
+     * @return filtered and projected rows
+     */
+    private List<Map<String, Object>> executeAvroPushdown(AvroRowStorage avroStorage,
+                                                           Table table,
+                                                           List<QueryParser.Condition> conditions,
+                                                           Map<String, Class<?>> combinedColumnTypes) {
+        try {
+            AvroQueryExecutor executor = new AvroQueryExecutor();
+            List<String> selectCols = columns;
+            if (columns.size() == 1 && "*".equals(columns.get(0))) {
+                selectCols = table.getColumns();
+            }
+
+            Set<String> required = buildAvroRequiredColumns(conditions, selectCols, table.getColumns());
+            java.util.function.Predicate<org.apache.avro.generic.GenericRecord> predicate =
+                    buildAvroPredicate(conditions, combinedColumnTypes);
+
+            AvroQueryExecutor.QueryResult result = executor.executeQuery(
+                    avroStorage, predicate, required,
+                    table.getColumns(), combinedColumnTypes, limit);
+            return result.rows();
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Avro pushdown failed, falling back to full scan", e);
+            List<Map<String, Object>> rawRows = table.getRows();
+            List<Map<String, Object>> mainRows = new ArrayList<>(rawRows.size());
+            for (int i = 0; i < rawRows.size(); i++) {
+                if (!table.isDeleted(i)) {
+                    mainRows.add(rawRows.get(i));
+                }
+            }
+            return mainRows;
+        }
+    }
+
+    /**
+     * Builds the minimal column set required for an Avro query from the
+     * SELECT columns and the columns referenced by WHERE conditions.
+     */
+    private static Set<String> buildAvroRequiredColumns(List<QueryParser.Condition> conditions,
+                                                         List<String> selectColumns,
+                                                         List<String> allColumns) {
+        Set<String> required = new LinkedHashSet<>();
+        if (selectColumns != null) {
+            for (String col : selectColumns) {
+                if ("*".equals(col)) {
+                    return new LinkedHashSet<>(allColumns);
+                }
+                required.add(col);
+            }
+        }
+        if (conditions != null) {
+            collectConditionColumnsForAvro(conditions, required);
+        }
+        if (required.isEmpty()) {
+            return new LinkedHashSet<>(allColumns);
+        }
+        return required;
+    }
+
+    private static void collectConditionColumnsForAvro(List<QueryParser.Condition> conditions,
+                                                         Set<String> columns) {
+        for (QueryParser.Condition c : conditions) {
+            if (c.isGrouped() && c.subConditions != null) {
+                collectConditionColumnsForAvro(c.subConditions, columns);
+            } else if (c.column != null) {
+                columns.add(c.column);
+            }
+        }
+    }
+
+    /**
+     * Builds a {@link java.util.function.Predicate} that evaluates WHERE
+     * conditions directly against a {@code GenericRecord}. Returns
+     * {@code null} when conditions cannot be pushed down.
+     */
+    private java.util.function.Predicate<org.apache.avro.generic.GenericRecord> buildAvroPredicate(
+            List<QueryParser.Condition> conditions,
+            Map<String, Class<?>> columnTypes) {
+        if (conditions == null || conditions.isEmpty()) {
+            return null;
+        }
+        List<java.util.function.Predicate<org.apache.avro.generic.GenericRecord>> predicates =
+                new ArrayList<>();
+        for (QueryParser.Condition c : conditions) {
+            java.util.function.Predicate<org.apache.avro.generic.GenericRecord> p =
+                    buildAvroSinglePredicate(c, columnTypes);
+            if (p == null) {
+                return null;
+            }
+            predicates.add(p);
+        }
+        java.util.function.Predicate<org.apache.avro.generic.GenericRecord> combined = predicates.get(0);
+        for (int i = 1; i < predicates.size(); i++) {
+            combined = combined.and(predicates.get(i));
+        }
+        return combined;
+    }
+
+    private java.util.function.Predicate<org.apache.avro.generic.GenericRecord> buildAvroSinglePredicate(
+            QueryParser.Condition c,
+            Map<String, Class<?>> columnTypes) {
+        if (c.isGrouped()) {
+            return buildAvroGroupedPredicate(c, columnTypes);
+        }
+        if (c.column == null || c.operator == null) return null;
+        if (c.rightColumn != null || c.subQuery != null) return null;
+
+        String colName = c.column;
+        Class<?> targetType = resolveAvroColumnType(colName, columnTypes);
+
+        return switch (c.operator) {
+            case EQUALS -> {
+                if (c.value == null) {
+                    yield rec -> rec.get(colName) == null;
+                }
+                Object converted = convertAvroValue(c.value, targetType);
+                yield rec -> {
+                    Object val = rec.get(colName);
+                    return val != null && avroValuesEqual(val, converted);
+                };
+            }
+            case NOT_EQUALS -> {
+                if (c.value == null) {
+                    yield rec -> rec.get(colName) != null;
+                }
+                Object converted = convertAvroValue(c.value, targetType);
+                yield rec -> {
+                    Object val = rec.get(colName);
+                    return val == null || !avroValuesEqual(val, converted);
+                };
+            }
+            case LESS_THAN -> {
+                Object converted = convertAvroValue(c.value, targetType);
+                yield rec -> {
+                    Object val = rec.get(colName);
+                    return val != null && avroCompareValues(val, converted) < 0;
+                };
+            }
+            case GREATER_THAN -> {
+                Object converted = convertAvroValue(c.value, targetType);
+                yield rec -> {
+                    Object val = rec.get(colName);
+                    return val != null && avroCompareValues(val, converted) > 0;
+                };
+            }
+            case LESS_THAN_OR_EQUALS -> {
+                Object converted = convertAvroValue(c.value, targetType);
+                yield rec -> {
+                    Object val = rec.get(colName);
+                    return val != null && avroCompareValues(val, converted) <= 0;
+                };
+            }
+            case GREATER_THAN_OR_EQUALS -> {
+                Object converted = convertAvroValue(c.value, targetType);
+                yield rec -> {
+                    Object val = rec.get(colName);
+                    return val != null && avroCompareValues(val, converted) >= 0;
+                };
+            }
+            case IN -> {
+                if (c.inValueSet == null || c.inValueSet.isEmpty()) {
+                    yield rec -> false;
+                }
+                Set<Object> convertedSet = new HashSet<>();
+                for (Object v : c.inValueSet) {
+                    convertedSet.add(convertAvroValue(v, targetType));
+                }
+                yield rec -> {
+                    Object val = rec.get(colName);
+                    if (val == null) return false;
+                    return convertedSet.stream().anyMatch(e -> avroValuesEqual(val, e));
+                };
+            }
+            case IS_NULL -> rec -> rec.get(colName) == null;
+            case IS_NOT_NULL -> rec -> rec.get(colName) != null;
+            default -> null;
+        };
+    }
+
+    private java.util.function.Predicate<org.apache.avro.generic.GenericRecord> buildAvroGroupedPredicate(
+            QueryParser.Condition c,
+            Map<String, Class<?>> columnTypes) {
+        if (c.subConditions == null || c.subConditions.isEmpty()) return null;
+        List<java.util.function.Predicate<org.apache.avro.generic.GenericRecord>> childPredicates =
+                new ArrayList<>();
+        for (QueryParser.Condition child : c.subConditions) {
+            java.util.function.Predicate<org.apache.avro.generic.GenericRecord> cp =
+                    buildAvroSinglePredicate(child, columnTypes);
+            if (cp == null) return null;
+            childPredicates.add(cp);
+        }
+        boolean isAnd = "AND".equalsIgnoreCase(c.conjunction);
+        java.util.function.Predicate<org.apache.avro.generic.GenericRecord> combined = childPredicates.get(0);
+        for (int i = 1; i < childPredicates.size(); i++) {
+            combined = isAnd ? combined.and(childPredicates.get(i))
+                    : combined.or(childPredicates.get(i));
+        }
+        return c.not ? combined.negate() : combined;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int avroCompareValues(Object a, Object b) {
+        if (a == null || b == null) return 0;
+        if (a instanceof Number && b instanceof Number) {
+            return java.math.BigDecimal.valueOf(((Number) a).doubleValue())
+                    .compareTo(java.math.BigDecimal.valueOf(((Number) b).doubleValue()));
+        }
+        if (a instanceof Comparable && b instanceof Comparable) {
+            try {
+                return ((Comparable<Object>) a).compareTo(b);
+            } catch (ClassCastException e) {
+                return a.toString().compareTo(b.toString());
+            }
+        }
+        return a.toString().compareTo(b.toString());
+    }
+
+    private static boolean avroValuesEqual(Object a, Object b) {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        if (a instanceof Number && b instanceof Number) {
+            return java.math.BigDecimal.valueOf(((Number) a).doubleValue())
+                    .compareTo(java.math.BigDecimal.valueOf(((Number) b).doubleValue())) == 0;
+        }
+        if (a.getClass().equals(b.getClass())) return a.equals(b);
+        return a.toString().equals(b.toString());
+    }
+
+    private static Object convertAvroValue(Object value, Class<?> targetType) {
+        if (value == null || targetType == null) return value;
+        try {
+            return switch (targetType.getSimpleName()) {
+                case "Long" -> value instanceof Number n ? n.longValue() : Long.parseLong(value.toString());
+                case "Integer" -> value instanceof Number n ? n.intValue() : Integer.parseInt(value.toString());
+                case "Double" -> value instanceof Number n ? n.doubleValue() : Double.parseDouble(value.toString());
+                case "Float" -> value instanceof Number n ? n.floatValue() : Float.parseFloat(value.toString());
+                case "String" -> value.toString();
+                case "Boolean" -> value instanceof Boolean b ? b : Boolean.parseBoolean(value.toString());
+                default -> value;
+            };
+        } catch (Exception e) {
+            return value;
+        }
+    }
+
+    private static Class<?> resolveAvroColumnType(String columnName, Map<String, Class<?>> columnTypes) {
+        if (columnTypes == null) return null;
+        Class<?> t = columnTypes.get(columnName);
+        if (t != null) return t;
+        for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(columnName)) return e.getValue();
+        }
+        return null;
     }
 
     private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
