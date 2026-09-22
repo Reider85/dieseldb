@@ -129,3 +129,4 @@ AvroTransactionManagerTest	storage
 AvroStorageTest	storage
 AvroCompressionTest	storage
 AvroRecoveryTest	storage
+AvroMetricsTest	storage
