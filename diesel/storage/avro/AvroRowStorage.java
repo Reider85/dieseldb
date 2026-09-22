@@ -13,8 +13,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
@@ -62,6 +64,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     private final Map<String, Integer> colIndex;
     private boolean fileInitialized;
     private AvroPrimaryKeyIndex primaryKeyIndex;
+    private AvroSecondaryIndexManager secondaryIndexManager;
 
     public AvroRowStorage(String tableName, List<String> columns, Map<String, Class<?>> columnTypes) {
         super(tableName, columns, columnTypes);
@@ -70,6 +73,12 @@ public class AvroRowStorage extends AbstractRowStorage {
         for (int i = 0; i < columns.size(); i++) {
             colIndex.put(columns.get(i), i);
         }
+        // Initialize secondary index manager
+        Map<Class<?>, Object> convertedTypes = new HashMap<>();
+        for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
+            convertedTypes.put(entry.getValue(), entry.getKey());
+        }
+        this.secondaryIndexManager = new AvroSecondaryIndexManager(tableName, columns, convertedTypes);
     }
 
     public boolean isFileInitialized() {
@@ -115,6 +124,41 @@ public class AvroRowStorage extends AbstractRowStorage {
      */
     public AvroPrimaryKeyIndex getPrimaryKeyIndex() {
         return primaryKeyIndex;
+    }
+
+    /**
+     * Returns the secondary index manager for this table.
+     */
+    public AvroSecondaryIndexManager getSecondaryIndexManager() {
+        return secondaryIndexManager;
+    }
+
+    /**
+     * Creates a new secondary index on a single column.
+     */
+    public void createSecondaryIndex(String indexName, String columnName) {
+        secondaryIndexManager.createIndex(indexName, columnName);
+    }
+
+    /**
+     * Creates a new composite index on multiple columns.
+     */
+    public void createCompositeIndex(String indexName, List<String> columnNames) {
+        secondaryIndexManager.createCompositeIndex(indexName, columnNames);
+    }
+
+    /**
+     * Drops an existing secondary index.
+     */
+    public void dropSecondaryIndex(String indexName) {
+        secondaryIndexManager.dropIndex(indexName);
+    }
+
+    /**
+     * Gets all secondary index names.
+     */
+    public Set<String> getSecondaryIndexNames() {
+        return secondaryIndexManager.getIndexNames();
     }
 
     /**
@@ -167,6 +211,8 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.insert(arr, rows.size() - 1);
         }
+        // Sync with secondary indexes
+        secondaryIndexManager.syncOnInsert(row, rows.size() - 1);
     }
 
     @Override
@@ -188,6 +234,8 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.update(oldRow, rowIndex, newRow);
         }
+        // Sync with secondary indexes
+        secondaryIndexManager.syncOnUpdate(toMap(oldRow), row, rowIndex);
     }
 
     @Override
@@ -198,6 +246,8 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.buildIndex(rows);
         }
+        // Sync with secondary indexes
+        secondaryIndexManager.syncOnDelete(toMap(row), rowIndex);
     }
 
     @Override
@@ -210,6 +260,8 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.buildIndex(rows);
         }
+        // Rebuild all secondary indexes
+        secondaryIndexManager.rebuildAllIndexes(newRows);
     }
 
     // ─── Persistence ────────────────────────────────────────────────
@@ -224,6 +276,7 @@ public class AvroRowStorage extends AbstractRowStorage {
             writeAvroFileEfficient(avroFile, schema);
             writeSchemaSidecar(tableName, schema);
             savePrimaryKeySidecar(avroFile);
+            saveSecondaryIndexes(avroFile);
             fileInitialized = true;
             LOGGER.info("AvroRowStorage {} saved Avro to {} with {} rows",
                     tableName, avroFile.getPath(), rows.size());
@@ -249,6 +302,7 @@ public class AvroRowStorage extends AbstractRowStorage {
                     tableName, avroFile.getPath(), rows.size());
             syncIndexBulkFromArrays(rows);
             loadPrimaryKeySidecar(avroFile);
+            loadSecondaryIndexes(avroFile);
         } catch (DieselIOException e) {
             rows.clear();
             rows.addAll(previous);
@@ -727,6 +781,30 @@ public class AvroRowStorage extends AbstractRowStorage {
             }
         }
         return null;
+    }
+
+    // ─── Secondary indexes persistence ─────────────────────────────────
+
+    private void saveSecondaryIndexes(File avroFile) throws IOException {
+        if (secondaryIndexManager != null) {
+            String basePath = avroFile.getPath().replace(".avro", "");
+            secondaryIndexManager.saveToFile(basePath);
+        }
+    }
+
+    private void loadSecondaryIndexes(File avroFile) throws IOException {
+        if (secondaryIndexManager != null) {
+            String basePath = avroFile.getPath().replace(".avro", "");
+            try {
+                AvroSecondaryIndexManager loaded = AvroSecondaryIndexManager.loadFromFile(basePath);
+                if (loaded != null) {
+                    this.secondaryIndexManager = loaded;
+                    LOGGER.debug("AvroRowStorage {} loaded secondary indexes", tableName);
+                }
+            } catch (ClassNotFoundException e) {
+                LOGGER.warn("Failed to load secondary indexes for {}: {}", tableName, e.getMessage());
+            }
+        }
     }
 
     // ─── Accessors ──────────────────────────────────────────────────
