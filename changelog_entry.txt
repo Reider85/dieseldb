@@ -1,1 +1,1 @@
-3.1.57 Prompt 88 (Section 2 AVRO): AVRO date partitioning with automatic partition creation, pruning, and configurable granularity
+3.1.60 Prompt 89 (Section 2 AVRO): AVRO hash partitioning for uniform data distribution - new AvroHashPartitioner with configurable hash column/count/function, and rebalancing when the partition count changes
