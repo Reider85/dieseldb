@@ -120,3 +120,4 @@ AvroIntegrityCheckerTest	storage
 AvroBackupManagerTest	storage
 AvroRestoreManagerTest	storage
 AvroPrimaryKeyIndexTest	storage
+AvroBloomFilterTest	storage
