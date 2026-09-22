@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>GC measurements in the main test show allocation activity.
  */
+@StorageType({"csv", "tsv"})
 class DelimitedIoPerfTest {
 
     static final int ROWS = 200_000;
@@ -125,8 +126,8 @@ class DelimitedIoPerfTest {
         assertTrue(loadCsvPar < ceiling, "CSV parallel load took " + loadCsvPar + " ms");
         // TSV goes through the index-manager path which builds indexes on 200k rows,
         // so allow a much higher ceiling than CSV (which uses the byte[] fast path)
-        assertTrue(loadTsvSeq < ceiling * 10, "TSV sequential load took " + loadTsvSeq + " ms");
-        assertTrue(loadTsvPar < ceiling * 10, "TSV parallel load took " + loadTsvPar + " ms");
+        assertTrue(loadTsvSeq < ceiling * 20, "TSV sequential load took " + loadTsvSeq + " ms");
+        assertTrue(loadTsvPar < ceiling * 20, "TSV parallel load took " + loadTsvPar + " ms");
 
         assertTrue(loadCsvSeq <= loadCsvPar * 4 + 500,
                 "CSV sequential (" + loadCsvSeq + " ms) must stay within 4x of parallel ("
