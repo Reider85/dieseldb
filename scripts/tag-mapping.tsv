@@ -125,3 +125,4 @@ AvroDatePartitionerTest	storage
 AvroHashPartitionerTest	storage
 AvroRangePartitionerTest	storage
 AvroQueryExecutorTest	storage
+AvroTransactionManagerTest	storage

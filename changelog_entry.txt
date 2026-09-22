@@ -1,1 +1,1 @@
-3.1.61 Prompt 90 (Section 2 AVRO): AVRO range partitioning - new AvroRangePartitioner with numeric column range boundaries (RangePartitionConfig), Hive-style range=L-U directories, dynamic range split/merge adjustment, and query pruning for ranges
+3.1.62 Prompt 92: AVRO transaction manager with ACID, WAL, isolation levels, and crash recovery - new AvroTransactionManager with write-ahead logging, table-level write locks, four isolation levels, and WAL-based crash recovery
