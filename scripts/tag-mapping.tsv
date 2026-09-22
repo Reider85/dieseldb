@@ -126,3 +126,6 @@ AvroHashPartitionerTest	storage
 AvroRangePartitionerTest	storage
 AvroQueryExecutorTest	storage
 AvroTransactionManagerTest	storage
+AvroStorageTest	storage
+AvroCompressionTest	storage
+AvroRecoveryTest	storage

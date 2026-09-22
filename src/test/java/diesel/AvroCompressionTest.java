@@ -23,6 +23,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -441,6 +445,155 @@ class AvroCompressionTest {
         AvroCompressionConfig cfg = AvroCompressionConfig.resolve();
         assertEquals("deflate", cfg.codec());
         assertEquals(7, cfg.level());
+    }
+
+    // ─── Performance & stress tests (Prompt 93) ────────────────────
+
+    private static List<Map<String, Object>> repetitiveRows(int n) {
+        String text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(6);
+        List<Map<String, Object>> list = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("ID", (long) i);
+            r.put("NAME", text + " " + (i % 7));
+            r.put("AGE", i % 100);
+            r.put("ACTIVE", i % 2 == 0);
+            list.add(r);
+        }
+        return list;
+    }
+
+    @Test
+    void deflateLevelSweepProducesReadableFiles() throws IOException {
+        for (int level : new int[]{1, 3, 6, 9}) {
+            File f = writeRows("deflate_sweep_" + level, "deflate", rows(5000), level);
+            assertEquals("deflate", readCodec(f));
+            try (AvroDataFileReader r = new AvroDataFileReader(f)) {
+                assertEquals(5000, countRecords(r), "deflate level " + level);
+            }
+        }
+    }
+
+    @Test
+    void zstandardLevelSweepProducesReadableFiles() throws IOException {
+        for (int level : new int[]{1, 5, 10, 19, 22}) {
+            File f = writeRows("zstd_sweep_" + level, "zstandard", rows(5000), level);
+            assertEquals("zstandard", readCodec(f));
+            try (AvroDataFileReader r = new AvroDataFileReader(f)) {
+                assertEquals(5000, countRecords(r), "zstandard level " + level);
+            }
+        }
+    }
+
+    @Test
+    void higherDeflateLevelNeverLargerOnRepetitiveData() throws IOException {
+        List<Map<String, Object>> data = repetitiveRows(5000);
+        long level1 = writeRows("deflate_l1", "deflate", data, 1).length();
+        long level9 = writeRows("deflate_l9", "deflate", data, 9).length();
+        assertTrue(level9 <= level1,
+                "deflate level 9 (" + level9 + ") should be <= level 1 (" + level1 + ")");
+    }
+
+    @Test
+    void deflateCompressionRatioVsNull() throws IOException {
+        List<Map<String, Object>> data = repetitiveRows(5000);
+        long nullBytes = writeRows("ratio_null", "null", data, -1).length();
+        long deflateBytes = writeRows("ratio_deflate", "deflate", data, 6).length();
+        assertTrue(deflateBytes < nullBytes,
+                "deflate must compress repetitive data (null=" + nullBytes + ", deflate=" + deflateBytes + ")");
+        assertTrue(deflateBytes / (double) nullBytes <= 0.6,
+                "deflate must reach <=0.6x null size (got " + deflateBytes / (double) nullBytes + ")");
+    }
+
+    @Test
+    void repeatedSaveWithSameCodecIsDeterministic() throws IOException {
+        List<Map<String, Object>> data = repetitiveRows(2000);
+        long size1 = writeRows("deterministic", "zstandard", data, 3).length();
+        long size2 = writeRows("deterministic", "zstandard", data, 3).length();
+        assertEquals(size1, size2, "same codec+level+data must yield identical file sizes");
+    }
+
+    @Test
+    void writeReadThroughputWithinBudget() throws IOException {
+        List<Map<String, Object>> data = repetitiveRows(50_000);
+
+        long nullWrite = measureWrite("throughput_null", "null", data);
+        for (String codec : List.of("deflate", "snappy", "zstandard", "bzip2")) {
+            long writeMs = measureWrite("throughput_" + codec, codec, data);
+            long readMs = measureRead("throughput_" + codec, codec);
+            assertTrue(writeMs < 20_000,
+                    codec + " write must stay under 20s (got " + writeMs + "ms)");
+            assertTrue(readMs < 20_000,
+                    codec + " read must stay under 20s (got " + readMs + "ms)");
+            System.out.printf(Locale.ROOT,
+                    "[AVRO-THROUGHPUT] %s: write=%dms read=%dms vsNullWrite=%dms%n",
+                    codec, writeMs, readMs, nullWrite);
+        }
+    }
+
+    private long measureWrite(String table, String codec, List<Map<String, Object>> data) throws IOException {
+        File f = new File(tempDir.toFile(), table + ".avro");
+        long start = System.nanoTime();
+        AvroDataFileWriter w = new AvroDataFileWriter(
+                simpleCols(), simpleTypes(), f, AvroCodecFactory.factory(codec, -1));
+        try {
+            for (Map<String, Object> row : data) {
+                w.writeRow(row);
+            }
+            w.flush();
+        } finally {
+            w.close();
+        }
+        return (System.nanoTime() - start) / 1_000_000;
+    }
+
+    private long measureRead(String table, String codec) throws IOException {
+        File f = new File(tempDir.toFile(), table + ".avro");
+        long start = System.nanoTime();
+        int seen;
+        try (AvroDataFileReader r = new AvroDataFileReader(f)) {
+            assertEquals(codec, r.getCodecName());
+            seen = countRecords(r);
+        }
+        long readMs = (System.nanoTime() - start) / 1_000_000;
+        assertEquals(50_000, seen);
+        return readMs;
+    }
+
+    @LargeTest
+    void concurrentCodecWritesAreIsolated() throws Exception {
+        int threads = 6;
+        int rowsPerThread = 5000;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<Long>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                final String codec = codecs().get(t % codecs().size());
+                final String table = "concurrent_" + t;
+                futures.add(pool.submit(() -> {
+                    File f = writeRows(table, codec, rows(rowsPerThread), -1);
+                    return f.length();
+                }));
+            }
+            List<Long> sizes = new ArrayList<>();
+            for (Future<Long> f : futures) {
+                Long size = f.get(60, TimeUnit.SECONDS);
+                assertTrue(size > 0, "concurrent write must produce data");
+                sizes.add(size);
+            }
+            // every file remains readable with the right codec
+            assertEquals(threads, sizes.size());
+            for (int t = 0; t < threads; t++) {
+                String codec = codecs().get(t % codecs().size());
+                File f = new File(tempDir.toFile(), "concurrent_" + t + ".avro");
+                assertEquals(codec, readCodec(f));
+                try (AvroDataFileReader r = new AvroDataFileReader(f)) {
+                    assertEquals(rowsPerThread, countRecords(r));
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     // ─── Benchmark (@LargeTest) ─────────────────────────────────────
