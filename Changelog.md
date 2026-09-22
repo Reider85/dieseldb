@@ -991,7 +991,7 @@ BY col OFFSET n' threw 'Invalid ORDER BY item: col OFFSET n' because the ORDER B
 n' / 'LIMIT n OFFSET m' and the standalone OFFSET stayed attached to the ORDER BY text; the ORDER BY trailing-clause
 regex was extended to also strip a standalone trailing 'OFFSET n' (anchored, DOTALL, re-appended to the retained text so
 the parser below still sees it), and a new standalone-OFFSET branch parses 'OFFSET n' when no LIMIT is present (digit
-regex with optional trailing semicolon, 'Недопустимый формат OFFSET' on malformed input, guarded by
+regex with optional trailing semicolon, 'Р СњР ВµР Т‘Р С•Р С—РЎС“РЎРѓРЎвЂљР С‘Р СРЎвЂ№Р в„– РЎвЂћР С•РЎР‚Р СР В°РЎвЂљ OFFSET' on malformed input, guarded by
 limitIndex == -1 so the LIMIT branch's already-consumed trailing OFFSET is not double-parsed); (2) SelectQuery now
 logs 'OFFSET without LIMIT may be inefficient' when offset is set and limit is null (per the prompt's warning
 requirement) - the offset application itself was already correct (applied after the ORDER BY sort, and offset > total
@@ -1431,7 +1431,7 @@ servers; (7) transactions - default isolation SERIALIZABLE (config transaction.i
 concurrency, workaround: lower isolation level where acceptable; (8) server socket timeout - default 30000ms (
 server.socket.timeout), idle connections closed, workaround: raise the value; (9) slow-query profiling threshold -
 diesel.profile.slow.threshold.ms default 1000, override via -Ddiesel.profile.slow.threshold.ms. README.md updated with
-a 'Known limitations / �?звестные ограничения' section (EN + RU) linking to KNOWN_LIMITATIONS.md.
+a 'Known limitations / РїС—Р…?Р В·Р Р†Р ВµРЎРѓРЎвЂљР Р…РЎвЂ№Р Вµ Р С•Р С–РЎР‚Р В°Р Р…Р С‘РЎвЂЎР ВµР Р…Р С‘РЎРЏ' section (EN + RU) linking to KNOWN_LIMITATIONS.md.
 Verification on JDK 21: full mvn test green - all 26 test classes run 0 failures 0 errors (AllTestsSampleTest 21 run
 0/0/1 skipped, QuantitativeTest 21 run 0/0/1 skipped, the two @LargeTest 600x600 joins skipped at 512m). Timing
 regression: not applicable - documentation-only prompt, no engine or test code changed, timing.md baseline untouched.
@@ -1639,7 +1639,7 @@ timing103.md (140 queries). Timing regression check timing103.md vs timing.md: P
 improvements, 32 unchanged. Profile check skipped per AGENTS.md step 6: the prompt 30 description contains the word
 PERFORMANCE, so the rule triggers, but ProfileMain.java is absent from this environment (as in prompts 27/29), so the
 check cannot run - the full timing gate including the two 360k-row joins serves as the proxy and passed.
-2.9.34 prompt 31 String literals в константы (java:S1192) (prompt2.md line 457): extracted the SQL keyword
+2.9.34 prompt 31 String literals Р Р† Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљРЎвЂ№ (java:S1192) (prompt2.md line 457): extracted the SQL keyword
 string literals that repeat 3+ times in the engine into a new package-private diesel/SqlKeywords.java (public final,
 private constructor, 43 public static final String constants: SELECT, INSERT, UPDATE, DELETE, WHERE, GROUP BY, ORDER BY,
 LIMIT, OFFSET, JOIN, INNER JOIN, LEFT JOIN, RIGHT JOIN, ON, AND, OR, NOT, LIKE, NOT LIKE, AS, TRUE, FALSE, ASC, VALUES,
@@ -1741,22 +1741,22 @@ across 15 test files from catch(IllegalArgumentException) to catch(TableNotFound
 0 regressions).
 2.9.39 prompt 53 Lazy deletion with tombstones + batch index removal + DELETE WHERE case-preservation fix (prompt2.md
 line 906): implemented lazy deletion (BitSet tombstones in Table.java) and batch index removal in DeleteQuery.java to
-eliminate the O(M×I) re-index pass — DELETE now marks rows as deleted and removes index entries in O(N×I) instead of
+eliminate the O(MР“вЂ”I) re-index pass РІР‚вЂќ DELETE now marks rows as deleted and removes index entries in O(NР“вЂ”I) instead of
 scanning all remaining rows; added compact() at 30% tombstone threshold, saveToFile/saveToSerializedFile skip tombstoned
 rows, addRow triggers compact before clustered insert. New LazyDeleteTest (18 tests): single-row delete, multi-row IN
 delete, delete-all auto-compact, BTree/Hash/Unique/Clustered index consistency, SELECT filtering after delete,
 UPDATE/INSERT after delete, delete-reinsert-delete cycle, statistics, complex conditions. Fixed a latent bug discovered
 during implementation: QueryParser.parseDeleteQuery() was parsing WHERE conditions from the normalized (uppercased)
 query string, causing string literals in DELETE WHERE clauses (e.g. 'User1') to be uppercased ('USER1') and fail to
-match the original-case values stored in indexes and rows — the fix uses the original query for WHERE extraction,
+match the original-case values stored in indexes and rows РІР‚вЂќ the fix uses the original query for WHERE extraction,
 matching the existing pattern in parseUpdateQuery and parseSelectQuery. AllTestsSampleTest 21/0 + QuantitativeTest 21/0
 BUILD SUCCESS; LazyDeleteTest 18/0 BUILD SUCCESS; full -Ptest suite 42 tests 0 failures 0 errors 2 skipped BUILD
 SUCCESS.
 2.9.40 prompt 55 Bulk-load secondary BTree indexes on deserialization (prompt2.md line 932): replaced one-by-one
 insert() calls in rebuildSecondaryIndexes() with a new BTreeIndex.bulkLoad() method that builds the tree in O(N) instead
-of O(N log N). The method: (1) collects all key–rowIndex pairs into parallel arrays, (2) sorts them by key, (3) merges
-duplicate keys (secondary index: same key → list of row indices), (4) builds leaf nodes left-to-right at full
-capacity, (5) builds internal levels bottom-up by repeatedly merging child groups — same algorithm already used by
+of O(N log N). The method: (1) collects all keyРІР‚вЂњrowIndex pairs into parallel arrays, (2) sorts them by key, (3) merges
+duplicate keys (secondary index: same key РІвЂ вЂ™ list of row indices), (4) builds leaf nodes left-to-right at full
+capacity, (5) builds internal levels bottom-up by repeatedly merging child groups РІР‚вЂќ same algorithm already used by
 BTreeClusteredIndex.bulkLoad(). In Table.rebuildSecondaryIndexes() the BTreeIndex branch now gathers, sorts and calls
 bulkLoad(); Hash/Unique indexes still use one-by-one insert(). The sort uses an int[] pair array to avoid key-comparator
 boxing overhead. Files changed: BTreeIndex.java (+bulkLoad, +extractFirstKey, +100 lines), Table.java (
@@ -1788,7 +1788,7 @@ QueryParser.java (+30 lines: composite/covering index parsing), ErrorMessages.ja
 +COVERING). New tests: WhereIndexTest.java (auto-index creation), CompositeIndexTest.java (composite index
 creation/search/persistence), CoveringIndexTest.java (covering index creation/lookup/selectivity),
 AutoWhereIndexTest.java (auto-creation on WHERE).
-2.9.42 prompt 57 Bulk UPDATE optimization � index-accelerated row identification + batch update mode (prompt2.md line
+2.9.42 prompt 57 Bulk UPDATE optimization РїС—Р… index-accelerated row identification + batch update mode (prompt2.md line
 958): refactored UpdateQuery.execute() into a three-phase pipeline: (1) identifyRows() uses index lookups (
 Hash/Unique/BTree equality, IN, BTree range) when a single matching condition exists, falling back to full table scan; (
 2) acquire write locks on identified rows; (3) apply updates via per-row index maintenance (small batches) or bulk
@@ -1797,9 +1797,9 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    would use (describeIndex reused for both UPDATE and DELETE). Table.markStatsDirty() changed from private to
    package-private so UpdateQuery can trigger stats refresh. Files changed: UpdateQuery.java (+185 lines: identifyRows,
    bulk path, index-accelerated path), ExplainQuery.java (describeIndex reuse), Table.java (markStatsDirty visibility).
-   Verification: quick gate -Ptest test at 512m � 42 tests 0 failures 0 errors 2 skipped BUILD SUCCESS (pre-existing
+   Verification: quick gate -Ptest test at 512m РїС—Р… 42 tests 0 failures 0 errors 2 skipped BUILD SUCCESS (pre-existing
    InTest btree index failure unrelated to this change).
-   2.9.43 prompt 58 Fix indexDefinitions serialization — remove redundant double-write + backward compat + new index
+   2.9.43 prompt 58 Fix indexDefinitions serialization РІР‚вЂќ remove redundant double-write + backward compat + new index
    round-trip tests (prompt2.md line 971): removed redundant explicit writes of hasClusteredIndex/clusteredIndexColumn in
    writeObject() (already serialized by defaultWriteObject()) and added backward-compat readObject() path for format v1
    files that still contain the duplicate bytes; bumped CURRENT_FORMAT_VERSION to 2 and relaxed loadFromFile() version
@@ -1809,7 +1809,7 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    testCoveringIndexFunctionalAfterLoad (covering B-tree index survives, CoveringBTreeIndex type preserved, cover column
    definitions intact, lookup works). Files changed: Table.java (writeObject, readObject, loadFromFile,
    rebuildSecondaryIndexes), PersistenceTest.java (+2 tests). Verification: PersistenceTest 8/0 BUILD SUCCESS.
-   2.9.44 prompt 59 Serialized index persistence — BTree nodes saved with CRC32 checksums (prompt2.md line 984): indexes
+   2.9.44 prompt 59 Serialized index persistence РІР‚вЂќ BTree nodes saved with CRC32 checksums (prompt2.md line 984): indexes
    now persist across restarts. Table.writeObject() serializes all secondary indexes (BTree, Hash, Unique, Composite,
    Covering) and the clustered index as byte arrays with CRC32 checksums; readObject() restores them, validating checksums
    and falling back to rebuildMissingSecondaryIndexes() on corruption or type mismatch. Format version bumped to 3. All
@@ -1837,11 +1837,11 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    copy (ObjectOutputStream/ObjectInputStream) with manual Copy-on-Write for transaction table snapshots. Table.java: added
    private copy constructor (skips schema validation) and copyForTransaction() method that deep-copies rows (new HashMap
    per row), clones deletedRows BitSet, copies sequences/indexDefinitions/coverColumnDefinitions/stats, and rebuilds all
-   indexes from scratch — same O(N) cost as deserialization but without ObjectOutputStream overhead. Added AtomicLong
+   indexes from scratch РІР‚вЂќ same O(N) cost as deserialization but without ObjectOutputStream overhead. Added AtomicLong
    version field incremented on every DML mutation (addRow, removeRow, markDeleted) for optimistic concurrency control.
-   Transaction.java: snapshotTable() now stores direct references (lazy snapshot — BEGIN is O(tables) not O(total rows)),
+   Transaction.java: snapshotTable() now stores direct references (lazy snapshot РІР‚вЂќ BEGIN is O(tables) not O(total rows)),
    updateTable() uses copyForTransaction() instead of cloneTable(), removed cloneForTransaction()/cloneTable() and all
-   serialization imports, added snapshotVersions map for conflict detection. Database.java: fixed DML isolation bug — DML
+   serialization imports, added snapshotVersions map for conflict detection. Database.java: fixed DML isolation bug РІР‚вЂќ DML
    now executes on the transaction's private copy (not the shared table), copy-on-write creates the copy on first DML per
    table; added version check at COMMIT that detects write-write conflicts when another transaction has modified the shared
    table since the snapshot. New CopyOnWriteIsolationTest (4 tests: insert/update/delete isolation + lazy BEGIN
@@ -1850,24 +1850,24 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    Prompt66Test + 10 Prompt67Test + 11 Prompt68Test pass.
    2.9.52 prompt 61 Replace verbose character classes with shorthand regex equivalents (java:S6353) (prompt2.md line 1013):
    replaced [0-9] with \d in regex patterns and [a-zA-Z0-9_] with \w in test patterns. QueryParser.java:2371
-   — [0-9]+(?:\\.[0-9]+)? → \\d+(?:\\.\\d+)? in "Comparison Number Condition" pattern. SubqueryParser.java:982
-   — [-]?[0-9]+(?:\\.[0-9]*)? → [-]?\\d+(?:\\.\\d*)? in "Comparison Condition" pattern. StringOpsBenchmarkTest.java:
-   59,61 — [a-zA-Z_][a-zA-Z0-9_]* → [a-zA-Z_]\\w* in asciiIdentifier benchmark patterns. CharOps.java:16 — updated
+   РІР‚вЂќ [0-9]+(?:\\.[0-9]+)? РІвЂ вЂ™ \\d+(?:\\.\\d+)? in "Comparison Number Condition" pattern. SubqueryParser.java:982
+   РІР‚вЂќ [-]?[0-9]+(?:\\.[0-9]*)? РІвЂ вЂ™ [-]?\\d+(?:\\.\\d*)? in "Comparison Condition" pattern. StringOpsBenchmarkTest.java:
+   59,61 РІР‚вЂќ [a-zA-Z_][a-zA-Z0-9_]* РІвЂ вЂ™ [a-zA-Z_]\\w* in asciiIdentifier benchmark patterns. CharOps.java:16 РІР‚вЂќ updated
    Javadoc comment to match. Note: SIMPLE_IDENTIFIER_PATTERN = "[a-zA-Z_]\\w*" already uses \\w and is semantically
    correct (no digit at start for SQL identifiers). Verification: quick gate 42/0 BUILD SUCCESS.
    2.9.53 prompt 62 Refactor high Cognitive Complexity methods (java:S3776) (prompt2.md line 1033): reduced Cognitive
    Complexity across QueryParser.java and SelectQuery.java by extracting helpers and eliminating repetitive if/else chains.
    QueryParser.parseSelectItems(): replaced 5 identical aggregate-function if/else branches (COUNT/MIN/MAX/AVG/SUM) with a
    unified aggPattern regex + parseAggregateArg() helper; extracted parseSelectSubQuery() and parseSelectColumn() for the
-   remaining branches — reduced from ~110 lines/CC~35 to ~40 lines/CC~12. QueryParser.parseAdditionalClauses():
+   remaining branches РІР‚вЂќ reduced from ~110 lines/CC~35 to ~40 lines/CC~12. QueryParser.parseAdditionalClauses():
    decomposed 100-line monolithic method into extractGroupBy(), extractOrderBy(), extractLimit(), extractOffset() helpers
    with ParsedGroupBy/ParsedOrderBy/ParsedLimitOffset records; removedClause() helper replaces manual before/after string
-   splicing — reduced CC from ~25 to ~10. QueryParser.parseConditionValue(): decomposed 75-line type-conversion method
-   into parseStringLiteral(), parseNumericLiteral(), parseBoundedFloat/Double/Byte/Short() helpers with early returns —
+   splicing РІР‚вЂќ reduced CC from ~25 to ~10. QueryParser.parseConditionValue(): decomposed 75-line type-conversion method
+   into parseStringLiteral(), parseNumericLiteral(), parseBoundedFloat/Double/Byte/Short() helpers with early returns РІР‚вЂќ
    reduced CC from ~22 to ~8. SelectQuery.computeAggregate(): extracted coerceNumericResult(BigDecimal, Class) helper
-   eliminating duplicated Float/Double/Integer/Long/Short/Byte type-conversion chains in both AVG and SUM branches —
+   eliminating duplicated Float/Double/Integer/Long/Short/Byte type-conversion chains in both AVG and SUM branches РІР‚вЂќ
    reduced CC from ~40 to ~25. SelectQuery.compareValues(): simplified null handling and early return for BigDecimal/Number
-   types — reduced CC from ~18 to ~12. Files changed: QueryParser.java (+~80 lines of helpers, -~120 lines of inline
+   types РІР‚вЂќ reduced CC from ~18 to ~12. Files changed: QueryParser.java (+~80 lines of helpers, -~120 lines of inline
    logic), SelectQuery.java (+~20 lines, -~40 lines). Verification: full -Ddiesel.largeTests=true -Dtest.heap=4g 494/0
    targeted tests + large tests BUILD SUCCESS; pre-existing advancedGroup flake in AllTestsSampleTest/QuantitativeTest
    unchanged.
@@ -1879,7 +1879,7 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    CopyOnWriteIsolationTest). Files changed: Table.java (bumpVersion), UpdateQuery.java (bumpVersion after UPDATE).
    Verification: 42/0 BUILD SUCCESS, all 6 previously failing tests pass.
     2.9.55 prompt 63 instanceof pattern matching (java:S6201) (prompt2.md line 1055): replaced old-style instanceof+cast
-   with Java 16+ pattern matching for instanceof. ConditionEvaluator.java:103-108 — replaced
+   with Java 16+ pattern matching for instanceof. ConditionEvaluator.java:103-108 РІР‚вЂќ replaced
    `if (!(rowValue instanceof String) || !(conditionValue instanceof String))` + separate `(String) rowValue` /
    `(String) conditionValue` casts with
    `if (!(rowValue instanceof String rowStr) || !(conditionValue instanceof String condStr))` pattern matching, eliminating
@@ -1912,7 +1912,7 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    BeginTransactionQuery.java, CommitTransactionQuery.java, RollbackTransactionQuery.java, SetAutoCommitQuery.java,
    SetIsolationLevelQuery.java. Verification: full -Ddiesel.largeTests=true -Dtest.heap=4g test 42/0 BUILD SUCCESS.
     2.9.58 prompt 66 Remove unused imports (java:S1128, prompt2.md line 1127): audited all 75+ Java files (33 source + 45
-   test) for unused import statements. Comprehensive scan found 0 unused imports — the 36 issues from the original
+   test) for unused import statements. Comprehensive scan found 0 unused imports РІР‚вЂќ the 36 issues from the original
    SonarQube report were already resolved by prior prompts (prompt 46 S1128 cleanup and general code modernization). All
    imports verified as actively used in code. No code changes needed. Files changed: none. Verification: mvn compile BUILD
    SUCCESS.
@@ -1931,7 +1931,7 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    Database.java. Verification: full -Ddiesel.largeTests=true -Dtest.heap=4g test 42/0 BUILD SUCCESS.
    2.9.58 prompt 70 Remove deprecated setScale() calls (java:S1874, prompt2.md line 1230): audited all 22 setScale() calls
    across the codebase (0 in main source, 22 in test files). All calls already use the non-deprecated 2-argument form
-   setScale(2, RoundingMode.HALF_UP) — no deprecated single-argument setScale(int) calls found. No code changes needed.
+   setScale(2, RoundingMode.HALF_UP) РІР‚вЂќ no deprecated single-argument setScale(int) calls found. No code changes needed.
    Files changed: none. Verification: grep confirmed zero deprecated calls.
    2.9.59 prompt 69 Fill or remove empty code blocks (java:S108, prompt2.md line 1198): fixed 18 empty code blocks (
    catch/else) across 9 files that violated SonarQube S108. Main source (13 blocks in 4 files): added LOGGER.fine() to 7
@@ -1947,15 +1947,15 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
    WhereIndexTest.java, BulkInsertTest.java. Verification: quick gate 42/0 BUILD SUCCESS (pre-existing JoinTest failures
    unrelated to S108 changes).
    2.9.60 prompt 68 Reduce break/continue in loops (java:S135, prompt2.md line 1166): refactored 13 S135-violating loops
-   across 2 files. QueryParser.java (7 violations): splitInValues() and normalizeCondition() 2nd loop — converted 2+2
-   continues to if-else-if chains; parseSelectItems() — converted 4 continues to nested if-else-if; findOperator() —
-   converted 3 continues to if-else-if; splitTopLevelComma() — converted 5 continues to if-else-if restructuring;
-   tokenizeCondition() — eliminated 1 break + 2 continues by restructuring to if-else-if with handled flag;
-   parseHavingConditions() — eliminated 7 continues + 1 break by restructuring to if-else-if chain (
-   保留1个break用于ORDER BY/LIMIT/OFFSET终止). SelectQuery.java (6 violations): processJoin() — inverted 2 guard
-   conditions; ensureWhereIndexes() — merged 6 guard continues into single compound if; getIndexedRows() — merged 2
-   guard continues; lookupCompositeIndex() 1st loop — merged 3 guard continues; lookupCompositeIndex() 2nd loop —
-   merged 3 continues into nested if; tryCoveringIndex() — merged 2 guard continues. Switch-case breaks left untouched (
+   across 2 files. QueryParser.java (7 violations): splitInValues() and normalizeCondition() 2nd loop РІР‚вЂќ converted 2+2
+   continues to if-else-if chains; parseSelectItems() РІР‚вЂќ converted 4 continues to nested if-else-if; findOperator() РІР‚вЂќ
+   converted 3 continues to if-else-if; splitTopLevelComma() РІР‚вЂќ converted 5 continues to if-else-if restructuring;
+   tokenizeCondition() РІР‚вЂќ eliminated 1 break + 2 continues by restructuring to if-else-if with handled flag;
+   parseHavingConditions() РІР‚вЂќ eliminated 7 continues + 1 break by restructuring to if-else-if chain (
+   РґС—СњР·вЂўв„ў1РґС‘Р„breakР·вЂќРЃРґС”Р‹ORDER BY/LIMIT/OFFSETР·В»в‚¬Р¶В­Сћ). SelectQuery.java (6 violations): processJoin() РІР‚вЂќ inverted 2 guard
+   conditions; ensureWhereIndexes() РІР‚вЂќ merged 6 guard continues into single compound if; getIndexedRows() РІР‚вЂќ merged 2
+   guard continues; lookupCompositeIndex() 1st loop РІР‚вЂќ merged 3 guard continues; lookupCompositeIndex() 2nd loop РІР‚вЂќ
+   merged 3 continues into nested if; tryCoveringIndex() РІР‚вЂќ merged 2 guard continues. Switch-case breaks left untouched (
    not S135 violations). Files changed: QueryParser.java, SelectQuery.java. Verification: full -Ddiesel.largeTests=true
    -Dtest.heap=4g test 42/0 BUILD SUCCESS.2.9.61 prompt 71 Remove unused local variables (java:S1481 - 26 problems) (
    prompt2.md line 1250): removed all 14 remaining unused local/pattern variables flagged by SonarQube java:S1481 (12 of
@@ -2149,44 +2149,44 @@ Hash/Unique/BTree equality, IN, BTree range) when a single matching condition ex
      3.0.4 S3776: refactor DeleteQuery high-complexity methods below 15
      3.0.5 prompt 5 - S3776 cognitive complexity refactor with early return
 
-Изменения: Table.java: buildIndex() switch expression + extract buildBTreeIndex/buildHashIndex/buildUniqueIndex, QueryParser.java: handleCloseParen/handleSpaceSeparator early return patterns
-Тесты: 42 passed, 0 failed
+Р ВР В·Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ: Table.java: buildIndex() switch expression + extract buildBTreeIndex/buildHashIndex/buildUniqueIndex, QueryParser.java: handleCloseParen/handleSpaceSeparator early return patterns
+Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: 42 passed, 0 failed
 Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
 Complexity: reduced from 87/70 to ~15/20 with early returns and extracted methods
 
 Refactored Table.buildIndex() to use Java 21 switch expression for cleaner control flow, extracted each index type into separate methods (buildBTreeIndex, buildHashIndex, buildUniqueIndex). Applied early return patterns to QueryParser.handleCloseParen and handleSpaceSeparator to reduce nesting and improve readability.
 
 3.0.6 prompt 6 - S3776 bulk cognitive complexity refactoring
-Изменения: decomposed 30+ methods with cognitive complexity >15 into sub-methods following Single Responsibility across 8 engine files - Database, SubqueryParser, BTreeIndex, BTreeClusteredIndex, QueryParser, SelectQuery, InsertQuery, ConditionEvaluator (plus CliRepl and DatabaseServer). Extract Method pattern: each complex block moved to a dedicated private helper. State classes introduced for parsing loops. Early returns replace nested if-else.
-Тесты: 42 passed, 0 failed
+Р ВР В·Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ: decomposed 30+ methods with cognitive complexity >15 into sub-methods following Single Responsibility across 8 engine files - Database, SubqueryParser, BTreeIndex, BTreeClusteredIndex, QueryParser, SelectQuery, InsertQuery, ConditionEvaluator (plus CliRepl and DatabaseServer). Extract Method pattern: each complex block moved to a dedicated private helper. State classes introduced for parsing loops. Early returns replace nested if-else.
+Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: 42 passed, 0 failed
 Timing: full acceptance gate 42/0 BUILD SUCCESS (4GB heap), no regressions
 
 3.0.7 Prompt 7 - S1192: replace 2 remaining raw "(?i)^(" literals with ErrorMessages.CASE_INSENSITIVE_START_PATTERN in QueryParser.java
 
-Заменены 2 оставшихся сырых литерала "(?i)^(" на константу ErrorMessages.CASE_INSENSITIVE_START_PATTERN в методах parseSelectColumns (строка 1426) и parseHavingAggregateFromText (строка 3347) QueryParser.java. Все вхождения в QueryParser.java теперь используют константу.
-Тесты: 42 passed, 0 failed, 0 errors
+Р вЂ”Р В°Р СР ВµР Р…Р ВµР Р…РЎвЂ№ 2 Р С•РЎРѓРЎвЂљР В°Р Р†РЎв‚¬Р С‘РЎвЂ¦РЎРѓРЎРЏ РЎРѓРЎвЂ№РЎР‚РЎвЂ№РЎвЂ¦ Р В»Р С‘РЎвЂљР ВµРЎР‚Р В°Р В»Р В° "(?i)^(" Р Р…Р В° Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљРЎС“ ErrorMessages.CASE_INSENSITIVE_START_PATTERN Р Р† Р СР ВµРЎвЂљР С•Р Т‘Р В°РЎвЂ¦ parseSelectColumns (РЎРѓРЎвЂљРЎР‚Р С•Р С”Р В° 1426) Р С‘ parseHavingAggregateFromText (РЎРѓРЎвЂљРЎР‚Р С•Р С”Р В° 3347) QueryParser.java. Р вЂ™РЎРѓР Вµ Р Р†РЎвЂ¦Р С•Р В¶Р Т‘Р ВµР Р…Р С‘РЎРЏ Р Р† QueryParser.java РЎвЂљР ВµР С—Р ВµРЎР‚РЎРЉ Р С‘РЎРѓР С—Р С•Р В»РЎРЉР В·РЎС“РЎР‹РЎвЂљ Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљРЎС“.
+Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: 42 passed, 0 failed, 0 errors
 
 3.0.9 Prompt 9 - S1192: Create MessageConstants class, extract 10 duplicated literals (3+ occurrences) into named constants
 
-Создан класс MessageConstants.java с 8 константами: TOKEN_LOGICAL_OPERATOR, TOKEN_LIKE_CONDITION, TOKEN_CLAUSE, SQL_WHERE_SPACED, SQL_FROM_SPACED, SQL_INDEX_PREFIX, SQL_INDEX_ON, ERROR_BOOLEAN_VALUE_PREFIX. Добавлены TRANSACTION_COMMITTED и TRANSACTION_ROLLED_BACK в ErrorMessages.java. Замены выполнены в 9 файлах: DatabaseClient, Database, QueryParser, SubqueryParser, QueryExecutor, SelectQuery, ExplainQuery — ~40 замен литералов на именованные константы.
-Тесты: 42 passed, 0 failed, 0 errors
+Р РЋР С•Р В·Р Т‘Р В°Р Р… Р С”Р В»Р В°РЎРѓРЎРѓ MessageConstants.java РЎРѓ 8 Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљР В°Р СР С‘: TOKEN_LOGICAL_OPERATOR, TOKEN_LIKE_CONDITION, TOKEN_CLAUSE, SQL_WHERE_SPACED, SQL_FROM_SPACED, SQL_INDEX_PREFIX, SQL_INDEX_ON, ERROR_BOOLEAN_VALUE_PREFIX. Р вЂќР С•Р В±Р В°Р Р†Р В»Р ВµР Р…РЎвЂ№ TRANSACTION_COMMITTED Р С‘ TRANSACTION_ROLLED_BACK Р Р† ErrorMessages.java. Р вЂ”Р В°Р СР ВµР Р…РЎвЂ№ Р Р†РЎвЂ№Р С—Р С•Р В»Р Р…Р ВµР Р…РЎвЂ№ Р Р† 9 РЎвЂћР В°Р в„–Р В»Р В°РЎвЂ¦: DatabaseClient, Database, QueryParser, SubqueryParser, QueryExecutor, SelectQuery, ExplainQuery РІР‚вЂќ ~40 Р В·Р В°Р СР ВµР Р… Р В»Р С‘РЎвЂљР ВµРЎР‚Р В°Р В»Р С•Р Р† Р Р…Р В° Р С‘Р СР ВµР Р…Р С•Р Р†Р В°Р Р…Р Р…РЎвЂ№Р Вµ Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљРЎвЂ№.
+Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: 42 passed, 0 failed, 0 errors
 
 3.0.10 Prompt 10 - S1192: extract regex literals "(?i)(SELECT" and "(?i)FROM\s+" into SELECT_PATTERN and FROM_PATTERN constants
 
-Добавлена константа SELECT_PATTERN = "(?i)(SELECT" в ErrorMessages.java. Заменены 6 литералов "(?i)FROM\\s+" на существующую константу ErrorMessages.FROM_PATTERN: 4 вхождения в Database.java (extractTableFromSelect, extractTableFromDelete, extractSelectTables, extractDeleteTables) и 2 в QueryParser.java (parseDeleteQuery — normalized/original split). Теперь все вхождения этой regex-строки используют константу.
-Тесты: 42 passed, 0 failed, 0 errors
+Р вЂќР С•Р В±Р В°Р Р†Р В»Р ВµР Р…Р В° Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљР В° SELECT_PATTERN = "(?i)(SELECT" Р Р† ErrorMessages.java. Р вЂ”Р В°Р СР ВµР Р…Р ВµР Р…РЎвЂ№ 6 Р В»Р С‘РЎвЂљР ВµРЎР‚Р В°Р В»Р С•Р Р† "(?i)FROM\\s+" Р Р…Р В° РЎРѓРЎС“РЎвЂ°Р ВµРЎРѓРЎвЂљР Р†РЎС“РЎР‹РЎвЂ°РЎС“РЎР‹ Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљРЎС“ ErrorMessages.FROM_PATTERN: 4 Р Р†РЎвЂ¦Р С•Р В¶Р Т‘Р ВµР Р…Р С‘РЎРЏ Р Р† Database.java (extractTableFromSelect, extractTableFromDelete, extractSelectTables, extractDeleteTables) Р С‘ 2 Р Р† QueryParser.java (parseDeleteQuery РІР‚вЂќ normalized/original split). Р СћР ВµР С—Р ВµРЎР‚РЎРЉ Р Р†РЎРѓР Вµ Р Р†РЎвЂ¦Р С•Р В¶Р Т‘Р ВµР Р…Р С‘РЎРЏ РЎРЊРЎвЂљР С•Р в„– regex-РЎРѓРЎвЂљРЎР‚Р С•Р С”Р С‘ Р С‘РЎРѓР С—Р С•Р В»РЎРЉР В·РЎС“РЎР‹РЎвЂљ Р С”Р С•Р Р…РЎРѓРЎвЂљР В°Р Р…РЎвЂљРЎС“.
+Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: 42 passed, 0 failed, 0 errors
 
 3.0.11 Prompt 12 - S5843: decompose the monolithic IN-subquery regex (complexity 46) in SubqueryParser.java into four simple, composable patterns
 
-Изменения: монолитный regex в SubqueryParser.parse() (complexity 46, порог 20) был декомпозирован в 4 статических паттерна IN_SUBQUERY_SELECT_START, IN_SUBQUERY_WHERE_CLAUSE, IN_SUBQUERY_OPENING, IN_SUBQUERY_TAIL + метод isInSubqueryPattern(), комбинирующий их через логическое И. Ни один новый паттерн не превышает порога 20. Поведение не изменилось: обе ветки (детект IN-подзапроса и нет) по-прежнему ведут к parseSelectQuery().
-Тесты: quick gate 42/0/0/2 BUILD SUCCESS; targeted SubqueriesTest+NullSafetyTest+ExplainTest+LimitOffsetTest 92/0/0/0; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
-Timing: heavy 600x600 ORDER BY joins без регрессий (primary key 5291.95ms -> 21.06ms, non indexed 4476.78ms -> 19.87ms)
+Р ВР В·Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ: Р СР С•Р Р…Р С•Р В»Р С‘РЎвЂљР Р…РЎвЂ№Р в„– regex Р Р† SubqueryParser.parse() (complexity 46, Р С—Р С•РЎР‚Р С•Р С– 20) Р В±РЎвЂ№Р В» Р Т‘Р ВµР С”Р С•Р СР С—Р С•Р В·Р С‘РЎР‚Р С•Р Р†Р В°Р Р… Р Р† 4 РЎРѓРЎвЂљР В°РЎвЂљР С‘РЎвЂЎР ВµРЎРѓР С”Р С‘РЎвЂ¦ Р С—Р В°РЎвЂљРЎвЂљР ВµРЎР‚Р Р…Р В° IN_SUBQUERY_SELECT_START, IN_SUBQUERY_WHERE_CLAUSE, IN_SUBQUERY_OPENING, IN_SUBQUERY_TAIL + Р СР ВµРЎвЂљР С•Р Т‘ isInSubqueryPattern(), Р С”Р С•Р СР В±Р С‘Р Р…Р С‘РЎР‚РЎС“РЎР‹РЎвЂ°Р С‘Р в„– Р С‘РЎвЂ¦ РЎвЂЎР ВµРЎР‚Р ВµР В· Р В»Р С•Р С–Р С‘РЎвЂЎР ВµРЎРѓР С”Р С•Р Вµ Р В. Р СњР С‘ Р С•Р Т‘Р С‘Р Р… Р Р…Р С•Р Р†РЎвЂ№Р в„– Р С—Р В°РЎвЂљРЎвЂљР ВµРЎР‚Р Р… Р Р…Р Вµ Р С—РЎР‚Р ВµР Р†РЎвЂ№РЎв‚¬Р В°Р ВµРЎвЂљ Р С—Р С•РЎР‚Р С•Р С–Р В° 20. Р СџР С•Р Р†Р ВµР Т‘Р ВµР Р…Р С‘Р Вµ Р Р…Р Вµ Р С‘Р В·Р СР ВµР Р…Р С‘Р В»Р С•РЎРѓРЎРЉ: Р С•Р В±Р Вµ Р Р†Р ВµРЎвЂљР С”Р С‘ (Р Т‘Р ВµРЎвЂљР ВµР С”РЎвЂљ IN-Р С—Р С•Р Т‘Р В·Р В°Р С—РЎР‚Р С•РЎРѓР В° Р С‘ Р Р…Р ВµРЎвЂљ) Р С—Р С•-Р С—РЎР‚Р ВµР В¶Р Р…Р ВµР СРЎС“ Р Р†Р ВµР Т‘РЎС“РЎвЂљ Р С” parseSelectQuery().
+Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: quick gate 42/0/0/2 BUILD SUCCESS; targeted SubqueriesTest+NullSafetyTest+ExplainTest+LimitOffsetTest 92/0/0/0; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
+Timing: heavy 600x600 ORDER BY joins Р В±Р ВµР В· РЎР‚Р ВµР С–РЎР‚Р ВµРЎРѓРЎРѓР С‘Р в„– (primary key 5291.95ms -> 21.06ms, non indexed 4476.78ms -> 19.87ms)
 
 3.0.12 Prompt 13 - S5843: use possessive quantifiers (++, *+) for regexes with complexity > 30 to reduce backtracking
 
-Изменения: к regex-паттернам со сложностью > 30 применены possessive quantifiers в 18 местах (10 в SubqueryParser.java: parseSelectItems (column/subQuery/agg), ORDER BY, GROUP BY, IN-условия, Subquery Comparison/Like, parseInCondition, parseSubQueryCondition, resolveAggregate; 8 в QueryParser.java: aggPattern, GROUP BY, Comparison Column Condition, Invalid Token, isSubQueryCondition, parseSubQueryCondition, HAVING aggPattern). Принцип: \s* → \s*+, \s+ → \s++, \d+ → \d++ (zero-or-more остаётся \s*+, а не \s++, чтобы сохранить семантику "ноль или более"). Это устраняет backtracking в парсинге SELECT-колонок, подзапросов и условий.
-Тесты: quick gate 42/0/0/2 BUILD SUCCESS; targeted SubqueriesTest 21/0/0/0; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
-Timing: A/B-бенчмарк на 600 строках (тот же harness, OLD=HEAD vs NEW) показал отсутствие регрессий: primary key 0.68ms vs 0.80ms, complex subquery GROUP BY HAVING ~1000ms vs ~1000ms, group by date having ~8.8ms vs ~8.5ms. Расхождения с timing.md (05.08.2026) — устаревший бейзлайн, а не результат этих изменений.
+Р ВР В·Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ: Р С” regex-Р С—Р В°РЎвЂљРЎвЂљР ВµРЎР‚Р Р…Р В°Р С РЎРѓР С• РЎРѓР В»Р С•Р В¶Р Р…Р С•РЎРѓРЎвЂљРЎРЉРЎР‹ > 30 Р С—РЎР‚Р С‘Р СР ВµР Р…Р ВµР Р…РЎвЂ№ possessive quantifiers Р Р† 18 Р СР ВµРЎРѓРЎвЂљР В°РЎвЂ¦ (10 Р Р† SubqueryParser.java: parseSelectItems (column/subQuery/agg), ORDER BY, GROUP BY, IN-РЎС“РЎРѓР В»Р С•Р Р†Р С‘РЎРЏ, Subquery Comparison/Like, parseInCondition, parseSubQueryCondition, resolveAggregate; 8 Р Р† QueryParser.java: aggPattern, GROUP BY, Comparison Column Condition, Invalid Token, isSubQueryCondition, parseSubQueryCondition, HAVING aggPattern). Р СџРЎР‚Р С‘Р Р…РЎвЂ Р С‘Р С—: \s* РІвЂ вЂ™ \s*+, \s+ РІвЂ вЂ™ \s++, \d+ РІвЂ вЂ™ \d++ (zero-or-more Р С•РЎРѓРЎвЂљР В°РЎвЂРЎвЂљРЎРѓРЎРЏ \s*+, Р В° Р Р…Р Вµ \s++, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…Р С‘РЎвЂљРЎРЉ РЎРѓР ВµР СР В°Р Р…РЎвЂљР С‘Р С”РЎС“ "Р Р…Р С•Р В»РЎРЉ Р С‘Р В»Р С‘ Р В±Р С•Р В»Р ВµР Вµ"). Р В­РЎвЂљР С• РЎС“РЎРѓРЎвЂљРЎР‚Р В°Р Р…РЎРЏР ВµРЎвЂљ backtracking Р Р† Р С—Р В°РЎР‚РЎРѓР С‘Р Р…Р С–Р Вµ SELECT-Р С”Р С•Р В»Р С•Р Р…Р С•Р С”, Р С—Р С•Р Т‘Р В·Р В°Р С—РЎР‚Р С•РЎРѓР С•Р Р† Р С‘ РЎС“РЎРѓР В»Р С•Р Р†Р С‘Р в„–.
+Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: quick gate 42/0/0/2 BUILD SUCCESS; targeted SubqueriesTest 21/0/0/0; full acceptance gate (4GB heap, @LargeTest) 42/0/0/0 BUILD SUCCESS
+Timing: A/B-Р В±Р ВµР Р…РЎвЂЎР СР В°РЎР‚Р С” Р Р…Р В° 600 РЎРѓРЎвЂљРЎР‚Р С•Р С”Р В°РЎвЂ¦ (РЎвЂљР С•РЎвЂљ Р В¶Р Вµ harness, OLD=HEAD vs NEW) Р С—Р С•Р С”Р В°Р В·Р В°Р В» Р С•РЎвЂљРЎРѓРЎС“РЎвЂљРЎРѓРЎвЂљР Р†Р С‘Р Вµ РЎР‚Р ВµР С–РЎР‚Р ВµРЎРѓРЎРѓР С‘Р в„–: primary key 0.68ms vs 0.80ms, complex subquery GROUP BY HAVING ~1000ms vs ~1000ms, group by date having ~8.8ms vs ~8.5ms. Р В Р В°РЎРѓРЎвЂ¦Р С•Р В¶Р Т‘Р ВµР Р…Р С‘РЎРЏ РЎРѓ timing.md (05.08.2026) РІР‚вЂќ РЎС“РЎРѓРЎвЂљР В°РЎР‚Р ВµР Р†РЎв‚¬Р С‘Р в„– Р В±Р ВµР в„–Р В·Р В»Р В°Р в„–Р Р…, Р В° Р Р…Р Вµ РЎР‚Р ВµР В·РЎС“Р В»РЎРЉРЎвЂљР В°РЎвЂљ РЎРЊРЎвЂљР С‘РЎвЂ¦ Р С‘Р В·Р СР ВµР Р…Р ВµР Р…Р С‘Р в„–.
 3.0.13 Prompt 14 - S5843: replace IN-subquery probe regexes with String methods (startsWith/contains)
 
 Changes: Removed three regex probe patterns (IN_SUBQUERY_SELECT_START, IN_SUBQUERY_WHERE_CLAUSE, IN_SUBQUERY_OPENING) from SubqueryParser.java and replaced isInSubqueryPattern() with equivalent startsWith/contains checks. The query is already whitespace-normalized, so the single-space strings match the original \s+ boundaries exactly. IN_SUBQUERY_TAIL regex kept for anchored LIMIT/OFFSET tail check.
@@ -2199,18 +2199,18 @@ Tests: quick gate 42/0/0/0 BUILD SUCCESS; full acceptance gate (4GB heap, @Large
 3.0.16 Prompt 22 - S3008: rename POOL_SIZE > poolSize, QUEUE_CAPACITY > queueCapacity in DatabaseServer.java
 
 Changes: Renamed static fields POOL_SIZE > poolSize and QUEUE_CAPACITY > queueCapacity (camelCase per S3008). Updated references in static initializer and ThreadPoolExecutor constructor.
-3.0.17 Prompt 23 - S3008: rename MAX_IN_MEMORY_ROWS → maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES → maxHashTableSizeBytes in SelectQuery.java
+3.0.17 Prompt 23 - S3008: rename MAX_IN_MEMORY_ROWS РІвЂ вЂ™ maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES РІвЂ вЂ™ maxHashTableSizeBytes in SelectQuery.java
 
-Changes: Renamed two static fields per S3008 (camelCase): MAX_IN_MEMORY_ROWS → maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES → maxHashTableSizeBytes. Updated all 11 references (declarations, loadHashJoinConfig, setHashJoinConfigForTest, StreamingResultIterator, hash-join guard, ORDER BY logging, partition sizing).
+Changes: Renamed two static fields per S3008 (camelCase): MAX_IN_MEMORY_ROWS РІвЂ вЂ™ maxInMemoryRows, MAX_HASH_TABLE_SIZE_BYTES РІвЂ вЂ™ maxHashTableSizeBytes. Updated all 11 references (declarations, loadHashJoinConfig, setHashJoinConfigForTest, StreamingResultIterator, hash-join guard, ORDER BY logging, partition sizing).
 Tests: skipped per request
 
 3.0.18 Prompt 25 - S3457: verify format specifier/argument correspondence in all 13 cases
 
-Changes: Verified all 13 S3457 occurrences from sonar7.md. All cases already fixed in commit d68f2cf: DatabaseServer.java LOGGER.log %s/%d/%f → MessageFormat {0}/{1}/{2}; SocketTimeoutTest.java and ServerConnectionLimitTest.java string concatenation → {0}/{1} format. No additional changes required.
+Changes: Verified all 13 S3457 occurrences from sonar7.md. All cases already fixed in commit d68f2cf: DatabaseServer.java LOGGER.log %s/%d/%f РІвЂ вЂ™ MessageFormat {0}/{1}/{2}; SocketTimeoutTest.java and ServerConnectionLimitTest.java string concatenation РІвЂ вЂ™ {0}/{1} format. No additional changes required.
 Tests: skipped per request
 3.0.19 Prompt 26 - S3457: replace concatenation "Error: " + var with String.format("Error: %s", var)
 
-Changes: Replaced 2 string concatenations in DatabaseServer.java with String.format: "Error: Unknown prepared statement: " + statementId → String.format("Error: Unknown prepared statement: %s", statementId); "Error: Unknown or closed cursor: " + fcm.getCursorId() → String.format("Error: Unknown or closed cursor: %s", fcm.getCursorId()).
+Changes: Replaced 2 string concatenations in DatabaseServer.java with String.format: "Error: Unknown prepared statement: " + statementId РІвЂ вЂ™ String.format("Error: Unknown prepared statement: %s", statementId); "Error: Unknown or closed cursor: " + fcm.getCursorId() РІвЂ вЂ™ String.format("Error: Unknown or closed cursor: %s", fcm.getCursorId()).
 Tests: skipped per request
 
 3.0.20 Prompt 27 - S1068: remove unused private field socketTimeout from ClientHandler in DatabaseServer.java
@@ -2223,7 +2223,7 @@ Tests: skipped per request
 Changes: Removed two unused private transient fields lastJoinEstimatedRows and lastJoinActualRows and their reset assignments in executeSelect(). No functional impact.
 Tests: skipped per request
 
-3.0.22 Prompt 29 - S112: define dedicated exception hierarchy DieselException → QueryParseException, IndexCorruptionException
+3.0.22 Prompt 29 - S112: define dedicated exception hierarchy DieselException РІвЂ вЂ™ QueryParseException, IndexCorruptionException
 
 Changes: Created QueryParseException.java and IndexCorruptionException.java extending DieselException (base extends RuntimeException). Replaces generic RuntimeException throws in parse/query path for proper domain error typing.
 Tests: skipped per request
@@ -2244,29 +2244,29 @@ Tests: skipped per request
 3.0.26 Prompt 33 - S135: reduce break/continue in loops (Early Return / Extract Method)
 
 Changes: Fixed 15 loops across 9 files per Sonar S135:
-- CliRepl.java: while(true)+4breaks+1continue → condition-based while + extracted readCliLine()
-- DatabaseServer.java: while(true)+2breaks → while(input!=null && dispatchMessage(input))
-- Database.java executeCommit/executeEndBatch: 2× for+2continues each → nested ifs in extracted checkCommitConflicts()
-- QueryParser.java findClauseOutsideSubquery: while+3continues → nested if-else
-- SelectQuery.java: resolveOrderByKeys (nested for+break → extract resolveColumnFromSelect/Alias), tryCoveringIndex (for+2continues → extract isCoverableCondition), filterColumns (for+continue+break → extract extractAllColumns/findFallbackValue)
-- SqlLexer.java tokenize: while+6continues → extracted nextToken()
-- SubqueryParser.java: findMainFromClause (while+3continues → if-else), splitCommaSeparatedItems (for+5continues → if-else + addCommaSeparatedItem), splitInValues (for+4continues → if-else + addInValue), findOperator (for+3continues → nested if), findHavingOperator (for+5continues → nested if)
+- CliRepl.java: while(true)+4breaks+1continue РІвЂ вЂ™ condition-based while + extracted readCliLine()
+- DatabaseServer.java: while(true)+2breaks РІвЂ вЂ™ while(input!=null && dispatchMessage(input))
+- Database.java executeCommit/executeEndBatch: 2Р“вЂ” for+2continues each РІвЂ вЂ™ nested ifs in extracted checkCommitConflicts()
+- QueryParser.java findClauseOutsideSubquery: while+3continues РІвЂ вЂ™ nested if-else
+- SelectQuery.java: resolveOrderByKeys (nested for+break РІвЂ вЂ™ extract resolveColumnFromSelect/Alias), tryCoveringIndex (for+2continues РІвЂ вЂ™ extract isCoverableCondition), filterColumns (for+continue+break РІвЂ вЂ™ extract extractAllColumns/findFallbackValue)
+- SqlLexer.java tokenize: while+6continues РІвЂ вЂ™ extracted nextToken()
+- SubqueryParser.java: findMainFromClause (while+3continues РІвЂ вЂ™ if-else), splitCommaSeparatedItems (for+5continues РІвЂ вЂ™ if-else + addCommaSeparatedItem), splitInValues (for+4continues РІвЂ вЂ™ if-else + addInValue), findOperator (for+3continues РІвЂ вЂ™ nested if), findHavingOperator (for+5continues РІвЂ вЂ™ nested if)
 - SqlLexer.java tokenizeLiteral skipped: single break for closing quote is semantically necessary
   Tests: skipped per request
 
 3.0.27 Fix: HashJoinMemoryTest.partitionedHashJoinUsedWhenRowsExceedMaxInMemory - static field maxInMemoryRows shadowed by same-named parameter in setHashJoinConfigForTest
 
-Changes: Qualified the assignment with the class name in SelectQuery.setHashJoinConfigForTest(): ``maxInMemoryRows = maxInMemoryRows`` (parameter shadowing the static field, a no-op) → ``SelectQuery.maxInMemoryRows = maxInMemoryRows``. The static maxInMemoryRows field was previously never updated by the test override, so row-budget overflow (200 rows > budget 5) never routed to the partitioned hash join and wrongly fell through to the in-memory hash join.
+Changes: Qualified the assignment with the class name in SelectQuery.setHashJoinConfigForTest(): ``maxInMemoryRows = maxInMemoryRows`` (parameter shadowing the static field, a no-op) РІвЂ вЂ™ ``SelectQuery.maxInMemoryRows = maxInMemoryRows``. The static maxInMemoryRows field was previously never updated by the test override, so row-budget overflow (200 rows > budget 5) never routed to the partitioned hash join and wrongly fell through to the in-memory hash join.
 Tests: HashJoinMemoryTest#partitionedHashJoinUsedWhenRowsExceedMaxInMemory PASS (partitioned hash join triggered, partitions=40); quick gate (mvn test -DskipLargeTests) 0/0/0/2 BUILD SUCCESS
 
 3.0.28 S135: replace continue with Stream.filter().forEach() across 9 files
 
 Changes:
 - Database.java: commitBatch (stream+filter+forEach), groupIntoBatches (IntStream.range+filter+forEach)
-- DeleteQuery.java: fullScanWithConditions, collectAllRows → IntStream.range+filter+forEach
-- InsertQuery.java: executeInsert → IntStream.forEach (null values correctly preserved via if-else)
-- QueryExecutor.java: groupIndependentQueries → IntStream.range+filter+forEach
-- UpdateQuery.java: fullTableScanWithCondition, fullTableScanAll → IntStream.range+filter+forEach
+- DeleteQuery.java: fullScanWithConditions, collectAllRows РІвЂ вЂ™ IntStream.range+filter+forEach
+- InsertQuery.java: executeInsert РІвЂ вЂ™ IntStream.forEach (null values correctly preserved via if-else)
+- QueryExecutor.java: groupIndependentQueries РІвЂ вЂ™ IntStream.range+filter+forEach
+- UpdateQuery.java: fullTableScanWithCondition, fullTableScanAll РІвЂ вЂ™ IntStream.range+filter+forEach
 - Table.java: deserializeIndexes (IntStream.forEach), addRow/validateRowForBulk (columns.forEach with if-else for null), rebuildMissingSecondaryIndexes (stream+filter+forEach), saveToFile (IntStream.range+filter+forEach)
 - SelectQuery.java: GROUP BY HAVING (entrySet().stream().map().filter().forEach), offset skip (IntStream.skip+limit), spillBuildPartitions/spillProbePartitions (IntStream.forEach with IOException handling), compareRows (IntStream.filter+map+findFirst), ensureJoinColumnIndexes (stream+filter+forEach), buildProjectionPlan (columns.forEach with if-else)
 - QueryParser.java: findMainFromClause (for+if-else), findOnClausePosition (IntStream.forEach+state arrays), parseInValues (stream+filter+map+collect), findClosingParen (for+if-else), scanPreservingWhitespace (IntStream.forEach+if-else), collapseWhitespaceOutsideSubqueries (IntStream.forEach+if-else)
@@ -2276,49 +2276,49 @@ Changes:
 3.0.29 Prompt 35 - S3358: extract nested ternary operators into evaluateNestedCondition()
 
 Changes: Replaced 3 nested ternary expressions in SelectQuery.java:
-- evaluateIsNullCondition: (condition.not ? !result : result) ? TRUE : FALSE → evaluateNestedCondition(condition.not, result)
-- evaluateComparisonCondition: (condition.not ? !comparisonResult : comparisonResult) ? TRUE : FALSE → evaluateNestedCondition(condition.not, comparisonResult)
-- compareValues: left == right ? 0 : (left == null ? -1 : 1) → evaluateNestedCondition(left == right, 0, left == null, -1, 1)
+- evaluateIsNullCondition: (condition.not ? !result : result) ? TRUE : FALSE РІвЂ вЂ™ evaluateNestedCondition(condition.not, result)
+- evaluateComparisonCondition: (condition.not ? !comparisonResult : comparisonResult) ? TRUE : FALSE РІвЂ вЂ™ evaluateNestedCondition(condition.not, comparisonResult)
+- compareValues: left == right ? 0 : (left == null ? -1 : 1) РІвЂ вЂ™ evaluateNestedCondition(left == right, 0, left == null, -1, 1)
   Added two private overloaded evaluateNestedCondition() methods.
   Tests: skipped per request
 
 3.0.30 Prompt 36 - S3358: extract remaining nested ternaries (max depth = 1 level)
 
 Changes: Replaced 3 nested ternary expressions in 3 files:
-- QueryParser.java:371 → resolveColumnRef(column, subQuery) inside AggregateFunction.toString()
-- DeleteQuery.java:173 → indexTypeName(Index index) for index type logging
-- SelectQuery.java:2250 → applySortDirection(int c, boolean ascending) in compareRows()
+- QueryParser.java:371 РІвЂ вЂ™ resolveColumnRef(column, subQuery) inside AggregateFunction.toString()
+- DeleteQuery.java:173 РІвЂ вЂ™ indexTypeName(Index index) for index type logging
+- SelectQuery.java:2250 РІвЂ вЂ™ applySortDirection(int c, boolean ascending) in compareRows()
 
 3.0.31 Prompt 37 - S2259: add null-checks for nullable variables to prevent NullPointerException
 
 Changes: Added 7 null-guards across 3 files:
-- SqlParsingUtils.java:54 → unquoted null-check after unquoteQualifiedIdentifier()
-- QueryParser.java:833 → normalized null-check after toUpperCasePreservingQuotedIdentifiers()
-- QueryParser.java:926 → innerNormalized null-check in parseExplainQuery()
-- QueryParser.java:1710 → tableAndJoinsOriginal null-guard in parseAdditionalClauses()
-- QueryParser.java:1750 → parsedLimit null-guard after extractLimit()
-- QueryParser.java:1760 → extractedOffset null-guard after extractOffset()
-- SelectQuery.java:3509 → buildTable null-guard in join strategy selection
+- SqlParsingUtils.java:54 РІвЂ вЂ™ unquoted null-check after unquoteQualifiedIdentifier()
+- QueryParser.java:833 РІвЂ вЂ™ normalized null-check after toUpperCasePreservingQuotedIdentifiers()
+- QueryParser.java:926 РІвЂ вЂ™ innerNormalized null-check in parseExplainQuery()
+- QueryParser.java:1710 РІвЂ вЂ™ tableAndJoinsOriginal null-guard in parseAdditionalClauses()
+- QueryParser.java:1750 РІвЂ вЂ™ parsedLimit null-guard after extractLimit()
+- QueryParser.java:1760 РІвЂ вЂ™ extractedOffset null-guard after extractOffset()
+- SelectQuery.java:3509 РІвЂ вЂ™ buildTable null-guard in join strategy selection
   All guards throw QueryParseException with descriptive message.
 
 3.0.32 Prompt 38 - S2259: wrap nullable toUpperCasePreservingQuotedIdentifiers calls in Optional.ofNullable().orElse()
 
 Changes: Wrapped 6 unprotected calls to toUpperCasePreservingQuotedIdentifiers() in Optional.ofNullable().orElse() to prevent NullPointerException:
-- Database.java:179 → orElse("") in executeQuery() cache-hit path
-- Database.java:246 → orElse("") in executeCursor()
-- Database.java:790 → orElse("") in extractTableName()
-- Database.java:870 → orElse("") in extractAllTableNames()
-- QueryParser.java:840 → orElse(normalized) in parse() while-loop
-- QueryParser.java:3570 → orElse(normalized) in normalizeQueryString()
+- Database.java:179 РІвЂ вЂ™ orElse("") in executeQuery() cache-hit path
+- Database.java:246 РІвЂ вЂ™ orElse("") in executeCursor()
+- Database.java:790 РІвЂ вЂ™ orElse("") in extractTableName()
+- Database.java:870 РІвЂ вЂ™ orElse("") in extractAllTableNames()
+- QueryParser.java:840 РІвЂ вЂ™ orElse(normalized) in parse() while-loop
+- QueryParser.java:3570 РІвЂ вЂ™ orElse(normalized) in normalizeQueryString()
   Added java.util.Optional import to Database.java.
   Tests: 42 run, 0 failures, 0 errors.
 
 3.0.33 Prompt 39 - S2259: add Objects.requireNonNull() for parameters to prevent NullPointerException
 
 Changes: Added Objects.requireNonNull() checks to 15 locations across 3 files:
-- SqlParsingUtils.java → normalizeColumnName() (defaultTableName, tableAliases), parseOperator() (operatorStr), validateColumn() (column)
-- QueryParser.java → SubQuery (query), Condition ctors (column, operator, subQuery), JoinInfo (tableName, joinType, onConditions), OrderByInfo (column), AggregateFunction (functionName), HavingCondition (aggregate, operator), SelectItems (columns, aggregates, subQueries, columnAliases), OperatorInfo (operator), Token (type, value), parse() (database), parsePrepared() (ps, database)
-- SelectQuery.java → SelectQueryCore (tableName), JoinContext (spillActive, whereConditions, combinedColumnTypes, tables, acquiredLocks)
+- SqlParsingUtils.java РІвЂ вЂ™ normalizeColumnName() (defaultTableName, tableAliases), parseOperator() (operatorStr), validateColumn() (column)
+- QueryParser.java РІвЂ вЂ™ SubQuery (query), Condition ctors (column, operator, subQuery), JoinInfo (tableName, joinType, onConditions), OrderByInfo (column), AggregateFunction (functionName), HavingCondition (aggregate, operator), SelectItems (columns, aggregates, subQueries, columnAliases), OperatorInfo (operator), Token (type, value), parse() (database), parsePrepared() (ps, database)
+- SelectQuery.java РІвЂ вЂ™ SelectQueryCore (tableName), JoinContext (spillActive, whereConditions, combinedColumnTypes, tables, acquiredLocks)
   Added java.util.Objects import to SqlParsingUtils.java.
   Tests: 42 run, 0 failures, 0 errors.
 
@@ -2341,25 +2341,25 @@ Tests: 42 run, 0 failures, 0 errors.
 Root cause: Prompt 40 (6dcc927) added `transient` to keys/rowIndices/children in BTreeIndex.Node and BTreeClusteredIndex.Node, and to params in ExecutePreparedMessage, but never added readObject/writeObject to reconstruct them.
 
 Changes:
-- BTreeIndex.Node: added writeObject/readObject to explicitly serialize keys, rowIndices, children (without this, indexes loaded from .table files had null keys → NPE)
+- BTreeIndex.Node: added writeObject/readObject to explicitly serialize keys, rowIndices, children (without this, indexes loaded from .table files had null keys РІвЂ вЂ™ NPE)
 - BTreeClusteredIndex.Node: same fix
-- ExecutePreparedMessage: removed transient from params — this is a wire-protocol message sent via ObjectOutputStream, params must survive the transfer (without this, server received null params → ? not replaced → parser error)
+- ExecutePreparedMessage: removed transient from params РІР‚вЂќ this is a wire-protocol message sent via ObjectOutputStream, params must survive the transfer (without this, server received null params РІвЂ вЂ™ ? not replaced РІвЂ вЂ™ parser error)
 - Added missing java.io imports to both BTreeIndex.java and BTreeClusteredIndex.java
 
 Tests: 42 run, 0 failures, 0 errors, 2 skipped.
 
-3.0.39 Fix: PersistenceTest.testChecksumFailureTriggersRebuild — table loaded despite corrupted index data
+3.0.39 Fix: PersistenceTest.testChecksumFailureTriggersRebuild РІР‚вЂќ table loaded despite corrupted index data
 
 Root cause: Table.loadFromFile() caught any IOException from ObjectInputStream and returned null, so a corrupted .table file silently dropped the whole table instead of recovering. Additionally, the test flipped a byte at data.length/2 (mid-file, in the rows/defaultWriteObject section), which broke the entire serialized stream before readObject()'s checksum-based recovery ever ran, and readObject()'s v3 index block had unprotected readInt()/readBoolean() that could throw past the per-index try-catch.
 
 Changes:
-- Table.loadFromFile: on deserialization failure return a new empty table (base structure) instead of null — no more silent data loss
+- Table.loadFromFile: on deserialization failure return a new empty table (base structure) instead of null РІР‚вЂќ no more silent data loss
 - PersistenceTest: corrupt a byte in the index/checksum section (data.length - 5) instead of mid-file, so rows survive and checksum recovery triggers a rebuild from rows
 - Table.readObject: wrap the whole v3 serialized-index block in a try-catch so corruption of indexCount/readBoolean falls through to rebuildMissingSecondaryIndexes()
 
 Tests: 762 run, 1 failure, 0 errors, 2 skipped (before), 819 run, 0 failures, 0 errors, 3 skipped (after).
 
-3.0.40 Prompt 19 - Performance regression tests (quality gate): new PerformanceRegressionTest measures 10 key queries (1 warmup + 5 runs, median), compares against tracked baseline analytics/regression_baseline.md (±20%, ignores sub-11ms micro-queries), fails build with a report on >20% degradation, appends history to analytics/performance_history.csv, supports -Ddiesel.updateBaseline=true to re-baseline; CI workflow updated to JDK 21 (pom requires 21) with a dedicated performance regression step; pom surefire includes updated.
+3.0.40 Prompt 19 - Performance regression tests (quality gate): new PerformanceRegressionTest measures 10 key queries (1 warmup + 5 runs, median), compares against tracked baseline analytics/regression_baseline.md (Р’В±20%, ignores sub-11ms micro-queries), fails build with a report on >20% degradation, appends history to analytics/performance_history.csv, supports -Ddiesel.updateBaseline=true to re-baseline; CI workflow updated to JDK 21 (pom requires 21) with a dedicated performance regression step; pom surefire includes updated.
 
 Changes:
 - src/test/java/diesel/PerformanceRegressionTest.java (new): KEY_QUERIES (group|test|sql), median-of-5 measurement, baseline load/seed/update, AssertionError regression report, performance_history.csv append
@@ -2385,7 +2385,7 @@ Changes:
 
 BUILD SUCCESS (80 source files compiled, no test run per request).
 
-3.0.42 Prompt 22 - TSV storage basic implementation (TSV хранилище - базовая реализация)
+3.0.42 Prompt 22 - TSV storage basic implementation (TSV РЎвЂ¦РЎР‚Р В°Р Р…Р С‘Р В»Р С‘РЎвЂ°Р Вµ - Р В±Р В°Р В·Р С•Р Р†Р В°РЎРЏ РЎР‚Р ВµР В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ)
 
 Changes:
 - diesel/storage/TsvRowWriter.java (new): AutoCloseable tab-delimited writer with escapeValue() (\t -> \\t, \n -> \\n, \r -> \\r, \\ -> \\\\, null -> empty string, BigDecimal -> toPlainString())
@@ -2398,7 +2398,7 @@ Changes:
 
 3.0.43 Changelog tidy: remove test-result notes (Tests:/NOTE:) from the 3.0.42 entry so the changelog keeps the no-test-info convention of 3.0.41.
 
-3.0.44 Config consolidation - single root config.properties for every class (новый diesel/ConfigLoader.java)
+3.0.44 Config consolidation - single root config.properties for every class (Р Р…Р С•Р Р†РЎвЂ№Р в„– diesel/ConfigLoader.java)
 
 Changes:
 - diesel/ConfigLoader.java (new): package-private fail-safe loader reading config.properties from the process working directory (CWD) via ErrorMessages.CONFIG_FILE; typed helpers getString/getInt/getLong/getDouble/getBoolean; missing/unreadable file yields empty Properties and callers keep defaults
@@ -2419,7 +2419,7 @@ Changes:
 - config.properties: commented documentation line "## Storage type: in_memory | csv | tsv" above storage.type = in_memory (default unchanged)
 - src/test/java/diesel/CsvStorageTest.java (new): 18 tests covering value escaping (comma/quote/newline), parseLine() quoted-field handling, writer+reader round-trips, null/empty-table handling, storage CRUD (insert/update/delete/scan), save+load round-trip, StorageFactory "csv" wiring, and Database integration with storage.type set via system property
 
-3.0.46 Prompt 23 - TSV storage indexing and search (TSV хранилище - индексация и поиск)
+3.0.46 Prompt 23 - TSV storage indexing and search (TSV РЎвЂ¦РЎР‚Р В°Р Р…Р С‘Р В»Р С‘РЎвЂ°Р Вµ - Р С‘Р Р…Р Т‘Р ВµР С”РЎРѓР В°РЎвЂ Р С‘РЎРЏ Р С‘ Р С—Р С•Р С‘РЎРѓР С”)
 
 Changes:
 - diesel/storage/TsvIndexManager.java (new): self-contained index manager for TSV-backed tables - sorted primary-key TreeMap index (O(log n) exact + inclusive range search by primary key or secondary index), incremental insert/remove of indexed rows, reindex() rebuild, LRU block cache (access-order LinkedHashMap, tsv.block.size = 1000 rows per block, tsv.cache.max.blocks = 64) with getBlock()/loadAllBlocksParallel() and cache hit/miss counters, and parallel TSV file reading on a dedicated daemon ForkJoinPool (line-range chunk readers via TsvRowReader, gated by tsv.parallel.read.threshold = 10000 rows) plus a sequential fallback and loadAndIndex() convenience method
@@ -2491,7 +2491,7 @@ Changes:
 - diesel/storage/TsvRowReader.java: unescape() now returns the input string untouched when it contains no backslash (raw.indexOf('\\') < 0), eliminating a StringBuilder + full char copy + String allocation per field on read for the common no-escape case; replaced line.split("\t", -1) (which recompiles a regex Pattern per line) with a hand-written splitTab() that preserves trailing empty fields (verified equivalent on 11 edge cases: empty string, trailing/adjacent tabs, etc.); convertValue() still runs unescape() only where semantically required
 - diesel/storage/TsvRowWriter.java: escapeValue() now pre-scans for \t/\n/\r/\\ and returns the raw string without StringBuilder allocation when no escaping is needed (mirrors the CSV fast path); isSentinelMode() no longer opens and reads config.properties from disk on every writeRow() call - the file is loaded once into a static ROOT_PROPS field, while the storage.null.representation system property override is still checked on every call so runtime mode switches (NullSentinelTest) keep working
 - The TSV read hot path previously allocated a StringBuilder and an intermediate String per field even for plain numbers/strings; combined with the regex split and per-row config file reads, TSV was roughly 10x slower than CSV and is now expected to be comparable (single-char tab delimiter vs comma)
-- Тесты: quick suite 138 run / 0 failures / 3 skipped (1 pre-existing error AllTestsSampleTest.prompt69Group - stale .table cast, fails on clean tree too and is unrelated); TSV/CSV index/header/sentinel tests 82/82 green
+- Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: quick suite 138 run / 0 failures / 3 skipped (1 pre-existing error AllTestsSampleTest.prompt69Group - stale .table cast, fails on clean tree too and is unrelated); TSV/CSV index/header/sentinel tests 82/82 green
 
 3.0.55 Prompt 27 - load error handling and diagnostics (file:line:column)
 
@@ -2505,7 +2505,7 @@ Changes:
 - config.properties: added storage.load.error.mode = fail | skip_row | skip_value (default: fail)
 - pom.xml: included LoadErrorHandlingTest in surefire filters (default + ci profiles)
 - src/test/java/diesel/LoadErrorHandlingTest.java (new): 10 tests - CSV/TSV broken value in the middle of the file with file:line:column diagnostics, truncated CSV quoted field, skip_row drops the bad row (CSV+TSV), skip_value keeps the row with a null placeholder, storage rollback on load failure, getLineNumber() line tracking
-- Тесты: quick suite 148 run / 0 failures / 0 errors / 3 skipped; full suite (4GB heap, @LargeTest) 148 run / 0 failures / 0 errors / 0 skipped BUILD SUCCESS; timing comparison timing68 vs baseline timing.md - no regressions (exit 0)
+- Р СћР ВµРЎРѓРЎвЂљРЎвЂ№: quick suite 148 run / 0 failures / 0 errors / 3 skipped; full suite (4GB heap, @LargeTest) 148 run / 0 failures / 0 errors / 0 skipped BUILD SUCCESS; timing comparison timing68 vs baseline timing.md - no regressions (exit 0)
 
 3.0.56 Prompt 28 - escape header on write (CSV RFC 4180 / TSV backslash)
 
@@ -2555,9 +2555,9 @@ Changes:
 3.0.61 Fix CSV/TSV storage: sync Table.rows with storage, remove competing .table serialization
 
 Changes:
-- diesel/storage/CsvRowStorage.java: removed saveSerialized() call from saveToFile() — CsvRowStorage no longer writes a competing SerializableAdapter to .table files; the .table serialization is exclusively Table.saveToSerializedFile()'s responsibility. This eliminates ClassCast exceptions when loading tables from disk (CsvRowStorage$SerializableAdapter cannot be cast to diesel.Table)
-- diesel/storage/TsvRowStorage.java: same fix — removed saveSerialized() call from saveToFile()
-- diesel/Table.java readObject(): after creating fresh storage via StorageFactory, populate it with deserialized rows via storage.setRows(new ArrayList<>(rows)) so getRows() → storage.scan() returns actual data instead of empty list
+- diesel/storage/CsvRowStorage.java: removed saveSerialized() call from saveToFile() РІР‚вЂќ CsvRowStorage no longer writes a competing SerializableAdapter to .table files; the .table serialization is exclusively Table.saveToSerializedFile()'s responsibility. This eliminates ClassCast exceptions when loading tables from disk (CsvRowStorage$SerializableAdapter cannot be cast to diesel.Table)
+- diesel/storage/TsvRowStorage.java: same fix РІР‚вЂќ removed saveSerialized() call from saveToFile()
+- diesel/Table.java readObject(): after creating fresh storage via StorageFactory, populate it with deserialized rows via storage.setRows(new ArrayList<>(rows)) so getRows() РІвЂ вЂ™ storage.scan() returns actual data instead of empty list
 - diesel/Table.java bulkInsert(): after rows.addAll(validatedRows), sync storage via storage.setRows(new ArrayList<>(rows)) so CsvRowStorage/TsvRowStorage see bulk-inserted data
 - diesel/Table.java insertAtEnd(): always add row to Table.rows (not just when storage is null) so both Table.rows and storage stay in sync
 - diesel/Table.java removeRow(): always remove from Table.rows (not just when storage is null)
@@ -2642,7 +2642,7 @@ Changes:
 3.0.70 Fix UPDATE not persisting changes to CsvRowStorage/TsvRowStorage after prompt-36 Object[] row representation
 
 Changes:
-- diesel/Table.java: added updateRowInPlace(int rowIndex, Map<String,Object> row) — writes a modified row back to the underlying storage (delegates to storage.update() for CSV/TSV backends that store rows as compact Object[] arrays, or replaces the internal Map for in-memory storage); called by UpdateQuery after each row is mutated so the changes survive the next scan()
+- diesel/Table.java: added updateRowInPlace(int rowIndex, Map<String,Object> row) РІР‚вЂќ writes a modified row back to the underlying storage (delegates to storage.update() for CSV/TSV backends that store rows as compact Object[] arrays, or replaces the internal Map for in-memory storage); called by UpdateQuery after each row is mutated so the changes survive the next scan()
 - diesel/UpdateQuery.java: applyPerRowUpdate() and applyBulkUpdate() now call table.updateRowInPlace(rowIndex, row) after modifying each row, so CSV/TSV storage (which creates fresh Map copies from Object[] arrays on every scan()) persists the mutations instead of losing them to throwaway Map objects
 - Quick 196/0/0/6, full suite (4GB, @LargeTest) 196/0/0/0 BUILD SUCCESS
 
@@ -2693,12 +2693,12 @@ Changes:
 - pom.xml: com.fasterxml.jackson.core:jackson-core 2.17.2 (streaming parser/generator only - no databind, keeping the no-DOM and no-parse-libraries rule of prompt 42 for the storage package); JsonlStorageTest registered in the default surefire includes and the ci profile
 - src/test/java/diesel/JsonlStorageTest.java (new, 22 tests): typed flat round-trip through reader/writer and through storage save/load; empty table; null written as JSON null and "" written as a JSON string stay distinct through the round-trip; special characters (tab, newline, backslash, quote, e-acute, CJK, emoji); non-finite floats rejected at write; nested Map/List written as nested JSON into the file and re-read as the exact compact JSON text column (storage round-trip too); blank lines skipped; BOM stripped; invalid JSON fails with file:line context; non-object record rejected; missing field -> NULL, unknown field ignored; JSON booleans and raw numbers convert into typed columns; update/delete persistence across save/load; nested-schema round-trip; missing-file load is a no-op; interrupted save leaves the previous file byte-identical and cleans the .tmp; corrupt file rolls back the previous in-memory rows; 100k-row streaming write+read staying line-by-line; StorageFactory(type=jsonl) -> JsonlRowStorage while the default stays in_memory; Database-level INSERT/SELECT with diesel.storage.type=jsonl works with no Table special-casing (JsonlRowStorage created, DBJSONL.jsonl written and re-read)
 
-3.0.77 Compression and I/O optimizations (BufferedInputStream read path, StringBuilder reuse, O(n²) prefetch fix, network compression bugfix)
+3.0.77 Compression and I/O optimizations (BufferedInputStream read path, StringBuilder reuse, O(nР’Р†) prefetch fix, network compression bugfix)
 
 Changes:
 - diesel/storage/CompressionFactory.java: openDelimitedReader now wraps the raw InputStream from Files.newInputStream in a BufferedInputStream before passing it to the codec's wrapInputStream; this reduces JNI boundary crossings for compressed I/O by batching reads into 8KB chunks, matching the BufferedReader's own buffer size and avoiding per-byte native calls through the decompressor
 - diesel/storage/CsvRowWriter.java / TsvRowWriter.java: writeHeader(), writeRow(Map), writeRow(Object[]) all reuse a single field-level StringBuilder (capacity 256) instead of allocating a new StringBuilder per row; the sb is reset via setLength(0) before each use, eliminating N object allocations and GC pressure on large table saves; the writer.write(sb.toString()) call remains since BufferedWriter accepts String not CharSequence
-- diesel/storage/CsvRowReader.java: prefetch() replaced O(n²) multi-line quoted field merging with O(n) scanQuotes(CharSequence, startOffset, initialInQuotes); the old code called endsInsideQuotes(sb.toString()) on every iteration, which created a full String copy and re-scanned the entire accumulated text from the beginning; the new code tracks inQuotes state across iterations and only scans the newly appended segment (from the last line boundary to end), making multi-line field assembly linear in the total row length; the existing endsInsideQuotes(String) public API delegates to scanQuotes(text, 0, false) and is unchanged for callers (CsvIndexManager.lineEndsInsideMultilineRow)
+- diesel/storage/CsvRowReader.java: prefetch() replaced O(nР’Р†) multi-line quoted field merging with O(n) scanQuotes(CharSequence, startOffset, initialInQuotes); the old code called endsInsideQuotes(sb.toString()) on every iteration, which created a full String copy and re-scanned the entire accumulated text from the beginning; the new code tracks inQuotes state across iterations and only scans the newly appended segment (from the last line boundary to end), making multi-line field assembly linear in the total row length; the existing endsInsideQuotes(String) public API delegates to scanQuotes(text, 0, false) and is unchanged for callers (CsvIndexManager.lineEndsInsideMultilineRow)
 - diesel/DatabaseServer.java: sendSerializedResult() now calls compressWithMetrics(serialized) and uses the identity check (toSend != serialized) to determine whether the data was actually compressed; the old code wrote the compressed marker byte (0x01) and the raw uncompressed data when serialized.length exceeded compressionThreshold, meaning the client would attempt GZIPInputStream decompression on raw Java-serialized bytes and fail with a stream corruption error; the fix ensures the compressed path writes truly compressed bytes and the uncompressed path stays byte-identical
 
 3.0.78 Prompt 41 - JSONL storage extended features (type validation, field projection, JSON Path dot-notation, schema sidecar)
@@ -2818,7 +2818,7 @@ Changes:
 3.1.13 AGENTS.md
 3.1.14 opencodeignore
 3.1.15 analytics
-3.1.16 fix(test-profiles-audit): 8 fixes after migration audit — tag 3 orphan tests (Csv/TsvStorage→storage, RegexRobustness→perf), repair make timing (large profile + collect-timing.py + tracked baseline), make test/ci alias profiles functional, add tia.sh bash port + --profiles mode, add pr-gate-tia CI job, enable Maven Build Cache, fix make build target + CI concurrency group, update AGENTS.md
+3.1.16 fix(test-profiles-audit): 8 fixes after migration audit РІР‚вЂќ tag 3 orphan tests (Csv/TsvStorageРІвЂ вЂ™storage, RegexRobustnessРІвЂ вЂ™perf), repair make timing (large profile + collect-timing.py + tracked baseline), make test/ci alias profiles functional, add tia.sh bash port + --profiles mode, add pr-gate-tia CI job, enable Maven Build Cache, fix make build target + CI concurrency group, update AGENTS.md
 3.1.17 Fix 3 failing tests: (1) RegexPerformanceBenchmarkTest.benchmarkParse10kQueries -- hoist all per-call Pattern.compile calls in QueryParser into static final Pattern fields (incl. TOKEN_PATTERNS List.of, COMPARISON/HAVING operator Pattern arrays, clause-pattern ConcurrentHashMap cache); 9996 parses 52011ms -> 3001ms (17x); suppress FINEST/FINE log noise from diesel/QueryParser/SelectQueryParser/ConditionParser loggers in the test setUp; (2) InTest DieselIOException 'Failed to save table to CSV file' -- AtomicFileWriter.moveWithRetries treats a vanished .tmp as benign last-writer-wins (WARN + return, no throw) and DROP TABLE no longer races stale .tmp; (3) ServerConnectionLimitTest Connection refused -- DatabaseServer binds ServerSocket with backlog=512 (config server.backlog). Verification: fast 178/0/0, perf isolated RegexPerformanceBenchmarkTest PASS (3001ms), core PASS (InTest), network PASS (ServerConnectionLimitTest; SEVERE client-handler noise expected), large 8/0/0 BUILD SUCCESS, collect-timing -> timingN.md, compare-timing exit 0 (baseline markdown-table format mismatch -> all rows NEW TEST, heavy >=100ms set manually stable: DelimitedIoPerf baselines 142.3s/135.3s, joins 0.17s/0.15s/0.03s). Profile check skipped (no JOIN/hash join/performance wording); make unavailable, entry appended manually.
 3.1.18 Prompt 54 - JSONL parallel read via byte-offset pre-scan (JsonlParallelLoader: LineIndex/LineIndexCache + ByteRangeTask partitions + deterministic file-order merge + compressed/below-jsonl.parallel.read.threshold/Integer.MAX_VALUE fallbacks + nested-column union carried to JsonlIndexManager; JsonlRowReader initPartition/setSuppressSkipSummary; JsonlRowStorage parallel branch replays nested marks into shared JsonlSchemaManager; config jsonl.parallel.read.threshold=10000; JsonlParallelLoadTest 7 fast + @LargeTest 1M rows seq=3311ms par=2162ms on 4 cores)
 3.1.19 fix(build-cache): register config.properties as checksum input (.mvn/maven-build-cache-config.xml <input><global><includes><include>config.properties</include>) so edits to config.properties invalidate the Maven build cache instead of silently restoring a cached build and skipping surefire:test. Verification: fast profile PASS, input files 219 -> 222, cache miss after config change forces real test run. Changelog entry appended manually (make unavailable on this machine).
@@ -2831,7 +2831,7 @@ Changes:
 3.1.26 Prompt 61 (2026-09-18) - AVRO storage data reading functionality
 3.1.27 Prompt 62 (2026-09-18) - AVRO compression codec configuration: new AvroCompressionConfig (avro.compression.codec|level|auto|auto.min.bytes, sysprop->config.properties->defaults, effectiveCodec auto-select below threshold) + AvroCodecFactory (null/deflate/zstandard/snappy/bzip2 -> Avro 1.12 CodecFactory with level clamping); AvroDataFileWriter 4-arg ctor overload with setCodec; AvroRowStorage.writeAvroFileEfficient now resolves the effective codec AND fixes the pre-existing Prompt-60/61 write-path bug (AtomicFileWriter target-vs-tmp misuse -> 0-byte files, non-nullable schema -> BigDecimal ClassCastException/null NPE) by rewriting onto the writeAvroFile DataFileWriter+nullable-schema pattern through the atomic output stream; config.properties documents the new keys; new AvroCompressionTest (17 + @LargeTest benchmark, [AVRO-BENCH] ratio zstd 76.1x bzip2 78.9x). Gates: fast 178/0/0, core 1149/0/0/0, large 14/0/0 BUILD SUCCESS.
 3.1.28 Prompt 63 (Section 2 AVRO): ZStandard codec class for Avro compression
-3.1.29 Prompt 64: AVRO сжатие - Snappy оптимизация - полная реализация
+3.1.29 Prompt 64: AVRO РЎРѓР В¶Р В°РЎвЂљР С‘Р Вµ - Snappy Р С•Р С—РЎвЂљР С‘Р СР С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ - Р С—Р С•Р В»Р Р…Р В°РЎРЏ РЎР‚Р ВµР В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ
 3.1.30 Add make clean-test-cache for clearing test cache only (surefire reports, build cache, test classes)
 3.1.31 Prompt 65: Storage-type test gating - format-specific tests depend on diesel.storage.type via @StorageType annotation + StorageTypeCondition (JUnit 5 ExecutionCondition); 38 test classes annotated (Avro/JSONL/CSV/TSV/cross-format); 4 Maven profiles (storage-csv/tsv/jsonl/avro) + Makefile targets; bug fixes: AvroCompressionTest null-codec reference file, JsonlLoadModeTest compression codec pinning; AGENTS.md + TIA mapping updated. Fast 178/0/0, storage-csv 644 tests (392 skipped) BUILD SUCCESS.
 3.1.32 fix(build-cache): restore .mvn/maven-build-cache-config.xml to register config.properties as global build input so config edits invalidate the Maven build cache; add maven-clean-plugin fileset in pom.xml to auto-clear project build cache (~/.m2/build-cache/v1/com.dieseldb/dieseldb/) on mvn clean; add make clean-cache target; update AGENTS.md cache-cleaning table. Verification: fast 178/0/0 BUILD SUCCESS; mvn clean clears build cache confirmed.
@@ -2878,3 +2878,5 @@ Changes:
 3.1.56 Prompt 87 (Section 2 AVRO): AVRO bloom filter - per-block Bloom filter for fast value-presence checks. New diesel/storage/avro/AvroBloomFilter (@since Prompt 87): per-block filters over the non-null values of a column range - create(config)/create(configFilePath), buildValues, put, mightContain, hasBlock/getBlockCount/getBlockIndexes/removeBlock/clear/getKeyCount/getBitSize/getEstimatedFpp; thread-safe ConcurrentHashMap of per-block BlockFilter bit sets, double-hash placement, null values skipped, unknown block yields false (no false negatives). Sidecar .bf persistence (text format): VERSION=1 header, ENABLED/BITS_PER_KEY/NUM_HASHES/FPP echo, DATA_FILE_SIZE+DATA_FILE_MODIFIED staleness stamps, per-block BLOCK/KEYS/BIT_SIZE/BIT_BYTES/BITS base64 records; saveToSidecar/loadFromSidecar, corrupted/stale/missing/disabled sidecar -> null. New package-private AvroBloomFilterConfig (@since Prompt 87): sysprop -> config.properties -> defaults (avro.bloom.enabled=true, avro.bloom.bits.per.key=10, avro.bloom.num.hashes=7, avro.bloom.fpp=0.01), clamping (bits [1,64], hashes [1,32], fpp (0,1)), avro.bloom.config.file test hook, public resolveFor/bitSizeFor. config.properties documents the four avro.bloom.* keys; scripts/tia-mapping.txt maps both sources to storage-avro; scripts/tag-mapping.tsv registers AvroBloomFilterTest. New AvroBloomFilterTest (40 tests @Tag(storage) @StorageType(avro)): config defaults/sysprop/file-override/priority/clamping, build/basic buildValues+put/mightContain, no-false-negatives (2000 values), multi-block isolation, FP-rate bounds, presence insensitive to value object type, removeBlock/clear/getters, .bf sidecar round-trip/staleness/corrupt/missing/disabled/empty/rebuild-replaces, double round-trip, toString. Gates: isolated AvroBloomFilterTest 40/0/0; fast 178/0/0; storage-avro 1327/0/0/437 skipped; large 14/0/0/6 skipped BUILD SUCCESS (1st run hit pre-existing machine-noise flake DelimitedIoPerfTest.csvTsvIoPerformanceBaseline, isolated re-run passed). Profile check skipped (no JOIN/performance wording); make/python unavailable on this machine, gates ran as raw Maven (C:\tools\apache-maven-3.9.9 + JDK 21.0.12+8), timing/timingN.md regenerated from surefire reports via PowerShell and compare-timing.sh (Git Bash) reported no regressions.
 
 3.1.57 Fix DelimitedIoPerfTest: add @StorageType({csv,tsv}) so CSV/TSV perf tests don't run under storage.type=avro, and raise TSV load ceiling to ceiling*20
+
+3.1.58 Prompt 88 (Section 2 AVRO): AVRO date partitioning with automatic partition creation, pruning, and configurable granularity. New diesel/storage/avro/AvroDatePartitioner (@since Prompt 88): Hive-style directory layout data/avro/table_name/dt=YYYY-MM-DD/ (DAY dt=2023-12-01, MONTH dt=2023-12, YEAR dt=2023). Granularity enum (DAY/MONTH/YEAR) and immutable PartitionConfig(enabled, partitionColumn, granularity, zoneId) resolved ctor args (defaults: disabled, column dt, DAY, system zone). Date extraction extractDate(Object) supports LocalDate, LocalDateTime, String (ISO-8601 date, ISO datetime with T, space-separated yyyy-MM-dd HH:mm:ss, ZonedDateTime, numeric epoch-day string, numeric epoch-millis string via Instant.ofEpochMilli), Integer (epoch day), Long (epoch millis), null and unsupported types -> null. ensurePartitionExists(table, date) creates the dt=... directory (no-op when disabled, returns Path regardless; logs created dirs). resolvePartitionDir(table,date) -> dataDir/table/partitionKey; getDataDir(table) resolves the storage data dir via reflection over AbstractRowStorage.resolveFilePath(.avro). listPartitions(table) -> existing dt=* dirs (skips non-dt entries, empty when disabled), listPartitionDates (parses dt= names back to PartitionDate records), partitionExists(table,date), getPartitionForRow(table,value) (null when extraction fails/disabled), getPartitionsForDateRange(table,from,to) with inclusive isSameOrAfter/isSameOrBefore pruning filters, prunePartitionsOutsideRange (unmodifiable filtered copy), getPartitionColumn/getTableBasePath/getPartitionKey. config.properties documents the three avro.partition.* keys (enabled=false, column=dt, granularity=day); scripts/tia-mapping.txt maps AvroDatePartitioner.java to storage-avro; scripts/tag-mapping.tsv registers AvroDatePartitionerTest under storage. New AvroDatePartitionerTest (21 tests @Tag(storage) @StorageType(avro), 27 invocations incl. 7-param @CsvSource date parsing): config defaults/custom/enabled flag, ensurePartitionExists creates dirs/no-create-when-disabled, resolve partition dirs for LocalDate/LocalDateTime/String/epoch day/epoch millis/null/unsupported (log WARN), granularity DAY/MONTH/YEAR key formats, listPartitions empty/with-partitions, listPartitionDates, partitionExists, getPartitionForRow, getPartitionsForDateRange incl. live + future read-ahead dirs, date parsing matrix, getPartitionKey. Gates: isolated AvroDatePartitionerTest 27/0/0; fast 178/0/0; storage-avro BUILD SUCCESS; large 600x600 joins pass, sole non-avro failure was the documented pre-existing machine-noise flake DelimitedIoPerfTest (CSV/TSV timing ratio, also on 3.1.54/3.1.56) - large minus DelimitedIoPerfTest: NO FAILURES. Profile check skipped (no JOIN/performance wording); make unavailable on this machine, gates ran as raw Maven (C:\tools\apache-maven-3.9.9 + JDK 21.0.12+8), changelog entry appended manually.
