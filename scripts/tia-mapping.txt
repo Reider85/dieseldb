@@ -99,6 +99,7 @@ diesel/storage/avro/AvroQueryConfig.java	storage-avro
 diesel/storage/avro/AvroStatistics.java	storage-avro
 diesel/storage/avro/AvroTransactionManager.java	storage-avro
 diesel/storage/avro/AvroMetrics.java	storage-avro
+diesel/storage/avro/AvroAuditLogger.java	storage-avro
 diesel/DatabaseServer.java		network
 diesel/DatabaseClient.java		network
 diesel/Cursor.java			network
