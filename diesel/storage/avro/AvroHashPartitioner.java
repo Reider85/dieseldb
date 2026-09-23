@@ -190,19 +190,14 @@ public class AvroHashPartitioner {
 
         int tail = 0;
         int off = len / 4 * 4;
-        switch (remaining) {
-            case 3:
-                tail ^= (data[off + 2] & 0xFF) << 16;
-            case 2:
-                tail ^= (data[off + 1] & 0xFF) << 8;
-            case 1:
-                tail ^= (data[off] & 0xFF);
-                tail *= c1;
-                tail = Integer.rotateLeft(tail, 15);
-                tail *= c2;
-                h1 ^= tail;
-            default:
-                break;
+        for (int k = 0; k < remaining; k++) {
+            tail ^= (data[off + k] & 0xFF) << (8 * k);
+        }
+        if (remaining > 0) {
+            tail *= c1;
+            tail = Integer.rotateLeft(tail, 15);
+            tail *= c2;
+            h1 ^= tail;
         }
 
         h1 ^= len;

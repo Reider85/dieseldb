@@ -328,9 +328,8 @@ try {
         for (Path partition : allPartitions) {
             LocalDate partitionDate = parsePartitionDirectoryName(partition.getFileName().toString());
             if (partitionDate != null && (partitionDate.isBefore(startDate) || partitionDate.isAfter(endDate))) {
-                try {
-                    Files.walk(partition)
-                         .sorted(Comparator.reverseOrder())
+                try (Stream<Path> paths = Files.walk(partition)) {
+                    paths.sorted(Comparator.reverseOrder())
                          .forEach(path -> {
                              try {
                                  Files.delete(path);

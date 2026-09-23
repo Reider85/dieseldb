@@ -1099,37 +1099,37 @@ class Database {
 
     private void executeBatchesInParallel(List<String> queries, UUID transactionId,
                                           List<List<Integer>> batches, List<Object> results) {
-        ExecutorService executor = Executors.newFixedThreadPool(
-                Math.min(batches.size(), Runtime.getRuntime().availableProcessors()));
-        
-        try {
-            List<Future<?>> futures = new ArrayList<>();
-            
-            for (List<Integer> batch : batches) {
-                Future<?> future = executor.submit(() -> {
-                    for (Integer queryIdx : batch) {
-                        try {
-                            Object result = executeQuery(queries.get(queryIdx), transactionId);
-                            results.set(queryIdx, result);
-                        } catch (Exception e) {
-                            // Store the exception as the result for this query
-                            results.set(queryIdx, e);
+        try (ExecutorService executor = Executors.newFixedThreadPool(
+                Math.min(batches.size(), Runtime.getRuntime().availableProcessors()))) {
+            try {
+                List<Future<?>> futures = new ArrayList<>();
+                
+                for (List<Integer> batch : batches) {
+                    Future<?> future = executor.submit(() -> {
+                        for (Integer queryIdx : batch) {
+                            try {
+                                Object result = executeQuery(queries.get(queryIdx), transactionId);
+                                results.set(queryIdx, result);
+                            } catch (Exception e) {
+                                // Store the exception as the result for this query
+                                results.set(queryIdx, e);
+                            }
                         }
-                    }
-                });
-                futures.add(future);
+                    });
+                    futures.add(future);
+                }
+                
+                for (Future<?> future : futures) {
+                    future.get();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new QuerySyntaxException("", "Batch query execution interrupted");
+            } catch (ExecutionException e) {
+                throw new QuerySyntaxException("", "Error executing batch queries");
+            } finally {
+                executor.shutdownNow();
             }
-            
-            for (Future<?> future : futures) {
-                future.get();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new QuerySyntaxException("", "Batch query execution interrupted");
-        } catch (ExecutionException e) {
-            throw new QuerySyntaxException("", "Error executing batch queries");
-        } finally {
-            executor.shutdownNow();
         }
     }
 

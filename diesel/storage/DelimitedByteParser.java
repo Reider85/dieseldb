@@ -715,13 +715,9 @@ public final class DelimitedByteParser {
         String msg = (fileName != null ? fileName + ":" : "") + "line " + lineNumber + ":"
                 + colInfo + " cannot parse \"" + raw + "\" as " + typeName;
         String mode = System.getProperty("storage.load.error.mode", "fail");
-        if ("skip_value".equalsIgnoreCase(mode)) {
+        if ("skip_value".equalsIgnoreCase(mode) || "skip_row".equalsIgnoreCase(mode)) {
             LOGGER.warn(msg);
-            return null;
-        }
-        if ("skip_row".equalsIgnoreCase(mode)) {
-            LOGGER.warn(msg);
-            return null; // caller handles skip_row via null row
+            return null; // skip_value → null column; skip_row → caller drops the row via null
         }
         throw new DieselIOException(msg, e);
     }

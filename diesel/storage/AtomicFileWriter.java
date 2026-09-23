@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -87,6 +88,7 @@ public final class AtomicFileWriter implements Closeable {
     private final FileChannel channel;
     private final ReentrantLock targetLock;
     private BufferedWriter bufferedWriter;
+    private Writer textWriter;
     private OutputStream outputStream;
     private boolean committed;
 
@@ -95,17 +97,24 @@ public final class AtomicFileWriter implements Closeable {
         this.tmp = tmpPath(target);
         this.targetLock = TARGET_LOCKS.computeIfAbsent(target.toAbsolutePath().normalize(), p -> new ReentrantLock());
         targetLock.lock();
+        FileChannel opened = null;
         try {
-            this.channel = FileChannel.open(tmp,
+            opened = FileChannel.open(tmp,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+            this.channel = opened;
+            this.outputStream = Channels.newOutputStream(opened);
             if (text) {
-                this.bufferedWriter = new BufferedWriter(
-                        new OutputStreamWriter(Channels.newOutputStream(channel), StorageConfig.getCharset()),
-                        StorageConfig.bufferSize());
-            } else {
-                this.outputStream = Channels.newOutputStream(channel);
+                this.textWriter = new OutputStreamWriter(outputStream, StorageConfig.getCharset());
+                this.bufferedWriter = new BufferedWriter(textWriter, StorageConfig.bufferSize());
             }
         } catch (IOException | RuntimeException e) {
+            if (opened != null) {
+                try {
+                    opened.close();
+                } catch (IOException closeFailure) {
+                    e.addSuppressed(closeFailure);
+                }
+            }
             targetLock.unlock();
             throw e;
         }
@@ -266,6 +275,10 @@ public final class AtomicFileWriter implements Closeable {
         if (bufferedWriter != null) {
             bufferedWriter.close();
             bufferedWriter = null;
+        }
+        if (textWriter != null) {
+            textWriter.close();
+            textWriter = null;
         }
         if (outputStream != null) {
             outputStream.close();

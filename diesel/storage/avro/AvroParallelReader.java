@@ -276,32 +276,33 @@ public final class AvroParallelReader implements Closeable {
     }
 
     private List<Object[]> readParallel(Collection<String> projection, List<String> cols) throws IOException {
-        ExecutorService pool = Executors.newFixedThreadPool(partitions.size(), r -> {
+        try (ExecutorService pool = Executors.newFixedThreadPool(partitions.size(), r -> {
             Thread t = new Thread(r, "avro-parallel");
             t.setDaemon(true);
             return t;
-        });
-        try {
-            List<Future<List<Object[]>>> futures = new ArrayList<>(partitions.size());
-            for (int[] p : partitions) {
-                futures.add(pool.submit(readPartition(projection, cols, p)));
+        })) {
+            try {
+                List<Future<List<Object[]>>> futures = new ArrayList<>(partitions.size());
+                for (int[] p : partitions) {
+                    futures.add(pool.submit(readPartition(projection, cols, p)));
+                }
+                List<Object[]> result = new ArrayList<>((int) Math.min(estimatedRows(), Integer.MAX_VALUE / 2));
+                for (Future<List<Object[]>> f : futures) {
+                    result.addAll(f.get());
+                }
+                return result;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Avro parallel read interrupted", e);
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof IOException io) {
+                    throw io;
+                }
+                throw new IOException("Avro parallel read failed", cause);
+            } finally {
+                pool.shutdownNow();
             }
-            List<Object[]> result = new ArrayList<>((int) Math.min(estimatedRows(), Integer.MAX_VALUE / 2));
-            for (Future<List<Object[]>> f : futures) {
-                result.addAll(f.get());
-            }
-            return result;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Avro parallel read interrupted", e);
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof IOException io) {
-                throw io;
-            }
-            throw new IOException("Avro parallel read failed", cause);
-        } finally {
-            pool.shutdownNow();
         }
     }
 
