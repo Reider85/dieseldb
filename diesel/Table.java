@@ -8,6 +8,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -108,6 +109,7 @@ interface Index {
      * {@code null} when the index does not store row data.
      */
     @SuppressWarnings("unused")
+    @Nullable
     default Map<String, Object> getCoveredValues(int rowIndex) {
         return null;
     }

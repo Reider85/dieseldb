@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.TreeMap;
 import org.slf4j.Logger;
+import javax.annotation.Nullable;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -123,6 +124,7 @@ public final class JsonPathResolver {
      * @param segments the remaining path segments
      * @param config the streaming JSON configuration for the walk
      */
+    @Nullable
     public static Object extract(String jsonText, List<String> segments, JsonParserConfig config) {
         if (jsonText == null || segments == null || segments.isEmpty()) {
             return null;

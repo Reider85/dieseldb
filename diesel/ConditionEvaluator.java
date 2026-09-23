@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import javax.annotation.Nullable;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -179,6 +180,7 @@ class ConditionEvaluator {
     /**
      * Converts a condition value to the target column type.
      */
+    @Nullable
     Object convertConditionValue(Object value, String column, Class<?> targetType, Map<String, Class<?>> columnTypes) {
         if (value == null) {
             return null;

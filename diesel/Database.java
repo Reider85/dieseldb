@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import javax.annotation.Nonnull;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -157,7 +158,7 @@ class Database {
      * @return the query result (row list, null, or a status String)
      * @throws RuntimeException when the query cannot be parsed or executed
      */
-    public Object executeQuery(String query, UUID transactionId) {
+    public Object executeQuery(@Nonnull String query, UUID transactionId) {
         // Prompt 22 (java:S2259): a null query would NPE below on
         // cleanQuery.trim() before the try-block that formats execution
         // errors; reject it up front with a clear IllegalArgumentException.
@@ -1148,7 +1149,7 @@ class Database {
      * @return the registered table
      * @throws IllegalArgumentException if no such table exists
      */
-    public Table getTable(String tableName) {
+    public Table getTable(@Nonnull String tableName) {
         Table table = tables.get(tableName);
         if (table == null) {
             throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);

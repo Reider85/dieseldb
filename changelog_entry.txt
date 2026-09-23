@@ -1,1 +1,1 @@
-3.1.63 Prompt 93: AVRO integration test suite - new AvroStorageTest (32 tests) for Database/SQL integration over AvroRowStorage, enhanced AvroCompressionTest with 9 performance/stress tests, new AvroRecoveryTest (13 tests) for the detect-recover-verify pipeline; tags mapped to storage
+3.1.72 Fix S2259 NullPointerException risk with @Nullable/@Nonnull annotations

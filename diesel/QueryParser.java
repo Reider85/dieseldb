@@ -15,6 +15,8 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import javax.annotation.Nullable;
+import javax.annotation.Nonnull;
 
 /**
  * Parser that turns a SQL string into a {@link Query} execution object.
@@ -934,7 +936,7 @@ class QueryParser {
      * @return the parsed query object
      * @throws IllegalArgumentException if the query is null, empty or unsupported
      */
-    public Query<?> parse(String query, Database database) {
+    public Query<?> parse(@Nonnull String query, @Nonnull Database database) {
         Objects.requireNonNull(database, "Database must not be null");
         if (query == null) {
             throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
@@ -1020,7 +1022,7 @@ class QueryParser {
      * @param query the SQL query to inspect
      * @return true when the query starts with the EXPLAIN keyword
      */
-    static boolean isExplainQuery(String query) {
+    static boolean isExplainQuery(@Nonnull String query) {
         // Prompt 22 (java:S2259): a null query has no EXPLAIN prefix.
         if (query == null) {
             return false;
@@ -3634,6 +3636,7 @@ class QueryParser {
      * Uppercases every character of the input except the contents of
      * double-quoted identifiers, which keep their original case.
      */
+    @Nullable
     static String toUpperCasePreservingQuotedIdentifiers(String input) {
         if (input == null) {
             return null;

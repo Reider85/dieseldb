@@ -746,3 +746,5 @@ Update PROMPT_STATUS.md for Prompt 96
 3.1.69 analytics
 3.1.70 analytics
 3.1.71 SonarQube BLOCKER fixes: S2095 (resource leak in AtomicFileWriter, AvroDatePartitioner, AvroParallelReader, Database), S128 (switch fallthrough in AvroHashPartitioner Murmur3), S3516 (dead return in DelimitedByteParser) - 9 main-code BLOCKER issues resolved, 0 OPEN BUG BLOCKER remaining
+
+3.1.72 Fix S2259 NullPointerException risk with @Nullable/@Nonnull annotations

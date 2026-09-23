@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.annotation.Nullable;
 
 /**
  * Shared SQL parsing utility methods for QueryParser and SubqueryParser.
@@ -20,6 +21,7 @@ class SqlParsingUtils {
      * Removes the surrounding double quotes from a quoted identifier.
      * Identifiers that are not quoted are returned unchanged.
      */
+    @Nullable
     static String unquoteIdentifier(String identifier) {
         if (identifier == null) {
             return null;
@@ -37,6 +39,7 @@ class SqlParsingUtils {
      * whole ({@code "user.address.city"}) is unquoted first, then each
      * dot-separated part is unquoted individually.
      */
+    @Nullable
     static String unquoteQualifiedIdentifier(String identifier) {
         if (identifier == null) {
             return null;
@@ -158,6 +161,7 @@ class SqlParsingUtils {
      * column prefix; a leading {@code TABLE.} segment is dropped before the
      * path lookup. Returns {@code null} when the column is not found.
      */
+    @Nullable
     static Class<?> resolveColumnType(String column, Map<String, Class<?>> combinedColumnTypes) {
         JsonPathResolver.ResolvedPath resolved = JsonPathResolver.resolveQualified(combinedColumnTypes.keySet(), column);
         if (resolved.columnIndex() < 0) {
