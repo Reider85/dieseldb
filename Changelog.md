@@ -741,3 +741,4 @@ Update PROMPT_STATUS.md for Prompt 94
 Update PROMPT_STATUS.md for Prompt 95
 3.1.66 Prompt 96: AVRO documentation and examples - comprehensive guide and SQL examples via new docs/avro-storage-guide.md (detailed setup/configuration guide, SQL usage examples, performance tuning, benchmark results, troubleshooting, best practices) and examples/avro-examples.sql (12 sections covering basic DDL/INSERT/SELECT, advanced queries with JOINs/subqueries/CTEs, window functions, transactions, indexing, statistical analysis, data validation, and cleanup examples). Guides cover configuration (storage/compression/performance/audit/metrics), SQL operations (DDL/DML/JOINs/aggregations/window functions/transactions), performance (compression/block size tuning/benchmark results), troubleshooting (common errors/JMX monitoring/command-line tools), and advanced features (schema evolution/partitioning/backup/external integration)
 Update PROMPT_STATUS.md for Prompt 96
+3.1.67 Sonar
