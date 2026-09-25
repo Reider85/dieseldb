@@ -22,89 +22,102 @@ final class JsonCopy {
         int depth = 0;
         String pendingFieldName = null;
         while (event != null) {
-            switch (event) {
-                case START_OBJECT -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    target.writeStartObject();
-                    depth++;
-                }
-                case START_ARRAY -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    target.writeStartArray();
-                    depth++;
-                }
-                case END_OBJECT -> {
-                    target.writeEndObject();
-                    depth--;
-                }
-                case END_ARRAY -> {
-                    target.writeEndArray();
-                    depth--;
-                }
-                case FIELD_NAME -> pendingFieldName = source.currentName();
-                case VALUE_STRING -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    target.writeString(source.getText());
-                }
-                case VALUE_NUMBER_INT -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    target.writeNumber(source.getLongValue());
-                }
-                case VALUE_NUMBER_FLOAT -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    BigDecimal number = source.getDecimalValue();
-                    double asDouble = number.doubleValue();
-                    if (Double.isFinite(asDouble)) {
-                        target.writeNumber(asDouble);
-                    } else {
-                        target.writeNumber(number);
-                    }
-                }
-                case VALUE_TRUE -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    target.writeBoolean(true);
-                }
-                case VALUE_FALSE -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    target.writeBoolean(false);
-                }
-                case VALUE_NULL -> {
-                    if (pendingFieldName != null) {
-                        target.writeFieldName(pendingFieldName);
-                        pendingFieldName = null;
-                    }
-                    target.writeNull();
-                }
-                case END_INPUT -> {
-                    event = null;
-                    continue;
-                }
-            }
+            pendingFieldName = handleCopyEvent(event, source, target, pendingFieldName);
+            depth = updateDepth(event, depth);
             if (depth <= 0 || event == null) {
                 break;
             }
             event = source.nextToken();
         }
+    }
+
+    /**
+     * Copies a single JSON event from source to target, handling field-name
+     * buffering and value writing. Returns the updated pending field name.
+     */
+    private static String handleCopyEvent(JsonEvent event, JsonStreamParser source,
+                                          JsonStreamGenerator target,
+                                          String pendingFieldName) throws IOException {
+        switch (event) {
+            case START_OBJECT -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                target.writeStartObject();
+            }
+            case START_ARRAY -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                target.writeStartArray();
+            }
+            case END_OBJECT -> target.writeEndObject();
+            case END_ARRAY -> target.writeEndArray();
+            case FIELD_NAME -> pendingFieldName = source.currentName();
+            case VALUE_STRING -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                target.writeString(source.getText());
+            }
+            case VALUE_NUMBER_INT -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                target.writeNumber(source.getLongValue());
+            }
+            case VALUE_NUMBER_FLOAT -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                BigDecimal number = source.getDecimalValue();
+                double asDouble = number.doubleValue();
+                if (Double.isFinite(asDouble)) {
+                    target.writeNumber(asDouble);
+                } else {
+                    target.writeNumber(number);
+                }
+            }
+            case VALUE_TRUE -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                target.writeBoolean(true);
+            }
+            case VALUE_FALSE -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                target.writeBoolean(false);
+            }
+            case VALUE_NULL -> {
+                if (pendingFieldName != null) {
+                    target.writeFieldName(pendingFieldName);
+                    pendingFieldName = null;
+                }
+                target.writeNull();
+            }
+            case END_INPUT -> { /* handled by caller via depth check */ }
+        }
+        return pendingFieldName;
+    }
+
+    /**
+     * Tracks nesting depth: +1 for START_OBJECT/START_ARRAY, -1 for END_OBJECT/END_ARRAY.
+     * Returns the updated depth.
+     */
+    private static int updateDepth(JsonEvent event, int depth) {
+        return switch (event) {
+            case START_OBJECT, START_ARRAY -> depth + 1;
+            case END_OBJECT, END_ARRAY -> depth - 1;
+            default -> depth;
+        };
     }
 }

@@ -232,9 +232,8 @@ public final class AvroRestoreManager {
             return result;
         }
         for (File child : children) {
-            if (!child.isDirectory()) continue;
             File manifestFile = new File(child, "manifest.txt");
-            if (!manifestFile.isFile()) continue;
+            if (!child.isDirectory() || !manifestFile.isFile()) continue;
             try {
                 AvroBackupManager.BackupManifest manifest = AvroBackupManager.readManifest(manifestFile);
                 result.add(new AvailableBackup(child, manifest));
@@ -313,9 +312,8 @@ public final class AvroRestoreManager {
 
         File best = null;
         for (File child : children) {
-            if (!child.isDirectory()) continue;
             File manifestFile = new File(child, "manifest.txt");
-            if (!manifestFile.isFile()) continue;
+            if (!child.isDirectory() || !manifestFile.isFile()) continue;
             try {
                 AvroBackupManager.BackupManifest manifest = AvroBackupManager.readManifest(manifestFile);
                 if (!manifest.startedAt().isAfter(pointInTime)) {

@@ -501,35 +501,26 @@ public class SubqueryParser {
             char c = normalized.charAt(pos);
             if (c == '\'') {
                 int quoteEnd = normalized.indexOf('\'', pos + 1);
-                if (quoteEnd == -1) {
-                    quoteEnd = normalized.length();
-                }
-                pos = quoteEnd + 1;
-                continue;
-            }
-            if (c == '(') {
+                pos = (quoteEnd == -1 ? normalized.length() : quoteEnd + 1);
+            } else if (c == '(') {
                 parenDepth++;
                 pos++;
-                continue;
-            }
-            if (c == ')') {
+            } else if (c == ')') {
                 parenDepth--;
                 pos++;
-                continue;
-            }
-            if (parenDepth > 0) {
+            } else if (parenDepth > 0) {
                 pos++;
-                continue;
+            } else {
+                String keyword = matchJoinKeywordAt(normalized, pos);
+                if (keyword != null) {
+                    parts.add(normalized.substring(lastEnd, pos).trim());
+                    parts.add(keyword.trim());
+                    pos += keyword.trim().length();
+                    lastEnd = pos;
+                } else {
+                    pos++;
+                }
             }
-            String keyword = matchJoinKeywordAt(normalized, pos);
-            if (keyword != null) {
-                parts.add(normalized.substring(lastEnd, pos).trim());
-                parts.add(keyword.trim());
-                pos += keyword.trim().length();
-                lastEnd = pos;
-                continue;
-            }
-            pos++;
         }
         parts.add(normalized.substring(lastEnd).trim());
         return parts;
@@ -1245,28 +1236,21 @@ for (int i = 0; i < input.length(); i++) {
             if (token.type == Token.TokenType.LOGICAL_OPERATOR) {
                 currentConjunction = token.value.toUpperCase();
                 LOGGER.log(Level.FINEST, "Set conjunction: {0}", currentConjunction);
-                continue;
-            }
-            if (token.type == Token.TokenType.TABLE_ALIAS) {
+            } else if (token.type == Token.TokenType.TABLE_ALIAS) {
                 lastAlias = token.value;
                 LOGGER.log(Level.FINEST, "Captured table alias: {0}", lastAlias);
-                continue;
-            }
-
-            String condStr = token.value;
-            String effectiveTableName = lastAlias != null ? ctx.tableAliases.getOrDefault(lastAlias, lastAlias) : ctx.defaultTableName;
-
-            if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
+            } else if (token.value.equalsIgnoreCase(SqlKeywords.NOT)) {
                 not = true;
                 LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
-                continue;
+            } else {
+                String condStr = token.value;
+                String effectiveTableName = lastAlias != null ? ctx.tableAliases.getOrDefault(lastAlias, lastAlias) : ctx.defaultTableName;
+                QueryParser.Condition condition = parseConditionByType(condStr, ctx, effectiveTableName, currentConjunction, not);
+                conditions.add(condition);
+                lastAlias = null;
+                currentConjunction = null;
+                not = false;
             }
-
-            QueryParser.Condition condition = parseConditionByType(condStr, ctx, effectiveTableName, currentConjunction, not);
-            conditions.add(condition);
-            lastAlias = null;
-            currentConjunction = null;
-            not = false;
         }
 
         LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);

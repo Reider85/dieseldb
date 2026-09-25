@@ -337,77 +337,35 @@ public final class AvroBloomFilter {
                                                   long dataFileModified) {
         if (!Files.exists(sidecarPath)) return null;
         try (BufferedReader r = Files.newBufferedReader(sidecarPath, StandardCharsets.UTF_8)) {
+            SidecarState state = new SidecarState();
             String line;
-            boolean enabled = true;
-            int loadedBitsPerKey = AvroBloomFilterConfig.DEFAULT_BITS_PER_KEY;
-            int loadedNumHashes = AvroBloomFilterConfig.DEFAULT_NUM_HASHES;
-            double loadedFpp = AvroBloomFilterConfig.DEFAULT_FPP;
-            long fileSize = -2;
-            long fileModified = -2;
-            int expectedBlocks = -1;
             boolean reachedData = false;
-            List<LoadedBlock> loaded = new ArrayList<>();
             while ((line = r.readLine()) != null) {
                 if (line.equals("---")) {
                     reachedData = true;
                     continue;
                 }
                 if (!reachedData) {
-                    if (line.startsWith("VERSION=")) {
-                        int version = Integer.parseInt(line.substring(8));
-                        if (version != SIDECAR_VERSION) return null;
-                    } else if (line.startsWith("ENABLED=")) {
-                        enabled = Boolean.parseBoolean(line.substring(8));
-                    } else if (line.startsWith("BITS_PER_KEY=")) {
-                        loadedBitsPerKey = Integer.parseInt(line.substring(13));
-                    } else if (line.startsWith("NUM_HASHES=")) {
-                        loadedNumHashes = Integer.parseInt(line.substring(11));
-                    } else if (line.startsWith("FPP=")) {
-                        loadedFpp = Double.parseDouble(line.substring(4));
-                    } else if (line.startsWith("DATA_FILE_SIZE=")) {
-                        fileSize = Long.parseLong(line.substring(15));
-                    } else if (line.startsWith("DATA_FILE_MODIFIED=")) {
-                        fileModified = Long.parseLong(line.substring(19));
-                    } else if (line.startsWith("BLOCK_COUNT=")) {
-                        expectedBlocks = Integer.parseInt(line.substring(12));
-                    }
+                    if (!parseHeaderLine(line, state)) return null;
                     continue;
                 }
-                if (line.startsWith("BLOCK=")) {
-                    int key = Integer.parseInt(line.substring(6));
-                    LoadedBlock block = new LoadedBlock();
-                    block.index = key;
-                    loaded.add(block);
-                } else if (line.startsWith("KEYS=")) {
-                    if (!loaded.isEmpty()) {
-                        loaded.get(loaded.size() - 1).keys = Integer.parseInt(line.substring(5));
-                    }
-                } else if (line.startsWith("BIT_SIZE=")) {
-                    if (!loaded.isEmpty()) {
-                        loaded.get(loaded.size() - 1).bitSize = Integer.parseInt(line.substring(9));
-                    }
-                } else if (line.startsWith("BITS=")) {
-                    if (!loaded.isEmpty()) {
-                        loaded.get(loaded.size() - 1).bits =
-                                Base64.getDecoder().decode(line.substring(5));
-                    }
-                }
+                parseDataLine(line, state.loaded);
             }
-            if (fileSize != dataFileSize || fileModified != dataFileModified) {
+            if (state.fileSize != dataFileSize || state.fileModified != dataFileModified) {
                 LOGGER.debug("AvroBloomFilter sidecar stamp mismatch: {}",
-                        fileSize != dataFileSize ? "size" : "modified");
+                        state.fileSize != dataFileSize ? "size" : "modified");
                 return null;
             }
-            if (expectedBlocks >= 0 && loaded.size() != expectedBlocks) {
+            if (state.expectedBlocks >= 0 && state.loaded.size() != state.expectedBlocks) {
                 LOGGER.warn("AvroBloomFilter sidecar block count mismatch: expected {}, got {}",
-                        expectedBlocks, loaded.size());
+                        state.expectedBlocks, state.loaded.size());
                 return null;
             }
             AvroBloomFilter filter = new AvroBloomFilter(
-                    AvroBloomFilterConfig.resolveFor(loadedBitsPerKey, loadedNumHashes, loadedFpp, enabled));
-            for (LoadedBlock block : loaded) {
+                    AvroBloomFilterConfig.resolveFor(state.bitsPerKey, state.numHashes, state.fpp, state.enabled));
+            for (LoadedBlock block : state.loaded) {
                 if (block.bits == null) continue;
-                BlockFilter bf = BlockFilter.fromBytes(block.bits, block.bitSize, loadedNumHashes);
+                BlockFilter bf = BlockFilter.fromBytes(block.bits, block.bitSize, state.numHashes);
                 bf.keyCount.set(block.keys);
                 filter.filters.put(block.index, bf);
             }
@@ -419,6 +377,70 @@ public final class AvroBloomFilter {
     }
 
     // ─── Internal helpers ───────────────────────────────────────────
+
+    private static final class SidecarState {
+        boolean enabled = true;
+        int bitsPerKey = AvroBloomFilterConfig.DEFAULT_BITS_PER_KEY;
+        int numHashes = AvroBloomFilterConfig.DEFAULT_NUM_HASHES;
+        double fpp = AvroBloomFilterConfig.DEFAULT_FPP;
+        long fileSize = -2;
+        long fileModified = -2;
+        int expectedBlocks = -1;
+        final List<LoadedBlock> loaded = new ArrayList<>();
+    }
+
+    /**
+     * Parses a single metadata header line from the sidecar file.
+     *
+     * @return {@code true} if the line was processed, {@code false} if the
+     *         version is incompatible (caller should return null)
+     */
+    private static boolean parseHeaderLine(String line, SidecarState state) {
+        if (line.startsWith("VERSION=")) {
+            int version = Integer.parseInt(line.substring(8));
+            if (version != SIDECAR_VERSION) return false;
+        } else if (line.startsWith("ENABLED=")) {
+            state.enabled = Boolean.parseBoolean(line.substring(8));
+        } else if (line.startsWith("BITS_PER_KEY=")) {
+            state.bitsPerKey = Integer.parseInt(line.substring(13));
+        } else if (line.startsWith("NUM_HASHES=")) {
+            state.numHashes = Integer.parseInt(line.substring(11));
+        } else if (line.startsWith("FPP=")) {
+            state.fpp = Double.parseDouble(line.substring(4));
+        } else if (line.startsWith("DATA_FILE_SIZE=")) {
+            state.fileSize = Long.parseLong(line.substring(15));
+        } else if (line.startsWith("DATA_FILE_MODIFIED=")) {
+            state.fileModified = Long.parseLong(line.substring(19));
+        } else if (line.startsWith("BLOCK_COUNT=")) {
+            state.expectedBlocks = Integer.parseInt(line.substring(12));
+        }
+        return true;
+    }
+
+    /**
+     * Parses a single data line (BLOCK/KEYS/BIT_SIZE/BITS) from the sidecar file.
+     */
+    private static void parseDataLine(String line, List<LoadedBlock> loaded) {
+        if (line.startsWith("BLOCK=")) {
+            int key = Integer.parseInt(line.substring(6));
+            LoadedBlock block = new LoadedBlock();
+            block.index = key;
+            loaded.add(block);
+        } else if (line.startsWith("KEYS=")) {
+            if (!loaded.isEmpty()) {
+                loaded.get(loaded.size() - 1).keys = Integer.parseInt(line.substring(5));
+            }
+        } else if (line.startsWith("BIT_SIZE=")) {
+            if (!loaded.isEmpty()) {
+                loaded.get(loaded.size() - 1).bitSize = Integer.parseInt(line.substring(9));
+            }
+        } else if (line.startsWith("BITS=")) {
+            if (!loaded.isEmpty()) {
+                loaded.get(loaded.size() - 1).bits =
+                        Base64.getDecoder().decode(line.substring(5));
+            }
+        }
+    }
 
     private static final class LoadedBlock {
         int index;

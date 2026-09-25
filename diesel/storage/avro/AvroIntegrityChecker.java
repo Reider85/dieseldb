@@ -430,19 +430,15 @@ public final class AvroIntegrityChecker {
             long pos = probe.headerEnd();
             int index = 0;
             while (pos < fileLen) {
-                if (fileLen - pos == SYNC_SIZE) {
-                    byte[] tail = new byte[SYNC_SIZE];
-                    readFully(ch, pos, tail, fileLen, avroFile);
-                    if (Arrays.equals(tail, probe.sync())) {
-                        break; // trailing flush marker - clean end
-                    }
+                if (isTrailingFlushMarker(ch, pos, fileLen, probe, avroFile)) {
+                    break;
                 }
                 BlockIntegrityResult r = validateOneBlock(ch, avroFile, pos, fileLen, probe, index);
                 results.add(r);
                 if (!r.valid()) {
                     clean = false;
                     fileProblems.addAll(r.problems());
-                    break; // the remainder of the file is unverifiable
+                    break;
                 }
                 pos = r.contentEndOffset();
                 index++;
@@ -917,6 +913,20 @@ public final class AvroIntegrityChecker {
             }
             off += got;
         }
+    }
+
+    /**
+     * Checks whether the remaining bytes at {@code pos} form a trailing flush
+     * marker (exactly SYNC_SIZE bytes matching the header sync).
+     */
+    private static boolean isTrailingFlushMarker(FileChannel ch, long pos, long fileLen,
+                                                  HeaderProbe probe, File avroFile) throws IOException {
+        if (fileLen - pos != SYNC_SIZE) {
+            return false;
+        }
+        byte[] tail = new byte[SYNC_SIZE];
+        readFully(ch, pos, tail, fileLen, avroFile);
+        return Arrays.equals(tail, probe.sync());
     }
 
     // ─── Configuration helpers ──────────────────────────────────────

@@ -276,49 +276,61 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             if (parser == null) {
                 return null;
             }
-            JsonStreamParser p = parser;
-            lastRowLine = lineNumber;
-            Object[] row = new Object[columns.size()];
-            boolean[] seen = new boolean[columns.size()];
-            try {
-                boolean oldPushdown = projectionPushdown;
-                projectionPushdown = false;
-                try {
-                    parseCurrentRow(p, row, seen);
-                } finally {
-                    projectionPushdown = oldPushdown;
-                }
-            } catch (IOException e) {
-                closeQuietly(p);
-                parser = null;
-                String msg = contextPrefix() + "line " + lastRowLine
-                        + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
-                        + ": " + e.getMessage();
-                if (skipRow(msg, e)) {
-                    continue;
-                }
-                throw new DieselIOException(msg, e);
-            } catch (DieselIOException e) {
-                closeQuietly(p);
-                parser = null;
-                if (skipRow(null, e)) {
-                    continue;
-                }
-                throw e;
+            Object[] row = tryParseRow();
+            if (row != null) {
+                return row;
             }
+        }
+    }
+
+    /**
+     * Attempts to parse the next row from the current parser position.
+     * Returns the parsed row on success, or {@code null} when the row was
+     * skipped via the skip-row policy (caller should retry).
+     */
+    private Object[] tryParseRow() {
+        JsonStreamParser p = parser;
+        lastRowLine = lineNumber;
+        Object[] row = new Object[columns.size()];
+        boolean[] seen = new boolean[columns.size()];
+        try {
+            boolean oldPushdown = projectionPushdown;
+            projectionPushdown = false;
+            try {
+                parseCurrentRow(p, row, seen);
+            } finally {
+                projectionPushdown = oldPushdown;
+            }
+        } catch (IOException e) {
             closeQuietly(p);
             parser = null;
-            try {
-                enforceMissingFieldPolicy(seen);
-            } catch (DieselIOException e) {
-                if (skipRow(null, e)) {
-                    continue;
-                }
-                throw e;
+            String msg = contextPrefix() + "line " + lastRowLine
+                    + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
+                    + ": " + e.getMessage();
+            if (skipRow(msg, e)) {
+                return null;
             }
-            lastRowPresent = seen;
-            return row;
+            throw new DieselIOException(msg, e);
+        } catch (DieselIOException e) {
+            closeQuietly(p);
+            parser = null;
+            if (skipRow(null, e)) {
+                return null;
+            }
+            throw e;
         }
+        closeQuietly(p);
+        parser = null;
+        try {
+            enforceMissingFieldPolicy(seen);
+        } catch (DieselIOException e) {
+            if (skipRow(null, e)) {
+                return null;
+            }
+            throw e;
+        }
+        lastRowPresent = seen;
+        return row;
     }
 
     /**
@@ -342,53 +354,78 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                 throw new DieselIOException(contextPrefix() + "line " + lastRowLine
                         + ": malformed JSON record: missing value for field '" + field + "'", null);
             }
-            if (flatten && projectionPushdown && !subtreeNeeded(field, idx)) {
-                if (idx == null && !isContainerPath(field)) {
-                    handleUnknownField(field);
-                }
-                skipValue(p, valueToken);
-                skippedFieldCount++;
+            if (processFieldFlatten(p, row, seen, flatten, field, idx, valueToken)) {
                 continue;
             }
-            if (flatten && valueToken == JsonEvent.START_OBJECT && isContainerPath(field)) {
-                walkObjectFlat(p, row, seen, field);
-                continue;
+            processFieldSimple(p, row, seen, field, idx, valueToken);
+        }
+    }
+
+    /**
+     * Handles a field in FLATTEN mode. Returns {@code true} if the field was
+     * fully processed (caller should continue to next token), {@code false} if
+     * the caller should fall through to simple processing.
+     */
+    private boolean processFieldFlatten(JsonStreamParser p, Object[] row, boolean[] seen,
+                                        boolean flatten, String field, Integer idx,
+                                        JsonEvent valueToken) throws IOException {
+        if (!flatten) {
+            return false;
+        }
+        if (projectionPushdown && !subtreeNeeded(field, idx)) {
+            if (idx == null && !isContainerPath(field)) {
+                handleUnknownField(field);
             }
-            if (flatten && valueToken == JsonEvent.START_ARRAY) {
-                parseArrayFlat(p, row, seen, field, idx);
-                continue;
-            }
-            if (flatten && valueToken == JsonEvent.START_OBJECT) {
-                if (idx == null) {
-                    handleUnknownField(field);
-                    skipValue(p, valueToken);
-                    skippedFieldCount++;
-                    continue;
-                }
-                if (seen[idx]) {
-                    handleDuplicateField(field);
-                }
-                parsedFieldCount++;
-                String json = captureNested(p);
-                schema.validateReadToken(idx, valueToken, json,
-                        contextPrefix() + "line " + lastRowLine + ": field '" + field + "': ");
-                row[idx] = json;
-                seen[idx] = true;
-                schema.markNestedJson(idx);
-                continue;
-            }
+            skipValue(p, valueToken);
+            skippedFieldCount++;
+            return true;
+        }
+        if (valueToken == JsonEvent.START_OBJECT && isContainerPath(field)) {
+            walkObjectFlat(p, row, seen, field);
+            return true;
+        }
+        if (valueToken == JsonEvent.START_ARRAY) {
+            parseArrayFlat(p, row, seen, field, idx);
+            return true;
+        }
+        if (valueToken == JsonEvent.START_OBJECT) {
             if (idx == null) {
                 handleUnknownField(field);
                 skipValue(p, valueToken);
                 skippedFieldCount++;
-            } else {
-                if (seen[idx]) {
-                    handleDuplicateField(field);
-                }
-                parsedFieldCount++;
-                row[idx] = parseFieldValue(p, idx, field, valueToken);
-                seen[idx] = true;
+                return true;
             }
+            if (seen[idx]) {
+                handleDuplicateField(field);
+            }
+            parsedFieldCount++;
+            String json = captureNested(p);
+            schema.validateReadToken(idx, valueToken, json,
+                    contextPrefix() + "line " + lastRowLine + ": field '" + field + "': ");
+            row[idx] = json;
+            seen[idx] = true;
+            schema.markNestedJson(idx);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Handles a field in simple (non-FLATTEN or non-container) mode.
+     */
+    private void processFieldSimple(JsonStreamParser p, Object[] row, boolean[] seen,
+                                    String field, Integer idx, JsonEvent valueToken) throws IOException {
+        if (idx == null) {
+            handleUnknownField(field);
+            skipValue(p, valueToken);
+            skippedFieldCount++;
+        } else {
+            if (seen[idx]) {
+                handleDuplicateField(field);
+            }
+            parsedFieldCount++;
+            row[idx] = parseFieldValue(p, idx, field, valueToken);
+            seen[idx] = true;
         }
     }
 
@@ -417,45 +454,59 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             }
             String full = path + "." + child;
             Integer childIdx = indexByName.get(full);
-            if (projectionPushdown && !subtreeNeeded(full, childIdx)) {
-                skipValue(p, childValue);
-                skippedFieldCount++;
+            if (processFlatField(p, row, seen, full, childIdx, childValue)) {
                 continue;
             }
-            if (childValue == JsonEvent.START_OBJECT) {
-                if (isContainerPath(full)) {
-                    walkObjectFlat(p, row, seen, full);
-                    continue;
-                }
-                if (childIdx != null && !seen[childIdx]) {
-                    parsedFieldCount++;
-                    String json = captureNested(p);
-                    schema.validateReadToken(childIdx, childValue, json,
-                            contextPrefix() + "line " + lastRowLine + ": field '" + full + "': ");
-                    row[childIdx] = json;
-                    seen[childIdx] = true;
-                    schema.markNestedJson(childIdx);
-                    continue;
-                }
-                skipValue(p, childValue);
-                continue;
-            }
-            if (childValue == JsonEvent.START_ARRAY) {
-                parseArrayFlat(p, row, seen, full, childIdx);
-                continue;
+            skipValue(p, childValue);
+        }
+    }
+
+    /**
+     * Processes a single field during FLATTEN-mode object walk.
+     *
+     * @return {@code true} if the field was fully handled (caller should
+     *         continue to next token), {@code false} if the value should be skipped
+     */
+    private boolean processFlatField(JsonStreamParser p, Object[] row, boolean[] seen,
+                                     String full, Integer childIdx,
+                                     JsonEvent childValue) throws IOException {
+        if (projectionPushdown && !subtreeNeeded(full, childIdx)) {
+            skipValue(p, childValue);
+            skippedFieldCount++;
+            return true;
+        }
+        if (childValue == JsonEvent.START_OBJECT) {
+            if (isContainerPath(full)) {
+                walkObjectFlat(p, row, seen, full);
+                return true;
             }
             if (childIdx != null && !seen[childIdx]) {
                 parsedFieldCount++;
-                if (childValue == JsonEvent.VALUE_NULL) {
-                    row[childIdx] = null;
-                } else {
-                    row[childIdx] = parseFieldValue(p, childIdx, full, childValue);
-                }
+                String json = captureNested(p);
+                schema.validateReadToken(childIdx, childValue, json,
+                        contextPrefix() + "line " + lastRowLine + ": field '" + full + "': ");
+                row[childIdx] = json;
                 seen[childIdx] = true;
-            } else {
-                skipValue(p, childValue);
+                schema.markNestedJson(childIdx);
+                return true;
             }
+            return false;
         }
+        if (childValue == JsonEvent.START_ARRAY) {
+            parseArrayFlat(p, row, seen, full, childIdx);
+            return true;
+        }
+        if (childIdx != null && !seen[childIdx]) {
+            parsedFieldCount++;
+            if (childValue == JsonEvent.VALUE_NULL) {
+                row[childIdx] = null;
+            } else {
+                row[childIdx] = parseFieldValue(p, childIdx, full, childValue);
+            }
+            seen[childIdx] = true;
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -629,71 +680,9 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             boolean[] seenColumn = new boolean[columns.size()];
             try {
                 if (config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
-                    // FLATTEN mode must parse nested containers to reach the leaf
-                    // columns; dot-path items resolve to exact leaf columns. With
-                    // projection pushdown (prompt 55) subtrees that hold no needed
-                    // leaf are skipped at the token level instead of being parsed
-                    // and converted.
-                    Object[] fullRow = new Object[columns.size()];
-                    boolean[] seenFull = new boolean[columns.size()];
-                    projectionPushdown = true;
-                    try {
-                        parseCurrentRow(p, fullRow, seenFull);
-                    } finally {
-                        projectionPushdown = false;
-                    }
-                    lastRowPresent = seenFull;
-                    for (int s = 0; s < slots; s++) {
-                        JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
-                        int idx = slot.columnIndex();
-                        if (idx >= 0 && seenFull[idx]) {
-                            values[s] = fullRow[idx];
-                        }
-                    }
+                    nextProjectedFlatten(p, values, slots);
                 } else {
-                    while (p.nextToken() != JsonEvent.END_OBJECT) {
-                        if (p.currentEvent() != JsonEvent.FIELD_NAME) {
-                            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                                    + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
-                        }
-                        String field = p.currentName();
-                        Integer idx = indexByName.get(field);
-                        JsonEvent valueToken = p.nextToken();
-                        if (valueToken == null) {
-                            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                                    + ": malformed JSON record: missing value for field '" + field + "'", null);
-                        }
-                        if (idx == null) {
-                            handleUnknownField(field);
-                            skipValue(p, valueToken);
-                            skippedFieldCount++;
-                            continue;
-                        }
-                        if (neededByColumn == null || !neededByColumn[idx]) {
-                            skipValue(p, valueToken);
-                            skippedFieldCount++;
-                            continue;
-                        }
-                        if (seenColumn[idx]) {
-                            handleDuplicateField(field);
-                        }
-                        parsedFieldCount++;
-                        Object value = parseFieldValue(p, idx, field, valueToken);
-                        seenColumn[idx] = true;
-                        lastRowPresent = seenColumn;
-                        for (int s = 0; s < slots; s++) {
-                            JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
-                            if (slot.columnIndex() != idx) {
-                                continue;
-                            }
-                            if (slot.isPlainColumn()) {
-                                values[s] = value;
-                            } else if (value instanceof String txt
-                                    && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
-                                values[s] = schema.extractPathValue(txt, slot.segments());
-                            }
-                        }
-                    }
+                    nextProjectedJsonColumn(p, values, slots, seenColumn);
                 }
             } catch (IOException e) {
                 closeQuietly(p);
@@ -716,6 +705,80 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             closeQuietly(p);
             parser = null;
             return values;
+        }
+    }
+
+    /**
+     * FLATTEN-mode branch of {@link #nextProjected}: parses nested containers
+     * to reach leaf columns, then copies requested slots.
+     */
+    private void nextProjectedFlatten(JsonStreamParser p, Object[] values, int slots) throws IOException {
+        Object[] fullRow = new Object[columns.size()];
+        boolean[] seenFull = new boolean[columns.size()];
+        projectionPushdown = true;
+        try {
+            parseCurrentRow(p, fullRow, seenFull);
+        } finally {
+            projectionPushdown = false;
+        }
+        lastRowPresent = seenFull;
+        for (int s = 0; s < slots; s++) {
+            JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
+            int idx = slot.columnIndex();
+            if (idx >= 0 && seenFull[idx]) {
+                values[s] = fullRow[idx];
+            }
+        }
+    }
+
+    /**
+     * json_column-mode branch of {@link #nextProjected}: parses fields directly,
+     * projecting only requested columns.
+     */
+    private void nextProjectedJsonColumn(JsonStreamParser p, Object[] values, int slots,
+                                        boolean[] seenColumn) throws IOException {
+        while (p.nextToken() != JsonEvent.END_OBJECT) {
+            if (p.currentEvent() != JsonEvent.FIELD_NAME) {
+                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+                        + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
+            }
+            String field = p.currentName();
+            Integer idx = indexByName.get(field);
+            JsonEvent valueToken = p.nextToken();
+            if (valueToken == null) {
+                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+                        + ": malformed JSON record: missing value for field '" + field + "'", null);
+            }
+            if (idx == null) {
+                handleUnknownField(field);
+                skipValue(p, valueToken);
+                skippedFieldCount++;
+                continue;
+            }
+            if (neededByColumn == null || !neededByColumn[idx]) {
+                skipValue(p, valueToken);
+                skippedFieldCount++;
+                continue;
+            }
+            if (seenColumn[idx]) {
+                handleDuplicateField(field);
+            }
+            parsedFieldCount++;
+            Object value = parseFieldValue(p, idx, field, valueToken);
+            seenColumn[idx] = true;
+            lastRowPresent = seenColumn;
+            for (int s = 0; s < slots; s++) {
+                JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
+                if (slot.columnIndex() != idx) {
+                    continue;
+                }
+                if (slot.isPlainColumn()) {
+                    values[s] = value;
+                } else if (value instanceof String txt
+                        && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
+                    values[s] = schema.extractPathValue(txt, slot.segments());
+                }
+            }
         }
     }
 

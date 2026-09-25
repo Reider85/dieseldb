@@ -237,23 +237,7 @@ public final class AvroCrashDetector {
                 backups.add(new BakFile(f, name.substring(0, name.length() - BAK_SUFFIX.length()),
                         f.length(), modifiedOf(f)));
             } else if (lower.endsWith(AVRO_SUFFIX)) {
-                if (f.length() == 0) {
-                    empties.add(new EmptyFile(f));
-                    continue;
-                }
-                AvroSyncMarkerManager.IntegrityResult integrity;
-                try {
-                    integrity = syncMarkerManager.validateIntegrity(f);
-                } catch (IOException e) {
-                    LOGGER.warn("Avro crash detection: cannot validate {} (unreadable header): {}",
-                            f.getPath(), e.getMessage());
-                    corrupted.add(new CorruptedFile(f, null, true));
-                    continue;
-                }
-                boolean needsRecovery = !integrity.valid() || integrity.truncationOffset() >= 0;
-                if (needsRecovery || !integrity.errors().isEmpty()) {
-                    corrupted.add(new CorruptedFile(f, integrity, needsRecovery));
-                }
+                classifyAvroFile(f, empties, corrupted);
             }
         }
 
@@ -277,6 +261,31 @@ public final class AvroCrashDetector {
 
     private static Instant modifiedOf(File file) {
         return Instant.ofEpochMilli(file.lastModified());
+    }
+
+    /**
+     * Classifies a single .avro file as empty, corrupt, or healthy.
+     * Adds the appropriate artifact to the provided lists.
+     */
+    private void classifyAvroFile(File f, List<EmptyFile> empties,
+                                  List<CorruptedFile> corrupted) {
+        if (f.length() == 0) {
+            empties.add(new EmptyFile(f));
+            return;
+        }
+        AvroSyncMarkerManager.IntegrityResult integrity;
+        try {
+            integrity = syncMarkerManager.validateIntegrity(f);
+        } catch (IOException e) {
+            LOGGER.warn("Avro crash detection: cannot validate {} (unreadable header): {}",
+                    f.getPath(), e.getMessage());
+            corrupted.add(new CorruptedFile(f, null, true));
+            return;
+        }
+        boolean needsRecovery = !integrity.valid() || integrity.truncationOffset() >= 0;
+        if (needsRecovery || !integrity.errors().isEmpty()) {
+            corrupted.add(new CorruptedFile(f, integrity, needsRecovery));
+        }
     }
 
     // ─── Configuration helpers ──────────────────────────────────────

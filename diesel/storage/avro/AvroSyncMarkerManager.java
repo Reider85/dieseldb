@@ -362,6 +362,30 @@ public final class AvroSyncMarkerManager {
     }
 
     /**
+     * Outcome of scanning a single block inside {@link #coreScan}.
+     *
+     * @param ok          {@code true} when a valid block was found and appended
+     * @param stop        {@code true} when the scan loop should terminate
+     * @param problem     non-null when the block was corrupt / truncated
+     * @param marker      the trailing sync marker (only set when a flush tail was read)
+     * @param block       the scanned block (only set when {@code ok})
+     * @param nextPos     the file offset to continue scanning from
+     */
+    private record BlockScanResult(boolean ok, boolean stop, String problem,
+                                   SyncMarkerInfo marker, ScannedBlock block,
+                                   long nextPos) {
+        static BlockScanResult flush(SyncMarkerInfo marker, long nextPos) {
+            return new BlockScanResult(false, true, null, marker, null, nextPos);
+        }
+        static BlockScanResult problem(String msg, long nextPos) {
+            return new BlockScanResult(false, true, msg, null, null, nextPos);
+        }
+        static BlockScanResult block(ScannedBlock block, long nextPos) {
+            return new BlockScanResult(true, false, null, null, block, nextPos);
+        }
+    }
+
+    /**
      * Walks the raw file bytes after the header. In strict mode structural
      * corruption and truncated blocks raise {@link IOException}; in lenient
      * mode they are recorded as problems and the scan stops at the first one,
@@ -383,108 +407,135 @@ public final class AvroSyncMarkerManager {
             long pos = headerEnd;
             int index = 0;
             while (pos < fileLen) {
-                if (fileLen - pos == SYNC_SIZE) {
-                    byte[] tail = new byte[SYNC_SIZE];
-                    try {
-                        readFully(ch, pos, tail, fileLen, avroFile);
-                    } catch (IOException e) {
+                BlockScanResult result = scanNextBlock(ch, pos, fileLen, sync, avroFile, index, strict);
+                if (result.stop()) {
+                    if (result.problem() != null) {
                         intact = false;
-                        problems.add("Truncated trailing sync marker at " + pos + ": " + e.getMessage());
-                        break;
+                        problems.add(result.problem());
                     }
-                    if (Arrays.equals(tail, sync)) {
-                        markers.add(new SyncMarkerInfo(sync.clone(), pos, -1));
-                        lastValidEnd = pos + SYNC_SIZE;
-                    } else {
-                        intact = false;
-                        problems.add("Trailing flush sync marker mismatch at offset " + pos);
+                    if (result.marker() != null) {
+                        markers.add(result.marker());
+                        lastValidEnd = result.nextPos();
                     }
                     break;
                 }
-
-                long headerPos = pos;
-                long count;
-                try {
-                    long[] cv = readZigzagVlq(ch, pos);
-                    count = cv[0];
-                    pos = cv[1];
-                } catch (IOException e) {
-                    if (strict) {
-                        throw new IOException("Malformed Avro block count at " + pos + " in "
-                                + avroFile + ": " + e.getMessage(), e);
-                    }
-                    intact = false;
-                    problems.add("Truncated Avro block count at " + pos + ": " + e.getMessage());
-                    break;
-                }
-                long size;
-                try {
-                    long[] sv = readZigzagVlq(ch, pos);
-                    size = sv[0];
-                    pos = sv[1];
-                } catch (IOException e) {
-                    if (strict) {
-                        throw new IOException("Malformed Avro block size at " + pos + " in "
-                                + avroFile + ": " + e.getMessage(), e);
-                    }
-                    intact = false;
-                    problems.add("Truncated Avro block size at " + pos + ": " + e.getMessage());
-                    break;
-                }
-                if (count < 0 || size < 0 || size > Integer.MAX_VALUE) {
-                    IOException problem = new IOException("Invalid Avro block header (count=" + count
-                            + ", size=" + size + ") at offset " + headerPos + " in " + avroFile);
-                    if (strict) {
-                        throw problem;
-                    }
-                    intact = false;
-                    problems.add("Invalid Avro block header (count=" + count + ", size=" + size
-                            + ") at offset " + headerPos);
-                    break;
-                }
-
-                long payloadStart = pos;
-                long syncPos = payloadStart + size;
-                if (syncPos + SYNC_SIZE > fileLen) {
-                    IOException truncated = new IOException("Truncated Avro block at " + headerPos
-                            + " in " + avroFile + ": expected sync marker at " + syncPos
-                            + ", file ends at " + fileLen);
-                    if (strict) {
-                        throw truncated;
-                    }
-                    intact = false;
-                    problems.add("Truncated Avro block at " + headerPos + ": expected sync marker at "
-                            + syncPos + ", file ends at " + fileLen);
-                    break;
-                }
-
-                byte[] actual = new byte[SYNC_SIZE];
-                try {
-                    readFully(ch, syncPos, actual, fileLen, avroFile);
-                } catch (IOException e) {
-                    if (strict) {
-                        throw new IOException("Truncated Avro block sync marker at " + syncPos
-                                + " in " + avroFile + ": " + e.getMessage(), e);
-                    }
-                    intact = false;
-                    problems.add("Truncated Avro block sync marker at " + syncPos + ": " + e.getMessage());
-                    break;
-                }
-                if (!Arrays.equals(actual, sync)) {
-                    intact = false;
-                    problems.add("Avro block sync marker mismatch at offset " + syncPos
-                            + " in " + avroFile + " (corrupt file or interrupted write)");
-                    break;
-                }
-
-                markers.add(new SyncMarkerInfo(sync.clone(), syncPos, index));
-                blocks.add(new ScannedBlock(index, headerPos, payloadStart, size, count, syncPos));
-                lastValidEnd = syncPos + SYNC_SIZE;
+                markers.add(new SyncMarkerInfo(sync.clone(), result.block().syncMarkerOffset(), index));
+                blocks.add(result.block());
+                lastValidEnd = result.block().syncMarkerOffset() + SYNC_SIZE;
                 index++;
                 pos = lastValidEnd;
             }
         }
         return new CoreScan(markers, blocks, problems, intact, intact ? -1 : lastValidEnd);
+    }
+
+    /**
+     * Attempts to read and validate the next Avro block at the given file offset.
+     * Returns a {@link BlockScanResult} that tells the caller whether a valid
+     * block was found, the scan should stop, or an error occurred.
+     *
+     * <p>This method replaces the eight {@code break} statements that were
+     * previously inlined in the {@link #coreScan} while-loop, reducing the
+     * loop's cognitive complexity from ~22 to ~8.
+     */
+    private BlockScanResult scanNextBlock(FileChannel ch, long pos, long fileLen,
+                                          byte[] sync, File avroFile, int index,
+                                          boolean strict) throws IOException {
+        // ── trailing flush marker (exactly SYNC_SIZE bytes left) ──
+        if (fileLen - pos == SYNC_SIZE) {
+            byte[] tail = new byte[SYNC_SIZE];
+            try {
+                readFully(ch, pos, tail, fileLen, avroFile);
+            } catch (IOException e) {
+                return BlockScanResult.problem(
+                        "Truncated trailing sync marker at " + pos + ": " + e.getMessage(), pos);
+            }
+            if (Arrays.equals(tail, sync)) {
+                return BlockScanResult.flush(
+                        new SyncMarkerInfo(sync.clone(), pos, -1), pos + SYNC_SIZE);
+            }
+            return BlockScanResult.problem(
+                    "Trailing flush sync marker mismatch at offset " + pos, pos);
+        }
+
+        // ── block count varint ──
+        long headerPos = pos;
+        long count;
+        try {
+            long[] cv = readZigzagVlq(ch, pos);
+            count = cv[0];
+            pos = cv[1];
+        } catch (IOException e) {
+            if (strict) {
+                throw new IOException("Malformed Avro block count at " + pos + " in "
+                        + avroFile + ": " + e.getMessage(), e);
+            }
+            return BlockScanResult.problem(
+                    "Truncated Avro block count at " + pos + ": " + e.getMessage(), pos);
+        }
+
+        // ── block size varint ──
+        long size;
+        try {
+            long[] sv = readZigzagVlq(ch, pos);
+            size = sv[0];
+            pos = sv[1];
+        } catch (IOException e) {
+            if (strict) {
+                throw new IOException("Malformed Avro block size at " + pos + " in "
+                        + avroFile + ": " + e.getMessage(), e);
+            }
+            return BlockScanResult.problem(
+                    "Truncated Avro block size at " + pos + ": " + e.getMessage(), pos);
+        }
+
+        // ── validate header values ──
+        if (count < 0 || size < 0 || size > Integer.MAX_VALUE) {
+            IOException problem = new IOException("Invalid Avro block header (count=" + count
+                    + ", size=" + size + ") at offset " + headerPos + " in " + avroFile);
+            if (strict) {
+                throw problem;
+            }
+            return BlockScanResult.problem(
+                    "Invalid Avro block header (count=" + count + ", size=" + size
+                            + ") at offset " + headerPos, pos);
+        }
+
+        // ── payload + trailing sync marker ──
+        long payloadStart = pos;
+        long syncPos = payloadStart + size;
+        if (syncPos + SYNC_SIZE > fileLen) {
+            IOException truncated = new IOException("Truncated Avro block at " + headerPos
+                    + " in " + avroFile + ": expected sync marker at " + syncPos
+                    + ", file ends at " + fileLen);
+            if (strict) {
+                throw truncated;
+            }
+            return BlockScanResult.problem(
+                    "Truncated Avro block at " + headerPos + ": expected sync marker at "
+                            + syncPos + ", file ends at " + fileLen, pos);
+        }
+
+        byte[] actual = new byte[SYNC_SIZE];
+        try {
+            readFully(ch, syncPos, actual, fileLen, avroFile);
+        } catch (IOException e) {
+            if (strict) {
+                throw new IOException("Truncated Avro block sync marker at " + syncPos
+                        + " in " + avroFile + ": " + e.getMessage(), e);
+            }
+            return BlockScanResult.problem(
+                    "Truncated Avro block sync marker at " + syncPos + ": " + e.getMessage(), pos);
+        }
+        if (!Arrays.equals(actual, sync)) {
+            return BlockScanResult.problem(
+                    "Avro block sync marker mismatch at offset " + syncPos
+                            + " in " + avroFile + " (corrupt file or interrupted write)", pos);
+        }
+
+        return BlockScanResult.block(
+                new ScannedBlock(index, headerPos, payloadStart, size, count, syncPos),
+                syncPos + SYNC_SIZE);
     }
 
     /**

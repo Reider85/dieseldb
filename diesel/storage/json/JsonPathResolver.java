@@ -137,23 +137,11 @@ public final class JsonPathResolver {
                     return null;
                 }
                 String wanted = segments.get(i);
-                boolean found = false;
-                while (p.nextToken() != JsonEvent.END_OBJECT) {
-                    if (p.currentEvent() != JsonEvent.FIELD_NAME) {
-                        return null;
-                    }
-                    if (!wanted.equals(p.currentName())) {
-                        JsonEvent value = p.nextToken();
-                        skipValue(p, value);
-                        continue;
-                    }
-                    t = p.nextToken();
-                    found = true;
-                    break;
-                }
-                if (!found) {
+                JsonEvent fieldValue = findFieldValue(p, wanted);
+                if (fieldValue == null) {
                     return null;
                 }
+                t = fieldValue;
                 if (i == segments.size() - 1) {
                     return leafValue(p, t, cfg);
                 }
@@ -166,6 +154,25 @@ public final class JsonPathResolver {
             LOGGER.warn("Failed to extract JSON path {}: {}", String.join(".", segments), e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Scans object fields until finding one whose name matches {@code wanted},
+     * reads its value token, and returns it. Returns {@code null} if the field
+     * was not found or the parser reached END_OBJECT.
+     */
+    private static JsonEvent findFieldValue(JsonStreamParser p, String wanted) throws IOException {
+        while (p.nextToken() != JsonEvent.END_OBJECT) {
+            if (p.currentEvent() != JsonEvent.FIELD_NAME) {
+                return null;
+            }
+            if (wanted.equals(p.currentName())) {
+                return p.nextToken();
+            }
+            JsonEvent value = p.nextToken();
+            skipValue(p, value);
+        }
+        return null;
     }
 
     private static Object leafValue(JsonStreamParser p, JsonEvent t, JsonParserConfig config) throws IOException {
