@@ -756,3 +756,5 @@ Update PROMPT_STATUS.md for Prompt 96
 3.1.74 Fix duplicate PK update atomically: validate before mutation in AvroRowStorage.update(), add AvroPrimaryKeyIndex.validateUpdate() to reject conflicting PK on update, 3 regression tests; gates fast 178/0/0, targeted 52/0/0
 
 3.1.75 Refactor QueryParser.java methods to reduce cognitive complexity from 17/18/22 to <=14 using extract method, guard clauses, and switch expressions
+
+3.1.76 Batch 1 Prompt 7: reduce cognitive complexity of 5 SubqueryParser.java methods via extract method and guard clauses — findClauseOutsideSubquery (CC=107→~10), tokenizeConditions (CC=70→~10), parseSingleCondition (CC=47→~8), parseTokenizedConditions (CC=34→~8), parseTableAndJoins (CC=30→~12); 186/0/0 fast tests pass
