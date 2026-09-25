@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * array-based read path.
  */
 @Tag("storage")
+@StorageType({"csv", "tsv"})
 class StorageArrayRepresentationTest {
 
     @TempDir

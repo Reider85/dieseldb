@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Mode is selected via {@code storage.load.error.mode = fail | skip_row | skip_value}.
  */
 @Tag("storage")
+@StorageType({"csv", "tsv"})
 class LoadErrorHandlingTest {
 
     @TempDir

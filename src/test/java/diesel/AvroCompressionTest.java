@@ -585,7 +585,7 @@ class AvroCompressionTest {
             assertEquals(threads, sizes.size());
             for (int t = 0; t < threads; t++) {
                 String codec = codecs().get(t % codecs().size());
-                File f = new File(tempDir.toFile(), "concurrent_" + t + ".avro");
+                File f = new File(tempDir.toFile(), "concurrent_" + t + "_" + codec + ".avro");
                 assertEquals(codec, readCodec(f));
                 try (AvroDataFileReader r = new AvroDataFileReader(f)) {
                     assertEquals(rowsPerThread, countRecords(r));
