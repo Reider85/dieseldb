@@ -5,9 +5,11 @@ import diesel.Database;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -18,11 +20,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 public class SubqueriesTest {
 
     private static final int RECORD_COUNT = 10;
+
+    @TempDir
+    static Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         createTable();
         createUniqueIndex();
         createBTreeIndex();

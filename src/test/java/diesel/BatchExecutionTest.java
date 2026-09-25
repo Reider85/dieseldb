@@ -3,7 +3,9 @@ package diesel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -18,11 +20,15 @@ import static org.junit.jupiter.api.Assertions.*;
 @Tag("query-full")
 class BatchExecutionTest {
 
+    @TempDir
+    Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         try {
             database.dropTable("BATCH_EXEC_TEST");
         } catch (TableNotFoundException ignored) {

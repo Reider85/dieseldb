@@ -5,7 +5,9 @@ import diesel.Database;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -15,11 +17,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 @Tag("smoke")
 public class SelectQueryRefactorTest {
 
+    @TempDir
+    static Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         createUsers();
         insertUsers();
         createProfiles();

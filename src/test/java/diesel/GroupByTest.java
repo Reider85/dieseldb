@@ -5,9 +5,11 @@ import diesel.Database;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Path;
 import java.sql.Date;
 import java.text.SimpleDateFormat;
 import java.util.List;
@@ -22,11 +24,16 @@ public class GroupByTest {
 
     private static final int RECORD_COUNT = 10;
     private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
+
+    @TempDir
+    static Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         createTable();
         createUniqueIndex();
         createBTreeIndex();

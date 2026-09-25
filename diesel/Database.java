@@ -1236,6 +1236,7 @@ class Database {
                 ".tsv", ".tsv.zst", ".tsv.lz4", ".tsv.snappy",
                 ".jsonl", ".jsonl.zst", ".jsonl.lz4", ".jsonl.snappy",
                 ".idx", ".idx.tmp",
+                ".avro", ".avro.tmp", ".avro.bak", ".asi",
                 ErrorMessages.TABLE_EXTENSION
         };
         for (String extension : suffixes) {

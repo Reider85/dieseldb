@@ -6,9 +6,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -20,11 +22,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class HashJoinMemoryTest {
 
     private static final int RECORD_COUNT = 200;
+
+    @TempDir
+    static Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         createTables();
         insertRecords();
     }

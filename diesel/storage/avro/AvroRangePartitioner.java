@@ -564,6 +564,18 @@ public class AvroRangePartitioner {
                 }
             }
 
+            // Ensure empty sub-range directories are created even when the
+            // original range held no rows (split must always materialize dirs)
+            for (RangeBoundary sub : subRanges) {
+                Path subDir = getDataDir(tableName).resolve(tableName)
+                        .resolve(PARTITION_PREFIX + formatBoundary(sub));
+                if (!written.contains(subDir) && !Files.exists(subDir)) {
+                    Files.createDirectories(subDir);
+                    written.add(subDir);
+                    rangesCreated++;
+                }
+            }
+
             // Remove the original range directory
             int rangesRemoved = 0;
             if (Files.exists(oldDir) && !written.contains(oldDir)) {
@@ -711,7 +723,13 @@ public class AvroRangePartitioner {
             result.add(new PartitionRangeInfo(
                     b.index(), b.lowerInclusive(), b.upperInclusive(), p, count));
         }
-        result.sort((x, y) -> Integer.compare(x.rangeIndex(), y.rangeIndex()));
+        result.sort((x, y) -> Double.compare(x.lowerBound(), y.lowerBound()));
+        for (int i = 0; i < result.size(); i++) {
+            PartitionRangeInfo info = result.get(i);
+            result.set(i, new PartitionRangeInfo(i,
+                    info.lowerBound(), info.upperBound(), info.partitionPath(),
+                    info.rowCount()));
+        }
         return result;
     }
 

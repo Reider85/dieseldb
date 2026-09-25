@@ -2511,6 +2511,22 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                                            List<QueryParser.Condition> conditions,
                                                            Map<String, Class<?>> combinedColumnTypes) {
         try {
+            // Prompt: when rows have been lazily deleted in memory, the on-disk
+            // Avro file still contains those tombstoned rows and the pushdown
+            // reader is not aware of them. Bypass pushdown and use the in-memory
+            // scan (which filters via Table.isDeleted) so deleted rows never leak
+            // back into results.
+            if (table.getDeletedCount() > 0) {
+                List<Map<String, Object>> rawRows = table.getRows();
+                List<Map<String, Object>> mainRows = new ArrayList<>(rawRows.size());
+                for (int i = 0; i < rawRows.size(); i++) {
+                    if (!table.isDeleted(i)) {
+                        mainRows.add(rawRows.get(i));
+                    }
+                }
+                return mainRows;
+            }
+
             AvroQueryExecutor executor = new AvroQueryExecutor();
             List<String> selectCols = columns;
             if (columns.size() == 1 && "*".equals(columns.get(0))) {
@@ -2518,12 +2534,43 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
 
             Set<String> required = buildAvroRequiredColumns(conditions, selectCols, table.getColumns());
+            // Aggregate argument columns (e.g. SUM(AGE)) live in the aggregates
+            // list, not in the SELECT projection; they must survive the pushdown
+            // projection or the GROUP BY/aggregate computation sees nulls.
+            for (QueryParser.AggregateFunction agg : aggregates) {
+                if (agg.column != null) {
+                    required.add(agg.column);
+                }
+            }
+            // GROUP BY columns are not always part of the SELECT projection but
+            // are needed to build the groups.
+            for (String groupCol : groupBy) {
+                if (groupCol != null && !groupCol.contains("(")) {
+                    required.add(groupCol);
+                }
+            }
+            // ORDER BY columns are not part of the SELECT projection but are
+            // needed for the post-pushdown sort; without them the comparator
+            // sees nulls and returns the insertion order unchanged.
+            if (orderBy != null) {
+                for (QueryParser.OrderByInfo order : orderBy) {
+                    String col = order.column;
+                    if (col == null || col.contains("(")) {
+                        continue;
+                    }
+                    // Avro record fields are unqualified; strip any TABLE. prefix.
+                    String unqualified = col.contains(".")
+                            ? col.substring(col.lastIndexOf('.') + 1)
+                            : col;
+                    required.add(unqualified);
+                }
+            }
             java.util.function.Predicate<org.apache.avro.generic.GenericRecord> predicate =
                     buildAvroPredicate(conditions, combinedColumnTypes);
 
             AvroQueryExecutor.QueryResult result = executor.executeQuery(
                     avroStorage, predicate, required,
-                    table.getColumns(), combinedColumnTypes, limit);
+                    table.getColumns(), combinedColumnTypes, null);
             return result.rows();
         } catch (Exception e) {
             LOGGER.log(Level.FINE, "Avro pushdown failed, falling back to full scan", e);
@@ -2585,6 +2632,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (conditions == null || conditions.isEmpty()) {
             return null;
         }
+        // The pushdown predicate is a pre-filter evaluated at the byte level.
+        // It must never drop a row the WHERE clause would accept. And-combining
+        // every condition would break OR conjunctions, and negated / grouped
+        // conditions (NOT IN, parens) have 3VL semantics that the byte-level
+        // predicate cannot fully mirror. For those cases disable pushdown and
+        // let the full scan + WHERE filter (which re-evaluates everything) do
+        // the accurate filtering.
+        for (QueryParser.Condition c : conditions) {
+            if (c.isGrouped() || c.not || Objects.equals(c.conjunction, SqlKeywords.OR)) {
+                return null;
+            }
+        }
         List<java.util.function.Predicate<org.apache.avro.generic.GenericRecord>> predicates =
                 new ArrayList<>();
         for (QueryParser.Condition c : conditions) {
@@ -2621,7 +2680,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 Object converted = convertAvroValue(c.value, targetType);
                 yield rec -> {
-                    Object val = rec.get(colName);
+                    Object val = convertAvroRecordValue(rec, colName, targetType);
                     return val != null && avroValuesEqual(val, converted);
                 };
             }
@@ -2631,35 +2690,35 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 Object converted = convertAvroValue(c.value, targetType);
                 yield rec -> {
-                    Object val = rec.get(colName);
+                    Object val = convertAvroRecordValue(rec, colName, targetType);
                     return val == null || !avroValuesEqual(val, converted);
                 };
             }
             case LESS_THAN -> {
                 Object converted = convertAvroValue(c.value, targetType);
                 yield rec -> {
-                    Object val = rec.get(colName);
+                    Object val = convertAvroRecordValue(rec, colName, targetType);
                     return val != null && avroCompareValues(val, converted) < 0;
                 };
             }
             case GREATER_THAN -> {
                 Object converted = convertAvroValue(c.value, targetType);
                 yield rec -> {
-                    Object val = rec.get(colName);
+                    Object val = convertAvroRecordValue(rec, colName, targetType);
                     return val != null && avroCompareValues(val, converted) > 0;
                 };
             }
             case LESS_THAN_OR_EQUALS -> {
                 Object converted = convertAvroValue(c.value, targetType);
                 yield rec -> {
-                    Object val = rec.get(colName);
+                    Object val = convertAvroRecordValue(rec, colName, targetType);
                     return val != null && avroCompareValues(val, converted) <= 0;
                 };
             }
             case GREATER_THAN_OR_EQUALS -> {
                 Object converted = convertAvroValue(c.value, targetType);
                 yield rec -> {
-                    Object val = rec.get(colName);
+                    Object val = convertAvroRecordValue(rec, colName, targetType);
                     return val != null && avroCompareValues(val, converted) >= 0;
                 };
             }
@@ -2672,7 +2731,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     convertedSet.add(convertAvroValue(v, targetType));
                 }
                 yield rec -> {
-                    Object val = rec.get(colName);
+                    Object val = convertAvroRecordValue(rec, colName, targetType);
                     if (val == null) return false;
                     return convertedSet.stream().anyMatch(e -> avroValuesEqual(val, e));
                 };
@@ -2683,10 +2742,59 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         };
     }
 
+    /**
+     * Converts a raw Avro record value to the column's Java target type.
+     * Decimal (BigDecimal) columns arrive as {@code ByteBuffer} on the wire;
+     * without this conversion a comparison would pit {@code [B} against
+     * {@code BigDecimal}. Mirror of {@link AvroRowStorage#fromAvroValue}.
+     */
+    private static Object convertAvroRecordValue(org.apache.avro.generic.GenericRecord rec,
+                                                 String colName, Class<?> targetType) {
+        Object val = rec.get(colName);
+        if (val == null || targetType == null) return val;
+        if (val instanceof org.apache.avro.util.Utf8 utf8) {
+            return targetType == String.class ? utf8.toString() : val;
+        }
+        if (val instanceof java.nio.ByteBuffer bb && targetType == BigDecimal.class) {
+            int scale = 18; // default
+            org.apache.avro.Schema.Field field = rec.getSchema().getField(colName);
+            if (field != null) {
+                org.apache.avro.Schema base = field.schema();
+                if (base.getType() == org.apache.avro.Schema.Type.UNION) {
+                    for (org.apache.avro.Schema branch : base.getTypes()) {
+                        if (branch.getType() == org.apache.avro.Schema.Type.BYTES
+                                && branch.getLogicalType() != null) {
+                            base = branch;
+                            break;
+                        }
+                    }
+                }
+                if (base.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
+                    scale = d.getScale();
+                }
+            }
+            return new BigDecimal(new java.math.BigInteger(bb.array()), scale).stripTrailingZeros();
+        }
+        if (targetType == String.class && val instanceof java.nio.ByteBuffer) {
+            return val.toString();
+        }
+        return val;
+    }
+
     private java.util.function.Predicate<org.apache.avro.generic.GenericRecord> buildAvroGroupedPredicate(
             QueryParser.Condition c,
             Map<String, Class<?>> columnTypes) {
         if (c.subConditions == null || c.subConditions.isEmpty()) return null;
+        for (QueryParser.Condition child : c.subConditions) {
+            // Same guard as buildAvroPredicate: do not push down grouped
+            // conditions containing OR / nested groups / negation — the
+            // byte-level pre-filter cannot mirror 3VL semantics and must not
+            // drop rows the WHERE clause would accept.
+            if (child.isGrouped() || child.not
+                    || Objects.equals(child.conjunction, SqlKeywords.OR)) {
+                return null;
+            }
+        }
         List<java.util.function.Predicate<org.apache.avro.generic.GenericRecord>> childPredicates =
                 new ArrayList<>();
         for (QueryParser.Condition child : c.subConditions) {
@@ -2695,12 +2803,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (cp == null) return null;
             childPredicates.add(cp);
         }
-        boolean isAnd = "AND".equalsIgnoreCase(c.conjunction);
         java.util.function.Predicate<org.apache.avro.generic.GenericRecord> combined = childPredicates.get(0);
         for (int i = 1; i < childPredicates.size(); i++) {
-            combined = isAnd ? combined.and(childPredicates.get(i))
-                    : combined.or(childPredicates.get(i));
+            combined = combined.and(childPredicates.get(i));
         }
+        // Apply the group's own negation, then its conjunction is handled by
+        // the caller's AND-combining (negated groups were already excluded).
         return c.not ? combined.negate() : combined;
     }
 
@@ -2740,6 +2848,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 case "Integer" -> value instanceof Number n ? n.intValue() : Integer.parseInt(value.toString());
                 case "Double" -> value instanceof Number n ? n.doubleValue() : Double.parseDouble(value.toString());
                 case "Float" -> value instanceof Number n ? n.floatValue() : Float.parseFloat(value.toString());
+                case "BigDecimal" -> value instanceof BigDecimal bd ? bd
+                        : new BigDecimal(value.toString());
                 case "String" -> value.toString();
                 case "Boolean" -> value instanceof Boolean b ? b : Boolean.parseBoolean(value.toString());
                 default -> value;

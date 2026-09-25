@@ -7,6 +7,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.function.Predicate;
 
@@ -227,16 +230,57 @@ public final class AvroQueryExecutor {
                 Object val = record.get(col);
                 if (val instanceof org.apache.avro.util.Utf8 utf8) {
                     map.put(col, utf8.toString());
-                } else if (val instanceof java.nio.ByteBuffer bb) {
-                    byte[] arr = new byte[bb.remaining()];
-                    bb.get(arr);
-                    map.put(col, arr);
+                } else if (val instanceof ByteBuffer bb) {
+                    Class<?> targetType = resolveColumnType(col, columnTypes);
+                    if (targetType == BigDecimal.class) {
+                        int scale = 18; // default
+                        Schema.Field field = recordSchema.getField(col);
+                        if (field != null) {
+                            org.apache.avro.LogicalType lt = field.schema().getLogicalType();
+                            if (lt != null) {
+                                org.apache.avro.Schema base = field.schema();
+                                if (base.getType() == Schema.Type.UNION) {
+                                    for (Schema branch : base.getTypes()) {
+                                        if (branch.getType() == Schema.Type.BYTES
+                                                && branch.getLogicalType() != null) {
+                                            base = branch;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (base.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
+                                    scale = d.getScale();
+                                }
+                            }
+                        }
+                        map.put(col, new BigDecimal(new BigInteger(bb.array()), scale).stripTrailingZeros());
+                    } else {
+                        byte[] arr = new byte[bb.remaining()];
+                        bb.get(arr);
+                        map.put(col, arr);
+                    }
                 } else {
                     map.put(col, val);
                 }
             }
         }
         return map;
+    }
+
+    private static Class<?> resolveColumnType(String columnName, Map<String, Class<?>> columnTypes) {
+        if (columnTypes == null || columnName == null) return null;
+        Class<?> t = columnTypes.get(columnName);
+        if (t != null) return t;
+        // The combined types map may use qualified keys (TABLE.COL) while the
+        // scan column list is unqualified — match the trailing segment.
+        String suffix = "." + columnName;
+        for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(columnName)
+                    || e.getKey().regionMatches(true, e.getKey().length() - suffix.length(), suffix, 0, suffix.length())) {
+                return e.getValue();
+            }
+        }
+        return null;
     }
 
     // ─── Statistics ─────────────────────────────────────────────────

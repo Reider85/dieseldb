@@ -4,10 +4,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
@@ -19,11 +21,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("query-full")
 public class AnalyzeTableTest {
 
+    @TempDir
+    static Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
     }
 
     @AfterEach
@@ -193,14 +199,15 @@ public class AnalyzeTableTest {
         database.executeQuery("ANALYZE TABLE " + tableName, null);
         database.getTable(tableName).saveToSerializedFile(tableName);
         try {
-            Table loaded = Table.loadFromFile(new Database(), tableName);
+            Database loadDb = new Database(tempDir.toString());
+            Table loaded = Table.loadFromFile(loadDb, tableName);
             assertTrue(loaded != null, "table must load from its serialized file");
             Table.TableStatistics stats = loaded.getStatistics();
             assertEquals(4, stats.getRowCount(), "row count must survive save/load");
             assertTrue(stats.getAvgRowSizeBytes() > 0, "average row size must survive save/load");
             assertTrue(stats.getLastAnalyzedMillis() > 0, "last-analyzed timestamp must survive save/load");
         } finally {
-            new File(tableName + ".table").delete();
+            new File(tempDir.toFile(), tableName + ".table").delete();
         }
     }
 }
