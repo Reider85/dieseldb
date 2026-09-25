@@ -1487,6 +1487,88 @@ class QueryParser {
         return bracketDepth;
     }
     private Query<List<Map<String, Object>>> parseSelectQuery(String original, Database database) {
+        // Разделяем парсинг на фазы для снижения когнитивной сложности
+        SelectQueryPhaseContext phaseContext = parseSelectQueryPhases(original, database);
+        
+        LOGGER.log(Level.INFO, "Разобран SELECT-запрос: таблица={0}, столбцы={1}, агрегации={2}, соединения={3}, условия={4}",
+                new Object[]{phaseContext.tableName, phaseContext.columns, phaseContext.aggregates, 
+                           phaseContext.joins, phaseContext.conditions});
+
+        return SelectQuery.builder()
+                .tableName(phaseContext.tableName)
+                .tableAlias(phaseContext.tableAlias)
+                .columns(phaseContext.columns)
+                .aggregates(phaseContext.aggregates)
+                .joins(phaseContext.joins)
+                .conditions(phaseContext.conditions)
+                .groupBy(phaseContext.groupBy)
+                .havingConditions(phaseContext.havingConditions)
+                .orderBy(phaseContext.orderBy)
+                .limit(phaseContext.limit)
+                .offset(phaseContext.offset)
+                .tableAliases(phaseContext.columnAliases)
+                .extraTableAliases(phaseContext.tableAliases)
+                .columnTypes(phaseContext.combinedColumnTypes)
+                .build();
+    }
+
+    /**
+     * Контекст для хранения результатов фаз парсинга SELECT-запроса
+     */
+    private static class SelectQueryPhaseContext {
+        String tableName;
+        String tableAlias;
+        List<String> columns;
+        List<AggregateFunction> aggregates;
+        List<SubQuery> subQueries;
+        Map<String, String> columnAliases;
+        List<JoinInfo> joins;
+        Map<String, String> tableAliases;
+        Map<String, Class<?>> combinedColumnTypes;
+        List<Condition> conditions;
+        List<String> groupBy;
+        List<HavingCondition> havingConditions;
+        List<OrderByInfo> orderBy;
+        Integer limit;
+        Integer offset;
+
+        SelectQueryPhaseContext() {
+            this.columns = new ArrayList<>();
+            this.aggregates = new ArrayList<>();
+            this.subQueries = new ArrayList<>();
+            this.columnAliases = new HashMap<>();
+            this.joins = new ArrayList<>();
+            this.tableAliases = new HashMap<>();
+            this.combinedColumnTypes = new HashMap<>();
+            this.conditions = new ArrayList<>();
+            this.groupBy = new ArrayList<>();
+            this.havingConditions = new ArrayList<>();
+            this.orderBy = new ArrayList<>();
+        }
+    }
+
+    /**
+     * Основной метод, разделяющий парсинг SELECT-запроса на фазы
+     */
+    private SelectQueryPhaseContext parseSelectQueryPhases(String original, Database database) {
+        SelectQueryPhaseContext context = new SelectQueryPhaseContext();
+        
+        // Фаза 1: Парсим SELECT и FROM клаузы
+        parseSelectAndFromClauses(original, database, context);
+        
+        // Фаза 2: Парсим таблицы и соединения
+        parseTableAndJoinsPhase(original, database, context);
+        
+        // Фаза 3: Парсим дополнительные условия (WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET)
+        parseAdditionalClausesPhase(original, database, context);
+        
+        return context;
+    }
+
+    /**
+     * Фаза 1: Парсим SELECT и FROM клаузы
+     */
+    private void parseSelectAndFromClauses(String original, Database database, SelectQueryPhaseContext context) {
         // Находим индекс основного FROM
         int fromIndex = findMainFromClause(original);
         if (fromIndex == -1) {
@@ -1498,53 +1580,52 @@ class QueryParser {
         if (selectIndex == -1) {
             throw new IllegalArgumentException("Недопустимый формат SELECT-запроса: отсутствует SELECT");
         }
+        
         String selectPartOriginal = original.substring(selectIndex + 6, fromIndex).trim();
         String tableAndJoinsOriginal = original.substring(fromIndex + 4).trim();
 
         // Парсим элементы SELECT
         SelectItems selectItems = parseSelectItems(selectPartOriginal, database);
-        List<String> columns = selectItems.columns;
-        List<AggregateFunction> aggregates = selectItems.aggregates;
-        List<SubQuery> subQueries = selectItems.subQueries;
-        Map<String, String> columnAliases = selectItems.columnAliases;
+        context.columns = selectItems.columns;
+        context.aggregates = selectItems.aggregates;
+        context.subQueries = selectItems.subQueries;
+        context.columnAliases = selectItems.columnAliases;
+    }
+
+    /**
+     * Фаза 2: Парсим таблицы и соединения
+     */
+    private void parseTableAndJoinsPhase(String original, Database database, SelectQueryPhaseContext context) {
+        int fromIndex = findMainFromClause(original);
+        String tableAndJoinsOriginal = original.substring(fromIndex + 4).trim();
 
         // Парсим таблицы и соединения
         TableJoins tableJoins = parseTableAndJoins(tableAndJoinsOriginal, database);
-        String tableName = tableJoins.tableName;
-        String tableAlias = tableJoins.tableAlias;
-        List<JoinInfo> joins = tableJoins.joins;
-        Map<String, String> tableAliases = tableJoins.tableAliases;
-        Map<String, Class<?>> combinedColumnTypes = tableJoins.combinedColumnTypes;
+        context.tableName = tableJoins.tableName;
+        context.tableAlias = tableJoins.tableAlias;
+        context.joins = tableJoins.joins;
+        context.tableAliases = tableJoins.tableAliases;
+        context.combinedColumnTypes = tableJoins.combinedColumnTypes;
+    }
+
+    /**
+     * Фаза 3: Парсим дополнительные условия и клаузы
+     */
+    private void parseAdditionalClausesPhase(String original, Database database, SelectQueryPhaseContext context) {
+        int fromIndex = findMainFromClause(original);
+        String tableAndJoinsOriginal = original.substring(fromIndex + 4).trim();
 
         // Парсим дополнительные условия и клаузы
-        ParseContext ctx = new ParseContext(tableName, database, original, false, combinedColumnTypes, tableAliases, columnAliases);
-        AdditionalClauses clauses = parseAdditionalClauses(tableAndJoinsOriginal, ctx, aggregates, subQueries);
-        List<Condition> conditions = clauses.conditions;
-        List<String> groupBy = clauses.groupBy;
-        List<HavingCondition> havingConditions = clauses.havingConditions;
-        List<OrderByInfo> orderBy = clauses.orderBy;
-        Integer limit = clauses.limit;
-        Integer offset = clauses.offset;
-
-        LOGGER.log(Level.INFO, "Разобран SELECT-запрос: таблица={0}, столбцы={1}, агрегации={2}, соединения={3}, условия={4}",
-                new Object[]{tableName, columns, aggregates, joins, conditions});
-
-        return SelectQuery.builder()
-                .tableName(tableName)
-                .tableAlias(tableAlias)
-                .columns(columns)
-                .aggregates(aggregates)
-                .joins(joins)
-                .conditions(conditions)
-                .groupBy(groupBy)
-                .havingConditions(havingConditions)
-                .orderBy(orderBy)
-                .limit(limit)
-                .offset(offset)
-                .tableAliases(columnAliases)
-                .extraTableAliases(tableAliases)
-                .columnTypes(tableJoins.combinedColumnTypes)
-                .build();
+        ParseContext ctx = new ParseContext(context.tableName, database, original, false, 
+                                          context.combinedColumnTypes, context.tableAliases, context.columnAliases);
+        AdditionalClauses clauses = parseAdditionalClauses(tableAndJoinsOriginal, ctx, context.aggregates, context.subQueries);
+        
+        context.conditions = clauses.conditions;
+        context.groupBy = clauses.groupBy;
+        context.havingConditions = clauses.havingConditions;
+        context.orderBy = clauses.orderBy;
+        context.limit = clauses.limit;
+        context.offset = clauses.offset;
     }
 
 
