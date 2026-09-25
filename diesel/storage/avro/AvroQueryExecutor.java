@@ -153,12 +153,13 @@ public final class AvroQueryExecutor {
                                                         Integer limit) throws IOException {
         List<String> projectionList = new ArrayList<>(requiredColumns);
         List<Map<String, Object>> result = new ArrayList<>();
+        Map<String, Class<?>> resolvedTypes = buildColumnTypeLookup(columnTypes);
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile, projectionList)) {
             while (reader.hasNext()) {
                 GenericRecord record = reader.nextRecord();
                 if (predicate.test(record)) {
-                    result.add(convertRecordToMap(record, allColumns, columnTypes));
+                    result.add(convertRecordToMap(record, allColumns, resolvedTypes));
                     if (limit != null && result.size() >= limit) {
                         break;
                     }
@@ -177,11 +178,12 @@ public final class AvroQueryExecutor {
                                                           Integer limit) throws IOException {
         List<String> projectionList = new ArrayList<>(requiredColumns);
         List<Map<String, Object>> result = new ArrayList<>();
+        Map<String, Class<?>> resolvedTypes = buildColumnTypeLookup(columnTypes);
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile, projectionList)) {
             while (reader.hasNext()) {
                 GenericRecord record = reader.nextRecord();
-                result.add(convertRecordToMap(record, allColumns, columnTypes));
+                result.add(convertRecordToMap(record, allColumns, resolvedTypes));
                 if (limit != null && result.size() >= limit) {
                     break;
                 }
@@ -194,13 +196,14 @@ public final class AvroQueryExecutor {
 
     private List<Map<String, Object>> readFull(File avroFile,
                                                 List<String> allColumns,
-                                                Map<String, Class<?>> columnTypes,
-                                                Integer limit) throws IOException {
+                                                 Map<String, Class<?>> columnTypes,
+                                                 Integer limit) throws IOException {
         List<Map<String, Object>> result = new ArrayList<>();
+        Map<String, Class<?>> resolvedTypes = buildColumnTypeLookup(columnTypes);
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile)) {
             while (reader.hasNext()) {
                 GenericRecord record = reader.nextRecord();
-                result.add(convertRecordToMap(record, allColumns, columnTypes));
+                result.add(convertRecordToMap(record, allColumns, resolvedTypes));
                 if (limit != null && result.size() >= limit) {
                     break;
                 }
@@ -231,7 +234,7 @@ public final class AvroQueryExecutor {
                 if (val instanceof org.apache.avro.util.Utf8 utf8) {
                     map.put(col, utf8.toString());
                 } else if (val instanceof ByteBuffer bb) {
-                    Class<?> targetType = resolveColumnType(col, columnTypes);
+                    Class<?> targetType = columnTypes.get(col);
                     if (targetType == BigDecimal.class) {
                         int scale = 18; // default
                         Schema.Field field = recordSchema.getField(col);
@@ -267,20 +270,26 @@ public final class AvroQueryExecutor {
         return map;
     }
 
-    private static Class<?> resolveColumnType(String columnName, Map<String, Class<?>> columnTypes) {
-        if (columnTypes == null || columnName == null) return null;
-        Class<?> t = columnTypes.get(columnName);
-        if (t != null) return t;
-        // The combined types map may use qualified keys (TABLE.COL) while the
-        // scan column list is unqualified — match the trailing segment.
-        String suffix = "." + columnName;
-        for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
-            if (e.getKey().equalsIgnoreCase(columnName)
-                    || e.getKey().regionMatches(true, e.getKey().length() - suffix.length(), suffix, 0, suffix.length())) {
-                return e.getValue();
+    private static Map<String, Class<?>> buildColumnTypeLookup(Map<String, Class<?>> columnTypes) {
+        Map<String, Class<?>> resolved = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (columnTypes == null) {
+            return resolved;
+        }
+        for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().indexOf('.') < 0) {
+                resolved.put(entry.getKey(), entry.getValue());
             }
         }
-        return null;
+        for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
+            if (entry.getKey() == null) {
+                continue;
+            }
+            int separator = entry.getKey().lastIndexOf('.');
+            if (separator >= 0 && separator + 1 < entry.getKey().length()) {
+                resolved.putIfAbsent(entry.getKey().substring(separator + 1), entry.getValue());
+            }
+        }
+        return resolved;
     }
 
     // ─── Statistics ─────────────────────────────────────────────────

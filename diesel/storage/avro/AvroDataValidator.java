@@ -14,11 +14,13 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -241,7 +243,12 @@ public final class AvroDataValidator {
                 }
             }
         }
-        for (Schema.Field field : schema.getFields()) {
+        List<Schema.Field> fields = schema.getFields();
+        Set<String> knownFields = new HashSet<>(fields.size());
+        for (Schema.Field field : fields) {
+            knownFields.add(field.name().toLowerCase(Locale.ROOT));
+        }
+        for (Schema.Field field : fields) {
             Object value = lookup.get(field.name().toLowerCase(Locale.ROOT));
             errors.addAll(checkField(field.name(), value, field.schema()));
         }
@@ -250,14 +257,7 @@ public final class AvroDataValidator {
                 if (key == null) {
                     continue;
                 }
-                boolean known = false;
-                for (Schema.Field field : schema.getFields()) {
-                    if (field.name().equalsIgnoreCase(key)) {
-                        known = true;
-                        break;
-                    }
-                }
-                if (!known) {
+                if (!knownFields.contains(key.toLowerCase(Locale.ROOT))) {
                     errors.add(new FieldError(key, ErrorType.EXTRA_FIELD,
                             "value for '" + key + "' is not defined by the schema", row.get(key)));
                 }

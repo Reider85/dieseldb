@@ -1,1 +1,0 @@
-3.1.72 Fix S2259 NullPointerException risk with @Nullable/@Nonnull annotations

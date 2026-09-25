@@ -1,6 +1,9 @@
 package diesel.storage.avro;
 
 import java.io.*;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -19,7 +22,7 @@ public class AvroSecondaryIndexManager implements Serializable {
     
     private final String tableName;
     private final List<String> columns;
-    private final Map<Class<?>, Object> columnTypes;
+    private Map<String, Class<?>> columnTypes;
     
     // Map: indexName -> AvroSecondaryIndex
     private final Map<String, AvroSecondaryIndex> indexes;
@@ -27,10 +30,19 @@ public class AvroSecondaryIndexManager implements Serializable {
     // Persistence file extension
     private static final String INDEX_FILE_EXTENSION = ".asi";
     
-    public AvroSecondaryIndexManager(String tableName, List<String> columns, Map<Class<?>, Object> columnTypes) {
+    public AvroSecondaryIndexManager(String tableName, List<String> columns, Map<?, ?> columnTypes) {
         this.tableName = tableName;
         this.columns = new ArrayList<>(columns);
-        this.columnTypes = new ConcurrentHashMap<>(columnTypes);
+        this.columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (columnTypes != null) {
+            for (Map.Entry<?, ?> entry : columnTypes.entrySet()) {
+                if (entry.getKey() instanceof String column && entry.getValue() instanceof Class<?> type) {
+                    this.columnTypes.put(column, type);
+                } else if (entry.getKey() instanceof Class<?> type && entry.getValue() instanceof String column) {
+                    this.columnTypes.put(column, type);
+                }
+            }
+        }
         this.indexes = new ConcurrentHashMap<>();
     }
     
@@ -42,7 +54,7 @@ public class AvroSecondaryIndexManager implements Serializable {
             throw new IllegalArgumentException("Index '" + indexName + "' already exists");
         }
         
-        if (!columns.contains(columnName)) {
+        if (findColumnIndex(columnName) < 0) {
             throw new IllegalArgumentException("Column '" + columnName + "' not found in table");
         }
         
@@ -64,7 +76,7 @@ public class AvroSecondaryIndexManager implements Serializable {
         }
         
         for (String col : columnNames) {
-            if (!columns.contains(col)) {
+            if (findColumnIndex(col) < 0) {
                 throw new IllegalArgumentException("Column '" + col + "' not found in table");
             }
         }
@@ -124,6 +136,55 @@ public class AvroSecondaryIndexManager implements Serializable {
     public synchronized int getIndexCount() {
         return indexes.size();
     }
+
+    public synchronized boolean isCompatible(List<String> expectedColumns,
+                                              Map<String, Class<?>> expectedTypes) {
+        if (expectedColumns == null || expectedTypes == null || columns.size() != expectedColumns.size()) {
+            return false;
+        }
+        for (int i = 0; i < columns.size(); i++) {
+            if (!columns.get(i).equalsIgnoreCase(expectedColumns.get(i))) {
+                return false;
+            }
+        }
+        for (AvroSecondaryIndex index : indexes.values()) {
+            List<String> coveredColumns = index.getCoversColumns();
+            for (String column : coveredColumns) {
+                if (findColumnIndex(column) < 0) {
+                    return false;
+                }
+            }
+            if (coveredColumns.size() == 1) {
+                Class<?> expectedType = getExpectedType(expectedTypes, coveredColumns.get(0));
+                if (expectedType != null && !expectedType.equals(index.getKeyType())) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private int findColumnIndex(String columnName) {
+        for (int i = 0; i < columns.size(); i++) {
+            if (columns.get(i).equalsIgnoreCase(columnName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private Class<?> getExpectedType(Map<String, Class<?>> expectedTypes, String columnName) {
+        Class<?> type = expectedTypes.get(columnName);
+        if (type != null) {
+            return type;
+        }
+        for (Map.Entry<String, Class<?>> entry : expectedTypes.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(columnName)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
     
     /**
      * Synchronize index on insert operation
@@ -173,15 +234,24 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Rebuild all indexes from current data
      */
     public synchronized void rebuildAllIndexes(List<Map<String, Object>> allRows) {
-        // Clear all indexes
         for (AvroSecondaryIndex index : indexes.values()) {
             index.clear();
         }
-        
-        // Rebuild each index
-        for (Map<String, Object> row : allRows) {
-            int rowIndex = allRows.indexOf(row);
-            syncOnInsert(row, rowIndex);
+
+        for (int rowIndex = 0; rowIndex < allRows.size(); rowIndex++) {
+            Map<String, Object> row = allRows.get(rowIndex);
+            for (AvroSecondaryIndex index : indexes.values()) {
+                Object key = buildKeyForIndex(row, index);
+                if (key != null) {
+                    index.insert(key, rowIndex);
+                }
+            }
+        }
+    }
+
+    public synchronized void shiftPositions(int rowIndex, int delta) {
+        for (AvroSecondaryIndex index : indexes.values()) {
+            index.shiftPositions(rowIndex, delta);
         }
     }
     
@@ -211,20 +281,26 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Save indexes to sidecar file
      */
     public synchronized void saveToFile(String basePath) throws IOException {
-        if (indexes.isEmpty()) {
-            return; // No indexes to save
-        }
-        
         File indexFile = new File(basePath + INDEX_FILE_EXTENSION);
         File tempFile = new File(indexFile.getPath() + ".tmp");
-        
+        if (indexes.isEmpty()) {
+            Files.deleteIfExists(indexFile.toPath());
+            Files.deleteIfExists(tempFile.toPath());
+            return;
+        }
+
+        File parent = indexFile.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
+            throw new IOException("Failed to create index sidecar directory: " + parent.getPath());
+        }
         try (ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(tempFile))) {
             out.writeObject(this);
         }
-        
-        // Atomic rename
-        if (!tempFile.renameTo(indexFile)) {
-            throw new IOException("Failed to rename temp file to: " + indexFile.getPath());
+        try {
+            Files.move(tempFile.toPath(), indexFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tempFile.toPath(), indexFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         }
     }
     
@@ -272,27 +348,52 @@ public class AvroSecondaryIndexManager implements Serializable {
             Object[] components = new Object[columns.size()];
             
             for (int i = 0; i < columns.size(); i++) {
-                components[i] = row.get(columns.get(i));
+                components[i] = getRowValue(row, columns.get(i));
             }
             
             return new AvroSecondaryIndex.CompositeKey(components);
         } else {
             // Single column index
-            return row.get(columns.get(0));
+            return getRowValue(row, columns.get(0));
         }
+    }
+
+    private Object getRowValue(Map<String, Object> row, String columnName) {
+        if (row == null || columnName == null) {
+            return null;
+        }
+        if (row.containsKey(columnName)) {
+            return row.get(columnName);
+        }
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(columnName)) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
     
     /**
      * Get the Java class for a column
      */
     private Class<?> getColumnClass(String columnName) {
-        Object typeObj = columnTypes.get(columnName);
-        if (typeObj instanceof Class) {
-            return (Class<?>) typeObj;
+        Class<?> type = columnTypes.get(columnName);
+        return type != null ? type : String.class;
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        Map<String, Class<?>> normalized = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (columnTypes != null) {
+            for (Map.Entry<?, ?> entry : columnTypes.entrySet()) {
+                if (entry.getKey() instanceof String key && entry.getValue() instanceof Class<?> type) {
+                    normalized.put(key, type);
+                } else if (entry.getKey() instanceof Class<?> type && entry.getValue() instanceof String column) {
+                    normalized.put(column, type);
+                }
+            }
         }
-        
-        // Default to String if type is not properly configured
-        return String.class;
+        columnTypes = normalized;
     }
     
     /**

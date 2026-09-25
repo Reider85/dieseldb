@@ -750,3 +750,5 @@ Update PROMPT_STATUS.md for Prompt 96
 3.1.72 Fix S2259 NullPointerException risk with @Nullable/@Nonnull annotations
 
 3.1.73 Fix mass avro storage test failures: avro query pushdown predicates now bypass tombstoned in-memory rows, project aggregate/GROUP BY/ORDER BY columns, convert ByteBuffer decimal fields (Utf8/decimal/SCALE) in record predicates, and disable pushdown for OR/negated/grouped 3VL conditions; AvroQueryExecutor converts BigDecimal ByteBuffer values; AvroRangePartitioner createEmptySubRanges + reindex describePartitions by lowerBound; 16 query-full/storage test classes isolated via @TempDir per-data-dir to remove shared data/ USERS.avro parallel-run contamination (GroupByTest, UpdateTest, BatchExecutionTest rollback-then-select, AnalyzeTableTest serialized save/load retargeted to temp dir, InTest precedent extended); gates fast 178/0/0, core 2150/0/0, large 17/0/0, timing no regressions
+
+3.1.74 Fix duplicate PK update atomically: validate before mutation in AvroRowStorage.update(), add AvroPrimaryKeyIndex.validateUpdate() to reject conflicting PK on update, 3 regression tests; gates fast 178/0/0, targeted 52/0/0

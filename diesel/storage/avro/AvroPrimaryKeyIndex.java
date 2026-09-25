@@ -7,15 +7,28 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.TreeMap;
+import java.util.UUID;
 
 /**
  * Primary-key index for AVRO-backed tables (Prompt 85).
@@ -56,7 +69,8 @@ public class AvroPrimaryKeyIndex {
     public static final int DEFAULT_PAGE_SIZE = 64;
 
     // ─── State ──────────────────────────────────────────────────────
-    private final TreeMap<Object, Integer> primaryKeyMap = new TreeMap<>();
+    private static final Comparator<Object> KEY_COMPARATOR = AvroPrimaryKeyIndex::compareKeys;
+    private final TreeMap<Object, Integer> primaryKeyMap = new TreeMap<>(KEY_COMPARATOR);
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private int pkColumnIndex = -1;
@@ -75,7 +89,8 @@ public class AvroPrimaryKeyIndex {
     private AvroPrimaryKeyIndex(List<String> columns, Map<String, Class<?>> columnTypes,
                                  boolean enabled, int cacheCapacity, int pageSize) {
         this.columns = List.copyOf(columns);
-        this.columnTypes = Map.copyOf(columnTypes);
+        this.columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        this.columnTypes.putAll(columnTypes);
         this.configEnabled = enabled;
         this.pageSize = pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize;
         this.cacheCapacity = cacheCapacity <= 0 ? DEFAULT_CACHE_SIZE : cacheCapacity;
@@ -193,6 +208,13 @@ public class AvroPrimaryKeyIndex {
         return pkColumnIndex;
     }
 
+    public Class<?> getKeyType() {
+        if (pkColumnIndex < 0 || pkColumnIndex >= columns.size()) {
+            return null;
+        }
+        return columnTypes.get(columns.get(pkColumnIndex));
+    }
+
     /**
      * Inserts a new row into the index.
      *
@@ -204,14 +226,21 @@ public class AvroPrimaryKeyIndex {
         if (pkColumnIndex < 0) return;
         Object key = extractKey(row);
         if (key == null) return;
-        Integer existing = primaryKeyMap.put(key, rowIndex);
+        validateInsert(row, rowIndex);
+        primaryKeyMap.put(key, rowIndex);
+        invalidatePageCache();
+    }
+
+    public void validateInsert(Object[] row, int rowIndex) {
+        if (pkColumnIndex < 0) return;
+        Object key = extractKey(row);
+        if (key == null) return;
+        Integer existing = primaryKeyMap.get(key);
         if (existing != null) {
-            primaryKeyMap.put(key, existing);
             throw new IllegalArgumentException(
                     "Duplicate primary key: " + key + " at index " + existing
                     + ", cannot insert at " + rowIndex);
         }
-        invalidatePageCache();
     }
 
     /**
@@ -224,6 +253,7 @@ public class AvroPrimaryKeyIndex {
      */
     public void update(Object[] oldRow, int rowIndex, Object[] newRow) {
         if (pkColumnIndex < 0) return;
+        validateUpdate(oldRow, rowIndex, newRow);
         Object oldKey = extractKey(oldRow);
         Object newKey = extractKey(newRow);
         if (oldKey != null) {
@@ -233,6 +263,27 @@ public class AvroPrimaryKeyIndex {
             primaryKeyMap.put(newKey, rowIndex);
         }
         invalidatePageCache();
+    }
+
+    /**
+     * Validates that updating a row won't create a duplicate primary key.
+     * Throws if the new key already maps to a different row.
+     */
+    public void validateUpdate(Object[] oldRow, int rowIndex, Object[] newRow) {
+        if (pkColumnIndex < 0) return;
+        Object oldKey = extractKey(oldRow);
+        Object newKey = extractKey(newRow);
+        if (newKey == null) return;
+        Integer existing = primaryKeyMap.get(newKey);
+        if (existing != null) {
+            boolean sameKey = keysEqual(oldKey, newKey);
+            boolean sameRow = existing == rowIndex;
+            if (!sameKey || !sameRow) {
+                throw new IllegalArgumentException(
+                        "Duplicate primary key: " + newKey + " at index " + existing
+                        + ", cannot update row " + rowIndex);
+            }
+        }
     }
 
     /**
@@ -247,6 +298,12 @@ public class AvroPrimaryKeyIndex {
         if (key != null) {
             primaryKeyMap.remove(key);
         }
+        invalidatePageCache();
+    }
+
+    public void shiftPositions(int rowIndex, int delta) {
+        if (delta == 0 || pkColumnIndex < 0) return;
+        primaryKeyMap.replaceAll((key, position) -> position >= rowIndex ? position + delta : position);
         invalidatePageCache();
     }
 
@@ -271,6 +328,140 @@ public class AvroPrimaryKeyIndex {
         }
         LOGGER.debug("AvroPrimaryKeyIndex built: {} entries for column index {}",
                 primaryKeyMap.size(), pkColumnIndex);
+    }
+
+    public boolean restoreFromSidecar(Map<Object, Integer> loaded, List<Object[]> currentRows) {
+        if (pkColumnIndex < 0 || loaded == null || currentRows == null) {
+            return false;
+        }
+        int expectedCount = 0;
+        for (Object[] row : currentRows) {
+            if (extractKey(row) != null) {
+                expectedCount++;
+            }
+        }
+        if (loaded.size() != expectedCount) {
+            return false;
+        }
+        TreeMap<Object, Integer> restored = new TreeMap<>(KEY_COMPARATOR);
+        try {
+            for (Map.Entry<Object, Integer> entry : loaded.entrySet()) {
+                Object key = entry.getKey();
+                Integer rowIndex = entry.getValue();
+                if (key == null || rowIndex == null || rowIndex < 0 || rowIndex >= currentRows.size()) {
+                    return false;
+                }
+                Object expectedKey = extractKey(currentRows.get(rowIndex));
+                Class<?> keyType = getKeyType();
+                if (expectedKey == null
+                        || (keyType != null && keyType != Object.class && !isInstanceOfBoxed(keyType, key))
+                        || !keysEqual(key, expectedKey)
+                        || restored.put(key, rowIndex) != null) {
+                    return false;
+                }
+            }
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (restored.size() != expectedCount) {
+            return false;
+        }
+        primaryKeyMap.clear();
+        primaryKeyMap.putAll(restored);
+        pageCache.clear();
+        cacheHits = 0;
+        cacheMisses = 0;
+        return true;
+    }
+
+    private static boolean isInstanceOfBoxed(Class<?> type, Object value) {
+        if (!type.isPrimitive()) {
+            return type.isInstance(value);
+        }
+        Class<?> boxed = switch (type.getName()) {
+            case "int" -> Integer.class;
+            case "long" -> Long.class;
+            case "short" -> Short.class;
+            case "byte" -> Byte.class;
+            case "float" -> Float.class;
+            case "double" -> Double.class;
+            case "boolean" -> Boolean.class;
+            case "char" -> Character.class;
+            default -> type;
+        };
+        return boxed.isInstance(value);
+    }
+
+    private static int compareKeys(Object left, Object right) {
+        if (left == right) {
+            return 0;
+        }
+        if (left == null) {
+            return -1;
+        }
+        if (right == null) {
+            return 1;
+        }
+        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
+            try {
+                return new BigDecimal(leftNumber.toString()).compareTo(new BigDecimal(rightNumber.toString()));
+            } catch (NumberFormatException ignored) {
+                return Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue());
+            }
+        }
+        if (left instanceof byte[] leftBytes && right instanceof byte[] rightBytes) {
+            return Arrays.compareUnsigned(leftBytes, rightBytes);
+        }
+        if (left instanceof ByteBuffer leftBuffer && right instanceof ByteBuffer rightBuffer) {
+            return compareBuffers(leftBuffer, rightBuffer);
+        }
+        if (left instanceof Comparable<?> && left.getClass().isInstance(right)) {
+            try {
+                @SuppressWarnings("unchecked")
+                Comparable<Object> comparable = (Comparable<Object>) left;
+                return comparable.compareTo(right);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return String.valueOf(left).compareTo(String.valueOf(right));
+    }
+
+    private static int compareBuffers(ByteBuffer left, ByteBuffer right) {
+        int length = Math.min(left.remaining(), right.remaining());
+        for (int i = 0; i < length; i++) {
+            int comparison = Integer.compare(left.get(left.position() + i) & 0xff,
+                    right.get(right.position() + i) & 0xff);
+            if (comparison != 0) {
+                return comparison;
+            }
+        }
+        return Integer.compare(left.remaining(), right.remaining());
+    }
+
+    private static boolean keysEqual(Object left, Object right) {
+        if (left == right) {
+            return true;
+        }
+        if (left == null || right == null) {
+            return false;
+        }
+        if (left instanceof BigDecimal leftDecimal && right instanceof BigDecimal rightDecimal) {
+            return leftDecimal.compareTo(rightDecimal) == 0;
+        }
+        if (left instanceof Number && right instanceof Number) {
+            try {
+                return new BigDecimal(left.toString()).compareTo(new BigDecimal(right.toString())) == 0;
+            } catch (NumberFormatException ignored) {
+                return Objects.equals(left, right);
+            }
+        }
+        if (left instanceof byte[] leftBytes && right instanceof byte[] rightBytes) {
+            return Arrays.equals(leftBytes, rightBytes);
+        }
+        if (left instanceof ByteBuffer leftBuffer && right instanceof ByteBuffer rightBuffer) {
+            return compareBuffers(leftBuffer, rightBuffer) == 0;
+        }
+        return Objects.equals(left, right);
     }
 
     // ─── Page cache ────────────────────────────────────────────────
@@ -356,7 +547,7 @@ public class AvroPrimaryKeyIndex {
      * @param dataFileModified the data file last-modified millis (stamp)
      */
     public void saveToSidecar(Path sidecarPath, long dataFileSize, long dataFileModified) throws IOException {
-        File parent = sidecarPath.getParent().toFile();
+        File parent = sidecarPath.getParent() != null ? sidecarPath.getParent().toFile() : null;
         if (parent != null) parent.mkdirs();
         Path tmp = sidecarPath.resolveSibling(sidecarPath.getFileName() + ".tmp");
         try (BufferedWriter w = Files.newBufferedWriter(tmp)) {
@@ -364,6 +555,9 @@ public class AvroPrimaryKeyIndex {
             w.newLine();
             w.write("PK_COLUMN_NAME=" + (pkColumnIndex >= 0 && pkColumnIndex < columns.size()
                     ? columns.get(pkColumnIndex) : ""));
+            w.newLine();
+            Class<?> keyType = getKeyType();
+            w.write("PK_KEY_TYPE=" + (keyType != null ? keyType.getName() : ""));
             w.newLine();
             w.write("ENTRY_COUNT=" + primaryKeyMap.size());
             w.newLine();
@@ -382,9 +576,11 @@ public class AvroPrimaryKeyIndex {
                 w.newLine();
             }
         }
-        Files.move(tmp, sidecarPath,
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        try {
+            Files.move(tmp, sidecarPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tmp, sidecarPath, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     /**
@@ -400,17 +596,24 @@ public class AvroPrimaryKeyIndex {
     public static Map<Object, Integer> loadFromSidecar(Path sidecarPath,
                                                         long dataFileSize,
                                                         long dataFileModified) {
+        return loadFromSidecar(sidecarPath, dataFileSize, dataFileModified, null);
+    }
+
+    public static Map<Object, Integer> loadFromSidecar(Path sidecarPath,
+                                                        long dataFileSize,
+                                                        long dataFileModified,
+                                                        Class<?> keyType) {
         if (!Files.exists(sidecarPath)) return null;
         try (BufferedReader r = Files.newBufferedReader(sidecarPath)) {
             String line;
-            int loadedPkIndex = -1;
             int expectedCount = -1;
             long loadedFileSize = -2;
             long loadedFileModified = -2;
+            String loadedKeyTypeName = null;
             while ((line = r.readLine()) != null) {
                 if (line.equals("---")) break;
-                if (line.startsWith("PK_COLUMN_INDEX=")) {
-                    loadedPkIndex = Integer.parseInt(line.substring(16));
+                if (line.startsWith("PK_KEY_TYPE=")) {
+                    loadedKeyTypeName = line.substring(12);
                 } else if (line.startsWith("ENTRY_COUNT=")) {
                     expectedCount = Integer.parseInt(line.substring(12));
                 } else if (line.startsWith("DATA_FILE_SIZE=")) {
@@ -424,14 +627,30 @@ public class AvroPrimaryKeyIndex {
                         loadedFileSize != dataFileSize ? "size" : "modified");
                 return null;
             }
-            Map<Object, Integer> map = new TreeMap<>();
+            Class<?> resolvedKeyType = keyType;
+            if (resolvedKeyType == null && loadedKeyTypeName != null && !loadedKeyTypeName.isBlank()) {
+                try {
+                    resolvedKeyType = Class.forName(loadedKeyTypeName);
+                } catch (ClassNotFoundException ignored) {
+                    resolvedKeyType = null;
+                }
+            }
+            Map<Object, Integer> map = new TreeMap<>(KEY_COMPARATOR);
             while ((line = r.readLine()) != null) {
                 if (line.isBlank()) continue;
                 int tab = line.indexOf('\t');
-                if (tab < 0) continue;
+                if (tab < 0 || tab == line.length() - 1) {
+                    return null;
+                }
                 String keyStr = line.substring(0, tab);
                 int idx = Integer.parseInt(line.substring(tab + 1));
-                map.put(deserializeKey(keyStr), idx);
+                if (idx < 0) {
+                    return null;
+                }
+                Object key = deserializeKey(keyStr, resolvedKeyType);
+                if (key == null || map.put(key, idx) != null) {
+                    return null;
+                }
             }
             if (expectedCount >= 0 && map.size() != expectedCount) {
                 LOGGER.warn("AvroPrimaryKeyIndex sidecar entry count mismatch: expected {}, got {}",
@@ -454,11 +673,100 @@ public class AvroPrimaryKeyIndex {
 
     private static String serializeKey(Object key) {
         if (key == null) return "\\N";
+        if (key instanceof byte[] bytes) {
+            return "B:" + Base64.getEncoder().encodeToString(bytes);
+        }
+        if (key instanceof ByteBuffer buffer) {
+            ByteBuffer copy = buffer.duplicate();
+            byte[] bytes = new byte[copy.remaining()];
+            copy.get(bytes);
+            return "B:" + Base64.getEncoder().encodeToString(bytes);
+        }
         return key.toString().replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n");
     }
 
-    private static Object deserializeKey(String s) {
+    private static Object deserializeKey(String s, Class<?> targetType) {
         if ("\\N".equals(s)) return null;
+        if (targetType != null && targetType.isPrimitive()) {
+            targetType = switch (targetType.getName()) {
+                case "int" -> Integer.class;
+                case "long" -> Long.class;
+                case "short" -> Short.class;
+                case "byte" -> Byte.class;
+                case "float" -> Float.class;
+                case "double" -> Double.class;
+                case "boolean" -> Boolean.class;
+                case "char" -> Character.class;
+                default -> targetType;
+            };
+        }
+        String raw = unescapeKey(s);
+        if (targetType == null || targetType == Object.class) {
+            return deserializeKey(raw);
+        }
+        if (targetType == String.class || targetType == CharSequence.class) {
+            return raw;
+        }
+        if (targetType == Integer.class) {
+            return Integer.valueOf(raw);
+        }
+        if (targetType == Long.class) {
+            return Long.valueOf(raw);
+        }
+        if (targetType == Short.class) {
+            return Short.valueOf(raw);
+        }
+        if (targetType == Byte.class) {
+            return Byte.valueOf(raw);
+        }
+        if (targetType == Float.class) {
+            return Float.valueOf(raw);
+        }
+        if (targetType == Double.class) {
+            return Double.valueOf(raw);
+        }
+        if (targetType == Boolean.class) {
+            if (!"true".equalsIgnoreCase(raw) && !"false".equalsIgnoreCase(raw)) {
+                throw new IllegalArgumentException("Invalid boolean key: " + raw);
+            }
+            return Boolean.valueOf(raw);
+        }
+        if (targetType == Character.class) {
+            if (raw.length() != 1) {
+                throw new IllegalArgumentException("Invalid character key: " + raw);
+            }
+            return raw.charAt(0);
+        }
+        if (targetType == BigDecimal.class) {
+            return new BigDecimal(raw);
+        }
+        if (targetType == BigInteger.class) {
+            return new BigInteger(raw);
+        }
+        if (targetType == Number.class) {
+            return new BigDecimal(raw);
+        }
+        if (targetType == LocalDate.class) {
+            return LocalDate.parse(raw);
+        }
+        if (targetType == LocalDateTime.class) {
+            return LocalDateTime.parse(raw);
+        }
+        if (targetType == Instant.class) {
+            return Instant.parse(raw);
+        }
+        if (targetType == UUID.class) {
+            return UUID.fromString(raw);
+        }
+        if (targetType == byte[].class || targetType == ByteBuffer.class) {
+            String encoded = raw.startsWith("B:") ? raw.substring(2) : raw;
+            byte[] bytes = Base64.getDecoder().decode(encoded);
+            return targetType == byte[].class ? bytes : ByteBuffer.wrap(bytes);
+        }
+        return raw;
+    }
+
+    private static String unescapeKey(String s) {
         StringBuilder sb = new StringBuilder(s.length());
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
@@ -474,20 +782,23 @@ public class AvroPrimaryKeyIndex {
                 sb.append(c);
             }
         }
-        String raw = sb.toString();
+        return sb.toString();
+    }
+
+    private static Object deserializeKey(String s) {
         try {
-            return Long.parseLong(raw);
+            return Long.parseLong(s);
         } catch (NumberFormatException ignored) {}
         try {
-            return Integer.parseInt(raw);
+            return Integer.parseInt(s);
         } catch (NumberFormatException ignored) {}
         try {
-            return Double.parseDouble(raw);
+            return Double.parseDouble(s);
         } catch (NumberFormatException ignored) {}
-        try {
-            return Boolean.parseBoolean(raw);
-        } catch (Exception ignored) {}
-        return raw;
+        if ("true".equalsIgnoreCase(s) || "false".equalsIgnoreCase(s)) {
+            return Boolean.valueOf(s);
+        }
+        return s;
     }
 
     // ─── Config resolution ─────────────────────────────────────────

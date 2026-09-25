@@ -295,9 +295,10 @@ public final class AvroInputFormatCompat {
                     ? buildColumns(schema)
                     : new ArrayList<>(projection);
             Map<String, Class<?>> types = buildColumnTypes(schema);
+            Class<?>[] targetTypes = AvroRowStorage.resolveColumnTypes(cols, types);
             rows = new ArrayList<>((int) Math.min(split.recordCount(), Integer.MAX_VALUE / 2));
             for (long i = 0; i < split.recordCount(); i++) {
-                rows.add(AvroRowStorage.fromRecord(reader.nextRecord(), cols, types));
+                rows.add(AvroRowStorage.fromRecord(reader.nextRecord(), cols, targetTypes));
             }
         }
         return rows;

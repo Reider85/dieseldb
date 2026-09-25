@@ -73,12 +73,7 @@ public class AvroRowStorage extends AbstractRowStorage {
         for (int i = 0; i < columns.size(); i++) {
             colIndex.put(columns.get(i), i);
         }
-        // Initialize secondary index manager
-        Map<Class<?>, Object> convertedTypes = new HashMap<>();
-        for (Map.Entry<String, Class<?>> entry : columnTypes.entrySet()) {
-            convertedTypes.put(entry.getValue(), entry.getKey());
-        }
-        this.secondaryIndexManager = new AvroSecondaryIndexManager(tableName, columns, convertedTypes);
+        this.secondaryIndexManager = new AvroSecondaryIndexManager(tableName, columns, columnTypes);
     }
 
     public boolean isFileInitialized() {
@@ -138,6 +133,7 @@ public class AvroRowStorage extends AbstractRowStorage {
      */
     public void createSecondaryIndex(String indexName, String columnName) {
         secondaryIndexManager.createIndex(indexName, columnName);
+        secondaryIndexManager.rebuildAllIndexes(scan());
     }
 
     /**
@@ -145,6 +141,7 @@ public class AvroRowStorage extends AbstractRowStorage {
      */
     public void createCompositeIndex(String indexName, List<String> columnNames) {
         secondaryIndexManager.createCompositeIndex(indexName, columnNames);
+        secondaryIndexManager.rebuildAllIndexes(scan());
     }
 
     /**
@@ -206,29 +203,38 @@ public class AvroRowStorage extends AbstractRowStorage {
     @Override
     public void insert(Map<String, Object> row) {
         Object[] arr = fromMap(row);
-        rows.add(arr);
-        syncIndexAppend(arr, rows.size() - 1);
+        int rowIndex = rows.size();
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
-            primaryKeyIndex.insert(arr, rows.size() - 1);
+            primaryKeyIndex.insert(arr, rowIndex);
         }
-        // Sync with secondary indexes
-        secondaryIndexManager.syncOnInsert(row, rows.size() - 1);
+        rows.add(arr);
+        syncIndexAppend(arr, rowIndex);
+        secondaryIndexManager.syncOnInsert(row, rowIndex);
     }
 
     @Override
     public void insertAt(int rowIndex, Map<String, Object> row) {
         Object[] arr = fromMap(row);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.validateInsert(arr, rowIndex);
+        }
         rows.add(rowIndex, arr);
         syncIndexInsert(arr, rowIndex);
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
-            primaryKeyIndex.buildIndex(rows);
+            primaryKeyIndex.shiftPositions(rowIndex, 1);
+            primaryKeyIndex.insert(arr, rowIndex);
         }
+        secondaryIndexManager.shiftPositions(rowIndex, 1);
+        secondaryIndexManager.syncOnInsert(row, rowIndex);
     }
 
     @Override
     public void update(int rowIndex, Map<String, Object> row) {
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = fromMap(row);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.validateUpdate(oldRow, rowIndex, newRow);
+        }
         rows.set(rowIndex, newRow);
         syncIndexUpdate(oldRow, rowIndex, newRow);
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
@@ -244,10 +250,11 @@ public class AvroRowStorage extends AbstractRowStorage {
         rows.remove(rowIndex);
         syncIndexDelete(rowIndex);
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
-            primaryKeyIndex.buildIndex(rows);
+            primaryKeyIndex.delete(row, rowIndex);
+            primaryKeyIndex.shiftPositions(rowIndex, -1);
         }
-        // Sync with secondary indexes
         secondaryIndexManager.syncOnDelete(toMap(row), rowIndex);
+        secondaryIndexManager.shiftPositions(rowIndex, -1);
     }
 
     @Override
@@ -467,8 +474,8 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex == null || !primaryKeyIndex.isEnabled()) return;
         Path sidecar = AvroPrimaryKeyIndex.sidecarPath(avroFile.toPath());
         Map<Object, Integer> loaded = AvroPrimaryKeyIndex.loadFromSidecar(
-                sidecar, avroFile.length(), avroFile.lastModified());
-        if (loaded != null) {
+                sidecar, avroFile.length(), avroFile.lastModified(), primaryKeyIndex.getKeyType());
+        if (loaded != null && primaryKeyIndex.restoreFromSidecar(loaded, rows)) {
             LOGGER.debug("AvroRowStorage {} loaded primary-key index sidecar ({} entries)",
                     tableName, loaded.size());
         } else {
@@ -493,15 +500,11 @@ public class AvroRowStorage extends AbstractRowStorage {
 
         String avroName = AvroSchemaManager.sanitizeName(tableName);
         List<Schema.Field> fields = new ArrayList<>(columns.size());
+        Map<String, Class<?>> types = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        types.putAll(columnTypes);
 
         for (String col : columns) {
-            Class<?> javaType = null;
-            for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
-                if (e.getKey().equalsIgnoreCase(col)) {
-                    javaType = e.getValue();
-                    break;
-                }
-            }
+            Class<?> javaType = types.get(col);
             if (javaType == null) {
                 throw new IllegalArgumentException("No type defined for column: " + col + " in table: " + tableName);
             }
@@ -561,14 +564,17 @@ public class AvroRowStorage extends AbstractRowStorage {
 
     static Object[] fromRecord(GenericRecord record, List<String> columns,
                                  Map<String, Class<?>> columnTypes) {
+        return fromRecord(record, columns, resolveColumnTypes(columns, columnTypes));
+    }
+
+    static Object[] fromRecord(GenericRecord record, List<String> columns, Class<?>[] targetTypes) {
         Object[] row = new Object[columns.size()];
         Schema schema = record.getSchema();
         for (int i = 0; i < columns.size(); i++) {
             String col = columns.get(i);
             Object avroValue = record.get(col);
-            Class<?> targetType = resolveType(col, columnTypes);
             Schema.Field field = schema.getField(col);
-            row[i] = fromAvroValue(avroValue, targetType, field != null ? field.schema() : null);
+            row[i] = fromAvroValue(avroValue, targetTypes[i], field != null ? field.schema() : null);
         }
         return row;
     }
@@ -771,40 +777,51 @@ public class AvroRowStorage extends AbstractRowStorage {
         return javaType == null ? avroValue : fromAvroValue(avroValue, javaType, fieldSchema);
     }
 
-    private static Class<?> resolveType(String col, Map<String, Class<?>> columnTypes) {
-        if (columnTypes instanceof TreeMap && ((TreeMap<?, ?>) columnTypes).comparator() != null) {
-            return columnTypes.get(col);
+    static Class<?>[] resolveColumnTypes(List<String> columns, Map<String, Class<?>> columnTypes) {
+        Map<String, Class<?>> types = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        types.putAll(columnTypes);
+        Class<?>[] resolved = new Class<?>[columns.size()];
+        for (int i = 0; i < columns.size(); i++) {
+            resolved[i] = types.get(columns.get(i));
         }
-        for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
-            if (e.getKey().equalsIgnoreCase(col)) {
-                return e.getValue();
-            }
-        }
-        return null;
+        return resolved;
     }
 
     // ─── Secondary indexes persistence ─────────────────────────────────
 
     private void saveSecondaryIndexes(File avroFile) throws IOException {
         if (secondaryIndexManager != null) {
-            String basePath = avroFile.getPath().replace(".avro", "");
-            secondaryIndexManager.saveToFile(basePath);
+            secondaryIndexManager.saveToFile(secondaryBasePath(avroFile));
         }
     }
 
-    private void loadSecondaryIndexes(File avroFile) throws IOException {
-        if (secondaryIndexManager != null) {
-            String basePath = avroFile.getPath().replace(".avro", "");
-            try {
-                AvroSecondaryIndexManager loaded = AvroSecondaryIndexManager.loadFromFile(basePath);
-                if (loaded != null) {
+    private static String secondaryBasePath(File avroFile) {
+        String path = avroFile.getPath();
+        if (path.endsWith(AVRO_EXTENSION)) {
+            return path.substring(0, path.length() - AVRO_EXTENSION.length());
+        }
+        return path;
+    }
+
+    private void loadSecondaryIndexes(File avroFile) {
+        if (secondaryIndexManager == null) {
+            return;
+        }
+        String basePath = secondaryBasePath(avroFile);
+        try {
+            AvroSecondaryIndexManager loaded = AvroSecondaryIndexManager.loadFromFile(basePath);
+            if (loaded != null) {
+                if (loaded.isCompatible(columns, columnTypes)) {
                     this.secondaryIndexManager = loaded;
                     LOGGER.debug("AvroRowStorage {} loaded secondary indexes", tableName);
+                } else {
+                    LOGGER.warn("Ignoring incompatible secondary index sidecar for {}", tableName);
                 }
-            } catch (ClassNotFoundException e) {
-                LOGGER.warn("Failed to load secondary indexes for {}: {}", tableName, e.getMessage());
             }
+        } catch (IOException | ClassNotFoundException | RuntimeException e) {
+            LOGGER.warn("Failed to load secondary indexes for {}: {}", tableName, e.getMessage());
         }
+        secondaryIndexManager.rebuildAllIndexes(scan());
     }
 
     // ─── Avro file accessor (Prompt 91) ─────────────────────────────

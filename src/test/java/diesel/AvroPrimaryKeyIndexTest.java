@@ -2,6 +2,7 @@ package diesel;
 
 import diesel.storage.avro.AvroPrimaryKeyIndex;
 import diesel.storage.avro.AvroRowStorage;
+import diesel.storage.avro.AvroSecondaryIndex;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -256,6 +258,26 @@ class AvroPrimaryKeyIndexTest {
         assertEquals(1, idx.lookup("User2"));
     }
 
+    @Test
+    void updateDuplicateKeyThrows() {
+        AvroPrimaryKeyIndex idx = AvroPrimaryKeyIndex.create(cols(), types());
+        idx.setPrimaryKeyColumn("ID", rows(5));
+        assertThrows(IllegalArgumentException.class,
+                () -> idx.update(row(2L, "User2", 22, false), 1, row(3L, "User3", 22, false)));
+        assertEquals(1, idx.lookup(2L));
+        assertEquals(2, idx.lookup(3L));
+    }
+
+    @Test
+    void updateSameKeyDifferentRowThrows() {
+        AvroPrimaryKeyIndex idx = AvroPrimaryKeyIndex.create(cols(), types());
+        idx.setPrimaryKeyColumn("ID", rows(5));
+        assertThrows(IllegalArgumentException.class,
+                () -> idx.update(row(1L, "User1", 21, true), 0, row(3L, "User3", 21, false)));
+        assertEquals(0, idx.lookup(1L));
+        assertEquals(2, idx.lookup(3L));
+    }
+
     // ─── Delete maintenance ────────────────────────────────────────
 
     @Test
@@ -398,6 +420,121 @@ class AvroPrimaryKeyIndexTest {
         assertNull(loaded);
     }
 
+    @Test
+    void restoreRejectsStalePrimaryKeyMapping() {
+        AvroPrimaryKeyIndex idx = AvroPrimaryKeyIndex.create(cols(), types());
+        idx.setPrimaryKeyColumn("ID", rows(2));
+
+        assertFalse(idx.restoreFromSidecar(Map.of(1L, 99), rows(2)));
+        assertEquals(2, idx.size());
+        assertEquals(0, idx.lookup(1L));
+    }
+
+    @Test
+    void storageLoadsPrimaryKeySidecarIntoIndex() {
+        System.setProperty("avro.index.enabled", "true");
+        AvroRowStorage first = new AvroRowStorage("PK_SIDECAR", cols(), types());
+        first.setDataDir(tempDir.toString());
+        first.setPrimaryKeyColumn("ID");
+        first.insert(mapRow(1L, "Alice", 30, true));
+        first.insert(mapRow(2L, "Bob", 25, false));
+        first.saveToFile("PK_SIDECAR");
+
+        AvroRowStorage second = new AvroRowStorage("PK_SIDECAR", cols(), types());
+        second.setDataDir(tempDir.toString());
+        second.setPrimaryKeyColumn("ID");
+        second.loadFromFile("PK_SIDECAR");
+
+        assertEquals(2, second.getPrimaryKeyIndex().size());
+        assertEquals(0, second.getPrimaryKeyIndex().lookup(1L));
+        assertEquals(1, second.getPrimaryKeyIndex().lookup(2L));
+    }
+
+    @Test
+    void storageRebuildsPrimaryKeyIndexWhenSidecarIsStale() throws Exception {
+        System.setProperty("avro.index.enabled", "true");
+        AvroRowStorage first = new AvroRowStorage("PK_STALE", cols(), types());
+        first.setDataDir(tempDir.toString());
+        first.setPrimaryKeyColumn("ID");
+        first.insert(mapRow(1L, "Alice", 30, true));
+        first.saveToFile("PK_STALE");
+
+        Path avro = tempDir.resolve("PK_STALE.avro");
+        Files.setLastModifiedTime(avro, FileTime.fromMillis(avro.toFile().lastModified() + 10_000));
+
+        AvroRowStorage second = new AvroRowStorage("PK_STALE", cols(), types());
+        second.setDataDir(tempDir.toString());
+        second.setPrimaryKeyColumn("ID");
+        second.loadFromFile("PK_STALE");
+
+        assertEquals(0, second.getPrimaryKeyIndex().lookup(1L));
+    }
+
+    @Test
+    void storageLoadsStringPrimaryKeySidecarWithoutTypeCoercion() {
+        System.setProperty("avro.index.enabled", "true");
+        List<String> columns = List.of("ID");
+        Map<String, Class<?>> types = Map.of("id", String.class);
+        AvroRowStorage first = new AvroRowStorage("STRING_PK", columns, types);
+        first.setDataDir(tempDir.toString());
+        first.setPrimaryKeyColumn("ID");
+        first.insert(Map.of("ID", "1"));
+        first.insert(Map.of("ID", "true"));
+        first.insert(Map.of("ID", "001"));
+        first.saveToFile("STRING_PK");
+
+        AvroRowStorage second = new AvroRowStorage("STRING_PK", columns, types);
+        second.setDataDir(tempDir.toString());
+        second.setPrimaryKeyColumn("ID");
+        second.loadFromFile("STRING_PK");
+
+        assertEquals(0, second.getPrimaryKeyIndex().lookup("1"));
+        assertEquals(1, second.getPrimaryKeyIndex().lookup("true"));
+        assertEquals(2, second.getPrimaryKeyIndex().lookup("001"));
+    }
+
+    @Test
+    void secondaryIndexSidecarReloadsAfterPhysicalDelete() {
+        AvroRowStorage first = new AvroRowStorage("SECONDARY_DELETE", cols(), types());
+        first.setDataDir(tempDir.toString());
+        first.createSecondaryIndex("age_idx", "AGE");
+        first.insert(mapRow(1L, "Alice", 30, true));
+        first.insert(mapRow(2L, "Bob", 20, false));
+        first.insert(mapRow(3L, "Charlie", 30, true));
+        first.delete(0);
+        first.saveToFile("SECONDARY_DELETE");
+
+        AvroRowStorage second = new AvroRowStorage("SECONDARY_DELETE", cols(), types());
+        second.setDataDir(tempDir.toString());
+        second.loadFromFile("SECONDARY_DELETE");
+
+        AvroSecondaryIndex index = second.getSecondaryIndexManager().getIndex("age_idx");
+        assertNotNull(index);
+        assertEquals(List.of(1), index.search(30));
+        assertEquals(List.of(0), index.search(20));
+    }
+
+    @Test
+    void savingWithNoSecondaryIndexesRemovesOldSidecar() {
+        AvroRowStorage first = new AvroRowStorage("SECONDARY_EMPTY", cols(), types());
+        first.setDataDir(tempDir.toString());
+        first.createSecondaryIndex("age_idx", "AGE");
+        first.insert(mapRow(1L, "Alice", 30, true));
+        first.saveToFile("SECONDARY_EMPTY");
+        first.insert(mapRow(2L, "Bob", 25, false));
+        first.saveToFile("SECONDARY_EMPTY");
+        assertTrue(Files.exists(tempDir.resolve("SECONDARY_EMPTY.asi")));
+
+        first.dropSecondaryIndex("age_idx");
+        first.saveToFile("SECONDARY_EMPTY");
+        assertFalse(Files.exists(tempDir.resolve("SECONDARY_EMPTY.asi")));
+
+        AvroRowStorage second = new AvroRowStorage("SECONDARY_EMPTY", cols(), types());
+        second.setDataDir(tempDir.toString());
+        second.loadFromFile("SECONDARY_EMPTY");
+        assertEquals(0, second.getSecondaryIndexManager().getIndexCount());
+    }
+
     // ─── AvroRowStorage integration ────────────────────────────────
 
     @Test
@@ -420,6 +557,23 @@ class AvroPrimaryKeyIndexTest {
         storage.update(0, mapRow(100L, "Alice", 30, true));
         assertNull(storage.getPrimaryKeyIndex().lookup(1L));
         assertEquals(0, storage.getPrimaryKeyIndex().lookup(100L));
+    }
+
+    @Test
+    void storageUpdateDuplicateKeyLeavesRowAndIndexUnchanged() {
+        AvroRowStorage storage = new AvroRowStorage("TEST", cols(), types());
+        storage.setPrimaryKeyColumn("ID");
+        storage.createSecondaryIndex("age_idx", "AGE");
+        storage.insert(mapRow(1L, "Alice", 30, true));
+        storage.insert(mapRow(2L, "Bob", 25, false));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> storage.update(0, mapRow(2L, "AliceConflict", 30, false)));
+        assertEquals(2, storage.scan().size());
+        assertEquals(0, storage.getPrimaryKeyIndex().lookup(1L));
+        assertEquals(1, storage.getPrimaryKeyIndex().lookup(2L));
+        assertEquals(List.of(0), storage.getSecondaryIndexManager().getIndex("age_idx").search(30));
+        assertEquals(List.of(1), storage.getSecondaryIndexManager().getIndex("age_idx").search(25));
     }
 
     @Test
@@ -463,6 +617,68 @@ class AvroPrimaryKeyIndexTest {
         storage.setRows(newRows);
         assertEquals(0, storage.getPrimaryKeyIndex().lookup(10L));
         assertEquals(1, storage.getPrimaryKeyIndex().lookup(20L));
+    }
+
+    @Test
+    void secondaryIndexKeepsRowPositionsSorted() {
+        AvroSecondaryIndex index = new AvroSecondaryIndex("age_idx", "AGE", Integer.class);
+        index.insert(30, 5);
+        index.insert(30, 1);
+        index.insert(30, 3);
+
+        assertEquals(List.of(1, 3, 5), index.search(30));
+        index.remove(30, 3);
+        assertEquals(List.of(1, 5), index.search(30));
+    }
+
+    @Test
+    void compositeIndexSupportsPrefixSearch() {
+        AvroSecondaryIndex.CompositeKey prefix = new AvroSecondaryIndex.CompositeKey(new Object[]{"A"});
+        AvroSecondaryIndex index = new AvroSecondaryIndex(
+                "group_age_idx", List.of("GROUP", "AGE"), AvroSecondaryIndex.CompositeKey.class);
+        index.insert(new AvroSecondaryIndex.CompositeKey(new Object[]{"A", 30}), 2);
+        index.insert(new AvroSecondaryIndex.CompositeKey(new Object[]{"A", 20}), 0);
+        index.insert(new AvroSecondaryIndex.CompositeKey(new Object[]{"B", 20}), 1);
+
+        assertEquals(List.of(0, 2), index.prefixSearch(prefix));
+        assertEquals(List.of(0), index.compositeSearch(
+                new AvroSecondaryIndex.CompositeKey(new Object[]{"A", 20})));
+    }
+
+    @Test
+    void storageInsertAtKeepsSecondaryIndexPositionsAligned() {
+        AvroRowStorage storage = new AvroRowStorage("TEST", cols(), types());
+        storage.setPrimaryKeyColumn("ID");
+        storage.createSecondaryIndex("age_idx", "AGE");
+        storage.insert(mapRow(1L, "Alice", 30, true));
+        storage.insert(mapRow(2L, "Bob", 20, false));
+        storage.insert(mapRow(3L, "Charlie", 30, true));
+
+        storage.insertAt(1, mapRow(4L, "Diana", 30, false));
+        AvroSecondaryIndex index = storage.getSecondaryIndexManager().getIndex("age_idx");
+        assertEquals(List.of(0, 1, 3), index.search(30));
+
+        storage.delete(0);
+        assertEquals(List.of(0, 2), index.search(30));
+        assertEquals(0, storage.getPrimaryKeyIndex().lookup(4L));
+        assertEquals(1, storage.getPrimaryKeyIndex().lookup(2L));
+    }
+
+    @Test
+    void storageInsertAtDuplicateKeyLeavesRowsAndIndexesUnchanged() {
+        AvroRowStorage storage = new AvroRowStorage("TEST", cols(), types());
+        storage.setPrimaryKeyColumn("ID");
+        storage.createSecondaryIndex("age_idx", "AGE");
+        storage.insert(mapRow(1L, "Alice", 30, true));
+        storage.insert(mapRow(2L, "Bob", 20, false));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> storage.insertAt(1, mapRow(1L, "Duplicate", 30, false)));
+        assertEquals(2, storage.scan().size());
+        assertEquals(0, storage.getPrimaryKeyIndex().lookup(1L));
+        assertEquals(1, storage.getPrimaryKeyIndex().lookup(2L));
+        assertEquals(List.of(0), storage.getSecondaryIndexManager().getIndex("age_idx").search(30));
+        assertEquals(List.of(1), storage.getSecondaryIndexManager().getIndex("age_idx").search(20));
     }
 
     // ─── toString ──────────────────────────────────────────────────

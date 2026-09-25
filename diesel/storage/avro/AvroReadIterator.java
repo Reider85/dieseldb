@@ -28,13 +28,13 @@ public final class AvroReadIterator implements Iterator<Object[]>, Iterable<Obje
 
     private final AvroDataFileReader reader;
     private final List<String> columns;
-    private final Map<String, Class<?>> columnTypes;
+    private final Class<?>[] targetTypes;
 
     public AvroReadIterator(AvroDataFileReader reader, List<String> columns,
                             Map<String, Class<?>> columnTypes) {
         this.reader = reader;
         this.columns = columns;
-        this.columnTypes = columnTypes;
+        this.targetTypes = AvroRowStorage.resolveColumnTypes(columns, columnTypes);
     }
 
     @Override
@@ -50,7 +50,7 @@ public final class AvroReadIterator implements Iterator<Object[]>, Iterable<Obje
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read row from Avro file: " + reader.getFile(), e);
         }
-        return AvroRowStorage.fromRecord(record, columns, columnTypes);
+        return AvroRowStorage.fromRecord(record, columns, targetTypes);
     }
 
     /**
@@ -65,7 +65,7 @@ public final class AvroReadIterator implements Iterator<Object[]>, Iterable<Obje
     public List<Object[]> nextBatch(int maxRecords) throws IOException {
         List<Object[]> batch = new ArrayList<>(Math.min(maxRecords, 4096));
         for (int i = 0; i < maxRecords && reader.hasNext(); i++) {
-            batch.add(AvroRowStorage.fromRecord(reader.nextRecord(), columns, columnTypes));
+            batch.add(AvroRowStorage.fromRecord(reader.nextRecord(), columns, targetTypes));
         }
         return batch;
     }

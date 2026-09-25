@@ -254,28 +254,31 @@ public final class AvroParallelReader implements Closeable {
         List<String> cols = (projection == null || projection.isEmpty())
                 ? columns
                 : new ArrayList<>(projection);
+        Class<?>[] targetTypes = AvroRowStorage.resolveColumnTypes(cols, columnTypes);
         if (blocks.isEmpty()) {
             return new ArrayList<>();
         }
         if (!parallelEnabled) {
-            return readSequential(projection, cols);
+            return readSequential(projection, cols, targetTypes);
         }
-        return readParallel(projection, cols);
+        return readParallel(projection, cols, targetTypes);
     }
 
-    private List<Object[]> readSequential(Collection<String> projection, List<String> cols) throws IOException {
+    private List<Object[]> readSequential(Collection<String> projection, List<String> cols,
+                                           Class<?>[] targetTypes) throws IOException {
         List<Object[]> rows = new ArrayList<>((int) Math.min(estimatedRows(), Integer.MAX_VALUE / 2));
         try (AvroDataFileReader reader = newReader(projection)) {
             for (BlockEntry b : blocks) {
                 for (long i = 0; i < b.recordCount; i++) {
-                    rows.add(AvroRowStorage.fromRecord(reader.nextRecord(), cols, columnTypes));
+                    rows.add(AvroRowStorage.fromRecord(reader.nextRecord(), cols, targetTypes));
                 }
             }
         }
         return rows;
     }
 
-    private List<Object[]> readParallel(Collection<String> projection, List<String> cols) throws IOException {
+    private List<Object[]> readParallel(Collection<String> projection, List<String> cols,
+                                        Class<?>[] targetTypes) throws IOException {
         try (ExecutorService pool = Executors.newFixedThreadPool(partitions.size(), r -> {
             Thread t = new Thread(r, "avro-parallel");
             t.setDaemon(true);
@@ -284,7 +287,7 @@ public final class AvroParallelReader implements Closeable {
             try {
                 List<Future<List<Object[]>>> futures = new ArrayList<>(partitions.size());
                 for (int[] p : partitions) {
-                    futures.add(pool.submit(readPartition(projection, cols, p)));
+                    futures.add(pool.submit(readPartition(projection, cols, targetTypes, p)));
                 }
                 List<Object[]> result = new ArrayList<>((int) Math.min(estimatedRows(), Integer.MAX_VALUE / 2));
                 for (Future<List<Object[]>> f : futures) {
@@ -306,7 +309,8 @@ public final class AvroParallelReader implements Closeable {
         }
     }
 
-    private Callable<List<Object[]>> readPartition(Collection<String> projection, List<String> cols, int[] range) {
+    private Callable<List<Object[]>> readPartition(Collection<String> projection, List<String> cols,
+                                                     Class<?>[] targetTypes, int[] range) {
         return () -> {
             try (AvroDataFileReader reader = newReader(projection)) {
                 long estimate = 0;
@@ -318,7 +322,7 @@ public final class AvroParallelReader implements Closeable {
                     BlockEntry b = blocks.get(i);
                     reader.seekToSyncMarker(b.headerPos - AvroDataFileReader.SYNC_SIZE);
                     for (long j = 0; j < b.recordCount; j++) {
-                        rows.add(AvroRowStorage.fromRecord(reader.nextRecord(), cols, columnTypes));
+                        rows.add(AvroRowStorage.fromRecord(reader.nextRecord(), cols, targetTypes));
                     }
                 }
                 return rows;

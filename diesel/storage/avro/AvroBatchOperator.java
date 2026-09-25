@@ -318,13 +318,14 @@ public final class AvroBatchOperator implements AutoCloseable {
         int imported = 0;
         List<String> columns = storage.getColumns();
         Map<String, Class<?>> columnTypes = storage.getColumnTypes();
+        Class<?>[] targetTypes = AvroRowStorage.resolveColumnTypes(columns, columnTypes);
         List<Object[]> internalRows = storage.getInternalRows();
 
         storage.beginBulkUpdate();
         try {
             while (reader.hasNext()) {
                 GenericRecord record = reader.next();
-                internalRows.add(AvroRowStorage.fromRecord(record, columns, columnTypes));
+                internalRows.add(AvroRowStorage.fromRecord(record, columns, targetTypes));
                 imported++;
                 if (imported % insertFlushSize == 0) {
                     stats.addFlush();

@@ -24,7 +24,7 @@ public class AvroSecondaryIndex implements Serializable {
     private final List<String> compositeColumns;
     
     // B-Tree structure: key -> list of row indices
-    private final Map<Object, List<Integer>> indexMap;
+    private final NavigableMap<Object, List<Integer>> indexMap;
     
     // Statistics
     private long lookupCount = 0;
@@ -59,9 +59,9 @@ public class AvroSecondaryIndex implements Serializable {
         
         indexMap.compute(key, (k, existing) -> {
             List<Integer> rows = existing != null ? existing : new ArrayList<>();
-            if (!rows.contains(rowIndex)) {
-                rows.add(rowIndex);
-                Collections.sort(rows); // Maintain sorted order for range queries
+            int position = Collections.binarySearch(rows, rowIndex);
+            if (position < 0) {
+                rows.add(-(position + 1), rowIndex);
             }
             return rows;
         });
@@ -77,10 +77,26 @@ public class AvroSecondaryIndex implements Serializable {
         validateKeyType(key);
         
         indexMap.computeIfPresent(key, (k, rows) -> {
-            rows.remove(Integer.valueOf(rowIndex));
+            int position = Collections.binarySearch(rows, rowIndex);
+            if (position >= 0) {
+                rows.remove(position);
+            }
             return rows.isEmpty() ? null : rows;
         });
         
+        lastAccessTime = System.currentTimeMillis();
+    }
+
+    public void shiftPositions(int rowIndex, int delta) {
+        if (delta == 0) return;
+        for (List<Integer> rows : indexMap.values()) {
+            for (int i = 0; i < rows.size(); i++) {
+                int position = rows.get(i);
+                if (position >= rowIndex) {
+                    rows.set(i, position + delta);
+                }
+            }
+        }
         lastAccessTime = System.currentTimeMillis();
     }
     
@@ -177,14 +193,12 @@ public class AvroSecondaryIndex implements Serializable {
         
         List<Integer> allResults = new ArrayList<>();
         
-        // Find all keys that start with the prefix
-        for (Map.Entry<Object, List<Integer>> entry : indexMap.entrySet()) {
-            if (entry.getKey() instanceof CompositeKey) {
-                CompositeKey key = (CompositeKey) entry.getKey();
-                if (key.startsWith(prefix)) {
-                    allResults.addAll(entry.getValue());
-                }
+        NavigableMap<Object, List<Integer>> candidates = indexMap.tailMap(prefix, true);
+        for (Map.Entry<Object, List<Integer>> entry : candidates.entrySet()) {
+            if (!(entry.getKey() instanceof CompositeKey key) || !key.startsWith(prefix)) {
+                break;
             }
+            allResults.addAll(entry.getValue());
         }
         
         Collections.sort(allResults);
@@ -272,7 +286,9 @@ public class AvroSecondaryIndex implements Serializable {
     /**
      * Composite key for multi-column indexes
      */
-    public static record CompositeKey(Object[] components) {
+    public static record CompositeKey(Object[] components) implements Comparable<CompositeKey>, Serializable {
+        private static final long serialVersionUID = 1L;
+
         public CompositeKey(Object[] components) {
             if (components == null || components.length == 0) {
                 throw new IllegalArgumentException("Composite key must have at least one component");
@@ -280,6 +296,42 @@ public class AvroSecondaryIndex implements Serializable {
             this.components = Arrays.copyOf(components, components.length);
         }
         
+        @Override
+        public int compareTo(CompositeKey other) {
+            int sharedLength = Math.min(components.length, other.components.length);
+            for (int i = 0; i < sharedLength; i++) {
+                int comparison = compareComponents(components[i], other.components[i]);
+                if (comparison != 0) {
+                    return comparison;
+                }
+            }
+            return Integer.compare(components.length, other.components.length);
+        }
+
+        private static int compareComponents(Object left, Object right) {
+            if (left == right) return 0;
+            if (left == null) return -1;
+            if (right == null) return 1;
+            if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
+                if (leftNumber instanceof java.math.BigDecimal leftDecimal) {
+                    return leftDecimal.compareTo(new java.math.BigDecimal(rightNumber.toString()));
+                }
+                if (rightNumber instanceof java.math.BigDecimal rightDecimal) {
+                    return new java.math.BigDecimal(leftNumber.toString()).compareTo(rightDecimal);
+                }
+                return Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue());
+            }
+            if (left instanceof byte[] leftBytes && right instanceof byte[] rightBytes) {
+                return Arrays.compareUnsigned(leftBytes, rightBytes);
+            }
+            if (left instanceof Comparable<?> && left.getClass().isInstance(right)) {
+                @SuppressWarnings("unchecked")
+                Comparable<Object> comparable = (Comparable<Object>) left;
+                return comparable.compareTo(right);
+            }
+            return String.valueOf(left).compareTo(String.valueOf(right));
+        }
+
         public boolean startsWith(CompositeKey prefix) {
             if (prefix.components.length > this.components.length) {
                 return false;

@@ -10,9 +10,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -69,9 +71,10 @@ public final class AvroSchemaManager {
 
         String avroName = sanitizeName(tableName);
         List<Schema.Field> fields = new ArrayList<>(columns.size());
+        Map<String, Class<?>> types = caseInsensitiveTypes(columnTypes);
 
         for (String col : columns) {
-            Class<?> javaType = resolveType(col, columnTypes);
+            Class<?> javaType = types.get(col);
             if (javaType == null) {
                 throw new IllegalArgumentException(
                         "No type defined for column: " + col + " in table: " + tableName);
@@ -219,6 +222,11 @@ public final class AvroSchemaManager {
         for (Schema.Field f : existing.getFields()) {
             existingFields.put(f.name().toLowerCase(), f);
         }
+        Map<String, Class<?>> types = caseInsensitiveTypes(columnTypes);
+        Set<String> columnNames = new HashSet<>(columns.size());
+        for (String col : columns) {
+            columnNames.add(col.toLowerCase());
+        }
 
         // Check columns in DieselDB schema against existing Avro fields
         for (String col : columns) {
@@ -227,7 +235,7 @@ public final class AvroSchemaManager {
                 issues.add("Column '" + col + "' exists in DieselDB but not in Avro schema");
                 continue;
             }
-            Class<?> expectedType = resolveType(col, columnTypes);
+            Class<?> expectedType = types.get(col);
             if (expectedType != null) {
                 Class<?> actualJavaType = AvroTypeMapper.toJavaType(avroField.schema());
                 if (actualJavaType != null && !expectedType.equals(actualJavaType)) {
@@ -240,14 +248,7 @@ public final class AvroSchemaManager {
 
         // Check fields in Avro that are missing from DieselDB columns
         for (Schema.Field f : existing.getFields()) {
-            boolean found = false;
-            for (String col : columns) {
-                if (col.equalsIgnoreCase(f.name())) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
+            if (!columnNames.contains(f.name().toLowerCase())) {
                 issues.add("Avro field '" + f.name() + "' exists but not in DieselDB columns");
             }
         }
@@ -260,18 +261,10 @@ public final class AvroSchemaManager {
     /**
      * Resolves the Java type for a column name from the type map (case-insensitive lookup).
      */
-    private static Class<?> resolveType(String col, Map<String, Class<?>> columnTypes) {
-        if (columnTypes instanceof TreeMap && ((TreeMap<?, ?>) columnTypes).comparator() != null) {
-            // Already case-insensitive TreeMap
-            return columnTypes.get(col);
-        }
-        // Fallback: iterate for case-insensitive match
-        for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
-            if (e.getKey().equalsIgnoreCase(col)) {
-                return e.getValue();
-            }
-        }
-        return null;
+    private static Map<String, Class<?>> caseInsensitiveTypes(Map<String, Class<?>> columnTypes) {
+        Map<String, Class<?>> types = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        types.putAll(columnTypes);
+        return types;
     }
 
     /**
