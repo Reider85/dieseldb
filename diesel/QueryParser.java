@@ -1027,7 +1027,8 @@ class QueryParser {
         if (query == null) {
             return false;
         }
-        return toUpperCasePreservingQuotedIdentifiers(query.trim()).startsWith(SqlKeywords.EXPLAIN);
+        return Optional.ofNullable(toUpperCasePreservingQuotedIdentifiers(query.trim()))
+                .orElse("").startsWith(SqlKeywords.EXPLAIN);
     }
 
     /**
@@ -1844,76 +1845,111 @@ class QueryParser {
         if (tableAndJoinsOriginal == null) {
             throw new QueryParseException("Table and joins clause must not be null");
         }
-        List<Condition> conditions = new ArrayList<>();
-        List<String> groupBy = new ArrayList<>();
-        List<HavingCondition> havingConditions = new ArrayList<>();
-        List<OrderByInfo> orderBy = new ArrayList<>();
-        Integer limit = null;
-        Integer offset = null;
-        Map<String, String> groupBySubQueries = new HashMap<>();
-
-        // Parse GROUP BY (and HAVING)
+        
+        AdditionalClausesBuilder builder = new AdditionalClausesBuilder();
+        
+        // Parse clauses in order: GROUP BY, ORDER BY, LIMIT/OFFSET, WHERE
+        parseGroupByClause(tableAndJoinsOriginal, ctx, aggregates, builder);
+        parseOrderByClause(tableAndJoinsOriginal, ctx, subQueries, builder);
+        parseLimitOffsetClause(tableAndJoinsOriginal, builder);
+        parseWhereClause(tableAndJoinsOriginal, ctx, builder);
+        
+        return builder.build();
+    }
+    
+    private static class AdditionalClausesBuilder {
+        private List<Condition> conditions = new ArrayList<>();
+        private List<String> groupBy = new ArrayList<>();
+        private List<HavingCondition> havingConditions = new ArrayList<>();
+        private List<OrderByInfo> orderBy = new ArrayList<>();
+        private Integer limit = null;
+        private Integer offset = null;
+        private Map<String, String> groupBySubQueries = new HashMap<>();
+        
+        public void setGroupBy(List<String> groupBy, List<HavingCondition> havingConditions, Map<String, String> groupBySubQueries) {
+            this.groupBy = groupBy;
+            this.havingConditions = havingConditions;
+            this.groupBySubQueries = groupBySubQueries;
+        }
+        
+        public void setOrderBy(List<OrderByInfo> orderBy) {
+            this.orderBy = orderBy;
+        }
+        
+        public void setLimitOffset(Integer limit, Integer offset) {
+            this.limit = limit;
+            this.offset = offset;
+        }
+        
+        public void setConditions(List<Condition> conditions) {
+            this.conditions = conditions;
+        }
+        
+        public AdditionalClauses build() {
+            return new AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset, groupBySubQueries);
+        }
+    }
+    
+    private void parseGroupByClause(String tableAndJoinsOriginal, ParseContext ctx, 
+                                   List<AggregateFunction> aggregates, AdditionalClausesBuilder builder) {
         int groupByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.GROUP_BY);
         if (groupByIndex != -1) {
+            Map<String, String> groupBySubQueries = new HashMap<>();
             ParsedGroupBy parsedGroupBy = extractGroupBy(tableAndJoinsOriginal, groupByIndex,
                     ctx.defaultTableName, ctx.database, ctx.combinedColumnTypes, ctx.tableAliases,
                     ctx.columnAliases, groupBySubQueries, aggregates, ctx);
-            groupBy = parsedGroupBy.groupBy;
-            havingConditions = parsedGroupBy.havingConditions;
-            tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, groupByIndex, parsedGroupBy.endIndex);
+            builder.setGroupBy(parsedGroupBy.groupBy, parsedGroupBy.havingConditions, groupBySubQueries);
         }
-
-        // Parse ORDER BY
+    }
+    
+    private void parseOrderByClause(String tableAndJoinsOriginal, ParseContext ctx, 
+                                   List<SubQuery> subQueries, AdditionalClausesBuilder builder) {
         int orderByIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.ORDER_BY);
         if (orderByIndex != -1) {
             ParsedOrderBy parsedOrderBy = extractOrderBy(tableAndJoinsOriginal, orderByIndex,
                     ctx.defaultTableName, ctx.combinedColumnTypes, ctx.tableAliases,
                     ctx.columnAliases, subQueries);
-            orderBy = parsedOrderBy.orderBy;
-            // ORDER BY ends where LIMIT/OFFSET starts, not at end of string
-            int orderByEnd = tableAndJoinsOriginal.length();
-            int limIdx = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
-            int offIdx = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET);
-            if (limIdx > orderByIndex) orderByEnd = Math.min(orderByEnd, limIdx);
-            if (offIdx > orderByIndex) orderByEnd = Math.min(orderByEnd, offIdx);
-            tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, orderByIndex, orderByEnd);
+            builder.setOrderBy(parsedOrderBy.orderBy);
         }
-
-        // Parse LIMIT (and optional trailing OFFSET)
+    }
+    
+    private void parseLimitOffsetClause(String tableAndJoinsOriginal, AdditionalClausesBuilder builder) {
         int limitIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.LIMIT);
         if (limitIndex != -1) {
-            ParsedLimitOffset parsedLimit = extractLimit(tableAndJoinsOriginal, limitIndex);
-            // Prompt 37 (java:S2259): extractLimit returns a record with nullable
-            // Integer fields; guard before dereferencing.
-            if (parsedLimit == null) {
-                throw new QueryParseException("Failed to parse LIMIT clause");
-            }
-            limit = parsedLimit.limit;
-            offset = parsedLimit.offset;
-            tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, limitIndex, tableAndJoinsOriginal.length());
+            parseWithLimit(tableAndJoinsOriginal, limitIndex, builder);
+        } else {
+            parseWithoutLimit(tableAndJoinsOriginal, builder);
         }
-
-        // Parse standalone OFFSET without LIMIT
-        if (limitIndex == -1) {
-            int offsetIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET);
-            if (offsetIndex != -1) {
-                Integer extractedOffset = extractOffset(tableAndJoinsOriginal, offsetIndex);
-                // Prompt 37 (java:S2259): extractOffset can return null.
-                if (extractedOffset != null) {
-                    offset = extractedOffset;
-                }
-                tableAndJoinsOriginal = removeClause(tableAndJoinsOriginal, offsetIndex, tableAndJoinsOriginal.length());
+    }
+    
+    private void parseWithLimit(String tableAndJoinsOriginal, int limitIndex, AdditionalClausesBuilder builder) {
+        ParsedLimitOffset parsedLimit = extractLimit(tableAndJoinsOriginal, limitIndex);
+        // Prompt 37 (java:S2259): extractLimit returns a record with nullable
+        // Integer fields; guard before dereferencing.
+        if (parsedLimit == null) {
+            throw new QueryParseException("Failed to parse LIMIT clause");
+        }
+        builder.setLimitOffset(parsedLimit.limit, parsedLimit.offset);
+    }
+    
+    private void parseWithoutLimit(String tableAndJoinsOriginal, AdditionalClausesBuilder builder) {
+        int offsetIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.OFFSET);
+        if (offsetIndex != -1) {
+            Integer extractedOffset = extractOffset(tableAndJoinsOriginal, offsetIndex);
+            // Prompt 37 (java:S2259): extractOffset can return null.
+            if (extractedOffset != null) {
+                builder.setLimitOffset(null, extractedOffset);
             }
         }
-
-        // Parse WHERE
+    }
+    
+    private void parseWhereClause(String tableAndJoinsOriginal, ParseContext ctx, AdditionalClausesBuilder builder) {
         int whereIndex = findClauseOutsideSubquery(tableAndJoinsOriginal, SqlKeywords.WHERE);
         if (whereIndex != -1) {
             String conditionStr = tableAndJoinsOriginal.substring(whereIndex + 6).trim();
-            conditions = parseConditions(conditionStr, ctx);
+            List<Condition> conditions = parseConditions(conditionStr, ctx);
+            builder.setConditions(conditions);
         }
-
-        return new AdditionalClauses(conditions, groupBy, havingConditions, orderBy, limit, offset, groupBySubQueries);
     }
 
     private String removeClause(String text, int clauseIndex, int endIndex) {
@@ -2135,6 +2171,11 @@ class QueryParser {
                 throw new IllegalArgumentException("Invalid ORDER BY item: " + trimmedItem);
             }
             String column = unquoteQualifiedIdentifier(orderMatcher.group(1).trim());
+            // Prompt 39 (java:S2259): unquoteQualifiedIdentifier returns null
+            // for null input; guard against dereferencing it below.
+            if (column == null) {
+                throw new IllegalArgumentException("Invalid ORDER BY column: " + trimmedItem);
+            }
             String direction = orderMatcher.group(2) != null ? orderMatcher.group(2).toUpperCase() : SqlKeywords.ASC;
             boolean ascending = direction.equals(SqlKeywords.ASC);
 
@@ -2264,6 +2305,11 @@ class QueryParser {
                     }
                 } else {
                     columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
+                    // Prompt 39 (java:S2259): unquoteQualifiedIdentifier can
+                    // return null; guard before it is dereferenced below.
+                    if (columnOrSubQuery == null) {
+                        throw new IllegalArgumentException("Invalid GROUP BY column: " + trimmedItem);
+                    }
                     for (Map.Entry<String, String> aliasEntry : columnAliases.entrySet()) {
                         if (aliasEntry.getValue().equalsIgnoreCase(columnOrSubQuery)) {
                             columnOrSubQuery = aliasEntry.getKey();
@@ -2498,6 +2544,10 @@ class QueryParser {
     }
 
     private Object parseConditionValue(String valueStr, Class<?> columnType) {
+        // Prompt 39 (java:S2259): columnType is nullable here; all callers
+        // resolve it via getColumnType() which throws when unknown, so a guard
+        // clause keeps the contract explicit and prevents an NPE in getSimpleName().
+        Objects.requireNonNull(columnType, "Column type must not be null");
         try {
             if (valueStr.equalsIgnoreCase(SqlKeywords.NULL)) {
                 return null;
@@ -2518,6 +2568,9 @@ class QueryParser {
     }
 
     private Object parseStringLiteral(String valueStr, Class<?> columnType) {
+        // Prompt 39 (java:S2259): guard against a nullable columnType before
+        // getSimpleName() is reached on unsupported types.
+        Objects.requireNonNull(columnType, "Column type must not be null");
         String strippedValue = SqlLexer.extractStringLiteral(valueStr);
         if (columnType == String.class) return strippedValue;
         if (columnType == LocalDate.class && CharOps.isLocalDateLiteral(strippedValue)) return LocalDate.parse(strippedValue);
@@ -2529,6 +2582,9 @@ class QueryParser {
     }
 
     private Object parseNumericLiteral(String valueStr, Class<?> columnType) {
+        // Prompt 39 (java:S2259): guard against a nullable columnType before
+        // getSimpleName() is reached on unsupported types.
+        Objects.requireNonNull(columnType, "Column type must not be null");
         try {
             if (columnType == BigDecimal.class) {
                 return new BigDecimal(valueStr);
@@ -2759,37 +2815,16 @@ class QueryParser {
         List<Condition> conditions = new ArrayList<>();
         for (int i = 0; i < tokens.size(); i++) {
             Token token = tokens.get(i);
-            if (token.type == TokenType.LOGICAL_OPERATOR) {
-                conjunction = token.value.toUpperCase();
-                LOGGER.log(Level.FINEST, "Processing logical operator: {0}, setting conjunction to {1}",
-                        new Object[]{token.value, conjunction});
-            } else if (token.type == TokenType.CONDITION) {
-                String condStr = token.value;
-                if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
-                    not = true;
-                    LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
-                } else if (condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'")) {
-                    LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
-                } else {
-                    if (condStr.startsWith("(") && condStr.endsWith(")")) {
-                        int endParen = findMatchingParenthesis(condStr, 0);
-                        if (endParen == condStr.length() - 1) {
-                            String subCondStr = condStr.substring(1, endParen).trim();
-                            List<Token> subTokens = tokenizeConditions(subCondStr);
-                            List<Condition> subConditions = parseTokenizedConditions(subTokens, ctx, conjunction, not);
-                            conditions.add(new Condition(subConditions, conjunction, not));
-                            LOGGER.log(Level.FINE, "Добавлено группированное условие: {0}", subConditions);
-                        } else {
-                            throw new IllegalArgumentException("Некорректная структура группированного условия: " + condStr);
-                        }
-                    } else if (condStr.toUpperCase().contains(" IN ")) {
-                        Condition condition = parseInCondition(condStr, ctx, conjunction, not);
+            switch (token.type) {
+                case LOGICAL_OPERATOR -> {
+                    conjunction = token.value.toUpperCase();
+                    LOGGER.log(Level.FINEST, "Processing logical operator: {0}, setting conjunction to {1}",
+                            new Object[]{token.value, conjunction});
+                }
+                case CONDITION -> {
+                    Condition condition = processConditionToken(token.value, ctx, conjunction, not);
+                    if (condition != null) {
                         conditions.add(condition);
-                        LOGGER.log(Level.FINE, "Добавлено условие IN: {0}", condition);
-                    } else {
-                        Condition condition = parseSingleCondition(condStr, ctx, conjunction, not, condStr);
-                        conditions.add(condition);
-                        LOGGER.log(Level.FINE, "Добавлено одиночное условие: {0}", condition);
                     }
                     conjunction = null;
                     not = false;
@@ -2797,6 +2832,43 @@ class QueryParser {
             }
         }
         return conditions;
+    }
+    
+    private Condition processConditionToken(String condStr, ParseContext ctx, String conjunction, boolean not) {
+        if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
+            not = true;
+            LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
+            return null;
+        }
+        
+        if (isQuotedString(condStr)) {
+            LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
+            return null;
+        }
+        
+        return switch (getConditionType(condStr)) {
+            case GROUPED -> parseGroupedCondition(condStr, ctx, conjunction, not);
+            case IN -> parseInCondition(condStr, ctx, conjunction, not);
+            case SINGLE -> parseSingleCondition(condStr, ctx, conjunction, not, condStr);
+        };
+    }
+    
+    private boolean isQuotedString(String condStr) {
+        return condStr.toUpperCase().startsWith("'") && condStr.toUpperCase().endsWith("'");
+    }
+    
+    private ConditionType getConditionType(String condStr) {
+        if (isGroupedCondition(condStr)) {
+            return ConditionType.GROUPED;
+        }
+        if (isInCondition(condStr)) {
+            return ConditionType.IN;
+        }
+        return ConditionType.SINGLE;
+    }
+    
+    private enum ConditionType {
+        GROUPED, IN, SINGLE
     }
 
     private void validateSubquery(String subquery) {
@@ -3095,34 +3167,66 @@ class QueryParser {
     private record RightPart(String column, Object value) {}
 
     private RightPart parseRightPart(String rightPart, String actualColumn, ParseContext ctx) {
-        Pattern columnPattern = RIGHT_PART_COLUMN_PATTERN;
         String upperRightPart = rightPart.toUpperCase();
-
-        if (upperRightPart.equals(SqlKeywords.TRUE) || upperRightPart.equals(SqlKeywords.FALSE) || upperRightPart.equals(SqlKeywords.NULL)) {
-            Class<?> literalColumnType = getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
-                    ctx.tableAliases, ctx.columnAliases);
-            if (upperRightPart.equals(SqlKeywords.NULL)) {
-                return new RightPart(null, null);
-            } else if (literalColumnType == Boolean.class) {
-                return new RightPart(null, Boolean.parseBoolean(rightPart));
-            } else {
-                throw new IllegalArgumentException(MessageConstants.ERROR_BOOLEAN_VALUE_PREFIX + rightPart + ErrorMessages.TYPE_MISMATCH_SUFFIX + literalColumnType.getSimpleName());
-            }
-        } else if (columnPattern.matcher(rightPart).matches()) {
-            return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
-        } else {
-            try {
-                return new RightPart(null, parseConditionValue(rightPart,
-                        getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
-                                ctx.tableAliases, ctx.columnAliases)));
-            } catch (IllegalArgumentException e) {
-                LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
-                        new Object[]{rightPart, e.getMessage()});
-                if (columnPattern.matcher(rightPart).matches()) {
-                    return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
+        
+        if (isKeywordLiteral(upperRightPart)) {
+            return parseKeywordLiteral(rightPart, actualColumn, ctx);
+        }
+        
+        if (isColumnReference(rightPart)) {
+            return parseColumnReference(rightPart);
+        }
+        
+        return parseValueOrFallback(rightPart, actualColumn, ctx);
+    }
+    
+    private boolean isKeywordLiteral(String upperRightPart) {
+        return upperRightPart.equals(SqlKeywords.TRUE) || 
+               upperRightPart.equals(SqlKeywords.FALSE) || 
+               upperRightPart.equals(SqlKeywords.NULL);
+    }
+    
+    private RightPart parseKeywordLiteral(String rightPart, String actualColumn, ParseContext ctx) {
+        Class<?> literalColumnType = getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
+                ctx.tableAliases, ctx.columnAliases);
+        // Prompt 39 (java:S2259): getColumnType throws when the column is
+        // unknown but is nullable per analysis; keep the contract explicit.
+        Objects.requireNonNull(literalColumnType, "Unknown column type for: " + actualColumn);
+        
+        return switch (rightPart.toUpperCase()) {
+            case SqlKeywords.NULL -> new RightPart(null, null);
+            case SqlKeywords.TRUE, SqlKeywords.FALSE -> {
+                if (literalColumnType == Boolean.class) {
+                    yield new RightPart(null, Boolean.parseBoolean(rightPart));
                 } else {
-                    throw e;
+                    throw new IllegalArgumentException(MessageConstants.ERROR_BOOLEAN_VALUE_PREFIX + rightPart + ErrorMessages.TYPE_MISMATCH_SUFFIX + literalColumnType.getSimpleName());
                 }
+            }
+            default -> throw new IllegalArgumentException("Unknown keyword literal: " + rightPart);
+        };
+    }
+    
+    private boolean isColumnReference(String rightPart) {
+        return RIGHT_PART_COLUMN_PATTERN.matcher(rightPart).matches();
+    }
+    
+    private RightPart parseColumnReference(String rightPart) {
+        return new RightPart(unquoteQualifiedIdentifier(rightPart), null);
+    }
+    
+    private RightPart parseValueOrFallback(String rightPart, String actualColumn, ParseContext ctx) {
+        try {
+            Class<?> columnType = getColumnType(actualColumn, ctx.combinedColumnTypes, ctx.defaultTableName,
+                    ctx.tableAliases, ctx.columnAliases);
+            Object value = parseConditionValue(rightPart, columnType);
+            return new RightPart(null, value);
+        } catch (IllegalArgumentException e) {
+            LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
+                    new Object[]{rightPart, e.getMessage()});
+            if (isColumnReference(rightPart)) {
+                return parseColumnReference(rightPart);
+            } else {
+                throw e;
             }
         }
     }
@@ -3448,6 +3552,11 @@ class QueryParser {
 
     private String resolveHavingAggregateColumn(String columnOrSubQuery, ParseContext ctx) {
         columnOrSubQuery = unquoteQualifiedIdentifier(columnOrSubQuery);
+        // Prompt 39 (java:S2259): unquoteQualifiedIdentifier returns null for
+        // null input; guard before normalizeColumnName dereferences it.
+        if (columnOrSubQuery == null) {
+            throw new IllegalArgumentException("Invalid HAVING column: column must not be null");
+        }
         String normalizedColumn = normalizeColumnName(columnOrSubQuery, ctx.defaultTableName, ctx.tableAliases);
         String unqualifiedColumn = normalizedColumn.contains(".") ? normalizedColumn.split("\\.")[1].trim() : normalizedColumn;
         for (Map.Entry<String, Class<?>> entry : ctx.combinedColumnTypes.entrySet()) {

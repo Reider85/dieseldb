@@ -3815,7 +3815,12 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                     || j.joinType == QueryParser.JoinType.LEFT_INNER
                     || j.joinType == QueryParser.JoinType.RIGHT_INNER);
             if (allInner) {
-                ordered.sort(Comparator.comparingInt(j -> database.getTable(j.tableName).rowCount()));
+                ordered.sort(Comparator.comparingInt(j -> {
+                    Table joinTable = database.getTable(j.tableName);
+                    // Prompt 39 (java:S2259): getTable aggregates with zero rows
+                    // when the table cannot be resolved for EXPLAIN planning.
+                    return joinTable != null ? joinTable.rowCount() : 0;
+                }));
             }
         }
         return ordered;
@@ -3849,7 +3854,9 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             return;
         }
         for (QueryParser.JoinInfo join : joinsForDisplay) {
-            Table joinTable = mainTable.getDatabase().getTable(join.tableName);
+            Database owningDatabase = Objects.requireNonNull(mainTable.getDatabase(),
+                    ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
+            Table joinTable = owningDatabase.getTable(join.tableName);
             appendPlanJoin(sb, join, joinTable, scanName, mainTable);
         }
     }

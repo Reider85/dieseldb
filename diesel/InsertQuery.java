@@ -4,9 +4,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.function.BiFunction;
 import java.util.logging.Logger;
 import java.util.logging.Level;
-import java.util.stream.IntStream;
 
 /**
  * Executes an INSERT INTO statement: converts the raw values to the column
@@ -63,75 +63,74 @@ class InsertQuery implements Query<Void> {
      */
     @Override
     public Void execute(Table table) {
+        validateInput();
+        Map<String, Object> row = buildRow(table);
+        insertRow(table, row);
+        return null;
+    }
+
+    private void validateInput() {
         if (columns.size() != values.size()) {
             throw new IllegalArgumentException("Column and value counts mismatch");
         }
+    }
+
+    private Map<String, Object> buildRow(Table table) {
         Map<String, Object> row = new HashMap<>();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
-        IntStream.range(0, columns.size()).forEach(i -> {
+        for (int i = 0; i < columns.size(); i++) {
             String column = columns.get(i);
             Object value = values.get(i);
             Class<?> expectedType = columnTypes.get(column);
             if (expectedType == null) {
                 throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
             }
-            if (value == null) {
-                row.put(column, null);
-            } else {
-                row.put(column, convertValue(value, column, expectedType));
-            }
-        });
-        insertRow(table, row);
-        return null;
+            row.put(column, convertValue(value, column, expectedType));
+        }
+        return row;
+    }
+
+    private static final Map<Class<?>, BiFunction<Object, String, Object>> CONVERTERS;
+
+    static {
+        Map<Class<?>, BiFunction<Object, String, Object>> converters = new HashMap<>();
+        converters.put(Integer.class, InsertQuery::parseInteger);
+        converters.put(Long.class, InsertQuery::parseLong);
+        converters.put(Short.class, InsertQuery::parseShort);
+        converters.put(Byte.class, InsertQuery::parseByte);
+        converters.put(BigDecimal.class, InsertQuery::parseBigDecimal);
+        converters.put(Float.class, InsertQuery::parseFloat);
+        converters.put(Double.class, InsertQuery::parseDouble);
+        converters.put(Character.class, InsertQuery::parseCharacter);
+        converters.put(UUID.class, InsertQuery::parseUUID);
+        converters.put(String.class, (value, column) -> value.toString());
+        CONVERTERS = Collections.unmodifiableMap(converters);
     }
 
     private Object convertValue(Object value, String column, Class<?> expectedType) {
         if (value == null) {
             return null;
         }
-        if (expectedType == Integer.class && !(value instanceof Integer)) {
-            return parseInteger(value, column);
+        if (expectedType.isInstance(value)) {
+            return value;
         }
-        if (expectedType == Long.class && !(value instanceof Long)) {
-            return parseLong(value, column);
+        BiFunction<Object, String, Object> converter = CONVERTERS.get(expectedType);
+        if (converter != null) {
+            return converter.apply(value, column);
         }
-        if (expectedType == Short.class && !(value instanceof Short)) {
-            return parseShort(value, column);
-        }
-        if (expectedType == Byte.class && !(value instanceof Byte)) {
-            return parseByte(value, column);
-        }
-        if (expectedType == BigDecimal.class && !(value instanceof BigDecimal)) {
-            return parseBigDecimal(value, column);
-        }
-        if (expectedType == Float.class && !(value instanceof Float)) {
-            return parseFloat(value, column);
-        }
-        if (expectedType == Double.class && !(value instanceof Double)) {
-            return parseDouble(value, column);
-        }
-        if (expectedType == Character.class && !(value instanceof Character)) {
-            return parseCharacter(value, column);
-        }
-        if (expectedType == UUID.class && !(value instanceof UUID)) {
-            return parseUUID(value, column);
-        }
-        if (expectedType == String.class && !(value instanceof String)) {
-            return value.toString();
-        }
-        if (expectedType == Boolean.class && !(value instanceof Boolean)) {
+        if (expectedType == Boolean.class) {
             throwInvalid(value, column, "BOOLEAN");
         }
-        if (expectedType == LocalDate.class && !(value instanceof LocalDate)) {
+        if (expectedType == LocalDate.class) {
             throwInvalid(value, column, "DATE");
         }
-        if (expectedType == LocalDateTime.class && !(value instanceof LocalDateTime)) {
+        if (expectedType == LocalDateTime.class) {
             throwInvalid(value, column, "DATETIME or DATETIME_MS");
         }
         return value;
     }
 
-    private int parseInteger(Object value, String column) {
+    private static int parseInteger(Object value, String column) {
         try {
             return Integer.parseInt(value.toString());
         } catch (NumberFormatException e) {
@@ -140,7 +139,7 @@ class InsertQuery implements Query<Void> {
         }
     }
 
-    private long parseLong(Object value, String column) {
+    private static long parseLong(Object value, String column) {
         try {
             return Long.parseLong(value.toString());
         } catch (NumberFormatException e) {
@@ -149,7 +148,7 @@ class InsertQuery implements Query<Void> {
         }
     }
 
-    private short parseShort(Object value, String column) {
+    private static short parseShort(Object value, String column) {
         try {
             return Short.parseShort(value.toString());
         } catch (NumberFormatException e) {
@@ -158,7 +157,7 @@ class InsertQuery implements Query<Void> {
         }
     }
 
-    private byte parseByte(Object value, String column) {
+    private static byte parseByte(Object value, String column) {
         try {
             return Byte.parseByte(value.toString());
         } catch (NumberFormatException e) {
@@ -167,7 +166,7 @@ class InsertQuery implements Query<Void> {
         }
     }
 
-    private float parseFloat(Object value, String column) {
+    private static float parseFloat(Object value, String column) {
         try {
             return Float.parseFloat(value.toString());
         } catch (NumberFormatException e) {
@@ -176,7 +175,7 @@ class InsertQuery implements Query<Void> {
         }
     }
 
-    private double parseDouble(Object value, String column) {
+    private static double parseDouble(Object value, String column) {
         try {
             return Double.parseDouble(value.toString());
         } catch (NumberFormatException e) {
@@ -185,7 +184,7 @@ class InsertQuery implements Query<Void> {
         }
     }
 
-    private BigDecimal parseBigDecimal(Object value, String column) {
+    private static BigDecimal parseBigDecimal(Object value, String column) {
         if (value instanceof BigDecimal bd) {
             return bd;
         }
@@ -197,17 +196,18 @@ class InsertQuery implements Query<Void> {
         }
     }
 
-    private char parseCharacter(Object value, String column) {
+    private static char parseCharacter(Object value, String column) {
         if (value instanceof Character c) {
             return c;
         }
         if (value.toString().length() != 1) {
-            throw new IllegalArgumentException("Expected single character");
+            throw new IllegalArgumentException(
+                    String.format("Invalid value '%s' for column %s: expected CHARACTER", value, column));
         }
         return value.toString().charAt(0);
     }
 
-    private UUID parseUUID(Object value, String column) {
+    private static UUID parseUUID(Object value, String column) {
         if (value instanceof UUID uuid) {
             return uuid;
         }
