@@ -1,5 +1,6 @@
 package diesel.storage.avro;
 
+import java.io.*;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.Serializable;
@@ -23,7 +24,7 @@ public class AvroSecondaryIndex implements Serializable {
     private final String columnName;
     private final Class<?> keyType;
     private final boolean isComposite;
-    private final List<String> compositeColumns;
+    private transient List<String> compositeColumns;
     
     // B-Tree structure: key -> list of row indices (transient: rebuilt from table data on load)
     private transient NavigableMap<Object, List<Integer>> indexMap;
@@ -52,9 +53,17 @@ public class AvroSecondaryIndex implements Serializable {
         this.indexMap = new ConcurrentSkipListMap<>();
     }
     
+    private void writeObject(ObjectOutputStream out) throws IOException {
+        out.defaultWriteObject();
+        out.writeObject(compositeColumns);
+    }
+    
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
         this.indexMap = new ConcurrentSkipListMap<>();
+        @SuppressWarnings("unchecked")
+        List<String> readColumns = (List<String>) in.readObject();
+        this.compositeColumns = readColumns;
     }
     
     public void insert(Object key, int rowIndex) {

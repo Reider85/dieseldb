@@ -1,5 +1,6 @@
 package diesel;
 
+import java.io.*;
 import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 class HashIndex implements Index, Serializable {
     private static final long serialVersionUID = 1L;
-    private final ConcurrentHashMap<Object, Set<Integer>> indexMap;
+    private transient ConcurrentHashMap<Object, Set<Integer>> indexMap;
     private final Class<?> keyType;
 
     /**
@@ -82,5 +83,17 @@ class HashIndex implements Index, Serializable {
     @Override
     public Class<?> getKeyType() {
         return keyType;
+    }
+
+    private void writeObject(ObjectOutputStream out) throws IOException {
+        out.defaultWriteObject();
+        out.writeObject(indexMap);
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        @SuppressWarnings("unchecked")
+        ConcurrentHashMap<Object, Set<Integer>> readIndexMap = (ConcurrentHashMap<Object, Set<Integer>>) in.readObject();
+        this.indexMap = readIndexMap;
     }
 }
