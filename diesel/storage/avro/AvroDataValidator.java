@@ -5,6 +5,8 @@ import org.apache.avro.generic.GenericRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.SqlKeywords;
+
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -461,11 +463,11 @@ public final class AvroDataValidator {
             return checkLogicalType(fieldName, value, branch);
         }
         return switch (type) {
-            case STRING -> value instanceof CharSequence ? null : mismatch(fieldName, value, "STRING");
+            case STRING -> value instanceof CharSequence ? null : mismatch(fieldName, value, SqlKeywords.TYPE_STRING);
             case INT -> checkInt(fieldName, value);
-            case LONG -> value instanceof Number ? null : mismatch(fieldName, value, "LONG");
+            case LONG -> value instanceof Number ? null : mismatch(fieldName, value, SqlKeywords.TYPE_LONG);
             case FLOAT, DOUBLE -> value instanceof Number ? null : mismatch(fieldName, value, type.name());
-            case BOOLEAN -> value instanceof Boolean ? null : mismatch(fieldName, value, "BOOLEAN");
+            case BOOLEAN -> value instanceof Boolean ? null : mismatch(fieldName, value, SqlKeywords.TYPE_BOOLEAN);
             case BYTES, FIXED ->
                     (value instanceof byte[] || value instanceof ByteBuffer)
                             ? null : mismatch(fieldName, value, type.name());
@@ -644,7 +646,7 @@ public final class AvroDataValidator {
             case "permissive":
                 return ValidationMode.PERMISSIVE;
             default:
-                LOGGER.warn("Invalid {} value '{}', using default {}", MODE_KEY, raw, DEFAULT_MODE);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, MODE_KEY, raw, DEFAULT_MODE);
                 return ValidationMode.PERMISSIVE;
         }
     }
@@ -674,7 +676,7 @@ public final class AvroDataValidator {
             case "no":
                 return false;
             default:
-                LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
                 return defaultValue;
         }
     }
@@ -698,7 +700,7 @@ public final class AvroDataValidator {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
-                LOGGER.debug("Could not read config.properties, using defaults: {}", ignored.getMessage());
+                LOGGER.debug(AvroMetricConstants.MSG_CONFIG_READ_FAILED, ignored.getMessage());
             }
         }
         return props;

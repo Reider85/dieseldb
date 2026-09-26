@@ -475,7 +475,7 @@ public final class AdaptiveCompressionManager {
                 case "no":
                     return false;
                 default:
-                    LOGGER.warn("Invalid {} value '{}', using default {}", ENABLED_KEY, raw, DEFAULT_ENABLED);
+                    LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, ENABLED_KEY, raw, DEFAULT_ENABLED);
             }
         }
         return DEFAULT_ENABLED;
@@ -490,7 +490,7 @@ public final class AdaptiveCompressionManager {
                     return v;
                 }
             } catch (NumberFormatException e) {
-                LOGGER.warn("Invalid {} value '{}', using default {}", WINDOW_SIZE_KEY, raw, DEFAULT_WINDOW_SIZE);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, WINDOW_SIZE_KEY, raw, DEFAULT_WINDOW_SIZE);
             }
         }
         return DEFAULT_WINDOW_SIZE;
@@ -505,7 +505,7 @@ public final class AdaptiveCompressionManager {
                     return v;
                 }
             } catch (NumberFormatException e) {
-                LOGGER.warn("Invalid {} value '{}', using default {}", RATIO_THRESHOLD_KEY, raw, DEFAULT_RATIO_THRESHOLD);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, RATIO_THRESHOLD_KEY, raw, DEFAULT_RATIO_THRESHOLD);
             }
         }
         return DEFAULT_RATIO_THRESHOLD;
@@ -520,7 +520,7 @@ public final class AdaptiveCompressionManager {
                     return v;
                 }
             } catch (NumberFormatException e) {
-                LOGGER.warn("Invalid {} value '{}', using default {}", MIN_SAMPLES_KEY, raw, DEFAULT_MIN_SAMPLES);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, MIN_SAMPLES_KEY, raw, DEFAULT_MIN_SAMPLES);
             }
         }
         return DEFAULT_MIN_SAMPLES;

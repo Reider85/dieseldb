@@ -131,7 +131,7 @@ public final class AvroBloomFilterConfig {
         }
         double fpp = getDouble(FPP_KEY, DEFAULT_FPP);
         if (fpp <= 0.0 || fpp >= 1.0) {
-            LOGGER.warn("Invalid {} value {}, using default {}", FPP_KEY, fpp, DEFAULT_FPP);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_UNQUOTED, FPP_KEY, fpp, DEFAULT_FPP);
             fpp = DEFAULT_FPP;
         }
         return new AvroBloomFilterConfig(enabled, bitsPerKey, numHashes, fpp);
@@ -151,7 +151,7 @@ public final class AvroBloomFilterConfig {
         try {
             return Integer.parseInt(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -161,7 +161,7 @@ public final class AvroBloomFilterConfig {
         try {
             return Double.parseDouble(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -175,7 +175,7 @@ public final class AvroBloomFilterConfig {
         if (v.equals("false") || v.equals("off") || v.equals("no")) {
             return false;
         }
-        LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+        LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
         return defaultValue;
     }
 
@@ -189,7 +189,7 @@ public final class AvroBloomFilterConfig {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
-                LOGGER.debug("Could not read config.properties, using defaults: {}", ignored.getMessage());
+                LOGGER.debug(AvroMetricConstants.MSG_CONFIG_READ_FAILED, ignored.getMessage());
             }
         }
         return props;

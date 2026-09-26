@@ -577,7 +577,7 @@ public final class AvroSyncMarkerManager {
             try (var in = Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
-                LOGGER.debug("Could not read config.properties, using defaults: {}", ignored.getMessage());
+                LOGGER.debug(AvroMetricConstants.MSG_CONFIG_READ_FAILED, ignored.getMessage());
             }
         }
         return props;

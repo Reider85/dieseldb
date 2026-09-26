@@ -108,13 +108,13 @@ public final class AvroBlockConfig {
     public static AvroBlockConfig resolve() {
         long blockSize = getLong(BLOCK_SIZE_KEY, DEFAULT_BLOCK_SIZE);
         if (blockSize <= 0) {
-            LOGGER.warn("Invalid {} value {}, using default {}", BLOCK_SIZE_KEY, blockSize, DEFAULT_BLOCK_SIZE);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_UNQUOTED, BLOCK_SIZE_KEY, blockSize, DEFAULT_BLOCK_SIZE);
             blockSize = DEFAULT_BLOCK_SIZE;
         }
         String workload = normalizeWorkload(getString(WORKLOAD_KEY, DEFAULT_WORKLOAD));
         long syncInterval = getLong(SYNC_INTERVAL_KEY, DEFAULT_SYNC_INTERVAL);
         if (syncInterval <= 0) {
-            LOGGER.warn("Invalid {} value {}, using default {}", SYNC_INTERVAL_KEY, syncInterval, DEFAULT_SYNC_INTERVAL);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_UNQUOTED, SYNC_INTERVAL_KEY, syncInterval, DEFAULT_SYNC_INTERVAL);
             syncInterval = DEFAULT_SYNC_INTERVAL;
         }
         return new AvroBlockConfig(blockSize, workload, syncInterval);
@@ -146,7 +146,7 @@ public final class AvroBlockConfig {
         try {
             return Long.parseLong(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -164,7 +164,7 @@ public final class AvroBlockConfig {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
-                LOGGER.debug("Could not read config.properties, using defaults: {}", ignored.getMessage());
+                LOGGER.debug(AvroMetricConstants.MSG_CONFIG_READ_FAILED, ignored.getMessage());
             }
         }
         return props;

@@ -357,7 +357,7 @@ public final class SchemaCompatibilityChecker {
             case "NONE":
                 return CompatibilityMode.NONE;
             default:
-                LOGGER.warn("Invalid {} value '{}', using default {}", MODE_CONFIG_KEY, raw, DEFAULT_MODE);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, MODE_CONFIG_KEY, raw, DEFAULT_MODE);
                 return CompatibilityMode.BACKWARD;
         }
     }
@@ -489,7 +489,7 @@ public final class SchemaCompatibilityChecker {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
-                LOGGER.debug("Could not read config.properties, using defaults: {}", ignored.getMessage());
+                LOGGER.debug(AvroMetricConstants.MSG_CONFIG_READ_FAILED, ignored.getMessage());
             }
         }
         return props;

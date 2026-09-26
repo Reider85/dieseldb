@@ -114,7 +114,7 @@ public final class BZip2Codec {
                 long v = Long.parseLong(raw.trim());
                 return v > 0 ? v : DEFAULT_COLD_THRESHOLD;
             } catch (NumberFormatException e) {
-                LOGGER.warn("Invalid {} value '{}', using default {}", COLD_THRESHOLD_KEY, raw, DEFAULT_COLD_THRESHOLD);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, COLD_THRESHOLD_KEY, raw, DEFAULT_COLD_THRESHOLD);
             }
         }
         return DEFAULT_COLD_THRESHOLD;

@@ -304,7 +304,7 @@ public final class AvroStatistics {
         try {
             return Long.parseLong(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
             return defaultValue;
         }
     }

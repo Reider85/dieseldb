@@ -316,7 +316,7 @@ public class AvroMetrics implements DynamicMBean {
                     while (alertHistory.size() > MAX_ALERT_HISTORY) {
                         alertHistory.pollFirst();
                     }
-                    LOGGER.error("[AVRO-METRIC] {}", alert.message());
+                    LOGGER.error(AvroMetricConstants.LOG_FORMAT_AVRO_METRIC, alert.message());
                 }
             }
         }
@@ -336,9 +336,9 @@ public class AvroMetrics implements DynamicMBean {
         }
 
         switch (severity) {
-            case INFO -> LOGGER.info("[AVRO-METRIC] {}", message);
-            case WARN -> LOGGER.warn("[AVRO-METRIC] {}", message);
-            case CRITICAL -> LOGGER.error("[AVRO-METRIC] {}", message);
+            case INFO -> LOGGER.info(AvroMetricConstants.LOG_FORMAT_AVRO_METRIC, message);
+            case WARN -> LOGGER.warn(AvroMetricConstants.LOG_FORMAT_AVRO_METRIC, message);
+            case CRITICAL -> LOGGER.error(AvroMetricConstants.LOG_FORMAT_AVRO_METRIC, message);
         }
     }
 
@@ -359,30 +359,30 @@ public class AvroMetrics implements DynamicMBean {
         StringBuilder sb = new StringBuilder(2048);
         long uptimeMs = System.currentTimeMillis() - startTimeMs;
 
-        appendMetric(sb, "avro_total_reads", "counter",
+        appendMetric(sb, "avro_total_reads", AvroMetricConstants.METRIC_TYPE_COUNTER,
                 "Total AVRO read operations", totalReads.get());
-        appendMetric(sb, "avro_total_writes", "counter",
+        appendMetric(sb, "avro_total_writes", AvroMetricConstants.METRIC_TYPE_COUNTER,
                 "Total AVRO write operations", totalWrites.get());
-        appendMetric(sb, "avro_total_bytes_read", "counter",
+        appendMetric(sb, "avro_total_bytes_read", AvroMetricConstants.METRIC_TYPE_COUNTER,
                 "Total bytes read from AVRO files", totalBytesRead.get());
-        appendMetric(sb, "avro_total_bytes_written", "counter",
+        appendMetric(sb, "avro_total_bytes_written", AvroMetricConstants.METRIC_TYPE_COUNTER,
                 "Total bytes written to AVRO files", totalBytesWritten.get());
 
         long orig = totalOriginalBytes.get();
         long comp = totalCompressedBytes.get();
         double avgRatio = orig > 0 ? (double) comp / orig : 1.0;
-        appendMetric(sb, "avro_compression_ratio", "gauge",
+        appendMetric(sb, "avro_compression_ratio", AvroMetricConstants.METRIC_TYPE_GAUGE,
                 "Last recorded compression ratio (compressed/original)", lastCompressionRatio100 / 100.0);
-        appendMetric(sb, "avro_avg_compression_ratio", "gauge",
+        appendMetric(sb, "avro_avg_compression_ratio", AvroMetricConstants.METRIC_TYPE_GAUGE,
                 "Average compression ratio across all operations", avgRatio);
 
-        appendMetric(sb, "avro_active_tables", "gauge",
+        appendMetric(sb, "avro_active_tables", AvroMetricConstants.METRIC_TYPE_GAUGE,
                 "Number of active AVRO tables", activeTables.get());
-        appendMetric(sb, "avro_total_errors", "counter",
+        appendMetric(sb, "avro_total_errors", AvroMetricConstants.METRIC_TYPE_COUNTER,
                 "Total AVRO error count", errorCount.get());
-        appendMetric(sb, "avro_alert_count", "counter",
+        appendMetric(sb, "avro_alert_count", AvroMetricConstants.METRIC_TYPE_COUNTER,
                 "Total alerts fired", alertCount.get());
-        appendMetric(sb, "avro_uptime_ms", "gauge",
+        appendMetric(sb, "avro_uptime_ms", AvroMetricConstants.METRIC_TYPE_GAUGE,
                 "Metrics collector uptime in milliseconds", uptimeMs);
 
         return sb.toString();
@@ -485,9 +485,12 @@ public class AvroMetrics implements DynamicMBean {
                 "ActiveTables", "AlertCount", "UptimeMs", "ErrorCount"
         };
         String[] types = {
-                "long", "long", "long", "long",
-                "double", "double", "double",
-                "long", "long", "long", "long"
+                AvroMetricConstants.MXBEAN_TYPE_LONG, AvroMetricConstants.MXBEAN_TYPE_LONG,
+                AvroMetricConstants.MXBEAN_TYPE_LONG, AvroMetricConstants.MXBEAN_TYPE_LONG,
+                AvroMetricConstants.MXBEAN_TYPE_DOUBLE, AvroMetricConstants.MXBEAN_TYPE_DOUBLE,
+                AvroMetricConstants.MXBEAN_TYPE_DOUBLE,
+                AvroMetricConstants.MXBEAN_TYPE_LONG, AvroMetricConstants.MXBEAN_TYPE_LONG,
+                AvroMetricConstants.MXBEAN_TYPE_LONG, AvroMetricConstants.MXBEAN_TYPE_LONG
         };
         String[] descriptions = {
                 "Total AVRO read operations",
@@ -541,7 +544,7 @@ public class AvroMetrics implements DynamicMBean {
         try {
             return Integer.parseInt(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} = \"{}\", using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED_EQUALS, key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -551,7 +554,7 @@ public class AvroMetrics implements DynamicMBean {
         try {
             return Long.parseLong(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} = \"{}\", using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED_EQUALS, key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -561,7 +564,7 @@ public class AvroMetrics implements DynamicMBean {
         try {
             return Double.parseDouble(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} = \"{}\", using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED_EQUALS, key, raw, defaultValue);
             return defaultValue;
         }
     }

@@ -764,3 +764,5 @@ Update PROMPT_STATUS.md for Prompt 96
 3.1.78 Refactor brain methods using strategy pattern: RangePartitionStrategy, SubqueryResolver, SidecarSerializer
 
 3.1.79 Sonar-prompt8 S1192 fix: close duplicated literals in QueryParser.java - 4 null-guard messages extracted to ErrorMessages (CONDITION_COLUMN_NULL_MSG 6x, COLUMN_TYPE_NULL_MSG 3x, CONDITION_OPERATOR_NULL_MSG 2x, CONDITION_SUBQUERY_NULL_MSG 2x) = 13 replacements; fast 186/0/0, large 17/0/0, timing 0 regressions
+
+3.1.80 Sonar-prompt8 S1192 fix: close duplicated literals in AVRO module - new AvroMetricConstants class [LOG_FORMAT_AVRO_METRIC 4x, METRIC_TYPE_COUNTER 6x, METRIC_TYPE_GAUGE 4x, MXBEAN_TYPE_LONG 8x, MXBEAN_TYPE_DOUBLE 3x, MSG_INVALID_VALUE_QUOTED 25x, MSG_INVALID_VALUE_UNQUOTED 13x, MSG_INVALID_VALUE_QUOTED_EQUALS 6x, MSG_CONFIG_READ_FAILED 14x]; AvroTypeMapper/AvroDataValidator now reuse existing SqlKeywords.TYPE_* constants = 28 replacements; 21 files changed; fast 186/0/0, avro 199/0/0

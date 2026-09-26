@@ -6,6 +6,8 @@ import org.apache.avro.SchemaBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.SqlKeywords;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -194,19 +196,19 @@ public final class AvroTypeMapper {
             return null;
         }
         return switch (type.getSimpleName()) {
-            case "Long" -> "LONG";
-            case "Integer" -> "INTEGER";
-            case "Short" -> "SHORT";
-            case "Byte" -> "BYTE";
-            case "Double" -> "DOUBLE";
-            case "Float" -> "FLOAT";
-            case "BigDecimal" -> "BIGDECIMAL";
-            case "Boolean" -> "BOOLEAN";
-            case "LocalDate" -> "DATE";
-            case "LocalDateTime" -> "DATETIME";
-            case "UUID" -> "UUID";
-            case "String" -> "STRING";
-            case "Character" -> "CHAR";
+            case "Long" -> SqlKeywords.TYPE_LONG;
+            case "Integer" -> SqlKeywords.TYPE_INTEGER;
+            case "Short" -> SqlKeywords.TYPE_SHORT;
+            case "Byte" -> SqlKeywords.TYPE_BYTE;
+            case "Double" -> SqlKeywords.TYPE_DOUBLE;
+            case "Float" -> SqlKeywords.TYPE_FLOAT;
+            case "BigDecimal" -> SqlKeywords.TYPE_BIGDECIMAL;
+            case "Boolean" -> SqlKeywords.TYPE_BOOLEAN;
+            case "LocalDate" -> SqlKeywords.TYPE_DATE;
+            case "LocalDateTime" -> SqlKeywords.TYPE_DATETIME;
+            case "UUID" -> SqlKeywords.TYPE_UUID;
+            case "String" -> SqlKeywords.TYPE_STRING;
+            case "Character" -> SqlKeywords.TYPE_CHAR;
             case "byte[]" -> "BYTES";
             // Prompt 75 complex types
             case "List", "ArrayList", "LinkedList" -> "ARRAY";
@@ -223,19 +225,19 @@ public final class AvroTypeMapper {
             return null;
         }
         return switch (name.toUpperCase()) {
-            case "STRING" -> String.class;
-            case "INTEGER" -> Integer.class;
-            case "LONG" -> Long.class;
-            case "SHORT" -> Short.class;
-            case "BYTE" -> Byte.class;
-            case "DOUBLE" -> Double.class;
-            case "FLOAT" -> Float.class;
-            case "BIGDECIMAL" -> BigDecimal.class;
-            case "BOOLEAN" -> Boolean.class;
-            case "DATE" -> LocalDate.class;
-            case "DATETIME", "DATETIME_MS" -> LocalDateTime.class;
-            case "UUID" -> UUID.class;
-            case "CHAR" -> Character.class;
+            case SqlKeywords.TYPE_STRING -> String.class;
+            case SqlKeywords.TYPE_INTEGER -> Integer.class;
+            case SqlKeywords.TYPE_LONG -> Long.class;
+            case SqlKeywords.TYPE_SHORT -> Short.class;
+            case SqlKeywords.TYPE_BYTE -> Byte.class;
+            case SqlKeywords.TYPE_DOUBLE -> Double.class;
+            case SqlKeywords.TYPE_FLOAT -> Float.class;
+            case SqlKeywords.TYPE_BIGDECIMAL -> BigDecimal.class;
+            case SqlKeywords.TYPE_BOOLEAN -> Boolean.class;
+            case SqlKeywords.TYPE_DATE -> LocalDate.class;
+            case SqlKeywords.TYPE_DATETIME, SqlKeywords.TYPE_DATETIME_MS -> LocalDateTime.class;
+            case SqlKeywords.TYPE_UUID -> UUID.class;
+            case SqlKeywords.TYPE_CHAR -> Character.class;
             // Prompt 75 complex types
             case "ARRAY" -> List.class;
             case "MAP" -> Map.class;

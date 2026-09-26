@@ -813,7 +813,7 @@ public class AvroPrimaryKeyIndex {
         try {
             return Integer.parseInt(raw.trim());
         } catch (NumberFormatException e) {
-            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -837,7 +837,7 @@ public class AvroPrimaryKeyIndex {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
-                LOGGER.debug("Could not read config.properties, using defaults: {}", ignored.getMessage());
+                LOGGER.debug(AvroMetricConstants.MSG_CONFIG_READ_FAILED, ignored.getMessage());
             }
         }
         return props;

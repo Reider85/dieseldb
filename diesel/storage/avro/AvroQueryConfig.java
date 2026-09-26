@@ -67,7 +67,7 @@ public final class AvroQueryConfig {
         boolean projection = getBoolean(PROJECTION_ENABLED_KEY, DEFAULT_PROJECTION_ENABLED);
         int threshold = getInt(PARALLEL_THRESHOLD_KEY, DEFAULT_PARALLEL_THRESHOLD);
         if (threshold < 0) {
-            LOGGER.warn("Invalid {} value {}, using default {}", PARALLEL_THRESHOLD_KEY, threshold, DEFAULT_PARALLEL_THRESHOLD);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_UNQUOTED, PARALLEL_THRESHOLD_KEY, threshold, DEFAULT_PARALLEL_THRESHOLD);
             threshold = DEFAULT_PARALLEL_THRESHOLD;
         }
         return new AvroQueryConfig(pushdown, projection, threshold);
@@ -96,7 +96,7 @@ public final class AvroQueryConfig {
         try {
             return Integer.parseInt(raw.trim());
         } catch (RuntimeException e) {
-            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+        LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -110,7 +110,7 @@ public final class AvroQueryConfig {
         if (v.equals("false") || v.equals("off") || v.equals("no")) {
             return false;
         }
-        LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+        LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
         return defaultValue;
     }
 

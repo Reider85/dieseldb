@@ -169,17 +169,17 @@ public final class AvroObjectPool implements Closeable {
             boolean enabled = getBoolean(ENABLED_KEY, DEFAULT_ENABLED);
             int recordCapacity = getInt(RECORD_CAPACITY_KEY, DEFAULT_RECORD_CAPACITY);
             if (recordCapacity < 0) {
-                LOGGER.warn("Invalid {} value {}, using default {}", RECORD_CAPACITY_KEY, recordCapacity, DEFAULT_RECORD_CAPACITY);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_UNQUOTED, RECORD_CAPACITY_KEY, recordCapacity, DEFAULT_RECORD_CAPACITY);
                 recordCapacity = DEFAULT_RECORD_CAPACITY;
             }
             int writerCapacity = getInt(WRITER_CAPACITY_KEY, DEFAULT_WRITER_CAPACITY);
             if (writerCapacity < 0) {
-                LOGGER.warn("Invalid {} value {}, using default {}", WRITER_CAPACITY_KEY, writerCapacity, DEFAULT_WRITER_CAPACITY);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_UNQUOTED, WRITER_CAPACITY_KEY, writerCapacity, DEFAULT_WRITER_CAPACITY);
                 writerCapacity = DEFAULT_WRITER_CAPACITY;
             }
             int readerCapacity = getInt(READER_CAPACITY_KEY, DEFAULT_READER_CAPACITY);
             if (readerCapacity < 0) {
-                LOGGER.warn("Invalid {} value {}, using default {}", READER_CAPACITY_KEY, readerCapacity, DEFAULT_READER_CAPACITY);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_UNQUOTED, READER_CAPACITY_KEY, readerCapacity, DEFAULT_READER_CAPACITY);
                 readerCapacity = DEFAULT_READER_CAPACITY;
             }
             return new Config(enabled, recordCapacity, writerCapacity, readerCapacity);
@@ -197,7 +197,7 @@ public final class AvroObjectPool implements Closeable {
             if ("false".equals(v) || "off".equals(v) || "no".equals(v) || "0".equals(v)) {
                 return false;
             }
-            LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+            LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
             return defaultValue;
         }
 
@@ -215,7 +215,7 @@ public final class AvroObjectPool implements Closeable {
             try {
                 return Integer.parseInt(raw.trim());
             } catch (RuntimeException e) {
-                LOGGER.warn("Invalid {} value '{}', using default {}", key, raw, defaultValue);
+                LOGGER.warn(AvroMetricConstants.MSG_INVALID_VALUE_QUOTED, key, raw, defaultValue);
                 return defaultValue;
             }
         }
@@ -230,7 +230,7 @@ public final class AvroObjectPool implements Closeable {
                 try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                     props.load(in);
                 } catch (IOException ignored) {
-                    LOGGER.debug("Could not read config.properties, using defaults: {}", ignored.getMessage());
+                    LOGGER.debug(AvroMetricConstants.MSG_CONFIG_READ_FAILED, ignored.getMessage());
                 }
             }
             return props;
