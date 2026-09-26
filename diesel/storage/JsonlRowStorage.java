@@ -2,9 +2,11 @@ package diesel.storage;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -959,7 +961,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             if (fresh) {
                 return planFromDescriptor(sidecar, false);
             }
-            return planFromDescriptor(infer(file, codec), true);
+            return planFromDescriptor(inferFromPreScanned(file, codec), true);
         }
         // HYBRID: keep the current columns, append the fields the data adds.
         List<String> planColumns = new ArrayList<>(columns);
@@ -973,7 +975,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             }
             return new SchemaPlan(planColumns, planTypes, false);
         }
-        JsonSchemaInference.InferredSchema inferred = infer(file, codec);
+        JsonSchemaInference.InferredSchema inferred = inferFromPreScanned(file, codec);
         for (String field : inferred.columns()) {
             if (indexOfIgnoreCase(planColumns, field) < 0) {
                 planColumns.add(field);
@@ -1007,6 +1009,29 @@ public class JsonlRowStorage extends AbstractRowStorage {
         try (BufferedReader br = CompressionFactory.openDelimitedReader(file, codec, StorageConfig.getCharset())) {
             return JsonSchemaInference.infer(br, file.getPath(), config);
         }
+    }
+
+    /**
+     * Schema inference that reuses the parallel pre-scan's byte buffer for
+     * plain files, avoiding a redundant full-file disk read. When the file is
+     * plain (uncompressed), the byte-offset pre-scan is performed once (and
+     * cached for the later parallel data load), then the inference reads lines
+     * from the in-memory byte buffer. Compressed files fall back to the
+     * sequential {@link #infer(File, CompressionCodec)} path.
+     */
+    private JsonSchemaInference.InferredSchema inferFromPreScanned(File file, CompressionCodec codec) throws IOException {
+        if (codec.isNone()) {
+            JsonlParallelLoader.LineIndex index = jsonlIndex().preScanKeepBytes(file);
+            if (index.fileBytes() != null) {
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(
+                                new ByteArrayInputStream(index.fileBytes()),
+                                StorageConfig.getCharset()))) {
+                    return JsonSchemaInference.infer(br, file.getPath(), config);
+                }
+            }
+        }
+        return infer(file, codec);
     }
 
     /** Applies the planned schema to the storage (and re-aligns the row mapper). */
