@@ -29,11 +29,11 @@ public class AvroSecondaryIndex implements Serializable {
     // B-Tree structure: key -> list of row indices (transient: rebuilt from table data on load)
     private transient NavigableMap<Object, List<Integer>> indexMap;
     
-    // Statistics
-    private long lookupCount = 0;
-    private long rangeScanCount = 0;
-    private long totalResults = 0;
-    private long lastAccessTime = System.currentTimeMillis();
+    // Statistics (transient: runtime state, not serialized)
+    private transient long lookupCount = 0;
+    private transient long rangeScanCount = 0;
+    private transient long totalResults = 0;
+    private transient long lastAccessTime = System.currentTimeMillis();
     
     public AvroSecondaryIndex(String indexName, String columnName, Class<?> keyType) {
         this.indexName = indexName;
