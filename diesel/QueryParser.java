@@ -213,8 +213,8 @@ class QueryParser {
         List<Condition> subConditions;
 
         Condition(String column, Object value, Operator operator, String conjunction, boolean not) {
-            Objects.requireNonNull(column, "Condition column must not be null");
-            Objects.requireNonNull(operator, "Condition operator must not be null");
+            Objects.requireNonNull(column, ErrorMessages.CONDITION_COLUMN_NULL_MSG);
+            Objects.requireNonNull(operator, ErrorMessages.CONDITION_OPERATOR_NULL_MSG);
             this.column = column;
             this.value = value;
             this.rightColumn = null;
@@ -228,7 +228,7 @@ class QueryParser {
         }
 
         Condition(String column, List<Object> inValues, String conjunction, boolean not) {
-            Objects.requireNonNull(column, "Condition column must not be null");
+            Objects.requireNonNull(column, ErrorMessages.CONDITION_COLUMN_NULL_MSG);
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -255,7 +255,7 @@ class QueryParser {
         }
 
         Condition(String column, String rightColumn, Operator operator, String conjunction, boolean not) {
-            Objects.requireNonNull(column, "Condition column must not be null");
+            Objects.requireNonNull(column, ErrorMessages.CONDITION_COLUMN_NULL_MSG);
             this.column = column;
             this.value = null;
             this.rightColumn = rightColumn;
@@ -269,8 +269,8 @@ class QueryParser {
         }
 
         Condition(String column, Operator operator, String conjunction, boolean not) {
-            Objects.requireNonNull(column, "Condition column must not be null");
-            Objects.requireNonNull(operator, "Condition operator must not be null");
+            Objects.requireNonNull(column, ErrorMessages.CONDITION_COLUMN_NULL_MSG);
+            Objects.requireNonNull(operator, ErrorMessages.CONDITION_OPERATOR_NULL_MSG);
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -284,8 +284,8 @@ class QueryParser {
         }
 
         Condition(String column, SubQuery subQuery, Operator operator, String conjunction, boolean not) {
-            Objects.requireNonNull(column, "Condition column must not be null");
-            Objects.requireNonNull(subQuery, "Condition subQuery must not be null");
+            Objects.requireNonNull(column, ErrorMessages.CONDITION_COLUMN_NULL_MSG);
+            Objects.requireNonNull(subQuery, ErrorMessages.CONDITION_SUBQUERY_NULL_MSG);
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -299,8 +299,8 @@ class QueryParser {
         }
 
         Condition(String column, SubQuery subQuery, String conjunction, boolean not) {
-            Objects.requireNonNull(column, "Condition column must not be null");
-            Objects.requireNonNull(subQuery, "Condition subQuery must not be null");
+            Objects.requireNonNull(column, ErrorMessages.CONDITION_COLUMN_NULL_MSG);
+            Objects.requireNonNull(subQuery, ErrorMessages.CONDITION_SUBQUERY_NULL_MSG);
             this.column = column;
             this.value = null;
             this.rightColumn = null;
@@ -2628,7 +2628,7 @@ class QueryParser {
         // Prompt 39 (java:S2259): columnType is nullable here; all callers
         // resolve it via getColumnType() which throws when unknown, so a guard
         // clause keeps the contract explicit and prevents an NPE in getSimpleName().
-        Objects.requireNonNull(columnType, "Column type must not be null");
+        Objects.requireNonNull(columnType, ErrorMessages.COLUMN_TYPE_NULL_MSG);
         try {
             if (valueStr.equalsIgnoreCase(SqlKeywords.NULL)) {
                 return null;
@@ -2651,7 +2651,7 @@ class QueryParser {
     private Object parseStringLiteral(String valueStr, Class<?> columnType) {
         // Prompt 39 (java:S2259): guard against a nullable columnType before
         // getSimpleName() is reached on unsupported types.
-        Objects.requireNonNull(columnType, "Column type must not be null");
+        Objects.requireNonNull(columnType, ErrorMessages.COLUMN_TYPE_NULL_MSG);
         String strippedValue = SqlLexer.extractStringLiteral(valueStr);
         if (columnType == String.class) return strippedValue;
         if (columnType == LocalDate.class && CharOps.isLocalDateLiteral(strippedValue)) return LocalDate.parse(strippedValue);
@@ -2665,7 +2665,7 @@ class QueryParser {
     private Object parseNumericLiteral(String valueStr, Class<?> columnType) {
         // Prompt 39 (java:S2259): guard against a nullable columnType before
         // getSimpleName() is reached on unsupported types.
-        Objects.requireNonNull(columnType, "Column type must not be null");
+        Objects.requireNonNull(columnType, ErrorMessages.COLUMN_TYPE_NULL_MSG);
         try {
             if (columnType == BigDecimal.class) {
                 return new BigDecimal(valueStr);

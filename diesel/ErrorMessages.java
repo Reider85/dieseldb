@@ -61,6 +61,12 @@ public final class ErrorMessages {
     // S1192 – subquery prefix (SubqueryParser.java)
     public static final String SUBQUERY_PREFIX = "SUBQUERY_";
 
+    // S1192 – null-guard messages (QueryParser.java)
+    public static final String CONDITION_COLUMN_NULL_MSG = "Condition column must not be null";
+    public static final String CONDITION_OPERATOR_NULL_MSG = "Condition operator must not be null";
+    public static final String CONDITION_SUBQUERY_NULL_MSG = "Condition subQuery must not be null";
+    public static final String COLUMN_TYPE_NULL_MSG = "Column type must not be null";
+
     // S1192 – parser tag names (QueryParser.java)
     public static final String TAG_QUOTED_STRING = "quotedString";
     public static final String TAG_OPEN_PAREN = "openParen";
