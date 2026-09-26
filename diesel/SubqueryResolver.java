@@ -148,7 +148,7 @@ public class SubqueryResolver {
     }
 
     private boolean isSubQueryPattern(String item) {
-        return item.toUpperCase().startsWith("(") && item.toUpperCase().contains("SELECT");
+        return item.toUpperCase().startsWith("(") && item.toUpperCase().contains(SqlKeywords.SELECT);
     }
 
     private boolean isAggregatePattern(String item) {
@@ -257,7 +257,7 @@ public class SubqueryResolver {
                 String arg = matcher.group(2);
                 String alias = extractAlias(matcher.group(3));
 
-                if (arg.toUpperCase().startsWith("(") && arg.toUpperCase().contains("SELECT")) {
+                if (arg.toUpperCase().startsWith("(") && arg.toUpperCase().contains(SqlKeywords.SELECT)) {
                     String subQueryStr = arg.substring(1, arg.length() - 1).trim();
                     validateSubQuery(subQueryStr);
                     Query<?> subQuery = queryParser.parse(subQueryStr, database);

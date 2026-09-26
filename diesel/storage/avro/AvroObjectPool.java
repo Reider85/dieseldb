@@ -20,6 +20,7 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicLong;
+import diesel.ConfigKeys;
 
 /**
  * AVRO object pool (Prompt 79).
@@ -225,7 +226,7 @@ public final class AvroObjectPool implements Closeable {
             String override = System.getProperty(CONFIG_FILE_KEY);
             File configFile = (override != null && !override.isBlank())
                     ? new File(override)
-                    : new File(System.getProperty("user.dir", "."), "config.properties");
+                    : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
             if (configFile.exists()) {
                 try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                     props.load(in);

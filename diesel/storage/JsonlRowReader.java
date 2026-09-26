@@ -268,7 +268,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     public Object[] nextArray() {
         while (true) {
             if (finished) {
-                throw new NoSuchElementException("No more rows in JSONL file");
+                throw new NoSuchElementException(StorageMessageConstants.JSONL_NO_MORE_ROWS);
             }
             if (parser == null) {
                 prefetch();
@@ -304,8 +304,8 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         } catch (IOException e) {
             closeQuietly(p);
             parser = null;
-            String msg = contextPrefix() + "line " + lastRowLine
-                    + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
+            String msg = contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                    + (atPhysicalEof() ? StorageMessageConstants.JSONL_TRUNCATED_RECORD : "")
                     + ": " + e.getMessage();
             if (skipRow(msg, e)) {
                 return null;
@@ -344,15 +344,15 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         boolean flatten = config.nestedMode() == JsonParserConfig.NestedMode.FLATTEN;
         while (p.nextToken() != JsonEvent.END_OBJECT) {
             if (p.currentEvent() != JsonEvent.FIELD_NAME) {
-                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                        + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
+                throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                        + StorageMessageConstants.JSONL_EXPECTED_FIELD_NAME + p.currentEvent(), null);
             }
             String field = p.currentName();
             Integer idx = indexByName.get(field);
             JsonEvent valueToken = p.nextToken();
             if (valueToken == null) {
-                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                        + ": malformed JSON record: missing value for field '" + field + "'", null);
+                throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                        + StorageMessageConstants.JSONL_MISSING_VALUE_FOR_FIELD + field + "'", null);
             }
             if (processFieldFlatten(p, row, seen, flatten, field, idx, valueToken)) {
                 continue;
@@ -401,7 +401,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             parsedFieldCount++;
             String json = captureNested(p);
             schema.validateReadToken(idx, valueToken, json,
-                    contextPrefix() + "line " + lastRowLine + ": field '" + field + "': ");
+                    contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': ");
             row[idx] = json;
             seen[idx] = true;
             schema.markNestedJson(idx);
@@ -443,14 +443,14 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private void walkObjectFlat(JsonStreamParser p, Object[] row, boolean[] seen, String path) throws IOException {
         while (p.nextToken() != JsonEvent.END_OBJECT) {
             if (p.currentEvent() != JsonEvent.FIELD_NAME) {
-                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                        + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
+                throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                        + StorageMessageConstants.JSONL_EXPECTED_FIELD_NAME + p.currentEvent(), null);
             }
             String child = p.currentName();
             JsonEvent childValue = p.nextToken();
             if (childValue == null) {
-                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                        + ": malformed JSON record: missing value for field '" + child + "'", null);
+                throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                        + StorageMessageConstants.JSONL_MISSING_VALUE_FOR_FIELD + child + "'", null);
             }
             String full = path + "." + child;
             Integer childIdx = indexByName.get(full);
@@ -484,7 +484,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                 parsedFieldCount++;
                 String json = captureNested(p);
                 schema.validateReadToken(childIdx, childValue, json,
-                        contextPrefix() + "line " + lastRowLine + ": field '" + full + "': ");
+                        contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + StorageMessageConstants.JSON_FIELD_PREFIX + full + "': ");
                 row[childIdx] = json;
                 seen[childIdx] = true;
                 schema.markNestedJson(childIdx);
@@ -527,7 +527,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         if (idx != null && !seen[idx]) {
             parsedFieldCount++;
             schema.validateReadToken(idx, JsonEvent.START_ARRAY, json,
-                    contextPrefix() + "line " + lastRowLine + ": field '" + field + "': ");
+                    contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': ");
             row[idx] = json;
             seen[idx] = true;
             schema.markNestedJson(idx);
@@ -568,9 +568,9 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                 }
                 String text = e.getText();
                 schema.validateReadToken(columnIndex, token, text,
-                        contextPrefix() + "line " + lastRowLine + ": field '" + column + "': ");
+                        contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + StorageMessageConstants.JSON_FIELD_PREFIX + column + "': ");
                 row[columnIndex] = typeMapper.toColumnValue(typeAt(columnIndex), token, text,
-                        contextPrefix() + "line " + lastRowLine + ": field '" + column + "': ");
+                        contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + StorageMessageConstants.JSON_FIELD_PREFIX + column + "': ");
                 seen[columnIndex] = true;
                 parsedFieldCount++;
                 populated++;
@@ -665,13 +665,13 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         }
         while (true) {
             if (finished) {
-                throw new NoSuchElementException("No more rows in JSONL file");
+                throw new NoSuchElementException(StorageMessageConstants.JSONL_NO_MORE_ROWS);
             }
             if (parser == null) {
                 prefetch();
             }
             if (parser == null) {
-                throw new NoSuchElementException("No more rows in JSONL file");
+                throw new NoSuchElementException(StorageMessageConstants.JSONL_NO_MORE_ROWS);
             }
             JsonStreamParser p = parser;
             lastRowLine = lineNumber;
@@ -687,8 +687,8 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             } catch (IOException e) {
                 closeQuietly(p);
                 parser = null;
-                String msg = contextPrefix() + "line " + lastRowLine
-                        + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
+                String msg = contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                        + (atPhysicalEof() ? StorageMessageConstants.JSONL_TRUNCATED_RECORD : "")
                         + ": " + e.getMessage();
                 if (skipRow(msg, e)) {
                     continue;
@@ -739,15 +739,15 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                                         boolean[] seenColumn) throws IOException {
         while (p.nextToken() != JsonEvent.END_OBJECT) {
             if (p.currentEvent() != JsonEvent.FIELD_NAME) {
-                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                        + ": malformed JSON record: expected a field name, found " + p.currentEvent(), null);
+                throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                        + StorageMessageConstants.JSONL_EXPECTED_FIELD_NAME + p.currentEvent(), null);
             }
             String field = p.currentName();
             Integer idx = indexByName.get(field);
             JsonEvent valueToken = p.nextToken();
             if (valueToken == null) {
-                throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                        + ": malformed JSON record: missing value for field '" + field + "'", null);
+                throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                        + StorageMessageConstants.JSONL_MISSING_VALUE_FOR_FIELD + field + "'", null);
             }
             if (idx == null) {
                 handleUnknownField(field);
@@ -942,15 +942,15 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             p = JsonStreams.createParser(line, config);
             if (p.nextToken() != JsonEvent.START_OBJECT) {
                 closeQuietly(p);
-                throw new DieselIOException(contextPrefix() + "line " + lineNumber
+                throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lineNumber
                         + ": JSON record must be a single JSON object, found " + p.currentEvent(), null);
             }
             parser = p;
             return true;
         } catch (IOException e) {
             closeQuietly(p);
-            String msg = contextPrefix() + "line " + lineNumber
-                    + (atPhysicalEof() ? " (possibly truncated record: JSON ends unexpectedly at end of file)" : "")
+            String msg = contextPrefix() + StorageMessageConstants.LINE_PREFIX + lineNumber
+                    + (atPhysicalEof() ? StorageMessageConstants.JSONL_TRUNCATED_RECORD : "")
                     + ": " + e.getMessage();
             if (skipRow(msg, e)) {
                 return false;
@@ -975,20 +975,20 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     }
 
     private Object parseFieldValue(JsonStreamParser p, int idx, String field, JsonEvent valueToken) throws IOException {
-        schema.validateReadToken(idx, valueToken, p.getText(), contextPrefix() + "line " + lastRowLine + ": ");
+        schema.validateReadToken(idx, valueToken, p.getText(), contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + ": ");
         switch (valueToken) {
             case VALUE_NULL -> {
                 return null;
             }
             case VALUE_STRING, VALUE_TRUE, VALUE_FALSE, VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> {
                 return typeMapper.toColumnValue(typeAt(idx), valueToken, p.getText(),
-                        contextPrefix() + "line " + lastRowLine + ": field '" + field + "': ");
+                        contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': ");
             }
             case START_OBJECT, START_ARRAY -> {
                 return captureNested(p);
             }
-            default -> throw new DieselIOException(contextPrefix() + "line " + lastRowLine
-                    + ": field '" + field + "': unsupported JSON value " + valueToken, null);
+            default -> throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
+                    + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': unsupported JSON value " + valueToken, null);
         }
     }
 
@@ -1024,7 +1024,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private void handleUnknownField(String field) {
         if (config.schemaMode() == JsonParserConfig.SchemaMode.STRICT) {
             String hint = schema.suggestNearestColumn(field);
-            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+            throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
                     + ": unknown field '" + field + "' is not part of the table schema (strict schema mode)"
                     + (hint != null ? "; did you mean '" + hint + "'?" : ""), null);
         }
@@ -1034,7 +1034,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private void warnUnknownField(String field) {
         if (!unknownFieldWarned) {
             unknownFieldWarned = true;
-            LOGGER.warn(contextPrefix() + "line " + lastRowLine + ": unknown field '" + field
+            LOGGER.warn(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + ": unknown field '" + field
                     + "' ignored (not part of the table schema); further occurrences are not reported "
                     + "(hybrid schema mode expands the schema, prompt 44)");
         }
@@ -1051,7 +1051,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
 
     private void handleDuplicateField(String field) {
         if (config.duplicateKeys() == JsonParserConfig.DuplicateKeyMode.FAIL) {
-            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+            throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
                     + ": duplicate field '" + field
                     + "' (set jsonl.duplicate.keys=LAST_WINS to keep the last value)", null);
         }
@@ -1061,7 +1061,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private void warnDuplicateField(String field) {
         if (!duplicateFieldWarned) {
             duplicateFieldWarned = true;
-            LOGGER.warn(contextPrefix() + "line " + lastRowLine + ": duplicate field '" + field
+            LOGGER.warn(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine + ": duplicate field '" + field
                     + "' - last value wins; further occurrences are not reported "
                     + "(prompt 43 will add the jsonl.duplicate.keys config)");
         }
@@ -1096,7 +1096,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             }
         }
         if (!missing.isEmpty()) {
-            throw new DieselIOException(contextPrefix() + "line " + lastRowLine
+            throw new DieselIOException(contextPrefix() + StorageMessageConstants.LINE_PREFIX + lastRowLine
                     + ": record is missing field(s) " + String.join(", ", missing)
                     + " (jsonl.missing.field=error, prompt 47)", null);
         }

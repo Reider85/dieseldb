@@ -151,7 +151,7 @@ public final class AvroDataFileReader implements Closeable {
     private AvroDataFileReader(File avroFile, Collection<String> projectedColumns, Schema explicitReader) throws IOException {
         this.file = avroFile;
         if (avroFile == null || !avroFile.isFile()) {
-            throw new IOException("Avro data file does not exist: " + avroFile);
+            throw new IOException(AvroFileConstants.MSG_FILE_NOT_FOUND + avroFile);
         }
 
         Header header = parseHeader(avroFile);
@@ -442,7 +442,7 @@ public final class AvroDataFileReader implements Closeable {
         byte[] sync = new byte[SYNC_SIZE];
         readFully(syncPos, sync);
         if (!Arrays.equals(sync, syncMarker)) {
-            throw new IOException("Avro block sync marker mismatch at offset " + syncPos + " in " + file
+            throw new IOException(AvroFileConstants.MSG_SYNC_MARKER_MISMATCH + syncPos + " in " + file
                     + " (corrupt file or interrupted write)");
         }
 
@@ -567,7 +567,7 @@ public final class AvroDataFileReader implements Closeable {
             int got = channel.read(ByteBuffer.wrap(out, off, length - off));
             if (got < 0) {
                 throw new EOFException("Unexpected end of Avro file " + file + " (expected " + length
-                        + " bytes at offset " + position + ")");
+                        + AvroFileConstants.MSG_BYTES_AT_OFFSET + position + ")");
             }
             off += got;
         }
@@ -716,7 +716,7 @@ public final class AvroDataFileReader implements Closeable {
             createInstance.setAccessible(true);
             return (Codec) createInstance.invoke(CodecFactory.fromString(codecName));
         } catch (ReflectiveOperationException | SecurityException e) {
-            throw new IOException("Unsupported Avro codec '" + codecName + "': " + e.getMessage(), e);
+            throw new IOException(AvroFileConstants.MSG_UNSUPPORTED_CODEC + codecName + "': " + e.getMessage(), e);
         }
     }
 

@@ -21,6 +21,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import diesel.ConfigKeys;
 
 /**
  * Parallel reader for Avro object-container files (Prompt 69).
@@ -111,7 +112,7 @@ public final class AvroParallelReader implements Closeable {
     public AvroParallelReader(File avroFile, int maxThreads) throws IOException {
         this.file = avroFile;
         if (avroFile == null || !avroFile.isFile()) {
-            throw new IOException("Avro data file does not exist: " + avroFile);
+            throw new IOException(AvroFileConstants.MSG_FILE_NOT_FOUND + avroFile);
         }
         this.maxThreads = Math.max(0, maxThreads);
         this.threshold = resolveThreshold();
@@ -185,7 +186,7 @@ public final class AvroParallelReader implements Closeable {
                 byte[] actual = new byte[AvroDataFileReader.SYNC_SIZE];
                 readFully(ch, syncPos, actual, fileLen, avroFile);
                 if (!Arrays.equals(actual, sync)) {
-                    throw new IOException("Avro block sync marker mismatch at offset " + syncPos
+                    throw new IOException(AvroFileConstants.MSG_SYNC_MARKER_MISMATCH + syncPos
                             + ": corrupt file or interrupted write");
                 }
                 result.add(new BlockEntry(blockHeaderStart, count, size));
@@ -430,7 +431,7 @@ public final class AvroParallelReader implements Closeable {
             }
         }
         Properties props = new Properties();
-        File configFile = new File(System.getProperty("user.dir", "."), "config.properties");
+        File configFile = new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
@@ -479,14 +480,14 @@ public final class AvroParallelReader implements Closeable {
     private static void readFully(FileChannel ch, long position, byte[] out, long fileLen, File avroFile)
             throws IOException {
         if (position < 0 || position + out.length > fileLen) {
-            throw new IOException("Truncated Avro data file " + avroFile + ": expected " + out.length
-                    + " bytes at offset " + position + ", file ends at " + fileLen);
+            throw new IOException(AvroFileConstants.MSG_TRUNCATED_FILE + avroFile + AvroFileConstants.MSG_EXPECTED + out.length
+                    + AvroFileConstants.MSG_BYTES_AT_OFFSET + position + AvroFileConstants.MSG_FILE_ENDS_AT + fileLen);
         }
         int off = 0;
         while (off < out.length) {
             int got = ch.read(ByteBuffer.wrap(out, off, out.length - off), position + off);
             if (got < 0) {
-                throw new IOException("Truncated Avro data file " + avroFile + " at offset " + position);
+                throw new IOException(AvroFileConstants.MSG_TRUNCATED_FILE + avroFile + " at offset " + position);
             }
             off += got;
         }

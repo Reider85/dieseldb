@@ -321,7 +321,7 @@ public class JsonlSchemaManager {
             default -> String.valueOf(token);
         };
         String detail = raw != null && !raw.isBlank() ? " " + raw : "";
-        return new DieselIOException(context + "field '" + field + "': JSON " + tag + detail
+        return new DieselIOException(context + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': JSON " + tag + detail
                 + " is not compatible with column type " + typeName(type), null);
     }
 
@@ -350,7 +350,7 @@ public class JsonlSchemaManager {
             return;
         }
         if (value instanceof Map<?, ?> || value instanceof List<?> || value.getClass().isArray()) {
-            throw new DieselIOException(recordContext + "field '" + field + "': JSON object/array cannot be stored "
+            throw new DieselIOException(recordContext + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': JSON object/array cannot be stored "
                     + "in column type " + typeName(type)
                     + " (nested structures are captured as JSON text only in STRING columns)", null);
         }
@@ -362,14 +362,14 @@ public class JsonlSchemaManager {
             requireNumeric(field, value, type, recordContext);
         } else if (value instanceof Float || value instanceof Double) {
             if (type == Integer.class || type == Long.class || type == Short.class || type == Byte.class) {
-                throw new DieselIOException(recordContext + "field '" + field + "': floating-point value " + value
-                        + " cannot be stored in column type " + typeName(type), null);
+                throw new DieselIOException(recordContext + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': floating-point value " + value
+                        + StorageMessageConstants.CANNOT_BE_STORED_IN_COLUMN_TYPE + typeName(type), null);
             }
         } else if (value instanceof BigDecimal) {
             JsonTypeMapper.validateDoublePrecision(type, value, field, recordContext);
             if (type == Integer.class || type == Long.class || type == Short.class || type == Byte.class) {
-                throw new DieselIOException(recordContext + "field '" + field + "': BigDecimal value " + value
-                        + " cannot be stored in column type " + typeName(type), null);
+                throw new DieselIOException(recordContext + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': BigDecimal value " + value
+                        + StorageMessageConstants.CANNOT_BE_STORED_IN_COLUMN_TYPE + typeName(type), null);
             }
         } else if (value instanceof LocalDate) {
             requireType(field, value, type, LocalDate.class, recordContext);
@@ -382,15 +382,15 @@ public class JsonlSchemaManager {
 
     private void requireNumeric(String field, Object value, Class<?> type, String recordContext) {
         if (!isNumericType(type) && type != BigDecimal.class) {
-            throw new DieselIOException(recordContext + "field '" + field + "': value " + value
-                    + " cannot be stored in column type " + typeName(type), null);
+            throw new DieselIOException(recordContext + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': value " + value
+                    + StorageMessageConstants.CANNOT_BE_STORED_IN_COLUMN_TYPE + typeName(type), null);
         }
     }
 
     private void requireType(String field, Object value, Class<?> type, Class<?> expected, String recordContext) {
         if (type != expected) {
-            throw new DieselIOException(recordContext + "field '" + field + "': value " + value
-                    + " cannot be stored in column type " + typeName(type), null);
+            throw new DieselIOException(recordContext + StorageMessageConstants.JSON_FIELD_PREFIX + field + "': value " + value
+                    + StorageMessageConstants.CANNOT_BE_STORED_IN_COLUMN_TYPE + typeName(type), null);
         }
     }
 

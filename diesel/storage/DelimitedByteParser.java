@@ -146,7 +146,7 @@ public final class DelimitedByteParser {
             decoder.decode(java.nio.ByteBuffer.wrap(bytes));
         } catch (java.nio.charset.CharacterCodingException e) {
             throw new DieselIOException(
-                    "Malformed " + charset.name() + " input in delimited file " + fileName, e);
+                    StorageMessageConstants.MALFORMED + charset.name() + StorageMessageConstants.INPUT_IN_DELIMITED_FILE + fileName, e);
         }
     }
 
@@ -439,7 +439,7 @@ public final class DelimitedByteParser {
             text = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString();
         } catch (java.nio.charset.CharacterCodingException e) {
             throw new DieselIOException(
-                    "Malformed " + charset.name() + " input in delimited file " + fileName, e);
+                    StorageMessageConstants.MALFORMED + charset.name() + StorageMessageConstants.INPUT_IN_DELIMITED_FILE + fileName, e);
         }
         List<String> lines = new ArrayList<>();
         int start = 0;
@@ -680,7 +680,7 @@ public final class DelimitedByteParser {
             return decoder.decode(java.nio.ByteBuffer.wrap(b, off, len)).toString();
         } catch (java.nio.charset.CharacterCodingException e) {
             throw new DieselIOException(
-                    "Malformed " + charset.name() + " input in delimited file " + fileName, e);
+                    StorageMessageConstants.MALFORMED + charset.name() + StorageMessageConstants.INPUT_IN_DELIMITED_FILE + fileName, e);
         }
     }
 

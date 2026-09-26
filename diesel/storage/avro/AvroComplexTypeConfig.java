@@ -2,6 +2,7 @@ package diesel.storage.avro;
 
 import java.io.File;
 import java.io.IOException;
+import diesel.ConfigKeys;
 
 /**
  * Shared per-call config resolution for the Prompt 75 complex-type handlers
@@ -53,7 +54,7 @@ final class AvroComplexTypeConfig {
     }
 
     private static String readConfigProperty(String key) {
-        String userDir = System.getProperty("user.dir", ".");
+        String userDir = System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, ".");
         String configPath = System.getProperty(CONFIG_FILE_KEY, DEFAULT_CONFIG_FILE);
         File configFile = new File(userDir, configPath);
         if (!configFile.exists()) {

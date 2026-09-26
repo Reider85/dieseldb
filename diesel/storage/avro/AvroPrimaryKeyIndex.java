@@ -29,6 +29,7 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.TreeMap;
 import java.util.UUID;
+import diesel.ConfigKeys;
 
 /**
  * Primary-key index for AVRO-backed tables (Prompt 85).
@@ -832,7 +833,7 @@ public class AvroPrimaryKeyIndex {
         String override = System.getProperty(CONFIG_FILE_KEY);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);

@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
 import java.util.zip.CRC32;
+import diesel.ConfigKeys;
 
 /**
  * AVRO online backup and incremental backup (Prompt 84).
@@ -400,7 +401,7 @@ public final class AvroBackupManager {
         File latest = null;
         for (File child : children) {
             if (child.isDirectory()) {
-                File manifest = new File(child, "manifest.txt");
+                File manifest = new File(child, AvroFileConstants.MANIFEST_FILE);
                 if (manifest.isFile()) {
                     if (latest == null || child.lastModified() > latest.lastModified()) {
                         latest = child;
@@ -411,23 +412,23 @@ public final class AvroBackupManager {
         if (latest == null) {
             return null;
         }
-        return readManifest(new File(latest, "manifest.txt"));
+        return readManifest(new File(latest, AvroFileConstants.MANIFEST_FILE));
     }
 
     private static void writeManifest(File backupDir, BackupManifest manifest) throws IOException {
-        Path manifestPath = backupDir.toPath().resolve("manifest.txt");
+        Path manifestPath = backupDir.toPath().resolve(AvroFileConstants.MANIFEST_FILE);
         StringBuilder sb = new StringBuilder();
-        sb.append("backup_type=").append(manifest.backupType()).append('\n');
-        sb.append("source_dir=").append(manifest.sourceDir()).append('\n');
-        sb.append("backup_dir=").append(manifest.backupDir()).append('\n');
-        sb.append("started_at=").append(manifest.startedAt()).append('\n');
-        sb.append("completed_at=").append(manifest.completedAt()).append('\n');
-        sb.append("total_files=").append(manifest.totalFiles()).append('\n');
-        sb.append("total_bytes=").append(manifest.totalBytes()).append('\n');
-        sb.append("duration_nanos=").append(manifest.durationNanos()).append('\n');
-        sb.append("files_failed=").append(manifest.filesFailed()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_BACKUP_TYPE).append(manifest.backupType()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_SOURCE_DIR).append(manifest.sourceDir()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_BACKUP_DIR).append(manifest.backupDir()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_STARTED_AT).append(manifest.startedAt()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_COMPLETED_AT).append(manifest.completedAt()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_TOTAL_FILES).append(manifest.totalFiles()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_TOTAL_BYTES).append(manifest.totalBytes()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_DURATION_NANOS).append(manifest.durationNanos()).append('\n');
+        sb.append(AvroFileConstants.MANIFEST_KEY_FILES_FAILED).append(manifest.filesFailed()).append('\n');
         for (BackedUpFile f : manifest.files()) {
-            sb.append("file=").append(f.path())
+            sb.append(AvroFileConstants.MANIFEST_KEY_FILE).append(f.path())
                     .append('|').append(f.sizeBytes())
                     .append('|').append(f.lastModifiedMs())
                     .append('|').append(f.crc32())
@@ -448,26 +449,26 @@ public final class AvroBackupManager {
         for (String line : lines) {
             line = line.trim();
             if (line.isEmpty()) continue;
-            if (line.startsWith("backup_type=")) {
-                type = line.substring("backup_type=".length());
-            } else if (line.startsWith("source_dir=")) {
-                source = line.substring("source_dir=".length());
-            } else if (line.startsWith("backup_dir=")) {
-                backup = line.substring("backup_dir=".length());
-            } else if (line.startsWith("started_at=")) {
-                started = line.substring("started_at=".length());
-            } else if (line.startsWith("completed_at=")) {
-                completed = line.substring("completed_at=".length());
-            } else if (line.startsWith("total_files=")) {
-                totalFiles = Integer.parseInt(line.substring("total_files=".length()));
-            } else if (line.startsWith("total_bytes=")) {
-                totalBytes = Long.parseLong(line.substring("total_bytes=".length()));
-            } else if (line.startsWith("duration_nanos=")) {
-                durationNanos = Long.parseLong(line.substring("duration_nanos=".length()));
-            } else if (line.startsWith("files_failed=")) {
-                filesFailed = Integer.parseInt(line.substring("files_failed=".length()));
-            } else if (line.startsWith("file=")) {
-                String[] parts = line.substring("file=".length()).split("\\|", -1);
+            if (line.startsWith(AvroFileConstants.MANIFEST_KEY_BACKUP_TYPE)) {
+                type = line.substring(AvroFileConstants.MANIFEST_KEY_BACKUP_TYPE.length());
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_SOURCE_DIR)) {
+                source = line.substring(AvroFileConstants.MANIFEST_KEY_SOURCE_DIR.length());
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_BACKUP_DIR)) {
+                backup = line.substring(AvroFileConstants.MANIFEST_KEY_BACKUP_DIR.length());
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_STARTED_AT)) {
+                started = line.substring(AvroFileConstants.MANIFEST_KEY_STARTED_AT.length());
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_COMPLETED_AT)) {
+                completed = line.substring(AvroFileConstants.MANIFEST_KEY_COMPLETED_AT.length());
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_TOTAL_FILES)) {
+                totalFiles = Integer.parseInt(line.substring(AvroFileConstants.MANIFEST_KEY_TOTAL_FILES.length()));
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_TOTAL_BYTES)) {
+                totalBytes = Long.parseLong(line.substring(AvroFileConstants.MANIFEST_KEY_TOTAL_BYTES.length()));
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_DURATION_NANOS)) {
+                durationNanos = Long.parseLong(line.substring(AvroFileConstants.MANIFEST_KEY_DURATION_NANOS.length()));
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_FILES_FAILED)) {
+                filesFailed = Integer.parseInt(line.substring(AvroFileConstants.MANIFEST_KEY_FILES_FAILED.length()));
+            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_FILE)) {
+                String[] parts = line.substring(AvroFileConstants.MANIFEST_KEY_FILE.length()).split("\\|", -1);
                 if (parts.length >= 5) {
                     files.add(new BackedUpFile(
                             parts[0],
@@ -515,7 +516,7 @@ public final class AvroBackupManager {
         Properties props = new Properties();
         Path configPath = overrideFile != null
                 ? Path.of(overrideFile)
-                : Path.of(System.getProperty("user.dir"), "config.properties");
+                : Path.of(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR), ConfigKeys.CONFIG_FILE);
         if (Files.exists(configPath)) {
             try (var in = Files.newInputStream(configPath)) {
                 props.load(in);

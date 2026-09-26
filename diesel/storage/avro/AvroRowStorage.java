@@ -35,6 +35,7 @@ import diesel.DieselIOException;
 import diesel.storage.AbstractRowStorage;
 import diesel.storage.AtomicFileWriter;
 import diesel.storage.RowStorage;
+import diesel.ConfigKeys;
 
 /**
  * Avro-backed implementation of {@link RowStorage}. Rows are kept in an
@@ -534,8 +535,8 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     private static String resolveConfigValue(String key, String defaultValue) {
-        String userDir = System.getProperty("user.dir", ".");
-        File configFile = new File(userDir, "config.properties");
+        String userDir = System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, ".");
+        File configFile = new File(userDir, ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try {
                 var props = new java.util.Properties();

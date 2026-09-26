@@ -18,6 +18,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
+import diesel.ConfigKeys;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * Adaptive AVRO compression manager — runtime monitoring, metrics collection,
@@ -372,7 +374,7 @@ public final class AdaptiveCompressionManager {
      */
     public static String analyzeDataPattern(List<?> rows) {
         if (rows == null || rows.isEmpty()) {
-            return "mixed";
+            return StorageMessageConstants.CONTENT_MIXED;
         }
         int sample = Math.min(rows.size(), 100);
         long textValues = 0;
@@ -411,7 +413,7 @@ public final class AdaptiveCompressionManager {
         }
 
         if (knownValues == 0) {
-            return "mixed";
+            return StorageMessageConstants.CONTENT_MIXED;
         }
         double textRatio = (double) textValues / knownValues;
         double numericRatio = (double) numericValues / knownValues;
@@ -426,7 +428,7 @@ public final class AdaptiveCompressionManager {
         if (textRatio > 0.7) {
             return "text";
         }
-        return "mixed";
+        return StorageMessageConstants.CONTENT_MIXED;
     }
 
     /** Whether adaptive mode is currently enabled. */
@@ -592,8 +594,8 @@ public final class AdaptiveCompressionManager {
 
     private static String readProperty(String key) {
         Properties props = new Properties();
-        String userDir = System.getProperty("user.dir", ".");
-        File configFile = new File(userDir, "config.properties");
+        String userDir = System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, ".");
+        File configFile = new File(userDir, ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = Files.newInputStream(configFile.toPath())) {
                 props.load(in);

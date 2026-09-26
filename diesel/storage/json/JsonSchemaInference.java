@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import diesel.DieselIOException;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * One-pass schema inference for JSON Lines files (prompt 44) - the
@@ -249,19 +250,19 @@ public final class JsonSchemaInference {
         boolean booleanV = observed.kinds.contains(JsonEvent.VALUE_TRUE)
                 || observed.kinds.contains(JsonEvent.VALUE_FALSE);
         if (number && string) {
-            throw new DieselIOException(prefix(fileName, line) + "field '" + field
+            throw new DieselIOException(prefix(fileName, line) + StorageMessageConstants.JSON_FIELD_PREFIX + field
                     + "': value changes type between rows (number at line " + observed.numberLine
-                    + ", string at line " + observed.stringLine + ") - inference refuses a silent conversion", null);
+                    + ", string at line " + observed.stringLine + StorageMessageConstants.REFUSES_SILENT_CONVERSION, null);
         }
         if (number && booleanV) {
-            throw new DieselIOException(prefix(fileName, line) + "field '" + field
+            throw new DieselIOException(prefix(fileName, line) + StorageMessageConstants.JSON_FIELD_PREFIX + field
                     + "': value changes type between rows (number at line " + observed.numberLine
-                    + ", boolean at line " + observed.booleanLine + ") - inference refuses a silent conversion", null);
+                    + ", boolean at line " + observed.booleanLine + StorageMessageConstants.REFUSES_SILENT_CONVERSION, null);
         }
         if (string && booleanV) {
-            throw new DieselIOException(prefix(fileName, line) + "field '" + field
+            throw new DieselIOException(prefix(fileName, line) + StorageMessageConstants.JSON_FIELD_PREFIX + field
                     + "': value changes type between rows (string at line " + observed.stringLine
-                    + ", boolean at line " + observed.booleanLine + ") - inference refuses a silent conversion", null);
+                    + ", boolean at line " + observed.booleanLine + StorageMessageConstants.REFUSES_SILENT_CONVERSION, null);
         }
     }
 

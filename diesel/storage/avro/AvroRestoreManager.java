@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.TreeMap;
 import java.util.zip.CRC32;
+import diesel.ConfigKeys;
 
 /**
  * AVRO restore from backup with validation and point-in-time recovery
@@ -232,7 +233,7 @@ public final class AvroRestoreManager {
             return result;
         }
         for (File child : children) {
-            File manifestFile = new File(child, "manifest.txt");
+            File manifestFile = new File(child, AvroFileConstants.MANIFEST_FILE);
             if (!child.isDirectory() || !manifestFile.isFile()) continue;
             try {
                 AvroBackupManager.BackupManifest manifest = AvroBackupManager.readManifest(manifestFile);
@@ -258,7 +259,7 @@ public final class AvroRestoreManager {
     }
 
     private static AvroBackupManager.BackupManifest readManifest(File backupDir) throws IOException {
-        File manifestFile = new File(backupDir, "manifest.txt");
+        File manifestFile = new File(backupDir, AvroFileConstants.MANIFEST_FILE);
         if (!manifestFile.isFile()) {
             throw new IOException("No manifest.txt found in " + backupDir.getPath());
         }
@@ -312,13 +313,13 @@ public final class AvroRestoreManager {
 
         File best = null;
         for (File child : children) {
-            File manifestFile = new File(child, "manifest.txt");
+            File manifestFile = new File(child, AvroFileConstants.MANIFEST_FILE);
             if (!child.isDirectory() || !manifestFile.isFile()) continue;
             try {
                 AvroBackupManager.BackupManifest manifest = AvroBackupManager.readManifest(manifestFile);
                 if (!manifest.startedAt().isAfter(pointInTime)) {
                     if (best == null || manifest.startedAt().isAfter(
-                            AvroBackupManager.readManifest(new File(best, "manifest.txt")).startedAt())) {
+                            AvroBackupManager.readManifest(new File(best, AvroFileConstants.MANIFEST_FILE)).startedAt())) {
                         best = child;
                     }
                 }
@@ -336,7 +337,7 @@ public final class AvroRestoreManager {
         Properties props = new Properties();
         Path configPath = overrideFile != null
                 ? Path.of(overrideFile)
-                : Path.of(System.getProperty("user.dir"), "config.properties");
+                : Path.of(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR), ConfigKeys.CONFIG_FILE);
         if (Files.exists(configPath)) {
             try (var in = Files.newInputStream(configPath)) {
                 props.load(in);

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import diesel.ConfigKeys;
 
 /**
  * Manages Avro schemas for DieselDB tables: builds Avro RECORD schemas from
@@ -171,8 +172,8 @@ public final class AvroSchemaManager {
     public static Path resolveSchemaPath(String tableName) {
         String schemaDir = System.getProperty(SCHEMA_PATH_KEY);
         if (schemaDir == null || schemaDir.isBlank()) {
-            schemaDir = System.getProperty("user.dir", ".");
-            Path configPath = Paths.get(schemaDir, "config.properties");
+            schemaDir = System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, ".");
+            Path configPath = Paths.get(schemaDir, ConfigKeys.CONFIG_FILE);
             if (Files.exists(configPath)) {
                 try {
                     var props = new java.util.Properties();

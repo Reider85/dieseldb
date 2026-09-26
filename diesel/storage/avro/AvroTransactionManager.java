@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * AVRO-aware transaction manager with ACID guarantees, write-ahead logging,
@@ -419,7 +420,7 @@ public final class AvroTransactionManager {
     public int recordInsert(UUID txId, String tableName, int rowIndex, String row) {
         AvroTransaction tx = activeTransactions.get(txId);
         if (tx == null || tx.getState() != TransactionState.ACTIVE) {
-            throw new IllegalStateException("No active transaction: " + txId);
+            throw new IllegalStateException(StorageMessageConstants.NO_ACTIVE_TRANSACTION + txId);
         }
         String detail = tableName + "|" + rowIndex + "|" + row;
         appendWalEntry(txId, WalOperation.INSERT, tableName, detail);
@@ -432,7 +433,7 @@ public final class AvroTransactionManager {
     public void recordUpdate(UUID txId, String tableName, int rowIndex, String row) {
         AvroTransaction tx = activeTransactions.get(txId);
         if (tx == null || tx.getState() != TransactionState.ACTIVE) {
-            throw new IllegalStateException("No active transaction: " + txId);
+            throw new IllegalStateException(StorageMessageConstants.NO_ACTIVE_TRANSACTION + txId);
         }
         String detail = tableName + "|" + rowIndex + "|" + row;
         appendWalEntry(txId, WalOperation.UPDATE, tableName, detail);
@@ -444,7 +445,7 @@ public final class AvroTransactionManager {
     public void recordDelete(UUID txId, String tableName, int rowIndex) {
         AvroTransaction tx = activeTransactions.get(txId);
         if (tx == null || tx.getState() != TransactionState.ACTIVE) {
-            throw new IllegalStateException("No active transaction: " + txId);
+            throw new IllegalStateException(StorageMessageConstants.NO_ACTIVE_TRANSACTION + txId);
         }
         String detail = tableName + "|" + rowIndex;
         appendWalEntry(txId, WalOperation.DELETE, tableName, detail);
@@ -462,7 +463,7 @@ public final class AvroTransactionManager {
             throws TransactionConflictException {
         AvroTransaction tx = activeTransactions.get(txId);
         if (tx == null || tx.getState() != TransactionState.ACTIVE) {
-            throw new IllegalStateException("No active transaction: " + txId);
+            throw new IllegalStateException(StorageMessageConstants.NO_ACTIVE_TRANSACTION + txId);
         }
 
         // SERIALIZABLE conflict detection — check that no other active

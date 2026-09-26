@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import diesel.ConfigKeys;
 
 /**
  * Avro schema evolution compatibility checker (Prompt 71).
@@ -481,10 +482,10 @@ public final class SchemaCompatibilityChecker {
 
     private static Properties rootProps() {
         Properties props = new Properties();
-        String override = System.getProperty("avro.schema.config.file");
+        String override = System.getProperty(AvroFileConstants.PROP_SCHEMA_CONFIG_FILE);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);

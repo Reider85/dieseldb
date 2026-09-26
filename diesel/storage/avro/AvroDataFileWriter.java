@@ -247,7 +247,7 @@ public class AvroDataFileWriter {
             createInstance.setAccessible(true);
             return (Codec) createInstance.invoke(CodecFactory.fromString(codecName));
         } catch (ReflectiveOperationException | SecurityException e) {
-            throw new IOException("Unsupported Avro codec '" + codecName + "': " + e.getMessage(), e);
+            throw new IOException(AvroFileConstants.MSG_UNSUPPORTED_CODEC + codecName + "': " + e.getMessage(), e);
         }
     }
 
