@@ -54,6 +54,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @since Prompt 87
  */
 public final class AvroBloomFilter {
+    private static final SidecarSerializer sidecarSerializer = new SidecarSerializer();
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AvroBloomFilter.class);
 
@@ -279,47 +280,7 @@ public final class AvroBloomFilter {
      * @param dataFileModified the .avro data file last-modified millis (validation stamp)
      */
     public void saveToSidecar(Path sidecarPath, long dataFileSize, long dataFileModified) throws IOException {
-        File parent = sidecarPath.getParent() != null ? sidecarPath.getParent().toFile() : null;
-        if (parent != null) parent.mkdirs();
-        Path tmp = sidecarPath.resolveSibling(sidecarPath.getFileName() + ".tmp");
-        List<Integer> indexes = getBlockIndexes();
-        try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
-            w.write("VERSION=" + SIDECAR_VERSION);
-            w.newLine();
-            w.write("ENABLED=" + enabled);
-            w.newLine();
-            w.write("BITS_PER_KEY=" + bitsPerKey);
-            w.newLine();
-            w.write("NUM_HASHES=" + numHashes);
-            w.newLine();
-            w.write("FPP=" + fpp);
-            w.newLine();
-            w.write("DATA_FILE_SIZE=" + dataFileSize);
-            w.newLine();
-            w.write("DATA_FILE_MODIFIED=" + dataFileModified);
-            w.newLine();
-            w.write("BLOCK_COUNT=" + indexes.size());
-            w.newLine();
-            w.write("---");
-            w.newLine();
-            for (Integer index : indexes) {
-                BlockFilter filter = filters.get(index);
-                if (filter == null) continue;
-                w.write("BLOCK=" + index);
-                w.newLine();
-                w.write("KEYS=" + filter.keyCount.get());
-                w.newLine();
-                w.write("BIT_SIZE=" + filter.bitSize);
-                w.newLine();
-                w.write("BIT_BYTES=" + filter.bits.toByteArray().length);
-                w.newLine();
-                w.write("BITS=" + Base64.getEncoder().encodeToString(filter.bits.toByteArray()));
-                w.newLine();
-            }
-        }
-        Files.move(tmp, sidecarPath,
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        sidecarSerializer.serialize(this, sidecarPath, dataFileSize, dataFileModified);
     }
 
     /**
@@ -335,45 +296,7 @@ public final class AvroBloomFilter {
     public static AvroBloomFilter loadFromSidecar(Path sidecarPath,
                                                   long dataFileSize,
                                                   long dataFileModified) {
-        if (!Files.exists(sidecarPath)) return null;
-        try (BufferedReader r = Files.newBufferedReader(sidecarPath, StandardCharsets.UTF_8)) {
-            SidecarState state = new SidecarState();
-            String line;
-            boolean reachedData = false;
-            while ((line = r.readLine()) != null) {
-                if (line.equals("---")) {
-                    reachedData = true;
-                    continue;
-                }
-                if (!reachedData) {
-                    if (!parseHeaderLine(line, state)) return null;
-                    continue;
-                }
-                parseDataLine(line, state.loaded);
-            }
-            if (state.fileSize != dataFileSize || state.fileModified != dataFileModified) {
-                LOGGER.debug("AvroBloomFilter sidecar stamp mismatch: {}",
-                        state.fileSize != dataFileSize ? "size" : "modified");
-                return null;
-            }
-            if (state.expectedBlocks >= 0 && state.loaded.size() != state.expectedBlocks) {
-                LOGGER.warn("AvroBloomFilter sidecar block count mismatch: expected {}, got {}",
-                        state.expectedBlocks, state.loaded.size());
-                return null;
-            }
-            AvroBloomFilter filter = new AvroBloomFilter(
-                    AvroBloomFilterConfig.resolveFor(state.bitsPerKey, state.numHashes, state.fpp, state.enabled));
-            for (LoadedBlock block : state.loaded) {
-                if (block.bits == null) continue;
-                BlockFilter bf = BlockFilter.fromBytes(block.bits, block.bitSize, state.numHashes);
-                bf.keyCount.set(block.keys);
-                filter.filters.put(block.index, bf);
-            }
-            return filter;
-        } catch (Exception e) {
-            LOGGER.debug("AvroBloomFilter sidecar load failed: {}", e.getMessage());
-            return null;
-        }
+        return sidecarSerializer.deserialize(sidecarPath, dataFileSize, dataFileModified);
     }
 
     // ─── Internal helpers ───────────────────────────────────────────

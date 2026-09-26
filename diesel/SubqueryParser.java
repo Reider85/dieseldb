@@ -24,6 +24,7 @@ import java.util.stream.IntStream;
  * @see Query
  */
 public class SubqueryParser {
+    private final SubqueryResolver resolver = new SubqueryResolver();
     private static final Logger LOGGER = Logger.getLogger(SubqueryParser.class.getName());
     private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
     private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-z_]\\w*";
@@ -296,64 +297,7 @@ public class SubqueryParser {
      }
 
     private QueryParser.SelectItems parseSelectItems(String selectPart, Database database) {
-        List<String> selectItems = splitCommaSeparatedItems(selectPart);
-        List<String> columns = new ArrayList<>();
-        List<QueryParser.AggregateFunction> aggregates = new ArrayList<>();
-        List<QueryParser.SubQuery> subQueries = new ArrayList<>();
-        Map<String, String> columnAliases = new HashMap<>();
-
-        Pattern columnPattern = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$");
-        Pattern subQueryPattern = Pattern.compile("(?i)^\\(\\s*+SELECT\\s++(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\)(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
-        Pattern aggPattern = Pattern.compile("(?i)^(COUNT|MIN|MAX|AVG|SUM)\\s*+\\(\\s*+(" + QUALIFIED_IDENTIFIER_PATTERN + "|\\*|\\(\\s*+SELECT\\s++(?:[^()']++|'(?:\\\\.|[^'\\\\])*+'|\\([^()]*+\\))*+\\))\\s*+\\)(?:\\s++(?:AS\\s++)?(" + IDENTIFIER_PATTERN + "))?$", Pattern.DOTALL);
-        Pattern starPattern = Pattern.compile("^\\*$");
-
-        for (String item : selectItems) {
-            String trimmedItem = item.trim();
-            Matcher columnMatcher = columnPattern.matcher(trimmedItem);
-            Matcher subQueryMatcher = subQueryPattern.matcher(trimmedItem);
-            Matcher aggMatcher = aggPattern.matcher(trimmedItem);
-
-            if (subQueryMatcher.matches()) {
-                String subQueryStr = trimmedItem.substring(1, trimmedItem.lastIndexOf(")")).trim();
-                String alias = unquoteIdentifier(subQueryMatcher.group(1));
-                validateSubQuery(subQueryStr);
-                Query<?> subQuery = queryParser.parse(subQueryStr, database);
-                subQueries.add(new QueryParser.SubQuery(subQuery, alias));
-                if (alias != null) {
-                    columnAliases.put(ErrorMessages.SUBQUERY_PREFIX + subQueries.size(), alias);
-                }
-                LOGGER.log(Level.FINE, "Parsed subquery in SELECT: {0}{1}", new Object[]{subQueryStr, alias != null ? " AS " + alias : ""});
-            } else if (aggMatcher.matches()) {
-                String funcName = aggMatcher.group(1);
-                String arg = aggMatcher.group(2);
-                String alias = unquoteIdentifier(aggMatcher.group(3));
-                if (arg.toUpperCase().startsWith("(") && arg.toUpperCase().contains(SqlKeywords.SELECT)) {
-                    String subQueryStr = arg.substring(1, arg.length() - 1).trim();
-                    validateSubQuery(subQueryStr);
-                    Query<?> subQuery = queryParser.parse(subQueryStr, database);
-                    aggregates.add(new QueryParser.AggregateFunction(funcName, new QueryParser.SubQuery(subQuery, null), alias));
-                } else {
-                    String column = arg.equals("*") ? null : unquoteQualifiedIdentifier(arg);
-                    aggregates.add(new QueryParser.AggregateFunction(funcName, column, alias));
-                }
-                LOGGER.log(Level.FINE, "Parsed aggregate: {0}({1}){2}", new Object[]{funcName, arg, alias != null ? " AS " + alias : ""});
-            } else if (columnMatcher.matches()) {
-                String column = unquoteQualifiedIdentifier(columnMatcher.group(1));
-                String alias = unquoteIdentifier(columnMatcher.group(2));
-                columns.add(column);
-                if (alias != null) {
-                    columnAliases.put(column, alias);
-                }
-                LOGGER.log(Level.FINE, "Parsed column: {0}{1}", new Object[]{column, alias != null ? " AS " + alias : ""});
-            } else if (starPattern.matcher(trimmedItem).matches()) {
-                columns.add("*");
-                LOGGER.log(Level.FINE, "Parsed column: *");
-            } else {
-                throw new IllegalArgumentException("Invalid SELECT item: " + trimmedItem);
-            }
-        }
-
-        return new QueryParser.SelectItems(columns, aggregates, subQueries, columnAliases);
+        return resolver.classifySelectItems(selectPart, database);
     }
 
     private QueryParser.TableJoins parseTableAndJoins(String tableAndJoins, Database database) {
@@ -1655,43 +1599,7 @@ for (int i = 0; i < input.length(); i++) {
     }
 
     private Object parseConditionValue(String column, String value, Class<?> columnType) {
-        try {
-            if (value.startsWith("'") && value.endsWith("'")) {
-                String strValue = SqlLexer.extractStringLiteral(value);
-                if (columnType == String.class) {
-                    return strValue;
-                } else if (columnType == UUID.class) {
-                    return UUID.fromString(strValue);
-                } else if (columnType == LocalDate.class) {
-                    return LocalDate.parse(strValue);
-                } else if (columnType == LocalDateTime.class) {
-                    return strValue.contains(".") ?
-                            LocalDateTime.parse(strValue, QueryParser.DATETIME_MS_FORMATTER) :
-                            LocalDateTime.parse(strValue, QueryParser.DATETIME_FORMATTER);
-                }
-            } else {
-                if (columnType == Integer.class) {
-                    return Integer.parseInt(value);
-                } else if (columnType == Long.class) {
-                    return Long.parseLong(value);
-                } else if (columnType == Short.class) {
-                    return Short.parseShort(value);
-                } else if (columnType == Byte.class) {
-                    return Byte.parseByte(value);
-                } else if (columnType == BigDecimal.class) {
-                    return new BigDecimal(value);
-                } else if (columnType == Float.class) {
-                    return Float.parseFloat(value);
-                } else if (columnType == Double.class) {
-                    return Double.parseDouble(value);
-                } else if (columnType == Boolean.class) {
-                    return Boolean.parseBoolean(value);
-                }
-            }
-            throw new IllegalArgumentException("Unsupported value type for column " + column + ": " + value);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Failed to parse value '" + value + "' for column " + column + ": " + e.getMessage(), e);
-        }
+        return resolver.parseConditionValue(column, value, columnType);
     }
 
     private Class<?> getColumnType(String column, Map<String, Class<?>> combinedColumnTypes) {

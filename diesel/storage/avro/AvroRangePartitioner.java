@@ -1,6 +1,7 @@
 package diesel.storage.avro;
 
 import diesel.storage.AbstractRowStorage;
+import diesel.storage.avro.RangePartitionStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -115,11 +116,13 @@ public class AvroRangePartitioner {
 
     private final AbstractRowStorage storage;
     private final RangePartitionConfig config;
+    private final RangePartitionStrategy strategy;
     private final List<RangeBoundary> boundaries = new ArrayList<>();
 
     public AvroRangePartitioner(AbstractRowStorage storage, RangePartitionConfig config) {
         this.storage = storage;
         this.config = config;
+        this.strategy = new RangePartitionStrategy(storage, config.getPartitionColumn());
         initBoundaries();
     }
 
@@ -225,42 +228,7 @@ public class AvroRangePartitioner {
      *         non-numeric, or unparseable
      */
     private Double toNumeric(Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof Double) {
-            return (Double) value;
-        }
-        if (value instanceof Float) {
-            return ((Float) value).doubleValue();
-        }
-        if (value instanceof Integer) {
-            return ((Integer) value).doubleValue();
-        }
-        if (value instanceof Long) {
-            return ((Long) value).doubleValue();
-        }
-        if (value instanceof Short) {
-            return ((Short) value).doubleValue();
-        }
-        if (value instanceof Byte) {
-            return ((Byte) value).doubleValue();
-        }
-        if (value instanceof BigDecimal) {
-            return ((BigDecimal) value).doubleValue();
-        }
-        if (value instanceof Number) {
-            return ((Number) value).doubleValue();
-        }
-        if (value instanceof String) {
-            try {
-                return Double.parseDouble(((String) value).trim());
-            } catch (NumberFormatException e) {
-                return null;
-            }
-        }
-        logger.warn("Unsupported range value type: {}", value.getClass());
-        return null;
+        return strategy.toNumeric(value);
     }
 
     // ─── Partition layout ───────────────────────────────────────────
@@ -495,84 +463,31 @@ public class AvroRangePartitioner {
         int oldCount = boundaries.size();
 
         try {
-            // Build sub-range boundaries
-            double span = target.upperInclusive() - target.lowerInclusive() + 1;
-            double subSize = span / splitCount;
-            List<RangeBoundary> subRanges = new ArrayList<>();
-            for (int i = 0; i < splitCount; i++) {
-                double lo = target.lowerInclusive() + i * subSize;
-                double hi = (i == splitCount - 1)
-                        ? target.upperInclusive()
-                        : lo + subSize - 1;
-                subRanges.add(new RangeBoundary(-1, lo, hi));
-            }
+            // Build sub-range boundaries using strategy
+            List<RangeBoundary> subRanges = strategy.computeSubRangeBoundaries(target, splitCount);
 
             // Read rows from the original range directory
             Path oldDir = getDataDir(tableName).resolve(tableName)
                     .resolve(PARTITION_PREFIX + formatBoundary(target));
             List<Map<String, Object>> rows = new ArrayList<>();
             if (Files.exists(oldDir)) {
-                rows.addAll(readPartitionRows(tableName, oldDir));
+                rows.addAll(strategy.readPartitionRows(tableName, oldDir));
             }
 
-            // Write rows into sub-range directories
-            int rangesCreated = 0;
+            // Write rows into sub-range directories using strategy
             Set<Path> written = new HashSet<>();
-            for (Map<String, Object> row : rows) {
-                Object value = extractPartitionValue(row);
-                Double numeric = toNumeric(value);
-                RangeBoundary targetSub = null;
-                if (numeric != null) {
-                    for (RangeBoundary sub : subRanges) {
-                        if (numeric >= sub.lowerInclusive() && numeric <= sub.upperInclusive()) {
-                            targetSub = sub;
-                            break;
-                        }
-                    }
-                }
-                if (targetSub == null) {
-                    // Row does not fit any sub-range — put it in the first sub-range
-                    targetSub = subRanges.get(0);
-                }
-                Path subDir = getDataDir(tableName).resolve(tableName)
-                        .resolve(PARTITION_PREFIX + formatBoundary(targetSub));
-                try {
-                    if (!written.contains(subDir)) {
-                        if (!Files.exists(subDir)) {
-                            Files.createDirectories(subDir);
-                        }
-                        AvroRowStorage subStorage = newPartitionStorage(subDir.toString());
-                        List<Map<String, Object>> existing = subStorage.scan();
-                        existing.add(row);
-                        subStorage.setRows(existing);
-                        subStorage.saveToFile(tableName);
-                        written.add(subDir);
-                        rangesCreated++;
-                    } else {
-                        AvroRowStorage subStorage = newPartitionStorage(subDir.toString());
-                        subStorage.loadFromFile(tableName);
-                        List<Map<String, Object>> existing = subStorage.scan();
-                        existing.add(row);
-                        subStorage.setRows(existing);
-                        subStorage.saveToFile(tableName);
-                    }
-                } catch (Exception e) {
-                    errors.add("Failed to write row to sub-range " + subDir + ": "
-                            + e.getMessage());
-                    logger.warn("splitRange failed to write sub-range {}: {}",
-                            subDir, e.getMessage());
-                }
-            }
+            RangePartitionStrategy.RedistributionResult redistributionResult = 
+                strategy.redistributeRows(tableName, rows, subRanges, written);
 
-            // Ensure empty sub-range directories are created even when the
-            // original range held no rows (split must always materialize dirs)
+            // Ensure empty sub-range directories are created
             for (RangeBoundary sub : subRanges) {
                 Path subDir = getDataDir(tableName).resolve(tableName)
                         .resolve(PARTITION_PREFIX + formatBoundary(sub));
                 if (!written.contains(subDir) && !Files.exists(subDir)) {
                     Files.createDirectories(subDir);
                     written.add(subDir);
-                    rangesCreated++;
+                    redistributionResult = new RangePartitionStrategy.RedistributionResult(
+                            redistributionResult.rangesCreated() + 1, redistributionResult.errors());
                 }
             }
 
@@ -592,13 +507,13 @@ public class AvroRangePartitioner {
                 boundaries.add(new RangeBoundary(finalIndex + i,
                         sub.lowerInclusive(), sub.upperInclusive()));
             }
-            reindexBoundaries();
+            strategy.reindexBoundaries(boundaries);
 
             logger.info("Split range {} of table {} into {} sub-ranges ({} rows)",
                     rangeIndex, tableName, splitCount, rows.size());
             return new RangeSplitReport(oldCount, boundaries.size(),
-                    rows.size(), rangesCreated, rangesRemoved,
-                    errors.isEmpty(), Collections.unmodifiableList(errors));
+                    rows.size(), redistributionResult.rangesCreated(), rangesRemoved,
+                    redistributionResult.errors().isEmpty(), Collections.unmodifiableList(redistributionResult.errors()));
         } catch (Exception e) {
             errors.add("splitRange aborted: " + e.getMessage());
             logger.warn("splitRange aborted: {}", e.getMessage());
@@ -639,26 +554,26 @@ public class AvroRangePartitioner {
             double mergedHigh = Math.max(a.upperInclusive(), b.upperInclusive());
             RangeBoundary merged = new RangeBoundary(-1, mergedLow, mergedHigh);
 
-            // Read rows from both range directories
+            // Read rows from both range directories using strategy
             List<Map<String, Object>> rows = new ArrayList<>();
             Path dirA = getDataDir(tableName).resolve(tableName)
                     .resolve(PARTITION_PREFIX + formatBoundary(a));
             Path dirB = getDataDir(tableName).resolve(tableName)
                     .resolve(PARTITION_PREFIX + formatBoundary(b));
             if (Files.exists(dirA)) {
-                rows.addAll(readPartitionRows(tableName, dirA));
+                rows.addAll(strategy.readPartitionRows(tableName, dirA));
             }
             if (Files.exists(dirB)) {
-                rows.addAll(readPartitionRows(tableName, dirB));
+                rows.addAll(strategy.readPartitionRows(tableName, dirB));
             }
 
-            // Write to the merged directory
+            // Write to the merged directory using strategy
             Path mergedDir = getDataDir(tableName).resolve(tableName)
                     .resolve(PARTITION_PREFIX + formatBoundary(merged));
             int rangesCreated = 0;
             if (!rows.isEmpty()) {
                 try {
-                    writePartitionRows(tableName, mergedDir, rows);
+                    strategy.writePartitionRows(tableName, mergedDir, rows);
                     rangesCreated = 1;
                 } catch (Exception e) {
                     errors.add("Failed to write merged partition: " + e.getMessage());
@@ -680,7 +595,7 @@ public class AvroRangePartitioner {
             // Replace boundaries
             boundaries.removeIf(bb -> bb.index() == indexA || bb.index() == indexB);
             boundaries.add(merged);
-            reindexBoundaries();
+            strategy.reindexBoundaries(boundaries);
 
             logger.info("Merged ranges {}+{} of table {} ({} rows)",
                     indexA, indexB, tableName, rows.size());
@@ -745,12 +660,7 @@ public class AvroRangePartitioner {
     }
 
     private void reindexBoundaries() {
-        boundaries.sort((x, y) -> Double.compare(x.lowerInclusive(), y.lowerInclusive()));
-        for (int i = 0; i < boundaries.size(); i++) {
-            RangeBoundary old = boundaries.get(i);
-            boundaries.set(i, new RangeBoundary(i,
-                    old.lowerInclusive(), old.upperInclusive()));
-        }
+        strategy.reindexBoundaries(boundaries);
     }
 
     private Object extractPartitionValue(Map<String, Object> row) {
