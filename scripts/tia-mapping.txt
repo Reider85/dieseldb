@@ -123,6 +123,7 @@ diesel/CreateUniqueIndexQuery.java	index,query-full
 diesel/CreateUniqueClusteredIndexQuery.java	index,query-full
 diesel/ErrorMessages.java		query,query-full
 diesel/MessageConstants.java		network
+diesel/SubqueryConstants.java		query,query-full
 pom.xml					all
 .github/workflows/ci.yml		none
 Makefile				none
