@@ -70,6 +70,8 @@ public final class SqlKeywords {
     public static final String SEQUENCE = "SEQUENCE";
     public static final String IN = "IN";
     public static final String IS = "IS";
+    public static final String IS_NULL = "IS NULL";
+    public static final String IS_NOT_NULL = "IS NOT NULL";
     public static final String INNER = "INNER";
     public static final String LEFT = "LEFT";
     public static final String RIGHT = "RIGHT";

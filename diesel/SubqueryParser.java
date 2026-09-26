@@ -1214,7 +1214,7 @@ for (int i = 0; i < input.length(); i++) {
         if (condStr.startsWith("(") && condStr.endsWith(")")) {
             return parseGroupedCondition(condStr, ctx, effectiveTableName, conjunction, not);
         }
-        if (condStr.toUpperCase().contains(" IN ")) {
+        if (condStr.toUpperCase().contains(MessageConstants.SQL_IN_SPACED)) {
             return parseInCondition(condStr, withDefaultTableName(ctx, effectiveTableName), conjunction, not);
         }
         if (condStr.toUpperCase().contains(SqlKeywords.SELECT)) {

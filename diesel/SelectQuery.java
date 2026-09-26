@@ -3831,7 +3831,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         sb.append("  Join ").append(join.joinType).append('\n');
         sb.append("    tables: ").append(scanName);
         if (join.alias != null) {
-            sb.append(" AS ").append(join.alias);
+            sb.append(MessageConstants.SQL_AS_SPACED).append(join.alias);
         }
         sb.append(" <-> ").append(join.tableName).append('\n');
         sb.append("    estimated rows: ").append(joinTable != null ? joinTable.rowCount() : 0).append('\n');
@@ -3901,7 +3901,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
 
         String scanName = derivedMainTable != null ? mainTable.getName() : mainTableName;
         StringBuilder sb = new StringBuilder("Execution Plan\n");
-        sb.append("  Operation: SELECT\n");
+        sb.append("  Operation: ").append(SqlKeywords.SELECT).append('\n');
         sb.append("  Scan ").append(scanName).append(" (estimated rows: ").append(mainTable.rowCount()).append(")\n");
         sb.append(MessageConstants.SQL_INDEX_PREFIX).append(describeScanIndex(mainTable, mainTableName, conditions)).append('\n');
 
@@ -4080,7 +4080,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                 sb.append(" ").append(join.alias);
             }
             if (!join.onConditions.isEmpty()) {
-                sb.append(" ON ");
+                sb.append(MessageConstants.SQL_ON_SPACED);
                 sb.append(join.onConditions.stream()
                         .map(QueryParser.Condition::toString)
                         .collect(Collectors.joining(" ")));
@@ -4095,30 +4095,30 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         }
 
         if (!groupBy.isEmpty()) {
-            sb.append(" GROUP BY ");
+            sb.append(MessageConstants.SQL_GROUP_BY_SPACED);
             sb.append(String.join(", ", groupBy));
         }
 
         if (!havingConditions.isEmpty()) {
-            sb.append(" HAVING ");
+            sb.append(MessageConstants.SQL_HAVING_SPACED);
             sb.append(havingConditions.stream()
                     .map(QueryParser.HavingCondition::toString)
                     .collect(Collectors.joining(" ")));
         }
 
         if (!orderBy.isEmpty()) {
-            sb.append(" ORDER BY ");
+            sb.append(MessageConstants.SQL_ORDER_BY_SPACED);
             sb.append(orderBy.stream()
                     .map(QueryParser.OrderByInfo::toString)
                     .collect(Collectors.joining(", ")));
         }
 
         if (limit != null) {
-            sb.append(" LIMIT ").append(limit);
+            sb.append(MessageConstants.SQL_LIMIT_SPACED).append(limit);
         }
 
         if (offset != null) {
-            sb.append(" OFFSET ").append(offset);
+            sb.append(MessageConstants.SQL_OFFSET_SPACED).append(offset);
         }
 
         return sb.toString();

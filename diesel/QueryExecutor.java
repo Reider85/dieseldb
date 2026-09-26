@@ -193,11 +193,11 @@ public class QueryExecutor {
      */
     private int findNextClauseStart(String query, int startIndex) {
         int whereIndex = query.indexOf(MessageConstants.SQL_WHERE_SPACED, startIndex);
-        int groupIndex = query.indexOf(" GROUP BY ", startIndex);
-        int havingIndex = query.indexOf(" HAVING ", startIndex);
-        int orderIndex = query.indexOf(" ORDER BY ", startIndex);
-        int limitIndex = query.indexOf(" LIMIT ", startIndex);
-        int offsetIndex = query.indexOf(" OFFSET ", startIndex);
+        int groupIndex = query.indexOf(MessageConstants.SQL_GROUP_BY_SPACED, startIndex);
+        int havingIndex = query.indexOf(MessageConstants.SQL_HAVING_SPACED, startIndex);
+        int orderIndex = query.indexOf(MessageConstants.SQL_ORDER_BY_SPACED, startIndex);
+        int limitIndex = query.indexOf(MessageConstants.SQL_LIMIT_SPACED, startIndex);
+        int offsetIndex = query.indexOf(MessageConstants.SQL_OFFSET_SPACED, startIndex);
         
         int nextIndex = query.length();
         if (whereIndex != -1) nextIndex = Math.min(nextIndex, whereIndex);

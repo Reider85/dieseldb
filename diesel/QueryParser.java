@@ -196,7 +196,7 @@ class QueryParser {
 
         @Override
         public String toString() {
-            return "(" + query.toString() + ")" + (alias != null ? " AS " + alias : "");
+            return "(" + query.toString() + ")" + (alias != null ? MessageConstants.SQL_AS_SPACED + alias : "");
         }
     }
 
@@ -352,12 +352,12 @@ class QueryParser {
 
         private String formatInConditionString() {
             if (subQuery != null) {
-                return notPrefix() + column + " IN " + subQuery.toString() + conjunctionSuffix();
+                return notPrefix() + column + MessageConstants.SQL_IN_SPACED + subQuery.toString() + conjunctionSuffix();
             }
             String valuesStr = inValues.stream()
                     .map(v -> v instanceof String ? "'" + v + "'" : v.toString())
                     .collect(Collectors.joining(", "));
-            return notPrefix() + column + " IN (" + valuesStr + ")" + conjunctionSuffix();
+            return notPrefix() + column + MessageConstants.SQL_IN_SPACED + "(" + valuesStr + ")" + conjunctionSuffix();
         }
 
         private String formatColumnComparisonString() {
@@ -365,7 +365,7 @@ class QueryParser {
         }
 
         private String formatNullConditionString() {
-            String operatorStr = operator == Operator.IS_NULL ? "IS NULL" : "IS NOT NULL";
+            String operatorStr = operator == Operator.IS_NULL ? SqlKeywords.IS_NULL : SqlKeywords.IS_NOT_NULL;
             return notPrefix() + column + " " + operatorStr + conjunctionSuffix();
         }
 
@@ -474,7 +474,7 @@ class QueryParser {
             sb.append(resolveColumnRef(column, subQuery));
             sb.append(")");
             if (alias != null) {
-                sb.append(" AS ").append(alias);
+                sb.append(MessageConstants.SQL_AS_SPACED).append(alias);
             }
             return sb.toString();
         }
@@ -1687,11 +1687,11 @@ class QueryParser {
         if (isSubQuery) {
             Query<?> subQuery = parse(subQueryStr, database);
             LOGGER.log(Level.FINE, "Parsed {0}(subquery){1}",
-                    new Object[]{funcName, alias != null ? " AS " + alias : ""});
+                    new Object[]{funcName, alias != null ? MessageConstants.SQL_AS_SPACED + alias : ""});
             return new AggregateFunction(funcName, new SubQuery(subQuery, null), alias);
         } else {
             LOGGER.log(Level.FINE, "Parsed {0}({1}){2}",
-                    new Object[]{funcName, column == null ? "*" : column, alias != null ? " AS " + alias : ""});
+                    new Object[]{funcName, column == null ? "*" : column, alias != null ? MessageConstants.SQL_AS_SPACED + alias : ""});
             return new AggregateFunction(funcName, column, alias);
         }
     }
@@ -1715,7 +1715,7 @@ class QueryParser {
             columnAliases.put(subQueryKey, alias);
         }
         LOGGER.log(Level.FINE, "Parsed SELECT subquery: {0}{1}",
-                new Object[]{subQueryStr, alias != null ? " AS " + alias : ""});
+                new Object[]{subQueryStr, alias != null ? MessageConstants.SQL_AS_SPACED + alias : ""});
     }
 
     private void parseSelectColumn(Matcher columnMatcher, List<String> columns, Map<String, String> columnAliases) {
@@ -1869,7 +1869,7 @@ class QueryParser {
         tableAliases.put(joinTableName, joinTableName);
         if (joinTableTokens.length > 1 && !joinTableTokens[1].trim().isEmpty()) {
             String remaining = joinTableTokens[1].trim();
-            if (remaining.toUpperCase().contains(" ON ")) {
+            if (remaining.toUpperCase().contains(MessageConstants.SQL_ON_SPACED)) {
                 throw new IllegalArgumentException("CROSS JOIN не поддерживает ON: " + joinPart);
             }
         }
@@ -3533,7 +3533,7 @@ class QueryParser {
             state.currentCondition.append(' ');
             return i + nextToken.length();
         }
-        if ((nextToken.equalsIgnoreCase("ORDER") && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase("BY")) ||
+        if ((nextToken.equalsIgnoreCase(SqlKeywords.ORDER) && getNextToken(havingClause, i + nextToken.length() + 2).equalsIgnoreCase(SqlKeywords.BY)) ||
                 (nextToken.equalsIgnoreCase(SqlKeywords.LIMIT) && state.subQueryStart == -1) ||
                 (nextToken.equalsIgnoreCase(SqlKeywords.OFFSET) && state.subQueryStart == -1)) {
             String condStr = state.currentCondition.toString().trim();
@@ -3805,11 +3805,11 @@ class QueryParser {
                 .replaceAll("(?i)\\bLIKE\\b", SqlKeywords.LIKE)
                 .replaceAll("(?i)\\bNOT_LIKE\\b", SqlKeywords.NOT_LIKE)
                 .replaceAll("\\s*;", "")
-                .replaceAll("(?i)\\bLIMIT\\s*(\\d+)\\b", " LIMIT $1 ")
+                .replaceAll("(?i)\\bLIMIT\\s*(\\d+)\\b", MessageConstants.SQL_LIMIT_SPACED + "$1 ")
                 .replaceAll("(?i)\\bWHERE\\b", MessageConstants.SQL_WHERE_SPACED)
                 .replaceAll("(?i)\\bFROM\\b", MessageConstants.SQL_FROM_SPACED)
-                .replaceAll("(?i)\\bSELECT\\b", " SELECT ")
-                .replaceAll("(?i)\\bAS\\b", " AS ")
+                .replaceAll("(?i)\\bSELECT\\b", MessageConstants.SQL_SELECT_SPACED)
+                .replaceAll("(?i)\\bAS\\b", MessageConstants.SQL_AS_SPACED)
                 .replaceAll("\\(\\s+", "(")
                 .replaceAll("\\s+\\)", ")")
                 .replaceAll("(?i)\\bID\\s*=\\s*U\\.ID\\b", "ID=U.ID")
