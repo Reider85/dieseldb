@@ -1,1 +1,1 @@
-3.1.93 Sonar-prompt8 S6213 fix: rename restricted identifier record in AvroAuditLogger.java - renamed private method record() to recordEntry() to avoid conflict with Java 21 record keyword; updated 9 occurrences (1 method declaration + 8 call sites) within AvroAuditLogger.java; 1 file changed
+3.1.96 Sonar-prompt8 S108 fix: fill empty catch block in Database.fallbackSingleTableExtraction with Level.FINER logging

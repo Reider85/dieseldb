@@ -910,7 +910,8 @@ class Database {
             if (singleTable != null && !singleTable.isEmpty()) {
                 tables.add(singleTable);
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            LOGGER.log(Level.FINER, "Fallback table extraction failed", e);
         }
     }
 
