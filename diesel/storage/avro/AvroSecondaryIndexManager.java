@@ -22,11 +22,11 @@ public class AvroSecondaryIndexManager implements Serializable {
     private static final long serialVersionUID = 1L;
     
     private final String tableName;
-    private final List<String> columns;
-    private Map<String, Class<?>> columnTypes;
+    private transient List<String> columns;
+    private transient Map<String, Class<?>> columnTypes;
     
     // Map: indexName -> AvroSecondaryIndex
-    private final Map<String, AvroSecondaryIndex> indexes;
+    private transient Map<String, AvroSecondaryIndex> indexes;
     
     // Persistence file extension
     private static final String INDEX_FILE_EXTENSION = ".asi";
@@ -382,11 +382,26 @@ public class AvroSecondaryIndexManager implements Serializable {
         return type != null ? type : String.class;
     }
 
+    private void writeObject(ObjectOutputStream out) throws IOException {
+        out.defaultWriteObject();
+        out.writeObject(columns);
+        out.writeObject(columnTypes);
+        out.writeObject(indexes);
+    }
+
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
+        @SuppressWarnings("unchecked")
+        List<String> readColumns = (List<String>) in.readObject();
+        @SuppressWarnings("unchecked")
+        Map<String, Class<?>> readColumnTypes = (Map<String, Class<?>>) in.readObject();
+        @SuppressWarnings("unchecked")
+        Map<String, AvroSecondaryIndex> readIndexes = (Map<String, AvroSecondaryIndex>) in.readObject();
+        
+        // Normalize columnTypes
         Map<String, Class<?>> normalized = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        if (columnTypes != null) {
-            for (Map.Entry<?, ?> entry : columnTypes.entrySet()) {
+        if (readColumnTypes != null) {
+            for (Map.Entry<?, ?> entry : readColumnTypes.entrySet()) {
                 if (entry.getKey() instanceof String key && entry.getValue() instanceof Class<?> type) {
                     normalized.put(key, type);
                 } else if (entry.getKey() instanceof Class<?> type && entry.getValue() instanceof String column) {
@@ -394,7 +409,10 @@ public class AvroSecondaryIndexManager implements Serializable {
                 }
             }
         }
-        columnTypes = normalized;
+        
+        this.columns = readColumns;
+        this.columnTypes = normalized;
+        this.indexes = readIndexes;
     }
     
     /**

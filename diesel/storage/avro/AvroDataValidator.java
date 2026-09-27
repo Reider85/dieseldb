@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 
 import diesel.SqlKeywords;
 
+import java.io.*;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -167,7 +168,7 @@ public final class AvroDataValidator {
     public static class AvroValidationException extends IllegalArgumentException {
 
         private final int rowIndex;
-        private final List<FieldError> errors;
+        private transient List<FieldError> errors;
         private final ValidationMode mode;
 
         AvroValidationException(String message, int rowIndex, List<FieldError> errors, ValidationMode mode) {
@@ -175,6 +176,18 @@ public final class AvroDataValidator {
             this.rowIndex = rowIndex;
             this.errors = List.copyOf(errors);
             this.mode = mode;
+        }
+
+        private void writeObject(ObjectOutputStream out) throws IOException {
+            out.defaultWriteObject();
+            out.writeObject(errors);
+        }
+
+        private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+            in.defaultReadObject();
+            @SuppressWarnings("unchecked")
+            List<FieldError> readErrors = (List<FieldError>) in.readObject();
+            this.errors = readErrors;
         }
 
         /** Index of the first invalid row, or {@code -1} when not applicable. */

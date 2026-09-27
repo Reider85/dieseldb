@@ -1,5 +1,6 @@
 package diesel;
 
+import java.io.*;
 import java.io.Serializable;
 import java.util.*;
 
@@ -16,8 +17,8 @@ class CoveringBTreeIndex extends BTreeIndex implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private final String indexColumn;
-    private final List<String> coverColumns;
-    private final Map<Integer, Map<String, Object>> coverData;
+    private transient List<String> coverColumns;
+    private transient Map<Integer, Map<String, Object>> coverData;
 
     /**
      * Creates a covering B-tree index.
@@ -121,5 +122,22 @@ class CoveringBTreeIndex extends BTreeIndex implements Serializable {
                 coverData.put(rowIdx, covered);
             }
         }
+    }
+
+    private void writeObject(ObjectOutputStream out) throws IOException {
+        out.defaultWriteObject();
+        out.writeObject(coverColumns);
+        out.writeObject(coverData);
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        @SuppressWarnings("unchecked")
+        List<String> readCoverColumns = (List<String>) in.readObject();
+        @SuppressWarnings("unchecked")
+        Map<Integer, Map<String, Object>> readCoverData = (Map<Integer, Map<String, Object>>) in.readObject();
+        
+        this.coverColumns = readCoverColumns;
+        this.coverData = readCoverData;
     }
 }

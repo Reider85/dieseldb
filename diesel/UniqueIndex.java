@@ -1,5 +1,6 @@
 package diesel;
 
+import java.io.*;
 import java.io.Serializable;
 import java.util.*;
 
@@ -12,7 +13,7 @@ import java.util.*;
  */
 class UniqueIndex implements Index, Serializable {
     private static final long serialVersionUID = 1L;
-    private final Map<Object, Integer> indexMap;
+    private transient Map<Object, Integer> indexMap;
     private final Class<?> keyType;
 
     /**
@@ -85,5 +86,17 @@ class UniqueIndex implements Index, Serializable {
     @Override
     public Class<?> getKeyType() {
         return keyType;
+    }
+
+    private void writeObject(ObjectOutputStream out) throws IOException {
+        out.defaultWriteObject();
+        out.writeObject(indexMap);
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        @SuppressWarnings("unchecked")
+        Map<Object, Integer> readIndexMap = (Map<Object, Integer>) in.readObject();
+        this.indexMap = readIndexMap;
     }
 }

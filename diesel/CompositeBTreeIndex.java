@@ -1,5 +1,6 @@
 package diesel;
 
+import java.io.*;
 import java.io.Serializable;
 import java.util.*;
 
@@ -44,6 +45,11 @@ class CompositeBTreeIndex implements Index, Serializable {
             return values.hashCode();
         }
 
+        @Override
+        public String toString() {
+            return values.toString();
+        }
+
         private static int compareObjects(Object k1, Object k2) {
             if (k1 == null && k2 == null) return 0;
             if (k1 == null) return -1;
@@ -53,9 +59,11 @@ class CompositeBTreeIndex implements Index, Serializable {
             }
             return String.valueOf(k1).compareTo(String.valueOf(k2));
         }
+        
+        
     }
 
-    private final List<String> columns;
+    private transient List<String> columns;
     private final BTreeIndex delegate;
 
     /**
@@ -167,5 +175,17 @@ class CompositeBTreeIndex implements Index, Serializable {
      */
     public List<String> getColumns() {
         return columns;
+    }
+
+    private void writeObject(ObjectOutputStream out) throws IOException {
+        out.defaultWriteObject();
+        out.writeObject(columns);
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        @SuppressWarnings("unchecked")
+        List<String> readColumns = (List<String>) in.readObject();
+        this.columns = readColumns;
     }
 }

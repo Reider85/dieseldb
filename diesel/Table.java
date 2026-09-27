@@ -142,16 +142,16 @@ class Table implements Serializable {
     private static final int CURRENT_FORMAT_VERSION = 3;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final String name;
-    private final List<String> columns;
-    private final Map<String, Class<?>> columnTypes;
+    private transient List<String> columns;
+    private transient Map<String, Class<?>> columnTypes;
     private final String primaryKeyColumn;
-    private final List<Map<String, Object>> rows;
+    private transient List<Map<String, Object>> rows;
     private transient RowStorage storage;
     private transient ConcurrentHashMap<Integer, ReentrantReadWriteLock> rowLocks;
     private transient Map<String, Index> indexes;
     private transient Map<String, Sequence> sequences;
-    private final Map<String, String> indexDefinitions = new ConcurrentHashMap<>();
-    private final Map<String, List<String>> coverColumnDefinitions = new ConcurrentHashMap<>();
+    private transient Map<String, String> indexDefinitions = new ConcurrentHashMap<>();
+    private transient Map<String, List<String>> coverColumnDefinitions = new ConcurrentHashMap<>();
     private boolean isFileInitialized;
     private boolean hasClusteredIndex;
     private String clusteredIndexColumn;
@@ -1388,9 +1388,12 @@ class Table implements Serializable {
 
     private void writeObject(ObjectOutputStream oos) throws IOException {
         oos.defaultWriteObject();
-        // Only transient fields need explicit serialization.
-        // Non-transient fields (hasClusteredIndex, clusteredIndexColumn,
-        // indexDefinitions, coverColumnDefinitions) are handled by defaultWriteObject().
+        // Serialize the transient fields that were made transient for S1948 compliance
+        oos.writeObject(columns);
+        oos.writeObject(columnTypes);
+        oos.writeObject(rows);
+        oos.writeObject(indexDefinitions);
+        oos.writeObject(coverColumnDefinitions);
         oos.writeObject(sequences);
         oos.writeObject(deletedRows != null ? deletedRows : new BitSet());
         // Serialize secondary indexes with checksums for integrity validation.
@@ -1412,6 +1415,25 @@ class Table implements Serializable {
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
+        // Read the transient fields that were made transient for S1948 compliance
+        @SuppressWarnings("unchecked")
+        List<String> readColumns = (List<String>) ois.readObject();
+        @SuppressWarnings("unchecked")
+        Map<String, Class<?>> readColumnTypes = (Map<String, Class<?>>) ois.readObject();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> readRows = (List<Map<String, Object>>) ois.readObject();
+        @SuppressWarnings("unchecked")
+        Map<String, String> readIndexDefinitions = (Map<String, String>) ois.readObject();
+        @SuppressWarnings("unchecked")
+        Map<String, List<String>> readCoverColumnDefinitions = (Map<String, List<String>>) ois.readObject();
+        
+        // Update the transient fields
+        this.columns = readColumns;
+        this.columnTypes = readColumnTypes;
+        this.rows = readRows;
+        this.indexDefinitions = readIndexDefinitions;
+        this.coverColumnDefinitions = readCoverColumnDefinitions;
+        
         // Rebuild the case-insensitive type map so lookups stay case-insensitive after load.
         Map<String, Class<?>> tempColumnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         tempColumnTypes.putAll(columnTypes);
