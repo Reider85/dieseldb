@@ -939,8 +939,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         try {
             ensureWhereIndexes(table, conditions, mainTableName);
-            List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName, combinedColumnTypes);
-            if (mainRows == null) {
+            List<Map<String, Object>> mainRows = getIndexedRows(table, conditions, mainTableName);
+            if (mainRows.isEmpty()) {
                 // Prompt 91: Avro pushdown — detect Avro-backed tables and use
                 // the optimised path that applies column projection and predicate
                 // pushdown at the Avro binary level.
@@ -1004,7 +1004,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             // Prompt 82: record execution outcome for adaptive learning.
             if (adaptiveState != null) {
-                OPTIMIZER.recordExecution(adaptiveState, lastExecuteNanos + lastSortNanos, result.size());
+                OPTIMIZER.recordExecution(adaptiveState, result.size());
             }
 
             return result;
@@ -1039,8 +1039,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             throw new IllegalStateException("Hash join equality column does not reference tables " + buildTableName + " and " + probeTableName);
         }
 
-        List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName, ctx.combinedColumnTypes);
-        if (buildRows == null) {
+        List<Map<String, Object>> buildRows = getIndexedRows(buildTable, join.onConditions, buildTableName);
+        if (buildRows.isEmpty()) {
             buildRows = buildTable.getLiveRows();
         }
         String buildColumnKey = normalizeColumnKey(buildColumn, buildTableName);
@@ -1409,8 +1409,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
         long probeStart = System.nanoTime();
         List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
-        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
-        if (probeRows == null) {
+        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName);
+        if (probeRows.isEmpty()) {
             probeRows = probeTable.getLiveRows();
         }
         for (Map<String, Object> probeRow : probeRows) {
@@ -1520,7 +1520,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             Map<Object, List<Map<String, Object>>> partitionHash = new HashMap<>();
             try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(buildFile), 1 << 20))) {
                 Map<String, Object> row;
-                while ((row = readBinaryRow(in)) != null) {
+                while (!(row = readBinaryRow(in)).isEmpty()) {
                     Object key = row.get(buildColumnKey);
                     if (key != null) {
                         partitionHash.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
@@ -1531,7 +1531,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(probeFile), 1 << 20))) {
                 Map<String, Object> probeRow;
-                while ((probeRow = readBinaryRow(in)) != null) {
+                while (!(probeRow = readBinaryRow(in)).isEmpty()) {
                     Object probeKey = probeRow.get(probeColumnKey);
                     if (probeKey != null) {
                         List<Map<String, Object>> matches = partitionHash.get(probeKey);
@@ -1575,8 +1575,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         long buildStart = System.nanoTime();
         spillBuildPartitions(buildRows, buildTable, buildColumnKey, partitionCount, tempDir, ctx);
 
-        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName, ctx.combinedColumnTypes);
-        if (probeRows == null) {
+        List<Map<String, Object>> probeRows = getIndexedRows(probeTable, ctx.join.onConditions, ctx.probeTableName);
+        if (probeRows.isEmpty()) {
             probeRows = probeTable.getLiveRows();
         }
         spillProbePartitions(probeRows, probeColumnKey, partitionCount, tempDir);
@@ -1733,8 +1733,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             List<Map<String, Map<String, Object>>> joinedRows, Table joinTable, JoinContext ctx) {
 
         List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
-        List<Map<String, Object>> joinRows = getIndexedRows(joinTable, ctx.join.onConditions, ctx.join.tableName, ctx.combinedColumnTypes);
-        if (joinRows == null) {
+        List<Map<String, Object>> joinRows = getIndexedRows(joinTable, ctx.join.onConditions, ctx.join.tableName);
+        if (joinRows.isEmpty()) {
             joinRows = joinTable.getLiveRows();
         }
 
@@ -1878,7 +1878,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         try {
             n = in.readInt();
         } catch (EOFException eof) {
-            return null;
+            return Collections.emptyMap();
         }
         Map<String, Object> row = new HashMap<>(n);
         for (int k = 0; k < n; k++) {
@@ -2016,11 +2016,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 try {
                     peekedRow = readBinaryRow(reader);
                 } catch (IOException e) {
-                    peekedRow = null;
+                    peekedRow = Collections.emptyMap();
                 }
                 peeked = true;
             }
-            return peekedRow != null;
+            return !peekedRow.isEmpty();
         }
 
         @Override
@@ -2228,8 +2228,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private List<Number> collectNumericValues(List<Map<String, Object>> rows, String columnKey) {
         return rows.stream().map(row -> row.get(columnKey))
                 .filter(Objects::nonNull)
-                .filter(v -> v instanceof Number)
-                .map(v -> (Number) v)
+                .filter(Number.class::isInstance)
+                .map(Number.class::cast)
                 .collect(Collectors.toList());
     }
 
@@ -2815,9 +2815,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     @SuppressWarnings("unchecked")
     private static int avroCompareValues(Object a, Object b) {
         if (a == null || b == null) return 0;
-        if (a instanceof Number && b instanceof Number) {
-            return java.math.BigDecimal.valueOf(((Number) a).doubleValue())
-                    .compareTo(java.math.BigDecimal.valueOf(((Number) b).doubleValue()));
+        if (a instanceof Number an && b instanceof Number bn) {
+            return java.math.BigDecimal.valueOf(an.doubleValue())
+                    .compareTo(java.math.BigDecimal.valueOf(bn.doubleValue()));
         }
         if (a instanceof Comparable && b instanceof Comparable) {
             try {
@@ -2832,9 +2832,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private static boolean avroValuesEqual(Object a, Object b) {
         if (a == null && b == null) return true;
         if (a == null || b == null) return false;
-        if (a instanceof Number && b instanceof Number) {
-            return java.math.BigDecimal.valueOf(((Number) a).doubleValue())
-                    .compareTo(java.math.BigDecimal.valueOf(((Number) b).doubleValue())) == 0;
+        if (a instanceof Number an && b instanceof Number bn) {
+            return java.math.BigDecimal.valueOf(an.doubleValue())
+                    .compareTo(java.math.BigDecimal.valueOf(bn.doubleValue())) == 0;
         }
         if (a.getClass().equals(b.getClass())) return a.equals(b);
         return a.toString().equals(b.toString());
@@ -2869,19 +2869,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return null;
     }
 
-    private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName, Map<String, Class<?>> combinedColumnTypes) {
+    private List<Map<String, Object>> getIndexedRows(Table table, List<QueryParser.Condition> conditions, String tableName) {
         if (conditions == null || conditions.isEmpty()) {
-            return null;
+            return Collections.emptyList();
         }
         if (hasOrConditions(conditions)) {
-            return null;
+            return Collections.emptyList();
         }
 
         List<Set<Integer>> indexedSets = collectIndexRowSets(conditions, table, tableName);
         List<Integer> compositeRows = lookupCompositeIndex(table, conditions, tableName);
 
-        if (indexedSets.isEmpty() && (compositeRows == null || compositeRows.isEmpty())) {
-            return null;
+        if (indexedSets.isEmpty() && compositeRows.isEmpty()) {
+            return Collections.emptyList();
         }
 
         Set<Integer> result = intersectIndexedResults(indexedSets, compositeRows);
@@ -2893,7 +2893,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Collections.sort(sortedResult);
 
         List<Map<String, Object>> coveredRows = tryCoveringIndex(table, new LinkedHashSet<>(sortedResult), conditions, tableName);
-        if (coveredRows != null) {
+        if (!coveredRows.isEmpty()) {
             return coveredRows;
         }
 
@@ -2921,7 +2921,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
                 if (index != null) {
                     List<Integer> rowIndices = lookupIndex(index, condition, tableName, unqualifiedColumn, table);
-                    if (rowIndices != null && !rowIndices.isEmpty()) {
+                    if (!rowIndices.isEmpty()) {
                         indexedSets.add(new LinkedHashSet<>(rowIndices));
                         lastIndexLookupCount++;
                     }
@@ -2942,7 +2942,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             if (result.isEmpty()) {
                 return result;
             }
-            if (compositeRows != null && !compositeRows.isEmpty()) {
+            if (!compositeRows.isEmpty()) {
                 result.retainAll(new LinkedHashSet<>(compositeRows));
             }
         } else {
@@ -2980,13 +2980,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     // the typed keys stored in the composite index (e.g. Integer→Long).
                     Class<?> colType = table.getColumnTypes().get(unqualified);
                     Object converted = colType != null
-                            ? new ConditionEvaluator().convertConditionValue(condition.value, unqualified, colType, table.getColumnTypes())
+                            ? new ConditionEvaluator().convertConditionValue(condition.value, unqualified, colType)
                             : condition.value;
                     equalityColumns.put(unqualified, converted);
                 }
             }
         }
-        if (equalityColumns.size() < 2) return null;
+        if (equalityColumns.size() < 2) return Collections.emptyList();
 
         // Find best matching composite index
         for (Map.Entry<String, Index> entry : table.getIndexes().entrySet()) {
@@ -3006,7 +3006,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
         }
-        return null;
+        return Collections.emptyList();
     }
 
     /**
@@ -3044,7 +3044,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                                                          List<QueryParser.Condition> conditions, String tableName) {
         Set<String> requiredColumns = collectRequiredSelectColumns();
         if (requiredColumns.isEmpty()) {
-            return null;
+            return Collections.emptyList();
         }
         for (QueryParser.Condition condition : conditions) {
             if (isCoverableCondition(condition)) {
@@ -3058,7 +3058,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                 }
             }
         }
-        return null;
+        return Collections.emptyList();
     }
 
     private boolean isCoverableCondition(QueryParser.Condition condition) {
@@ -3076,7 +3076,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         Class<?> colType = table.getColumnTypes().get(unqualifiedColumn);
         ConditionEvaluator evaluator = new ConditionEvaluator();
         if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
-            Object val = colType != null ? evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType, table.getColumnTypes()) : condition.value;
+            Object val = colType != null ? evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType) : condition.value;
             List<Integer> rowIndices = index.search(val);
             LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
                     new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
@@ -3085,7 +3085,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         if (condition.isInOperator() && condition.inValues != null) {
             List<Integer> rowIndices = new ArrayList<>();
             for (Object inValue : condition.inValues) {
-                Object val = colType != null ? evaluator.convertConditionValue(inValue, unqualifiedColumn, colType, table.getColumnTypes()) : inValue;
+                Object val = colType != null ? evaluator.convertConditionValue(inValue, unqualifiedColumn, colType) : inValue;
                 rowIndices.addAll(index.search(val));
             }
             LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
@@ -3095,13 +3095,13 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         if (index instanceof BTreeIndex bTreeIndex) {
             // Convert condition value for range searches too.
             if (colType != null && condition.value != null) {
-                Object converted = evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType, table.getColumnTypes());
+                Object converted = evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType);
                 QueryParser.Condition adjusted = new QueryParser.Condition(condition.column, converted, condition.operator, condition.conjunction, condition.not);
                 return lookupBTreeRange(bTreeIndex, adjusted, tableName, unqualifiedColumn);
             }
             return lookupBTreeRange(bTreeIndex, condition, tableName, unqualifiedColumn);
         }
-        return null;
+        return Collections.emptyList();
     }
 
     /**
@@ -3134,7 +3134,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                         new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
                 yield r;
             }
-            default -> null;
+            default -> Collections.emptyList();
         };
     }
 
