@@ -775,6 +775,8 @@ Update PROMPT_STATUS.md for Prompt 96
 
 3.1.89 perf: eliminate redundant full-file read during JSONL load — reuse parallel pre-scan byte buffer for schema inference (inferFromPreScanned) so plain JSONL files are read from disk only once instead of twice; fast 186/0/0
 
+3.1.90 Sonar-prompt8 S1948 fix: make fields transient or serializable in AVRO module - fixed 4 statistics fields in AvroSecondaryIndex.java (lookupCount, rangeScanCount, totalResults, lastAccessTime) by marking them as transient; fields represent runtime state that shouldn't be serialized; AvroSecondaryIndexManager.java already had correct transient annotations; 2 files changed
+
 3.1.90 Sonar-prompt8 S1948 fix: make AvroSecondaryIndex.indexMap transient to fix non-serializable ConcurrentSkipListMap; add readObject for post-deserialization init
 
 3.1.91 Fix all 16 Java:S1948 "Make field transient or serializable" violations by adding transient modifiers and custom serialization methods to non-serializable interface types (List, Map, ConcurrentHashMap) in Serializable classes
