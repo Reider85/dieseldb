@@ -785,10 +785,6 @@ chore: test-profiles-audit changelog entry
 
 3.2.5 S1172 fix: remove unused method parameters in QueryParser.java and SubqueryParser.java
 
-<<<<<<< HEAD
-3.2.6 Fix QueryProfilerTest parallel test interference with delta-based assertions
-=======
 3.2.6 S1172: remove 9 unused method parameters across 6 files
->>>>>>> a9bd57c02713394b109afd273ce6a04a4a35b4df
 
 3.2.7 Fix QueryProfilerTest parallel test interference with delta-based assertions
