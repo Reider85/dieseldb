@@ -796,3 +796,5 @@ chore: test-profiles-audit changelog entry
 3.2.11 Sonar-prompt8 S1068: remove 4 unused volatile fields (lastReadBytes/lastReadNanos/lastWriteBytes/lastWriteNanos) in AvroMetrics.java
 
 3.2.12 S1068: remove 4 unused private fields in AVRO module
+
+3.2.13 Replace instanceof+cast with pattern matching in SelectQuery.java (S6201)
