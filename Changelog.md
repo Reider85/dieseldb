@@ -798,3 +798,5 @@ chore: test-profiles-audit changelog entry
 3.2.12 S1068: remove 4 unused private fields in AVRO module
 
 3.2.13 Replace instanceof+cast with pattern matching in SelectQuery.java (S6201)
+
+3.2.14 Fix S6201: Replace instanceof+cast with pattern matching in AVRO module and storage files

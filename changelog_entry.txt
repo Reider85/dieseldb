@@ -1,1 +1,1 @@
-3.2.13 Replace instanceof+cast with pattern matching in SelectQuery.java (S6201)
+3.2.14 Fix S6201: Replace instanceof+cast with pattern matching in AVRO module and storage files
