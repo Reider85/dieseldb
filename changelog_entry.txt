@@ -1,1 +1,1 @@
-3.2.6 Fix QueryProfilerTest parallel test interference with delta-based assertions
+3.2.7 Fix QueryProfilerTest parallel test interference with delta-based assertions
