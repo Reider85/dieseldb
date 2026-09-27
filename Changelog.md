@@ -792,3 +792,5 @@ chore: test-profiles-audit changelog entry
 3.2.9 S1168: replace null returns with empty collections in 3 index-lookup methods
 
 3.2.10 Mass fix S1168 violations - return empty collections instead of null across 29 methods
+
+3.2.11 Sonar-prompt8 S1068: remove 4 unused volatile fields (lastReadBytes/lastReadNanos/lastWriteBytes/lastWriteNanos) in AvroMetrics.java

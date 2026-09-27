@@ -100,11 +100,6 @@ public class AvroMetrics implements DynamicMBean {
     private final AtomicLong totalOperations = new AtomicLong();
     private final AtomicLong alertCount = new AtomicLong();
 
-    // ─── Volatile last-values ─────────────────────────────────────────
-    private volatile long lastReadBytes;
-    private volatile long lastReadNanos;
-    private volatile long lastWriteBytes;
-    private volatile long lastWriteNanos;
     private volatile long lastCompressionRatio100; // ratio * 100 for integer storage
     private volatile long lastAlertTimestampMs;
 
@@ -167,9 +162,6 @@ public class AvroMetrics implements DynamicMBean {
         totalBytesRead.addAndGet(bytes);
         totalReadNanos.addAndGet(nanos);
         totalOperations.incrementAndGet();
-        lastReadBytes = bytes;
-        lastReadNanos = nanos;
-
         long readMs = nanos / 1_000_000;
         if (readMs > alertSlowReadMs) {
             fireAlert(Alert.Severity.WARN, "slow_read", readMs, alertSlowReadMs,
@@ -191,9 +183,6 @@ public class AvroMetrics implements DynamicMBean {
         totalBytesWritten.addAndGet(bytes);
         totalWriteNanos.addAndGet(nanos);
         totalOperations.incrementAndGet();
-        lastWriteBytes = bytes;
-        lastWriteNanos = nanos;
-
         long writeMs = nanos / 1_000_000;
         if (writeMs > alertSlowWriteMs) {
             fireAlert(Alert.Severity.WARN, "slow_write", writeMs, alertSlowWriteMs,
@@ -290,10 +279,6 @@ public class AvroMetrics implements DynamicMBean {
         errorCount.set(0);
         totalOperations.set(0);
         alertCount.set(0);
-        lastReadBytes = 0;
-        lastReadNanos = 0;
-        lastWriteBytes = 0;
-        lastWriteNanos = 0;
         lastCompressionRatio100 = 0;
         lastAlertTimestampMs = 0;
         alertHistory.clear();
