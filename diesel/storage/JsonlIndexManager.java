@@ -641,6 +641,27 @@ public final class JsonlIndexManager {
     }
 
     /**
+     * Like {@link #preScan(File)}, but retains the whole-file byte buffer on
+     * the returned {@link JsonlParallelLoader.LineIndex} so callers can iterate
+     * lines from the buffer without re-reading the file from disk. The cached
+     * result is shared with {@link #preScan(File)}, so a later call to either
+     * method (on the same file) will return the same index.
+     */
+    JsonlParallelLoader.LineIndex preScanKeepBytes(File file) throws IOException {
+        JsonlParallelLoader.LineIndexCache cached = lineIndexCache;
+        if (cached != null && cached.matches(file)) {
+            return cached.index;
+        }
+        JsonlParallelLoader.LineIndex index = JsonlParallelLoader.preScanKeepBytes(file, StorageConfig.getCharset());
+        try {
+            lineIndexCache = new JsonlParallelLoader.LineIndexCache(
+                    file.getAbsolutePath(), file.lastModified(), file.length(), index);
+        } catch (SecurityException ignored) {
+        }
+        return index;
+    }
+
+    /**
      * Drops the cached byte-offset pre-scan so the next {@link #preScan(File)}
      * re-scans the file. Explicit discarding is only needed after an append or
      * compaction rewrite inside the same storage session (the stamp would also
