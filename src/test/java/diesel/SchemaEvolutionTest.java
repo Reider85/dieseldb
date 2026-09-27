@@ -39,7 +39,7 @@ class SchemaEvolutionTest {
 
     private static final String NS = "diesel.avro";
 
-    private static Schema record(String name, Schema.Field... fields) {
+    private static Schema createRecord(String name, Schema.Field... fields) {
         Schema r = Schema.createRecord(name, null, NS, false);
         r.setFields(Arrays.asList(fields));
         return r;
@@ -101,7 +101,7 @@ class SchemaEvolutionTest {
 
     // v1 {id STRING, name STRING}
     private static Schema oldSchema() {
-        return record("t1", f("id", str()), f("name", str()));
+        return createRecord("t1", f("id", str()), f("name", str()));
     }
 
     @Test
@@ -111,25 +111,25 @@ class SchemaEvolutionTest {
 
     @Test
     void addingFieldWithDefaultIsBackwardCompatible() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
         assertTrue(SchemaCompatibilityChecker.isBackwardCompatible(oldSchema(), v2));
     }
 
     @Test
     void addingNullableFieldIsBackwardCompatibleWithoutExplicitDefault() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
         assertTrue(SchemaCompatibilityChecker.isBackwardCompatible(oldSchema(), v2));
     }
 
     @Test
     void addingNonNullableFieldWithoutDefaultBreaksBackward() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("age", intT()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("age", intT()));
         assertFalse(SchemaCompatibilityChecker.isBackwardCompatible(oldSchema(), v2));
     }
 
     @Test
     void removedFieldIsBackwardCompatible() {
-        Schema v2 = record("t1", f("id", str()));
+        Schema v2 = createRecord("t1", f("id", str()));
         assertTrue(SchemaCompatibilityChecker.isBackwardCompatible(oldSchema(), v2));
     }
 
@@ -159,13 +159,13 @@ class SchemaEvolutionTest {
 
     @Test
     void addingFieldsIsForwardCompatible() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("region", str()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("region", str()));
         assertTrue(SchemaCompatibilityChecker.isForwardCompatible(v2, oldSchema()));
     }
 
     @Test
     void removingReaderFieldBreaksForward() {
-        Schema v2 = record("t1", f("id", str()));
+        Schema v2 = createRecord("t1", f("id", str()));
         assertFalse(SchemaCompatibilityChecker.isForwardCompatible(v2, oldSchema()));
     }
 
@@ -190,25 +190,25 @@ class SchemaEvolutionTest {
 
     @Test
     void addingNullableFieldIsFullyCompatible() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
         assertTrue(SchemaCompatibilityChecker.isFullyCompatible(oldSchema(), v2));
     }
 
     @Test
     void addingDefaultedFieldIsFullyCompatible() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
         assertTrue(SchemaCompatibilityChecker.isFullyCompatible(oldSchema(), v2));
     }
 
     @Test
     void removingFieldIsNotFullyCompatible() {
-        Schema v2 = record("t1", f("id", str()));
+        Schema v2 = createRecord("t1", f("id", str()));
         assertFalse(SchemaCompatibilityChecker.isFullyCompatible(oldSchema(), v2));
     }
 
     @Test
     void addingFieldWithoutDefaultIsNotFullyCompatible() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("age", intT()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("age", intT()));
         assertFalse(SchemaCompatibilityChecker.isFullyCompatible(oldSchema(), v2));
     }
 
@@ -216,7 +216,7 @@ class SchemaEvolutionTest {
 
     @Test
     void checkCompatibilityBackwardModeSucceeds() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
         CompatibilityReport report = SchemaCompatibilityChecker.checkCompatibility(oldSchema(), v2, CompatibilityMode.BACKWARD);
         assertTrue(report.compatible());
         assertEquals(CompatibilityMode.BACKWARD, report.mode());
@@ -225,7 +225,7 @@ class SchemaEvolutionTest {
 
     @Test
     void checkCompatibilityBackwardModeFailsOnMissingDefault() {
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("age", intT()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("age", intT()));
         CompatibilityReport report = SchemaCompatibilityChecker.checkCompatibility(oldSchema(), v2, CompatibilityMode.BACKWARD);
         assertFalse(report.compatible());
         assertTrue(report.diffs().stream().anyMatch(d -> d.severity() == CompatibilityResult.INCOMPATIBLE));
@@ -234,13 +234,13 @@ class SchemaEvolutionTest {
     @Test
     void checkCompatibilityFullRequiresBothDirections() {
         // removing a field is backward-ok but forward-broken
-        Schema v2 = record("t1", f("id", str()));
+        Schema v2 = createRecord("t1", f("id", str()));
         assertFalse(SchemaCompatibilityChecker.checkCompatibility(oldSchema(), v2, CompatibilityMode.FULL).compatible());
     }
 
     @Test
     void noneModeIsAlwaysCompatible() {
-        Schema v2 = record("t1", f("id", str()));
+        Schema v2 = createRecord("t1", f("id", str()));
         CompatibilityReport report = SchemaCompatibilityChecker.checkCompatibility(oldSchema(), v2, CompatibilityMode.NONE);
         assertTrue(report.compatible());
         assertTrue(report.diffs().isEmpty());
@@ -294,14 +294,14 @@ class SchemaEvolutionTest {
     @Test
     void renamedFieldViaAliasStaysCompatible() {
         // old schema writes "full_name"; new reader expects "name" aliased to "full_name"
-        Schema oldR = record("u", f("full_name", str()));
+        Schema oldR = createRecord("u", f("full_name", str()));
         Schema.Field renamed = new Schema.Field("name", str(), null, (Object) null);
         renamed.addAlias("full_name");
-        Schema reader = record("u", renamed);
+        Schema reader = createRecord("u", renamed);
         // backward: new reader reads old writer (has full_name, matched via alias) — no default required
         assertTrue(SchemaCompatibilityChecker.isBackwardCompatible(oldR, reader));
         // without the alias, the new "name" reader field would demand a default
-        Schema noAlias = record("u", f("name", str()));
+        Schema noAlias = createRecord("u", f("name", str()));
         assertFalse(SchemaCompatibilityChecker.isBackwardCompatible(oldR, noAlias));
     }
 
@@ -309,8 +309,8 @@ class SchemaEvolutionTest {
 
     @Test
     void collectDiffsReportsAddedRemovedAndTypeChanges() {
-        Schema oldR = record("t", f("id", str()), f("qty", intT()), f("gone", str()));
-        Schema newR = record("t", f("id", str()), f("qty", longT()), f("nickname", nStr()));
+        Schema oldR = createRecord("t", f("id", str()), f("qty", intT()), f("gone", str()));
+        Schema newR = createRecord("t", f("id", str()), f("qty", longT()), f("nickname", nStr()));
         List<SchemaDiff> diffs = SchemaCompatibilityChecker.collectDiffs(oldR, newR);
         assertTrue(diffs.stream().anyMatch(d -> d.fieldName().equalsIgnoreCase("gone")
                 && d.severity() == CompatibilityResult.WARNING));
@@ -369,7 +369,7 @@ class SchemaEvolutionTest {
     void versionsIncrementAndFullyCompatibleEvolutionRegisters() {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager();
         mgr.registerSchema(oldSchema(), "v1");
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
         SchemaVersion two = mgr.registerSchema(v2, "add nullable nickname");
         assertEquals(2, two.version());
         assertEquals(2, mgr.getVersionCount());
@@ -382,7 +382,7 @@ class SchemaEvolutionTest {
     void incompatibleEvolutionThrows() {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager();
         mgr.registerSchema(oldSchema(), "v1");
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("age", intT()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("age", intT()));
         assertThrows(IllegalArgumentException.class, () -> mgr.registerSchema(v2, "add non-null age"));
         assertEquals(1, mgr.getVersionCount());
     }
@@ -391,7 +391,7 @@ class SchemaEvolutionTest {
     void forceRegistersIncompatibleEvolution() {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager();
         mgr.registerSchema(oldSchema(), "v1");
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("age", intT()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("age", intT()));
         SchemaVersion two = mgr.registerSchema(v2, "forced break", true);
         assertEquals(2, mgr.getVersionCount());
         assertEquals(2, two.version());
@@ -409,7 +409,7 @@ class SchemaEvolutionTest {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager("t", CompatibilityMode.FULL);
         mgr.registerSchema(oldSchema(), "v1");
         // removing field is backward-ok but forward-broken → fails FULL
-        Schema v2 = record("t1", f("id", str()));
+        Schema v2 = createRecord("t1", f("id", str()));
         assertThrows(IllegalArgumentException.class, () -> mgr.registerSchema(v2, "remove name"));
     }
 
@@ -417,7 +417,7 @@ class SchemaEvolutionTest {
     void noneModeAcceptsAnyEvolution() {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager(null, CompatibilityMode.NONE);
         mgr.registerSchema(oldSchema(), "v1");
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("age", intT()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("age", intT()));
         assertDoesNotThrow(() -> mgr.registerSchema(v2, "any change"));
         assertEquals(2, mgr.getVersionCount());
     }
@@ -442,7 +442,7 @@ class SchemaEvolutionTest {
     @Test
     void validateEvolutionDelegatesToChecker() {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager();
-        Schema v2 = record("t1", f("id", str()), f("nickname", nStr()));
+        Schema v2 = createRecord("t1", f("id", str()), f("nickname", nStr()));
         assertTrue(mgr.validateEvolution(oldSchema(), v2, CompatibilityMode.BACKWARD).compatible());
         assertFalse(mgr.validateEvolution(oldSchema(), v2, CompatibilityMode.FORWARD).compatible());
     }
@@ -453,8 +453,8 @@ class SchemaEvolutionTest {
     void evolutionPathReturnsIntermediateSteps() {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager();
         mgr.registerSchema(oldSchema(), "v1");
-        mgr.registerSchema(record("t1", f("id", str()), f("nickname", nStr())), "v2");
-        mgr.registerSchema(record("t1", f("id", str()), f("nickname", nStr()), fDef("region", str(), "NA")), "v3");
+        mgr.registerSchema(createRecord("t1", f("id", str()), f("nickname", nStr())), "v2");
+        mgr.registerSchema(createRecord("t1", f("id", str()), f("nickname", nStr()), fDef("region", str(), "NA")), "v3");
         List<SchemaVersion> path = mgr.getEvolutionPath(1, 3);
         assertEquals(2, path.size());
         assertEquals(2, path.get(0).version());
@@ -477,7 +477,7 @@ class SchemaEvolutionTest {
     void versionHistoryRoundTrip() throws IOException {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager();
         mgr.registerSchema(oldSchema(), "v1");
-        mgr.registerSchema(record("t1", f("id", str()), f("nickname", nStr())), "v2 add nickname");
+        mgr.registerSchema(createRecord("t1", f("id", str()), f("nickname", nStr())), "v2 add nickname");
 
         Path file = tempDir.resolve("history.json");
         mgr.writeVersionHistory(file);
@@ -541,9 +541,9 @@ class SchemaEvolutionTest {
     void fullSchemaEvolutionLifecycle() throws IOException {
         SchemaEvolutionManager mgr = new SchemaEvolutionManager("users", CompatibilityMode.FULL);
         mgr.registerSchema(oldSchema(), "initial");
-        Schema v2 = record("t1", f("id", str()), f("name", str()), f("age", nInt()));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), f("age", nInt()));
         mgr.registerSchema(v2, "add nullable age");
-        Schema v3 = record("t1", f("id", str()), f("name", str()));
+        Schema v3 = createRecord("t1", f("id", str()), f("name", str()));
         assertThrows(IllegalArgumentException.class, () -> mgr.registerSchema(v3, "drop age"));
 
         Path file = tempDir.resolve("users.history.json");

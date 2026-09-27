@@ -86,8 +86,8 @@ public class AvroDataFileWriter {
             String fieldName = schema.getFields().get(i).name();
             rowArray[i] = rowMap.get(fieldName);
         }
-        GenericRecord record = toRecord(rowArray, schema);
-        dataFileWriter.append(record);
+        GenericRecord avroRecord = toRecord(rowArray, schema);
+        dataFileWriter.append(avroRecord);
         bytesSinceLastSync += estimatedEncodedSize(rowArray);
         if (AvroBlockManager.shouldInsertSyncMarker(bytesSinceLastSync, syncInterval)) {
             dataFileWriter.sync();
@@ -154,12 +154,12 @@ public class AvroDataFileWriter {
     }
 
     private static GenericRecord toRecord(Object[] row, Schema schema) {
-        GenericRecord record = new org.apache.avro.generic.GenericData.Record(schema);
+        GenericRecord avroRecord = new org.apache.avro.generic.GenericData.Record(schema);
         for (int i = 0; i < schema.getFields().size() && i < row.length; i++) {
             Schema.Field field = schema.getFields().get(i);
-            record.put(field.name(), row[i]);
+            avroRecord.put(field.name(), row[i]);
         }
-        return record;
+        return avroRecord;
     }
 
     public synchronized void flush() throws IOException {

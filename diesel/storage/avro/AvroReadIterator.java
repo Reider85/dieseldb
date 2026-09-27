@@ -44,13 +44,13 @@ public final class AvroReadIterator implements Iterator<Object[]>, Iterable<Obje
 
     @Override
     public Object[] next() {
-        GenericRecord record;
+        GenericRecord avroRecord;
         try {
-            record = reader.nextRecord();
+            avroRecord = reader.nextRecord();
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read row from Avro file: " + reader.getFile(), e);
         }
-        return AvroRowStorage.fromRecord(record, columns, targetTypes);
+        return AvroRowStorage.fromRecord(avroRecord, columns, targetTypes);
     }
 
     /**

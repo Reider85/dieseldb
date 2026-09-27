@@ -85,13 +85,13 @@ public final class AvroSchemaManager {
             fields.add(field);
         }
 
-        Schema record = Schema.createRecord(avroName,
+        Schema schemaRecord = Schema.createRecord(avroName,
                 "DieselDB table: " + tableName,
                 DEFAULT_NAMESPACE,
                 false);
-        record.setFields(fields);
+        schemaRecord.setFields(fields);
         LOGGER.debug("Built Avro schema for table '{}' with {} columns", tableName, columns.size());
-        return record;
+        return schemaRecord;
     }
 
     /**

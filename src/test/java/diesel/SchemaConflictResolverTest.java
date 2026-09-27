@@ -39,7 +39,7 @@ class SchemaConflictResolverTest {
 
     private static final String NS = "diesel.avro";
 
-    private static Schema record(String name, Schema.Field... fields) {
+    private static Schema createRecord(String name, Schema.Field... fields) {
         Schema r = Schema.createRecord(name, null, NS, false);
         r.setFields(Arrays.asList(fields));
         return r;
@@ -97,7 +97,7 @@ class SchemaConflictResolverTest {
     }
 
     private static Schema v1() {
-        return record("t1", f("id", str()), f("name", str()));
+        return createRecord("t1", f("id", str()), f("name", str()));
     }
 
     // ─── Conflict classification ────────────────────────────────────
@@ -115,8 +115,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void caseInsensitiveNameMatchIsCompatible() {
-        Schema writer = record("t1", f("ID", str()));
-        Schema reader = record("t1", f("id", str()));
+        Schema writer = createRecord("t1", f("ID", str()));
+        Schema reader = createRecord("t1", f("id", str()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         assertEquals(ConflictType.COMPATIBLE, result.conflicts().get(0).type());
@@ -125,7 +125,7 @@ class SchemaConflictResolverTest {
     @Test
     void fieldAddedWithExplicitDefaultUsesIt() {
         Schema writer = v1();
-        Schema reader = record("t1", f("id", str()), f("name", str()), f("region", str()));
+        Schema reader = createRecord("t1", f("id", str()), f("name", str()), f("region", str()));
         ResolutionConfig cfg = new ResolutionConfig().withFieldDefault("region", "NA");
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, cfg);
         assertTrue(result.isResolved());
@@ -140,7 +140,7 @@ class SchemaConflictResolverTest {
     @Test
     void fieldAddedNullableGetsImplicitNull() {
         Schema writer = v1();
-        Schema reader = record("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
+        Schema reader = createRecord("t1", f("id", str()), f("name", str()), f("nickname", nStr()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         FieldConflict conflict = findByField(result, "nickname");
@@ -151,7 +151,7 @@ class SchemaConflictResolverTest {
     @Test
     void fieldAddedWithSchemaDefaultUsesIt() {
         Schema writer = v1();
-        Schema reader = record("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
+        Schema reader = createRecord("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         assertEquals("NA", result.defaultValues().get("region"));
@@ -160,7 +160,7 @@ class SchemaConflictResolverTest {
     @Test
     void addedFieldWithoutDefaultSkipsLenient() {
         Schema writer = v1();
-        Schema reader = record("t1", f("id", str()), f("name", str()), f("req", str()));
+        Schema reader = createRecord("t1", f("id", str()), f("name", str()), f("req", str()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         FieldConflict conflict = findByField(result, "req");
@@ -172,7 +172,7 @@ class SchemaConflictResolverTest {
     @Test
     void addedFieldWithoutDefaultFailsStrict() {
         Schema writer = v1();
-        Schema reader = record("t1", f("id", str()), f("name", str()), f("req", str()));
+        Schema reader = createRecord("t1", f("id", str()), f("name", str()), f("req", str()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(
                 writer, reader, new ResolutionConfig().strict(true));
         assertFalse(result.isResolved());
@@ -182,7 +182,7 @@ class SchemaConflictResolverTest {
     @Test
     void useDefaultsOffSkipsAddedField() {
         Schema writer = v1();
-        Schema reader = record("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
+        Schema reader = createRecord("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(
                 writer, reader, new ResolutionConfig().useDefaultValues(false));
         assertTrue(result.isResolved());
@@ -194,8 +194,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void removedFieldIgnoredByDefault() {
-        Schema writer = record("t1", f("id", str()), f("name", str()));
-        Schema reader = record("t1", f("id", str()));
+        Schema writer = createRecord("t1", f("id", str()), f("name", str()));
+        Schema reader = createRecord("t1", f("id", str()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         assertTrue(result.conflicts().stream().noneMatch(c -> c.type() == ConflictType.FIELD_REMOVED));
@@ -203,8 +203,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void removedFieldReportedWhenNotIgnored() {
-        Schema writer = record("t1", f("id", str()), f("name", str()));
-        Schema reader = record("t1", f("id", str()));
+        Schema writer = createRecord("t1", f("id", str()), f("name", str()));
+        Schema reader = createRecord("t1", f("id", str()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(
                 writer, reader, new ResolutionConfig().ignoreRemovedFields(false));
         assertTrue(result.isResolved());
@@ -217,8 +217,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void promotedTypeResolvesAsPromote() {
-        Schema writer = record("t1", f("id", intT()));
-        Schema reader = record("t1", f("id", longT()));
+        Schema writer = createRecord("t1", f("id", intT()));
+        Schema reader = createRecord("t1", f("id", longT()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         assertEquals(ConflictType.TYPE_PROMOTED, result.conflicts().get(0).type());
@@ -227,8 +227,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void promotedNullableUnionWidens() {
-        Schema writer = record("t1", f("id", nInt()));
-        Schema reader = record("t1", f("id", nLong()));
+        Schema writer = createRecord("t1", f("id", nInt()));
+        Schema reader = createRecord("t1", f("id", nLong()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         assertEquals(ConflictType.TYPE_PROMOTED, result.conflicts().get(0).type());
@@ -236,8 +236,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void typeMismatchFails() {
-        Schema writer = record("t1", f("id", str()));
-        Schema reader = record("t1", f("id", intT()));
+        Schema writer = createRecord("t1", f("id", str()));
+        Schema reader = createRecord("t1", f("id", intT()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertFalse(result.isResolved());
         FieldConflict conflict = result.conflicts().get(0);
@@ -249,8 +249,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void renamedViaConfigMapping() {
-        Schema writer = record("t1", f("id", str()), f("email", str()));
-        Schema reader = record("t1", f("id", str()), f("contact", str()));
+        Schema writer = createRecord("t1", f("id", str()), f("email", str()));
+        Schema reader = createRecord("t1", f("id", str()), f("contact", str()));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(
                 writer, reader, new ResolutionConfig().withAlias("email", "contact"));
         assertTrue(result.isResolved());
@@ -262,8 +262,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void renamedViaAvroAlias() {
-        Schema writer = record("t1", f("id", str()), f("email", str()));
-        Schema reader = record("t1", f("id", str()), fAlias("contact", str(), "email"));
+        Schema writer = createRecord("t1", f("id", str()), f("email", str()));
+        Schema reader = createRecord("t1", f("id", str()), fAlias("contact", str(), "email"));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(writer, reader, new ResolutionConfig());
         assertTrue(result.isResolved());
         assertEquals(ConflictType.FIELD_RENAMED, findByField(result, "contact").type());
@@ -271,8 +271,8 @@ class SchemaConflictResolverTest {
 
     @Test
     void renameNotDetectedWhenAliasesDisabled() {
-        Schema writer = record("t1", f("id", str()), f("email", str()));
-        Schema reader = record("t1", f("id", str()), fAlias("contact", str(), "email"));
+        Schema writer = createRecord("t1", f("id", str()), f("email", str()));
+        Schema reader = createRecord("t1", f("id", str()), fAlias("contact", str(), "email"));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(
                 writer, reader, new ResolutionConfig().allowAliases(false));
         FieldConflict contact = findByField(result, "contact");
@@ -287,12 +287,12 @@ class SchemaConflictResolverTest {
 
     @Test
     void mixedConflictsApplyPerFieldStrategies() {
-        Schema writer = record("t1",
+        Schema writer = createRecord("t1",
                 f("a", str()),
                 f("b", intT()),
                 f("gone", str()),
                 f("email", str()));
-        Schema reader = record("t1",
+        Schema reader = createRecord("t1",
                 f("a", str()),
                 f("b", longT()),
                 fDef("c", str(), "x"),
@@ -312,7 +312,7 @@ class SchemaConflictResolverTest {
     @Test
     void resolutionMatchesCheckerBackwardVerdict() {
         Schema v1 = v1();
-        Schema v2 = record("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
+        Schema v2 = createRecord("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
         assertTrue(SchemaCompatibilityChecker.isBackwardCompatible(v1, v2));
         ResolutionResult result = SchemaConflictResolver.resolveConflicts(v1, v2, new ResolutionConfig());
         assertTrue(result.isResolved());
@@ -339,7 +339,7 @@ class SchemaConflictResolverTest {
     @Test
     void resolveDefaultsCollectsAddedFieldDefaults() {
         Schema writer = v1();
-        Schema reader = record("t1",
+        Schema reader = createRecord("t1",
                 f("id", str()), f("name", str()),
                 fDef("region", str(), "NA"),
                 f("nickname", nStr()),
@@ -353,7 +353,7 @@ class SchemaConflictResolverTest {
     @Test
     void resolveDefaultsExplicitOverrideWins() {
         Schema writer = v1();
-        Schema reader = record("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
+        Schema reader = createRecord("t1", f("id", str()), f("name", str()), fDef("region", str(), "NA"));
         Map<String, Object> defaults = SchemaConflictResolver.resolveDefaults(
                 writer, reader, Map.of("region", "EU"));
         assertEquals("EU", defaults.get("region"));
@@ -376,28 +376,28 @@ class SchemaConflictResolverTest {
 
     @Test
     void applyDefaultsFillsNullSlots() {
-        Schema reader = record("t1", f("id", str()), f("region", str()));
-        GenericRecord record = new GenericData.Record(reader);
-        record.put("id", "x");
-        SchemaConflictResolver.applyDefaults(record, Map.of("region", "NA"));
-        assertEquals("NA", record.get("region"));
+        Schema reader = createRecord("t1", f("id", str()), f("region", str()));
+        GenericRecord avroRecord = new GenericData.Record(reader);
+        avroRecord.put("id", "x");
+        SchemaConflictResolver.applyDefaults(avroRecord, Map.of("region", "NA"));
+        assertEquals("NA", avroRecord.get("region"));
     }
 
     @Test
     void applyDefaultsKeepsExistingValues() {
-        Schema reader = record("t1", f("id", str()), f("region", str()));
-        GenericRecord record = new GenericData.Record(reader);
-        record.put("id", "x");
-        record.put("region", "EU");
-        SchemaConflictResolver.applyDefaults(record, Map.of("region", "NA"));
-        assertEquals("EU", record.get("region"));
+        Schema reader = createRecord("t1", f("id", str()), f("region", str()));
+        GenericRecord avroRecord = new GenericData.Record(reader);
+        avroRecord.put("id", "x");
+        avroRecord.put("region", "EU");
+        SchemaConflictResolver.applyDefaults(avroRecord, Map.of("region", "NA"));
+        assertEquals("EU", avroRecord.get("region"));
     }
 
     // ─── buildAliasedSchema ─────────────────────────────────────────
 
     @Test
     void buildAliasedSchemaAddsRenameAlias() {
-        Schema reader = record("t1", f("id", str()), f("contact", str()));
+        Schema reader = createRecord("t1", f("id", str()), f("contact", str()));
         Schema aliased = SchemaConflictResolver.buildAliasedSchema(reader, Map.of("contact", "email"));
         Schema.Field contact = aliased.getField("contact");
         assertTrue(contains(contact.aliases(), "email"));
@@ -406,7 +406,7 @@ class SchemaConflictResolverTest {
 
     @Test
     void buildAliasedSchemaPreservesExistingAliasesAndDefault() {
-        Schema reader = record("t1", f("id", str()), withAliases(fDef("contact", str(), "N/A"), "legacy"));
+        Schema reader = createRecord("t1", f("id", str()), withAliases(fDef("contact", str(), "N/A"), "legacy"));
         Schema aliased = SchemaConflictResolver.buildAliasedSchema(reader, Map.of("contact", "email"));
         Schema.Field contact = aliased.getField("contact");
         assertTrue(contact.hasDefaultValue());

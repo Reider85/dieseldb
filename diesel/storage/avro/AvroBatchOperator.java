@@ -325,8 +325,8 @@ public final class AvroBatchOperator implements AutoCloseable {
         storage.beginBulkUpdate();
         try {
             while (reader.hasNext()) {
-                GenericRecord record = reader.next();
-                internalRows.add(AvroRowStorage.fromRecord(record, columns, targetTypes));
+                GenericRecord avroRecord = reader.next();
+                internalRows.add(AvroRowStorage.fromRecord(avroRecord, columns, targetTypes));
                 imported++;
                 if (imported % insertFlushSize == 0) {
                     stats.addFlush();

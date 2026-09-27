@@ -255,9 +255,9 @@ public final class AvroTypeMapper {
      * @param namespace Avro namespace (may be {@code null})
      */
     public static Schema createRecord(String name, Schema.Field[] fields, String namespace) {
-        Schema record = Schema.createRecord(name, null, namespace, false);
-        record.setFields(java.util.Arrays.asList(fields));
-        return record;
+        Schema schemaRecord = Schema.createRecord(name, null, namespace, false);
+        schemaRecord.setFields(java.util.Arrays.asList(fields));
+        return schemaRecord;
     }
 
     /**
@@ -271,9 +271,9 @@ public final class AvroTypeMapper {
      */
     public static Schema buildRecord(String name, java.util.List<Schema.Field> fields,
                                      String namespace, boolean isError) {
-        Schema record = Schema.createRecord(name, null, namespace, isError);
-        record.setFields(fields);
-        return record;
+        Schema schemaRecord = Schema.createRecord(name, null, namespace, isError);
+        schemaRecord.setFields(fields);
+        return schemaRecord;
     }
 
     /**

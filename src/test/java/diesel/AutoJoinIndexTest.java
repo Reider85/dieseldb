@@ -34,8 +34,8 @@ public class AutoJoinIndexTest {
         captured = new ArrayList<>();
         handler = new Handler() {
             @Override
-            public void publish(LogRecord record) {
-                captured.add(record);
+            public void publish(LogRecord logRecord) {
+                captured.add(logRecord);
             }
 
             @Override
@@ -92,8 +92,8 @@ public class AutoJoinIndexTest {
 
     private List<String> warnings() {
         List<String> warnings = new ArrayList<>();
-        for (LogRecord record : captured) {
-            String message = record.getMessage();
+        for (LogRecord logRecord : captured) {
+            String message = logRecord.getMessage();
             if (message != null && message.contains("Consider creating index on")) {
                 warnings.add(message);
             }

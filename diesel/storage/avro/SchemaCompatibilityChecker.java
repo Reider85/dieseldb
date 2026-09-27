@@ -445,9 +445,9 @@ public final class SchemaCompatibilityChecker {
     }
 
     /** Indexes record fields by lower-case name for case-insensitive lookup. */
-    private static Map<String, Schema.Field> indexFields(Schema record) {
+    private static Map<String, Schema.Field> indexFields(Schema schemaRecord) {
         Map<String, Schema.Field> byName = new LinkedHashMap<>();
-        for (Schema.Field field : record.getFields()) {
+        for (Schema.Field field : schemaRecord.getFields()) {
             byName.put(field.name().toLowerCase(Locale.ROOT), field);
         }
         return byName;

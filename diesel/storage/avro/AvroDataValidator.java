@@ -287,16 +287,16 @@ public final class AvroDataValidator {
      * Validates a {@link GenericRecord} against a RECORD schema (usually the
      * record's own schema, but any RECORD may be passed).
      *
-     * @param record the record to validate (may be {@code null})
-     * @param schema the RECORD schema to validate against
-     * @return the validation result (never {@code null})
-     * @throws IllegalArgumentException when {@code schema} is {@code null} or not a RECORD
-     */
-    public static ValidationResult validateRow(GenericRecord record, Schema schema) {
+* @param avroRecord the record to validate (may be {@code null})
+      * @param schema the RECORD schema to validate against
+      * @return the validation result (never {@code null})
+      * @throws IllegalArgumentException when {@code schema} is {@code null} or not a RECORD
+      */
+    public static ValidationResult validateRow(GenericRecord avroRecord, Schema schema) {
         List<FieldError> errors = new ArrayList<>();
         checkRecord(schema);
         for (Schema.Field field : schema.getFields()) {
-            Object value = record != null ? record.get(field.name()) : null;
+            Object value = avroRecord != null ? avroRecord.get(field.name()) : null;
             errors.addAll(checkField(field.name(), value, field.schema()));
         }
         return new ValidationResult(errors.isEmpty(), List.copyOf(errors));
@@ -425,8 +425,8 @@ public final class AvroDataValidator {
         if (row instanceof Object[] arrayRow) {
             return validateRow(arrayRow, schema);
         }
-        if (row instanceof GenericRecord record) {
-            return validateRow(record, schema);
+        if (row instanceof GenericRecord avroRecord) {
+            return validateRow(avroRecord, schema);
         }
         if (row instanceof Map<?, ?> mapRow) {
             Map<String, Object> typed = new LinkedHashMap<>();

@@ -781,5 +781,9 @@ Update PROMPT_STATUS.md for Prompt 96
 
 3.1.91 Fix all 16 Java:S1948 "Make field transient or serializable" violations by adding transient modifiers and custom serialization methods to non-serializable interface types (List, Map, ConcurrentHashMap) in Serializable classes
 
+3.1.93 Sonar-prompt8 S6213 fix: rename restricted identifier record in AvroAuditLogger.java - renamed private method record() to recordEntry() to avoid conflict with Java 21 record keyword; updated 9 occurrences (1 method declaration + 8 call sites) within AvroAuditLogger.java; 1 file changed
+
 3.1.92 Sonar-prompt8 S1948 fix: make fields transient or serializable in AVRO module - fixed 4 statistics fields in AvroSecondaryIndex.java (lookupCount, rangeScanCount, totalResults, lastAccessTime) by marking them as transient; fields represent runtime state that shouldn't be serialized; AvroSecondaryIndexManager.java already had correct transient annotations; 2 files changed
+
+3.1.95 Sonar-prompt8 S6213 fix: rename restricted identifier 'record' variables across 23 files - renamed all 'record' variables used as variable/parameter names instead of types to contextually appropriate names (avroRecord for GenericRecord, schemaRecord for Schema, logRecord for LogRecord, createRecord for test helper methods) across 13 production files and 10 test files; updated all method parameter body references and test helper method call sites; fixed compilation errors in SchemaConflictResolver.java; fast profile tests pass (186/0), large profile shows CSV performance regression unrelated to changes
 

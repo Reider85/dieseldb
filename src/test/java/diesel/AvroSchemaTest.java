@@ -432,10 +432,10 @@ class AvroSchemaTest {
         Path nested = tempDir.resolve("sub").resolve("dir").resolve("T.avsc");
         Schema schema = AvroTypeMapper.nullableOf(String.class, "X");
         // wrap in a record since writeSchemaFile takes any Schema
-        Schema record = Schema.createRecord("T", null, "test", false);
-        record.setFields(List.of(new Schema.Field("col", schema)));
+        Schema schemaRecord = Schema.createRecord("T", null, "test", false);
+        schemaRecord.setFields(List.of(new Schema.Field("col", schema)));
 
-        AvroSchemaManager.writeSchemaFile(record, nested);
+        AvroSchemaManager.writeSchemaFile(schemaRecord, nested);
         assertTrue(Files.exists(nested));
     }
 
@@ -591,9 +591,9 @@ class AvroSchemaTest {
                 new Schema.Field("X", Schema.create(Schema.Type.STRING)),
                 new Schema.Field("Y", Schema.create(Schema.Type.INT))
         );
-        Schema record = AvroTypeMapper.buildRecord("MyRec", fields, "diesel.avro", false);
-        assertEquals(Schema.Type.RECORD, record.getType());
-        assertEquals("MyRec", record.getName());
-        assertEquals(2, record.getFields().size());
+        Schema schemaRecord = AvroTypeMapper.buildRecord("MyRec", fields, "diesel.avro", false);
+        assertEquals(Schema.Type.RECORD, schemaRecord.getType());
+        assertEquals("MyRec", schemaRecord.getName());
+        assertEquals(2, schemaRecord.getFields().size());
     }
 }

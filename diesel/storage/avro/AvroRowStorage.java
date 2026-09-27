@@ -349,8 +349,8 @@ public class AvroRowStorage extends AbstractRowStorage {
             try {
                 dataFileWriter.create(schema, nonClosing);
                 for (Object[] row : rows) {
-                    GenericRecord record = toRecord(row, schema);
-                    dataFileWriter.append(record);
+                    GenericRecord avroRecord = toRecord(row, schema);
+                    dataFileWriter.append(avroRecord);
                 }
                 dataFileWriter.flush();
             } finally {
@@ -398,8 +398,8 @@ public class AvroRowStorage extends AbstractRowStorage {
             try {
                 dataFileWriter.create(schema, nonClosing);
                 for (Object[] row : rows) {
-                    GenericRecord record = toRecord(row, schema);
-                    dataFileWriter.append(record);
+                    GenericRecord avroRecord = toRecord(row, schema);
+                    dataFileWriter.append(avroRecord);
                 }
                 dataFileWriter.flush();
             } finally {
@@ -515,12 +515,12 @@ public class AvroRowStorage extends AbstractRowStorage {
             fields.add(field);
         }
 
-        Schema record = Schema.createRecord(avroName,
+        Schema schemaRecord = Schema.createRecord(avroName,
                 "DieselDB table: " + tableName,
                 "diesel.avro",
                 false);
-        record.setFields(fields);
-        return record;
+        schemaRecord.setFields(fields);
+        return schemaRecord;
     }
 
     private String resolveAvroFilePath() {
@@ -553,27 +553,27 @@ public class AvroRowStorage extends AbstractRowStorage {
     // ─── Row <-> GenericRecord conversion ───────────────────────────
 
     static GenericRecord toRecord(Object[] row, Schema schema) {
-        GenericRecord record = new GenericData.Record(schema);
+        GenericRecord avroRecord = new GenericData.Record(schema);
         List<Schema.Field> fields = schema.getFields();
         for (int i = 0; i < fields.size() && i < row.length; i++) {
             Schema.Field field = fields.get(i);
             Object value = row[i];
-            record.put(field.name(), toAvroValue(value, field.schema()));
+            avroRecord.put(field.name(), toAvroValue(value, field.schema()));
         }
-        return record;
+        return avroRecord;
     }
 
-    static Object[] fromRecord(GenericRecord record, List<String> columns,
-                                 Map<String, Class<?>> columnTypes) {
-        return fromRecord(record, columns, resolveColumnTypes(columns, columnTypes));
+static Object[] fromRecord(GenericRecord avroRecord, List<String> columns,
+                                  Map<String, Class<?>> columnTypes) {
+        return fromRecord(avroRecord, columns, resolveColumnTypes(columns, columnTypes));
     }
 
-    static Object[] fromRecord(GenericRecord record, List<String> columns, Class<?>[] targetTypes) {
+    static Object[] fromRecord(GenericRecord avroRecord, List<String> columns, Class<?>[] targetTypes) {
         Object[] row = new Object[columns.size()];
-        Schema schema = record.getSchema();
+        Schema schema = avroRecord.getSchema();
         for (int i = 0; i < columns.size(); i++) {
             String col = columns.get(i);
-            Object avroValue = record.get(col);
+            Object avroValue = avroRecord.get(col);
             Schema.Field field = schema.getField(col);
             row[i] = fromAvroValue(avroValue, targetTypes[i], field != null ? field.schema() : null);
         }

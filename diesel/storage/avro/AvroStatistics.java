@@ -216,13 +216,13 @@ public final class AvroStatistics {
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile)) {
             while (reader.hasNext()) {
-                org.apache.avro.generic.GenericRecord record = reader.nextRecord();
+                org.apache.avro.generic.GenericRecord avroRecord = reader.nextRecord();
                 rowCount++;
                 for (String col : columns) {
-                    Object value = record.get(col);
+                    Object value = avroRecord.get(col);
                     ColumnStats cs = columnStatistics.get(col);
                     if (value == null || org.apache.avro.Schema.Type.NULL.equals(
-                            getBaseType(record.getSchema(), col))) {
+                            getBaseType(avroRecord.getSchema(), col))) {
                         cs.nullCount++;
                     } else {
                         updateMinMax(cs, value);

@@ -369,46 +369,46 @@ public final class AvroObjectPool implements Closeable {
             return new org.apache.avro.generic.GenericData.Record(schema);
         }
         Deque<GenericRecord> queue = records.get(schema);
-        GenericRecord record = queue != null ? queue.poll() : null;
-        if (record != null) {
+        GenericRecord avroRecord = queue != null ? queue.poll() : null;
+        if (avroRecord != null) {
             recordHits.incrementAndGet();
         } else {
             recordMisses.incrementAndGet();
             recordAllocations.incrementAndGet();
-            record = new org.apache.avro.generic.GenericData.Record(schema);
+            avroRecord = new org.apache.avro.generic.GenericData.Record(schema);
         }
         activeRecords.incrementAndGet();
-        return record;
+        return avroRecord;
     }
 
-    /**
-     * Returns a borrowed record to the pool. Every field value is nulled so the
-     * next borrower sees a clean instance; the backing array and schema are kept.
-     * If the per-schema queue has reached {@code avro.pool.record.capacity}, the
-     * record is dropped for the garbage collector.
-     *
-     * @param record the record to recycle (may be {@code null} = no-op)
-     */
-    public void returnRecord(GenericRecord record) {
+/**
+      * Returns a borrowed record to the pool. Every field value is nulled so the
+      * next borrower sees a clean instance; the backing array and schema are kept.
+      * If the per-schema queue has reached {@code avro.pool.record.capacity}, the
+      * record is dropped for the garbage collector.
+      *
+      * @param avroRecord the record to recycle (may be {@code null} = no-op)
+      */
+    public void returnRecord(GenericRecord avroRecord) {
         activeRecords.decrementAndGet();
-        if (!isEnabled() || record == null) {
+        if (!isEnabled() || avroRecord == null) {
             return;
         }
-        clear(record);
+        clear(avroRecord);
         recordReturns.incrementAndGet();
-        Deque<GenericRecord> queue = records.computeIfAbsent(record.getSchema(),
+        Deque<GenericRecord> queue = records.computeIfAbsent(avroRecord.getSchema(),
                 s -> new ConcurrentLinkedDeque<>());
         synchronized (queue) {
             if (queue.size() < config.recordCapacity()) {
-                queue.add(record);
+                queue.add(avroRecord);
             }
         }
-    }
+}
 
-    private static void clear(GenericRecord record) {
-        List<Schema.Field> fields = record.getSchema().getFields();
+    private static void clear(GenericRecord avroRecord) {
+        List<Schema.Field> fields = avroRecord.getSchema().getFields();
         for (int i = 0; i < fields.size(); i++) {
-            record.put(i, null);
+            avroRecord.put(i, null);
         }
     }
 

@@ -169,8 +169,8 @@ public class MaxResultRowsTest {
         List<LogRecord> captured = new java.util.ArrayList<>();
         Handler handler = new Handler() {
             @Override
-            public void publish(LogRecord record) {
-                captured.add(record);
+            public void publish(LogRecord logRecord) {
+                captured.add(logRecord);
             }
 
             @Override

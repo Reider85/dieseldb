@@ -148,8 +148,8 @@ class AvroObjectPoolTest {
         for (int i = 0; i < held.length; i++) {
             held[i] = pool.borrowRecord(s);
         }
-        for (GenericRecord record : held) {
-            pool.returnRecord(record);
+        for (GenericRecord avroRecord : held) {
+            pool.returnRecord(avroRecord);
         }
         assertEquals(3, pool.pooledRecords());
     }

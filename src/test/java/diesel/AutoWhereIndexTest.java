@@ -97,7 +97,7 @@ public class AutoWhereIndexTest {
         Logger logger = Logger.getLogger(SelectQuery.class.getName());
         List<LogRecord> warnings = new ArrayList<>();
         Handler handler = new Handler() {
-            @Override public void publish(LogRecord record) { warnings.add(record); }
+            @Override public void publish(LogRecord logRecord) { warnings.add(logRecord); }
             @Override public void flush() {}
             @Override public void close() {}
         };

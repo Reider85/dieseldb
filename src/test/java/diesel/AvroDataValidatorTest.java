@@ -44,7 +44,7 @@ class AvroDataValidatorTest {
 
     // ─── Schema helpers ─────────────────────────────────────────────
 
-    private static Schema record(String name, Schema.Field... fields) {
+    private static Schema createRecord(String name, Schema.Field... fields) {
         Schema r = Schema.createRecord(name, null, NS, false);
         r.setFields(Arrays.asList(fields));
         return r;
@@ -88,7 +88,7 @@ class AvroDataValidatorTest {
     }
 
     private static Schema person() {
-        return record("person", f("id", str()), f("name", str()), f("age", intT()));
+        return createRecord("person", f("id", str()), f("name", str()), f("age", intT()));
     }
 
     private static FieldError findError(ValidationResult result, String fieldName) {
@@ -120,16 +120,16 @@ class AvroDataValidatorTest {
 
     @Test
     void validGenericRecordPasses() {
-        GenericRecord record = new GenericData.Record(person());
-        record.put("id", "u1");
-        record.put("name", "Anna");
-        record.put("age", 30);
-        assertTrue(AvroDataValidator.validateRow(record, person()).isValid());
+        GenericRecord avroRecord = new GenericData.Record(person());
+        avroRecord.put("id", "u1");
+        avroRecord.put("name", "Anna");
+        avroRecord.put("age", 30);
+        assertTrue(AvroDataValidator.validateRow(avroRecord, person()).isValid());
     }
 
     @Test
     void nullableUnionAcceptsNull() {
-        Schema s = record("t", f("id", AvroTypeMapper.nullableOf(str())));
+        Schema s = createRecord("t", f("id", AvroTypeMapper.nullableOf(str())));
         ValidationResult result = AvroDataValidator.validateRow(new Object[]{null}, s);
         assertTrue(result.isValid());
         assertEquals(0, result.errors().size());
@@ -137,7 +137,7 @@ class AvroDataValidatorTest {
 
     @Test
     void bareNullTypeAcceptsNull() {
-        Schema s = record("t", f("id", Schema.create(Schema.Type.NULL)));
+        Schema s = createRecord("t", f("id", Schema.create(Schema.Type.NULL)));
         assertTrue(AvroDataValidator.validateRow(new Object[]{null}, s).isValid());
     }
 
@@ -155,7 +155,7 @@ class AvroDataValidatorTest {
 
     @Test
     void nullOnNullTypeWithValueFails() {
-        Schema s = record("t", f("id", Schema.create(Schema.Type.NULL)));
+        Schema s = createRecord("t", f("id", Schema.create(Schema.Type.NULL)));
         ValidationResult result = AvroDataValidator.validateRow(new Object[]{"x"}, s);
         assertFalse(result.isValid());
         assertEquals(ErrorType.TYPE_MISMATCH, result.errors().get(0).type());
@@ -174,7 +174,7 @@ class AvroDataValidatorTest {
 
     @Test
     void integerValueInStringColumnFails() {
-        Schema s = record("t", f("name", str()));
+        Schema s = createRecord("t", f("name", str()));
         ValidationResult result = AvroDataValidator.validateRow(new Object[]{42}, s);
         assertFalse(result.isValid());
         assertEquals(ErrorType.TYPE_MISMATCH, result.errors().get(0).type());
@@ -182,7 +182,7 @@ class AvroDataValidatorTest {
 
     @Test
     void booleanColumnRejectsNonBoolean() {
-        Schema s = record("t", f("active", boolT()));
+        Schema s = createRecord("t", f("active", boolT()));
         assertFalse(AvroDataValidator.validateRow(new Object[]{42}, s).isValid());
         assertFalse(AvroDataValidator.validateRow(new Object[]{"true"}, s).isValid());
         assertTrue(AvroDataValidator.validateRow(new Object[]{Boolean.TRUE}, s).isValid());
@@ -190,7 +190,7 @@ class AvroDataValidatorTest {
 
     @Test
     void intRangeRespectedForWiderNumericTypes() {
-        Schema s = record("t", f("n", intT()));
+        Schema s = createRecord("t", f("n", intT()));
         assertTrue(AvroDataValidator.validateRow(new Object[]{5L}, s).isValid());
         assertTrue(AvroDataValidator.validateRow(new Object[]{(short) 3}, s).isValid());
         ValidationResult result = AvroDataValidator.validateRow(new Object[]{Integer.MAX_VALUE + 1L}, s);
@@ -201,7 +201,7 @@ class AvroDataValidatorTest {
 
     @Test
     void longColumnAcceptsAnyIntegralNumber() {
-        Schema s = record("t", f("n", Schema.create(Schema.Type.LONG)));
+        Schema s = createRecord("t", f("n", Schema.create(Schema.Type.LONG)));
         assertTrue(AvroDataValidator.validateRow(new Object[]{5}, s).isValid());
         assertTrue(AvroDataValidator.validateRow(new Object[]{5L}, s).isValid());
         assertFalse(AvroDataValidator.validateRow(new Object[]{"5"}, s).isValid());
@@ -211,7 +211,7 @@ class AvroDataValidatorTest {
 
     @Test
     void enumAcceptsDeclaredSymbols() {
-        Schema s = record("t", f("status", enumT("ACTIVE", "INACTIVE")));
+        Schema s = createRecord("t", f("status", enumT("ACTIVE", "INACTIVE")));
         assertTrue(AvroDataValidator.validateRow(new Object[]{"ACTIVE"}, s).isValid());
         ValidationResult result = AvroDataValidator.validateRow(new Object[]{"UNKNOWN"}, s);
         assertFalse(result.isValid());
@@ -221,7 +221,7 @@ class AvroDataValidatorTest {
 
     @Test
     void enumRejectsNonString() {
-        Schema s = record("t", f("status", enumT("ACTIVE")));
+        Schema s = createRecord("t", f("status", enumT("ACTIVE")));
         assertFalse(AvroDataValidator.validateRow(new Object[]{1}, s).isValid());
         assertEquals(ErrorType.TYPE_MISMATCH, AvroDataValidator.validateRow(new Object[]{1}, s).errors().get(0).type());
     }
@@ -230,7 +230,7 @@ class AvroDataValidatorTest {
 
     @Test
     void decimalAcceptsBigDecimalOnly() {
-        Schema s = record("t", f("amount", decimal()));
+        Schema s = createRecord("t", f("amount", decimal()));
         assertTrue(AvroDataValidator.validateRow(new Object[]{new BigDecimal("10.50")}, s).isValid());
         ValidationResult result = AvroDataValidator.validateRow(new Object[]{10}, s);
         assertFalse(result.isValid());
@@ -239,7 +239,7 @@ class AvroDataValidatorTest {
 
     @Test
     void dateAcceptsLocalDateAndEpochDay() {
-        Schema s = record("t", f("d", date()));
+        Schema s = createRecord("t", f("d", date()));
         assertTrue(AvroDataValidator.validateRow(new Object[]{LocalDate.of(2024, 1, 1)}, s).isValid());
         assertTrue(AvroDataValidator.validateRow(new Object[]{19723}, s).isValid());
         assertFalse(AvroDataValidator.validateRow(new Object[]{"2024-01-01"}, s).isValid());
@@ -247,7 +247,7 @@ class AvroDataValidatorTest {
 
     @Test
     void timestampAcceptsLocalDateTimeAndMillis() {
-        Schema s = record("t", f("ts", timestamp()));
+        Schema s = createRecord("t", f("ts", timestamp()));
         assertTrue(AvroDataValidator.validateRow(new Object[]{LocalDateTime.of(2024, 1, 1, 0, 0)}, s).isValid());
         assertTrue(AvroDataValidator.validateRow(new Object[]{1704067200000L}, s).isValid());
         assertFalse(AvroDataValidator.validateRow(new Object[]{"now"}, s).isValid());
@@ -256,7 +256,7 @@ class AvroDataValidatorTest {
     @Test
     void uuidAcceptsUuidAndParseableString() {
         String hex = UUID.randomUUID().toString();
-        Schema s = record("t", f("u", uuid()));
+        Schema s = createRecord("t", f("u", uuid()));
         assertTrue(AvroDataValidator.validateRow(new Object[]{UUID.fromString(hex)}, s).isValid());
         assertTrue(AvroDataValidator.validateRow(new Object[]{hex}, s).isValid());
         assertFalse(AvroDataValidator.validateRow(new Object[]{"not-a-uuid"}, s).isValid());
@@ -264,7 +264,7 @@ class AvroDataValidatorTest {
 
     @Test
     void byteValueNotAllowedInDecimalField() {
-        Schema s = record("t", f("amount", decimal()));
+        Schema s = createRecord("t", f("amount", decimal()));
         assertFalse(AvroDataValidator.validateRow(new Object[]{new byte[]{1, 2}}, s).isValid());
     }
 
@@ -305,16 +305,16 @@ class AvroDataValidatorTest {
 
     @Test
     void missingMapKeyTreatedAsNull() {
-        Schema s = record("t", f("id", AvroTypeMapper.nullableOf(str())));
+        Schema s = createRecord("t", f("id", AvroTypeMapper.nullableOf(str())));
         Map<String, Object> row = new HashMap<>();
         assertTrue(AvroDataValidator.validateRow(row, s).isValid());
-        Schema strict = record("t", f("id", str()));
+        Schema strict = createRecord("t", f("id", str()));
         assertFalse(AvroDataValidator.validateRow(row, strict).isValid());
     }
 
     @Test
     void shortArrayMissingTrailingTreatedAsNull() {
-        Schema s = record("t", f("id", AvroTypeMapper.nullableOf(str())), f("v", intT()));
+        Schema s = createRecord("t", f("id", AvroTypeMapper.nullableOf(str())), f("v", intT()));
         ValidationResult result = AvroDataValidator.validateRow(new Object[]{"u1"}, s);
         assertFalse(result.isValid());
         assertEquals(ErrorType.NULL_NOT_ALLOWED, findError(result, "v").type());
@@ -340,7 +340,7 @@ class AvroDataValidatorTest {
 
     @Test
     void permissiveDatasetAggregatesStatistics() {
-        Schema s = record("t", f("id", str()), f("age", intT()));
+        Schema s = createRecord("t", f("id", str()), f("age", intT()));
         List<Object[]> rows = List.of(
                 new Object[]{"u1", 30},
                 new Object[]{"u2", null},
@@ -362,7 +362,7 @@ class AvroDataValidatorTest {
 
     @Test
     void datasetSupportsMixedRowForms() {
-        Schema s = record("t", f("id", str()));
+        Schema s = createRecord("t", f("id", str()));
         Map<String, Object> mapRow = Map.of("id", "u1");
         GenericRecord rec = new GenericData.Record(s);
         rec.put("id", "u2");
@@ -407,7 +407,7 @@ class AvroDataValidatorTest {
 
     @Test
     void requireValidThrowsOnInvalidReport() {
-        Schema s = record("t", f("id", str()));
+        Schema s = createRecord("t", f("id", str()));
         DatasetValidationResult report = AvroDataValidator.validateDataset(
                 List.<Object[]>of(new Object[]{1}), s, ValidationMode.PERMISSIVE, false);
         assertThrows(AvroValidationException.class, () -> AvroDataValidator.requireValid(report));
@@ -420,7 +420,7 @@ class AvroDataValidatorTest {
 
     @Test
     void invalidRowsLoggedAtWarnWhenEnabled() {
-        Schema s = record("t", f("id", str()));
+        Schema s = createRecord("t", f("id", str()));
         try (Slf4jLogCapture capture = new Slf4jLogCapture(AvroDataValidator.class)) {
             AvroDataValidator.validateDataset(
                     List.of(new Object[]{"ok"}, new Object[]{1}), s, ValidationMode.PERMISSIVE, true);
@@ -431,7 +431,7 @@ class AvroDataValidatorTest {
 
     @Test
     void invalidRowsNotLoggedWhenDisabled() {
-        Schema s = record("t", f("id", str()));
+        Schema s = createRecord("t", f("id", str()));
         try (Slf4jLogCapture capture = new Slf4jLogCapture(AvroDataValidator.class)) {
             AvroDataValidator.validateDataset(
                     List.of(new Object[]{"ok"}, new Object[]{1}), s, ValidationMode.PERMISSIVE, false);
@@ -491,7 +491,7 @@ class AvroDataValidatorTest {
     void datasetUsesResolvedModeFromSysprop() {
         try {
             System.setProperty(AvroDataValidator.MODE_KEY, "strict");
-            Schema s = record("t", f("id", str()));
+            Schema s = createRecord("t", f("id", str()));
             assertThrows(AvroValidationException.class,
                     () -> AvroDataValidator.validateDataset(List.<Object[]>of(new Object[]{1}), s));
         } finally {

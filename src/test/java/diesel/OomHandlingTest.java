@@ -103,8 +103,8 @@ public class OomHandlingTest {
         List<LogRecord> captured = new ArrayList<>();
         Handler handler = new Handler() {
             @Override
-            public void publish(LogRecord record) {
-                captured.add(record);
+            public void publish(LogRecord logRecord) {
+                captured.add(logRecord);
             }
 
             @Override
@@ -238,11 +238,11 @@ public class OomHandlingTest {
         }
     }
 
-    private static String formatRecord(LogRecord record) {
-        if (record.getParameters() == null || record.getParameters().length == 0) {
-            return record.getMessage();
+    private static String formatRecord(LogRecord logRecord) {
+        if (logRecord.getParameters() == null || logRecord.getParameters().length == 0) {
+            return logRecord.getMessage();
         }
-        return java.text.MessageFormat.format(record.getMessage(), record.getParameters());
+        return java.text.MessageFormat.format(logRecord.getMessage(), logRecord.getParameters());
     }
 
     private static int freePort() throws IOException {

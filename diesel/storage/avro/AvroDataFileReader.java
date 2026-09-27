@@ -375,9 +375,9 @@ public final class AvroDataFileReader implements Closeable {
         if (!hasNext()) {
             throw new NoSuchElementException("No more Avro records in " + file);
         }
-        GenericRecord record = datumReader.read(null, currentBlockDecoder);
+        GenericRecord avroRecord = datumReader.read(null, currentBlockDecoder);
         currentBlockRemaining--;
-        return record;
+        return avroRecord;
     }
 
     /**
@@ -700,9 +700,9 @@ public final class AvroDataFileReader implements Closeable {
         if (projected.isEmpty()) {
             return null;
         }
-        Schema record = Schema.createRecord(writer.getName(), writer.getDoc(), writer.getNamespace(), writer.isError());
-        record.setFields(projected);
-        return record;
+        Schema schemaRecord = Schema.createRecord(writer.getName(), writer.getDoc(), writer.getNamespace(), writer.isError());
+        schemaRecord.setFields(projected);
+        return schemaRecord;
     }
 
     /**

@@ -414,26 +414,26 @@ public final class SchemaConflictResolver {
         return resolveDefaults(writer, reader, null);
     }
 
-    /**
-     * Fills concrete default values into a {@link GenericRecord} for fields not
-     * already set, so a record read with the old writer schema can be decoded
-     * with the new reader schema.
-     *
-     * @param record   the record to fill (may be {@code null})
-     * @param defaults field name → default value (may be {@code null})
-     * @return the same record, mutated in place
-     */
-    public static GenericRecord applyDefaults(GenericRecord record, Map<String, Object> defaults) {
-        if (record != null && defaults != null) {
+/**
+      * Fills null slots in a reader record with default values from the given map.
+      * Null values are preserved; missing fields are not added. Returns the same
+      * record, mutated in place.
+      *
+      * @param avroRecord   the record to fill (may be {@code null})
+      * @param defaults field name → default value (may be {@code null})
+      * @return the same record, mutated in place
+      */
+    public static GenericRecord applyDefaults(GenericRecord avroRecord, Map<String, Object> defaults) {
+        if (avroRecord != null && defaults != null) {
             for (Map.Entry<String, Object> e : defaults.entrySet()) {
                 // GenericData.Record.hasField() only checks schema membership, so a
                 // null value is the signal that the slot was never populated.
-                if (record.get(e.getKey()) == null) {
-                    record.put(e.getKey(), e.getValue());
+                if (avroRecord.get(e.getKey()) == null) {
+                    avroRecord.put(e.getKey(), e.getValue());
                 }
             }
-        }
-        return record;
+}
+        return avroRecord;
     }
 
     // ─── Aliasing ───────────────────────────────────────────────────
@@ -605,9 +605,9 @@ public final class SchemaConflictResolver {
     }
 
     /** Indexes record fields by lower-case name. */
-    private static Map<String, Schema.Field> indexFields(Schema record) {
+    private static Map<String, Schema.Field> indexFields(Schema schemaRecord) {
         Map<String, Schema.Field> byName = new LinkedHashMap<>();
-        for (Schema.Field field : record.getFields()) {
+        for (Schema.Field field : schemaRecord.getFields()) {
             byName.put(field.name().toLowerCase(Locale.ROOT), field);
         }
         return byName;

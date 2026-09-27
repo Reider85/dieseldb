@@ -57,9 +57,9 @@ public final class AvroRecordHandler {
         if (fields == null || fields.isEmpty()) {
             throw new IllegalArgumentException("Record must declare at least one field");
         }
-        Schema record = Schema.createRecord(name, null, namespace, false);
-        record.setFields(new ArrayList<>(fields));
-        return record;
+        Schema schemaRecord = Schema.createRecord(name, null, namespace, false);
+        schemaRecord.setFields(new ArrayList<>(fields));
+        return schemaRecord;
     }
 
     /**
@@ -116,12 +116,12 @@ public final class AvroRecordHandler {
                     lookup.put(key.toString(), entry.getValue());
                 }
             }
-            GenericData.Record record = new GenericData.Record(recordSchema);
+            GenericData.Record avroRecord = new GenericData.Record(recordSchema);
             for (Schema.Field field : recordSchema.getFields()) {
                 Object fieldValue = lookup.get(field.name());
-                record.put(field.name(), fieldConverter.convert(fieldValue, field.schema()));
+                avroRecord.put(field.name(), fieldConverter.convert(fieldValue, field.schema()));
             }
-            return record;
+            return avroRecord;
         } finally {
             stack.pop();
             if (stack.isEmpty()) {
@@ -140,15 +140,15 @@ public final class AvroRecordHandler {
         if (avroValue == null) {
             return null;
         }
-        if (!(avroValue instanceof GenericRecord record)) {
+        if (!(avroValue instanceof GenericRecord avroRecord)) {
             throw new IllegalArgumentException("Avro RECORD value must be a GenericRecord, got: "
                     + avroValue.getClass().getName());
         }
-        Schema schema = record.getSchema() != null ? record.getSchema() : recordSchema;
+        Schema schema = avroRecord.getSchema() != null ? avroRecord.getSchema() : recordSchema;
         Map<String, Object> result = new LinkedHashMap<>();
         if (schema != null) {
             for (Schema.Field field : schema.getFields()) {
-                Object fieldValue = record.get(field.name());
+                Object fieldValue = avroRecord.get(field.name());
                 result.put(field.name(), fieldConverter != null
                         ? fieldConverter.convert(fieldValue, field.schema()) : fieldValue);
             }

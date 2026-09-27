@@ -460,10 +460,10 @@ class AvroUnionHandlerTest {
     }
 
     private static Schema recordSchema(String name, String namespace) {
-        Schema record = Schema.createRecord(name, null, namespace, false);
+        Schema schemaRecord = Schema.createRecord(name, null, namespace, false);
         List<Schema.Field> fields = List.of(
                 new Schema.Field("v", Schema.create(Schema.Type.STRING), null, null));
-        record.setFields(fields);
-        return record;
+        schemaRecord.setFields(fields);
+        return schemaRecord;
     }
 }
