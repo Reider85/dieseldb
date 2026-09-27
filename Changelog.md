@@ -790,3 +790,5 @@ chore: test-profiles-audit changelog entry
 3.2.7 Fix QueryProfilerTest parallel test interference with delta-based assertions
 
 3.2.9 S1168: replace null returns with empty collections in 3 index-lookup methods
+
+3.2.10 Mass fix S1168 violations - return empty collections instead of null across 29 methods
