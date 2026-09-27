@@ -428,6 +428,7 @@ public final class AvroParallelReader implements Closeable {
                     return v;
                 }
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid int value from sysproperty: " + THRESHOLD_KEY + ", trying config", ignored);
             }
         }
         Properties props = new Properties();
@@ -436,6 +437,7 @@ public final class AvroParallelReader implements Closeable {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
+                LOGGER.warn("Failed to load config file: " + configFile + ", using default threshold", ignored);
             }
         }
         String raw = props.getProperty(THRESHOLD_KEY);
@@ -446,6 +448,7 @@ public final class AvroParallelReader implements Closeable {
                     return v;
                 }
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid int value from config: " + raw + ", using default threshold", ignored);
             }
         }
         return DEFAULT_THRESHOLD;

@@ -545,7 +545,9 @@ public class AvroRowStorage extends AbstractRowStorage {
                 }
                 String val = props.getProperty(key);
                 if (val != null && !val.isBlank()) return val;
-            } catch (IOException ignored) { }
+            } catch (IOException ignored) { 
+                LOGGER.warn("Failed to read config file for Avro row storage, using default", ignored);
+            }
         }
         return defaultValue;
     }

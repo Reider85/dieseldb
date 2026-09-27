@@ -24,6 +24,8 @@ import java.util.zip.Deflater;
  * @see Database
  */
 public class DatabaseServer {
+    private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
+
     static {
         try {
             java.util.Properties props = ConfigLoader.load();
@@ -33,10 +35,10 @@ public class DatabaseServer {
             if (val2 != null) queueCapacity = Integer.parseInt(val2.trim());
             String val3 = props.getProperty("server.backlog");
             if (val3 != null) backlog = Integer.parseInt(val3.trim());
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+            LOGGER.log(Level.WARNING, "Failed to load server config properties, using defaults", ignored);
+        }
     }
-
-    private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
     private static final String CONFIG_FILE = ErrorMessages.CONFIG_FILE;
     private static int poolSize = 100;
     private static int queueCapacity = 100;

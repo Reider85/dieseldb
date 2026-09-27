@@ -538,6 +538,7 @@ public class AvroAuditLogger implements AutoCloseable {
             try (InputStream in = Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
+                LOGGER.warn("Failed to load config properties for audit logger, using defaults", ignored);
             }
         }
         return props;

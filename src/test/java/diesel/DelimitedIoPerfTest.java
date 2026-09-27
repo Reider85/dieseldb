@@ -49,6 +49,7 @@ class DelimitedIoPerfTest {
             try {
                 return Long.parseLong(override.trim());
             } catch (NumberFormatException ignored) {
+                // fall through to default performance ceiling
             }
         }
         return 10_000;

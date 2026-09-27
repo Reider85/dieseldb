@@ -496,6 +496,7 @@ public final class AvroInputFormatCompat {
                     return v;
                 }
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid long value from sysproperty: " + key + ", trying config", ignored);
             }
         }
         Properties props = new Properties();
@@ -504,6 +505,7 @@ public final class AvroInputFormatCompat {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
+                LOGGER.warn("Failed to load config file: " + configFile + ", using fallback", ignored);
             }
         }
         String raw = props.getProperty(key);
@@ -514,6 +516,7 @@ public final class AvroInputFormatCompat {
                     return v;
                 }
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid long value from config: " + raw + ", using fallback", ignored);
             }
         }
         return fallback;

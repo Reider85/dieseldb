@@ -70,6 +70,7 @@ public class AvroDataFileWriter {
             try (var out = dataFileWriter) {
                 // already closed via create failure; release the stream
             } catch (IOException ignored) {
+                // best-effort cleanup of already failed resource
             }
             throw e;
         }
@@ -291,6 +292,7 @@ public class AvroDataFileWriter {
             try {
                 dataFileWriter.close();
             } catch (IOException ignored) {
+                // best-effort cleanup during rollback
             }
             closed.set(true);
         }

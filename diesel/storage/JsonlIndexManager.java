@@ -636,6 +636,7 @@ public final class JsonlIndexManager {
             lineIndexCache = new JsonlParallelLoader.LineIndexCache(
                     file.getAbsolutePath(), file.lastModified(), file.length(), index);
         } catch (SecurityException ignored) {
+            LOGGER.trace("Security exception when caching line index, proceeding without cache", ignored);
         }
         return index;
     }
@@ -657,6 +658,7 @@ public final class JsonlIndexManager {
             lineIndexCache = new JsonlParallelLoader.LineIndexCache(
                     file.getAbsolutePath(), file.lastModified(), file.length(), index);
         } catch (SecurityException ignored) {
+            LOGGER.trace("Security exception when caching line index, proceeding without cache", ignored);
         }
         return index;
     }
@@ -678,6 +680,7 @@ public final class JsonlIndexManager {
             try {
                 return Long.parseLong(override.trim());
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid long value for override: " + override + ", trying config", ignored);
             }
         }
         String configured = ROOT_CONFIG.getProperty(PARALLEL_READ_THRESHOLD_KEY);
@@ -685,6 +688,7 @@ public final class JsonlIndexManager {
             try {
                 return Long.parseLong(configured.trim());
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid long value for configured setting: " + configured + ", using default", ignored);
             }
         }
         return DEFAULT_PARALLEL_READ_THRESHOLD;

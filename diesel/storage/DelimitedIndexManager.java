@@ -895,6 +895,7 @@ public abstract class DelimitedIndexManager {
         try {
             lineIndexCache = new LineIndexCache(file.getAbsolutePath(), file.lastModified(), file.length(), index);
         } catch (SecurityException ignored) {
+            LOGGER.trace("Security exception when caching line index, proceeding without cache", ignored);
         }
         return index;
     }
@@ -1066,6 +1067,7 @@ public abstract class DelimitedIndexManager {
             try {
                 return Integer.parseInt(override.trim());
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid int value for override: " + override + ", trying config", ignored);
             }
         }
         String configured = ROOT_CONFIG.getProperty(configPrefix + "." + suffix);
@@ -1073,6 +1075,7 @@ public abstract class DelimitedIndexManager {
             try {
                 return Integer.parseInt(configured.trim());
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid int value for configured setting: " + configured + ", using default", ignored);
             }
         }
         return defaultValue;
@@ -1084,6 +1087,7 @@ public abstract class DelimitedIndexManager {
             try {
                 return Long.parseLong(override.trim());
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid long value for override: " + override + ", trying config", ignored);
             }
         }
         String configured = ROOT_CONFIG.getProperty(configPrefix + "." + suffix);
@@ -1091,6 +1095,7 @@ public abstract class DelimitedIndexManager {
             try {
                 return Long.parseLong(configured.trim());
             } catch (NumberFormatException ignored) {
+                LOGGER.debug("Invalid long value for configured setting: " + configured + ", using default", ignored);
             }
         }
         return defaultValue;

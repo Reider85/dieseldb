@@ -300,7 +300,9 @@ public final class AvroTransactionManager {
         this.logRetentionMs = logRetentionMs;
         this.recoveryOnStartup = recoveryOnStartup;
         if (enabled) {
-            try { Files.createDirectories(walDir); } catch (IOException ignored) { }
+            try { Files.createDirectories(walDir); } catch (IOException ignored) { 
+            LOGGER.warn("WAL directory creation failed: " + walDir, ignored);
+        }
         }
     }
 

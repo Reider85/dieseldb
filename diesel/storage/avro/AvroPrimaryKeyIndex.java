@@ -422,6 +422,7 @@ public class AvroPrimaryKeyIndex {
                 Comparable<Object> comparable = (Comparable<Object>) left;
                 return comparable.compareTo(right);
             } catch (RuntimeException ignored) {
+                LOGGER.debug("Key comparison fallback to string comparison", ignored);
             }
         }
         return String.valueOf(left).compareTo(String.valueOf(right));
@@ -795,7 +796,9 @@ public class AvroPrimaryKeyIndex {
         } catch (NumberFormatException ignored) {}
         try {
             return Double.parseDouble(s);
-        } catch (NumberFormatException ignored) {}
+        } catch (NumberFormatException ignored) {
+            // fall through — try next type
+        }
         if ("true".equalsIgnoreCase(s) || "false".equalsIgnoreCase(s)) {
             return Boolean.valueOf(s);
         }

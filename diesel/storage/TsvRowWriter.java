@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import diesel.ConfigKeys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Writes rows to a TSV (Tab-Separated Values) file. Values are
@@ -20,6 +22,8 @@ import diesel.ConfigKeys;
  * in legacy mode, or as {@code \N} sentinel in sentinel mode.
  */
 public class TsvRowWriter implements AutoCloseable {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(TsvRowWriter.class);
 
     private final BufferedWriter writer;
     private final List<String> columns;
@@ -222,6 +226,7 @@ public class TsvRowWriter implements AutoCloseable {
                 }
             }
         } catch (IOException ignored) {
+            LOGGER.warn("Failed to load config properties for TSV writer, using defaults", ignored);
         }
         return props;
     }

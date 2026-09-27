@@ -125,6 +125,7 @@ public final class AvroQueryConfig {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
+                LOGGER.warn("Failed to load config properties for query config, using defaults", ignored);
             }
         }
         return props;

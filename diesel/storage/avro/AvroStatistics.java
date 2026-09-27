@@ -329,6 +329,7 @@ public final class AvroStatistics {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
+                LOGGER.warn("Failed to load config properties for statistics, using defaults", ignored);
             }
         }
         return props;

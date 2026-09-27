@@ -494,6 +494,7 @@ class JsonlStorageAdvancedTest {
             try {
                 return Long.parseLong(override.trim());
             } catch (NumberFormatException ignored) {
+                // fall through to default performance ceiling
             }
         }
         return 60_000;

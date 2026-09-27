@@ -144,6 +144,7 @@ private static final Comparator<Object> VALUE_ORDER = (a, b) -> {
             indexCache = new JsonlParallelLoader.LineIndexCache(
                     file.getAbsolutePath(), file.lastModified(), file.length(), fresh);
         } catch (SecurityException ignored) {
+            LOGGER.trace("Security exception when caching line index, proceeding without cache", ignored);
         }
         byte[] full = fresh.fileBytes();
         fileBytes = full != null && full.length <= MAX_BUFFERED_FILE_BYTES ? full : null;

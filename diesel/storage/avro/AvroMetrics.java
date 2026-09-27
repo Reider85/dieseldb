@@ -528,6 +528,7 @@ public class AvroMetrics implements DynamicMBean {
             try (InputStream in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);
             } catch (IOException ignored) {
+                LOGGER.warn("Failed to load config properties for metrics, using defaults", ignored);
             }
         }
         return props;
