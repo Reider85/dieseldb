@@ -360,6 +360,10 @@
 3. After implementation and tests pass, change to ??? DONE
 4. Add date completed in format `??? DONE (2025-01-15)`
 
+> **Prompt 23 DONE (2026-09-27)** — Sonar-prompt8 S1172 fix: remove unused 'deletedCount' parameter from `DeleteQuery.updateIndexes()` private method; method was already using `table.getDeletedCount()` instead of the parameter; updated call site at line 67; 1 file changed, 2 lines. Fast tests 186/0/0. Committed as 3.2.4.
+
+> **Prompt 22 DONE (2026-09-27)** — Sonar-prompt8 S108 fix: fill all 32 empty catch blocks across 17 files by adding appropriate logging (warn/debug/trace), comments for intentional suppression, and best-effort cleanup documentation; fixed config parsing fallbacks (NumberFormatException/IOException), resource cleanup (IOException on close), intentional type coercion cascade (NumberFormatException in deserializeKey), directory creation (IOException), best-effort caching (SecurityException), and test helpers; added missing LOGGER import to TsvRowWriter.java; moved LOGGER declaration before static block in DatabaseServer.java to avoid forward reference error; all fast profile tests pass (186/0/0). Committed as 3.1.97.
+
 > **Prompt 19 DONE (2026-09-27)** — Sonar-prompt8 S6213 fix: mass renaming of restricted identifier violations across 23 files. Renamed all `record` variables used as variable/parameter names instead of types to contextually appropriate names (avroRecord for GenericRecord, schemaRecord for Schema, logRecord for LogRecord, createRecord for test helper methods) across 13 production files and 10 test files; updated all method parameter body references and test helper method call sites; fixed compilation errors in SchemaConflictResolver.java; fast profile tests pass (186/0/0), large profile shows CSV performance regression unrelated to changes. Committed as 3.1.95.
 
 

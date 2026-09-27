@@ -779,3 +779,5 @@ chore: test-profiles-audit changelog entry
 
 
 3.2.3 Add PowerShell wrapper scripts for Windows agents: mvn.ps1 (auto JAVA_HOME), git-helpers.ps1 (push retry + lock fix), compare-timing.ps1 (PowerShell port), make.ps1 (make replacement); add setup/doctor targets to Makefile; update AGENTS.md with PowerShell Quick Reference section
+
+3.2.4 Sonar-prompt8 S1172 fix: remove unused 'deletedCount' parameter from DeleteQuery.updateIndexes() private method; method was already using table.getDeletedCount() instead of the parameter; fast tests 186/0/0

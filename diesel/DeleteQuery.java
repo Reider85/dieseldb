@@ -64,7 +64,7 @@ class DeleteQuery implements Query<Void> {
         table.beginBulkUpdate();
         try {
             performDelete(table, rows, rowsToDelete);
-            updateIndexes(table, rowsToDelete.size());
+            updateIndexes(table);
         } finally {
             table.endBulkUpdate();
             releaseLock(locks);
@@ -238,9 +238,8 @@ class DeleteQuery implements Query<Void> {
      * Updates indexes after deletion, performing auto-compaction if needed.
      *
      * @param table the table to update
-     * @param deletedCount number of rows deleted
      */
-    private void updateIndexes(Table table, int deletedCount) {
+    private void updateIndexes(Table table) {
         // Phase 4: Auto-compact if tombstone threshold reached
         int rawCount = table.getRawRowCount();
         if (rawCount > 0 && (double) table.getDeletedCount() / rawCount >= 0.3) {
