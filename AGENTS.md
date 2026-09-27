@@ -75,7 +75,45 @@ Skip `make timing` and `make check-profile` for non-performance changes.
   **Alternative (if AxiomJDK not installed):**
   `$env:JAVA_HOME = "C:\tools\jdk-21.0.12+8"; & "C:\tools\apache-maven-3.9.9\bin\mvn.cmd" <args>`
 - `mvn package` produces a jar without a usable `Main-Class`; launch the engine via `diesel.DatabaseServer` or use `start-server.bat/.sh`.
-- Build: `make build` (or `mvn package -DskipTests`.
+- Build: `make build` (or `mvn package -DskipTests`).
+
+### PowerShell Quick Reference (for agents that can't use make)
+
+**`make` is NOT on PATH.** Use `scripts\make.ps1` as a direct replacement:
+
+| Task | Command |
+|------|---------|
+| Compile check | `.\scripts\make.ps1 compile` |
+| Run one test | `.\scripts\make.ps1 test-one -T QueryParserTest#testSelect` |
+| Fast test suite | `.\scripts\make.ps1 test` |
+| Core test suite | `.\scripts\make.ps1 test-core` |
+| Build JAR | `.\scripts\make.ps1 build` |
+| Full release | `.\scripts\make.ps1 release -Desc "description"` |
+
+**Or use `scripts\mvn.ps1` for direct Maven calls (auto-sets JAVA_HOME):**
+
+| Task | Command |
+|------|---------|
+| Compile check | `.\scripts\mvn.ps1 -B compile -q` |
+| Run one test | `.\scripts\mvn.ps1 -B test -P fast -Dtest=ClassName#method` |
+| Fast test suite | `.\scripts\mvn.ps1 -B clean test -P fast` |
+| Core test suite | `.\scripts\mvn.ps1 -B clean test -P core` |
+| Build JAR | `.\scripts\mvn.ps1 -B package -DskipTests` |
+| AVRO storage tests | `.\scripts\mvn.ps1 -B clean test -P core -Ddiesel.storage.type=avro` |
+
+**Git helpers** — use `scripts/git-helpers.ps1` for safe git operations:
+
+| Task | Command |
+|------|---------|
+| Push (with retry, 3 attempts) | `.\scripts\git-helpers.ps1 push` |
+| Fix stale git lock files | `.\scripts\git-helpers.ps1 fix-lock` |
+| Commit + push (safe) | `.\scripts\git-helpers.ps1 commit -m "description"` |
+| Short status | `.\scripts\git-helpers.ps1 status` |
+
+**Timing comparison (PowerShell):**
+```powershell
+.\scripts\compare-timing.ps1 -Base timing\timing.md -New timing\timingN.md
+```
 
 ## Git Rules
 
@@ -86,6 +124,12 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 - `timing/` — benchmark timing files
 
 If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ timing/`
+
+**Git push best practices:**
+- **Always push to `origin main`** — never use `origin master` (the branch is `main`)
+- If push fails, run `.\scripts\git-helpers.ps1 fix-lock` first, then retry
+- Never force-push. If history diverges, ask the user.
+- The `make release` target handles push automatically with the correct branch
 
 ## Tests
 

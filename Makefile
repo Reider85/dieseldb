@@ -14,7 +14,7 @@ else
 TIA = ./scripts/tia.sh
 endif
 
-.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run changelog release release-local
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run changelog release release-local setup doctor
 
 # Default target
 all: build
@@ -197,6 +197,42 @@ tia-run:
 	@echo "Running TIA + impacted tests..."
 	@$(TIA) --run
 
+## Verify build environment: JAVA_HOME, mvn, java (exit 1 if broken)
+setup:
+	@echo "Checking build environment..."
+	@java -version 2>&1 | head -1
+	@$(MVN) -version 2>&1 | head -1
+	@echo "Build environment OK."
+
+## Full environment diagnostic
+doctor:
+	@echo "=== DieselDB Doctor ==="
+	@echo ""
+	@echo "--- Java ---"
+	@java -version 2>&1 || echo "ERROR: java not found on PATH"
+	@echo ""
+	@echo "--- JAVA_HOME ---"
+	@if [ -n "$$JAVA_HOME" ]; then echo "JAVA_HOME=$$JAVA_HOME"; else echo "WARNING: JAVA_HOME not set"; fi
+	@echo ""
+	@echo "--- Maven ---"
+	@$(MVN) -version 2>&1 || echo "ERROR: mvn not found on PATH"
+	@echo ""
+	@echo "--- Git ---"
+	@git --version 2>&1 || echo "ERROR: git not found"
+	@git remote -v 2>&1 | head -2
+	@git branch --show-current 2>&1
+	@echo ""
+	@echo "--- Python ---"
+	@$(PY) --version 2>&1 || echo "ERROR: python not found"
+	@echo ""
+	@echo "--- Lock files ---"
+	@find .git -name "*.lock" 2>/dev/null | head -5 || echo "  (none)"
+	@echo ""
+	@echo "--- Disk space ---"
+	@df -h . 2>/dev/null || echo "  (N/A on Windows)"
+	@echo ""
+	@echo "=== Doctor done ==="
+
 ## Show help
 help:
 	@echo "DieselDB Makefile - Quick Reference"
@@ -224,7 +260,15 @@ help:
 	@echo "  make profile            - Run profiler"
 	@echo "  make clean              - Remove build artifacts"
 	@echo "  make clean-test-cache   - Clean test cache only (surefire, build cache)"
+	@echo "  make setup              - Verify JAVA_HOME, mvn, java are available"
+	@echo "  make doctor             - Full environment diagnostic"
 	@echo "  make help               - Show this help"
+	@echo ""
+	@echo "PowerShell (Windows agents):"
+	@echo "  .\scripts\mvn.ps1 <args>            - Maven with auto JAVA_HOME"
+	@echo "  .\scripts\git-helpers.ps1 push      - Git push with retry (origin main)"
+	@echo "  .\scripts\git-helpers.ps1 fix-lock  - Remove stale git lock files"
+	@echo "  .\scripts\compare-timing.ps1        - Compare timing (PowerShell)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  JAVA_HOME=/path/to/java"
