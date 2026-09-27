@@ -58,8 +58,16 @@ public class SocketTimeoutTest {
             try {
                 Files.walk(tempDir)
                     .sorted((a, b) -> b.compareTo(a))
-                    .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
-            } catch (IOException ignored) {}
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {
+                            // Intentionally ignored: best-effort temp-dir cleanup.
+                        }
+                    });
+            } catch (IOException ignored) {
+                // Intentionally ignored: the stream may already be closed if walking failed.
+            }
         }
     }
 

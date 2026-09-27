@@ -32,8 +32,8 @@ public class QueryOptimizerTest {
     }
 
     private void createAndPopulateTables() {
-        try { database.dropTable("T2"); } catch (Exception ignored) {}
-        try { database.dropTable("T1"); } catch (Exception ignored) {}
+        try { database.dropTable("T2"); } catch (Exception ignored) { /* table may not exist yet */ }
+        try { database.dropTable("T1"); } catch (Exception ignored) { /* table may not exist yet */ }
         database.executeQuery("CREATE TABLE T1 (ID LONG PRIMARY KEY SEQUENCE(seq1 1 1), NAME STRING, AGE INTEGER, VAL BIGDECIMAL)", null);
         database.executeQuery("CREATE TABLE T2 (ID LONG PRIMARY KEY SEQUENCE(seq2 1 1), T1_ID LONG, NAME STRING, SCORE INTEGER)", null);
         for (int i = 1; i <= 100; i++) {

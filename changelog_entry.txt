@@ -1,1 +1,1 @@
-3.1.96 Sonar-prompt8 S108 fix: fill empty catch block in Database.fallbackSingleTableExtraction with Level.FINER logging
+3.1.97 Sonar-prompt8 S108: document 8 intentionally-ignored empty catch blocks in tests (AllTestsSampleTest, PreparedStatementTest, ServerConnectionLimitTest, SocketTimeoutTest, QueryOptimizerTest)

@@ -1073,6 +1073,8 @@ public class AllTestsSampleTest {
                     }
                 }
             } catch (IOException ignored) {
+                // Intentionally ignored: the process stream is closed when the
+                // server subprocess exits, which is the normal termination path.
             }
         }, "prompt70-output-pump");
         outputPump.setDaemon(true);

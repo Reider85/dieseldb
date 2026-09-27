@@ -56,6 +56,8 @@ public class PreparedStatementTest {
                         try {
                             Files.deleteIfExists(p);
                         } catch (IOException ignored) {
+                            // Intentionally ignored: best-effort temp-dir cleanup,
+                            // a leftover file must not fail the test.
                         }
                     });
         }
