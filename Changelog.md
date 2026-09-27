@@ -783,3 +783,5 @@ chore: test-profiles-audit changelog entry
 3.2.4 Sonar-prompt8 S1172 fix: remove unused 'deletedCount' parameter from DeleteQuery.updateIndexes() private method; method was already using table.getDeletedCount() instead of the parameter; fast tests 186/0/0
 
 3.2.5 S1172 fix: remove unused method parameters in QueryParser.java and SubqueryParser.java
+
+3.2.6 Fix QueryProfilerTest parallel test interference with delta-based assertions
