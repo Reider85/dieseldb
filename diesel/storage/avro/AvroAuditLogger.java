@@ -165,7 +165,7 @@ public class AvroAuditLogger implements AutoCloseable {
      * Records an arbitrary audit entry with the given level, category, operation and detail.
      */
     public void log(AuditLevel level, AuditCategory category, String operation, String table, String detail) {
-        record(new AuditEntry(now(), level, category, operation, table, detail, 0), false);
+        recordEntry(new AuditEntry(now(), level, category, operation, table, detail, 0), false);
     }
 
     /**
@@ -180,7 +180,7 @@ public class AvroAuditLogger implements AutoCloseable {
     public void logRead(String table, String operation, String detail, long durationNs) {
         boolean slow = tracingEnabled && durationNs > slowThresholdMs * 1_000_000L;
         AuditLevel level = slow ? AuditLevel.WARN : AuditLevel.INFO;
-        record(new AuditEntry(now(), level, AuditCategory.READ, operation, table, detail,
+        recordEntry(new AuditEntry(now(), level, AuditCategory.READ, operation, table, detail,
                 durationNs / 1_000_000), slow);
     }
 
@@ -191,7 +191,7 @@ public class AvroAuditLogger implements AutoCloseable {
     public void logWrite(String table, String operation, String detail, long durationNs) {
         boolean slow = tracingEnabled && durationNs > slowThresholdMs * 1_000_000L;
         AuditLevel level = slow ? AuditLevel.WARN : AuditLevel.INFO;
-        record(new AuditEntry(now(), level, AuditCategory.WRITE, operation, table, detail,
+        recordEntry(new AuditEntry(now(), level, AuditCategory.WRITE, operation, table, detail,
                 durationNs / 1_000_000), slow);
     }
 
@@ -201,7 +201,7 @@ public class AvroAuditLogger implements AutoCloseable {
     public void logTrace(String operation, String table, String detail, long durationNs) {
         boolean slow = tracingEnabled && durationNs > slowThresholdMs * 1_000_000L;
         AuditLevel level = slow ? AuditLevel.WARN : AuditLevel.TRACE;
-        record(new AuditEntry(now(), level, AuditCategory.PERFORMANCE, operation, table, detail,
+        recordEntry(new AuditEntry(now(), level, AuditCategory.PERFORMANCE, operation, table, detail,
                 durationNs / 1_000_000), slow);
     }
 
@@ -214,7 +214,7 @@ public class AvroAuditLogger implements AutoCloseable {
             message = message.isEmpty() ? error.getClass().getSimpleName()
                     : message + " cause=" + error.getClass().getSimpleName() + ": " + msg(error);
         }
-        record(new AuditEntry(now(), AuditLevel.ERROR, AuditCategory.ERROR, operation, table,
+        recordEntry(new AuditEntry(now(), AuditLevel.ERROR, AuditCategory.ERROR, operation, table,
                 message, 0), false);
     }
 
@@ -223,7 +223,7 @@ public class AvroAuditLogger implements AutoCloseable {
      */
     public void logTransaction(String table, String operation, String txId, String detail) {
         String d = (detail == null ? "" : detail + " ") + "tx=" + txId;
-        record(new AuditEntry(now(), AuditLevel.INFO, AuditCategory.TRANSACTION, operation, table,
+        recordEntry(new AuditEntry(now(), AuditLevel.INFO, AuditCategory.TRANSACTION, operation, table,
                 d.trim(), 0), false);
     }
 
@@ -231,7 +231,7 @@ public class AvroAuditLogger implements AutoCloseable {
      * Configuration-change audit trail (compliance requirement).
      */
     public void logConfig(String key, String oldValue, String newValue) {
-        record(new AuditEntry(now(), AuditLevel.INFO, AuditCategory.CONFIG, "config_change", null,
+        recordEntry(new AuditEntry(now(), AuditLevel.INFO, AuditCategory.CONFIG, "config_change", null,
                 key + "=" + oldValue + " -> " + newValue, 0), false);
     }
 
@@ -239,7 +239,7 @@ public class AvroAuditLogger implements AutoCloseable {
      * Convenience for backup/restore lifecycle events.
      */
     public void logBackup(String table, String operation, String detail) {
-        record(new AuditEntry(now(), AuditLevel.INFO, AuditCategory.BACKUP, operation, table,
+        recordEntry(new AuditEntry(now(), AuditLevel.INFO, AuditCategory.BACKUP, operation, table,
                 detail, 0), false);
     }
 
@@ -381,7 +381,7 @@ public class AvroAuditLogger implements AutoCloseable {
 
     // ─── Recording internals ──────────────────────────────────────────
 
-    private synchronized void record(AuditEntry e, boolean slow) {
+    private synchronized void recordEntry(AuditEntry e, boolean slow) {
         if (!enabled) {
             return;
         }
