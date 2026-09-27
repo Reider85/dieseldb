@@ -1,1 +1,1 @@
-3.2.5 S1172 fix: remove unused method parameters in QueryParser.java and SubqueryParser.java
+3.2.6 S1172: remove 9 unused method parameters across 6 files
