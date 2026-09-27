@@ -157,9 +157,9 @@ public final class AvroQueryExecutor {
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile, projectionList)) {
             while (reader.hasNext()) {
-                GenericRecord record = reader.nextRecord();
-                if (predicate.test(record)) {
-                    result.add(convertRecordToMap(record, allColumns, resolvedTypes));
+                GenericRecord avroRecord = reader.nextRecord();
+                if (predicate.test(avroRecord)) {
+                    result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes));
                     if (limit != null && result.size() >= limit) {
                         break;
                     }
@@ -182,8 +182,8 @@ public final class AvroQueryExecutor {
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile, projectionList)) {
             while (reader.hasNext()) {
-                GenericRecord record = reader.nextRecord();
-                result.add(convertRecordToMap(record, allColumns, resolvedTypes));
+                GenericRecord avroRecord = reader.nextRecord();
+                result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes));
                 if (limit != null && result.size() >= limit) {
                     break;
                 }
@@ -202,8 +202,8 @@ public final class AvroQueryExecutor {
         Map<String, Class<?>> resolvedTypes = buildColumnTypeLookup(columnTypes);
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile)) {
             while (reader.hasNext()) {
-                GenericRecord record = reader.nextRecord();
-                result.add(convertRecordToMap(record, allColumns, resolvedTypes));
+                GenericRecord avroRecord = reader.nextRecord();
+                result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes));
                 if (limit != null && result.size() >= limit) {
                     break;
                 }
@@ -221,16 +221,16 @@ public final class AvroQueryExecutor {
 
     // ─── Record value extraction ────────────────────────────────────
 
-    private static Map<String, Object> convertRecordToMap(GenericRecord record,
+    private static Map<String, Object> convertRecordToMap(GenericRecord avroRecord,
                                                            List<String> allColumns,
                                                            Map<String, Class<?>> columnTypes) {
         // Only include columns present in the record's schema (projected subset).
         // Non-projected fields are skipped entirely to keep the map lean.
-        Schema recordSchema = record.getSchema();
+        Schema recordSchema = avroRecord.getSchema();
         Map<String, Object> map = new LinkedHashMap<>(Math.max(recordSchema.getFields().size() * 2, 4));
         for (String col : allColumns) {
             if (recordSchema.getField(col) != null) {
-                Object val = record.get(col);
+                Object val = avroRecord.get(col);
                 if (val instanceof org.apache.avro.util.Utf8 utf8) {
                     map.put(col, utf8.toString());
                 } else if (val instanceof ByteBuffer bb) {
