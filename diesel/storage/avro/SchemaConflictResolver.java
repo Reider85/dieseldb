@@ -15,6 +15,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import diesel.ConfigKeys;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * Avro schema conflict resolution during schema evolution (Prompt 72).
@@ -519,7 +521,7 @@ public final class SchemaConflictResolver {
         if (!cfg.useDefaultValues()) {
             conflicts.add(new FieldConflict(readerField.name(), ConflictType.FIELD_ADDED,
                     null, readerField, null, ResolutionStrategy.SKIP));
-            warnings.add("Reader field '" + readerField.name()
+            warnings.add(StorageMessageConstants.READER_FIELD_PREFIX + readerField.name()
                     + "' added without applying defaults (useDefaultValues=off)");
             return;
         }
@@ -531,12 +533,12 @@ public final class SchemaConflictResolver {
         } else if (cfg.strict()) {
             conflicts.add(new FieldConflict(readerField.name(), ConflictType.FIELD_ADDED,
                     null, readerField, null, ResolutionStrategy.FAIL));
-            warnings.add("Reader field '" + readerField.name()
+            warnings.add(StorageMessageConstants.READER_FIELD_PREFIX + readerField.name()
                     + "' added without a usable default (strict mode)");
         } else {
             conflicts.add(new FieldConflict(readerField.name(), ConflictType.FIELD_ADDED,
                     null, readerField, null, ResolutionStrategy.SKIP));
-            warnings.add("Reader field '" + readerField.name()
+            warnings.add(StorageMessageConstants.READER_FIELD_PREFIX + readerField.name()
                     + "' added without a default (skipped)");
         }
     }
@@ -656,10 +658,10 @@ public final class SchemaConflictResolver {
 
     private static Properties rootProps() {
         Properties props = new Properties();
-        String override = System.getProperty("avro.schema.config.file");
+        String override = System.getProperty(AvroFileConstants.PROP_SCHEMA_CONFIG_FILE);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);

@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * Manages a collection of secondary indexes for AVRO tables.
@@ -51,7 +52,7 @@ public class AvroSecondaryIndexManager implements Serializable {
      */
     public synchronized void createIndex(String indexName, String columnName) {
         if (indexes.containsKey(indexName)) {
-            throw new IllegalArgumentException("Index '" + indexName + "' already exists");
+            throw new IllegalArgumentException(StorageMessageConstants.INDEX_PREFIX + indexName + "' already exists");
         }
         
         if (findColumnIndex(columnName) < 0) {
@@ -72,7 +73,7 @@ public class AvroSecondaryIndexManager implements Serializable {
      */
     public synchronized void createCompositeIndex(String indexName, List<String> columnNames) {
         if (indexes.containsKey(indexName)) {
-            throw new IllegalArgumentException("Index '" + indexName + "' already exists");
+            throw new IllegalArgumentException(StorageMessageConstants.INDEX_PREFIX + indexName + "' already exists");
         }
         
         for (String col : columnNames) {
@@ -96,7 +97,7 @@ public class AvroSecondaryIndexManager implements Serializable {
     public synchronized void dropIndex(String indexName) {
         AvroSecondaryIndex index = indexes.remove(indexName);
         if (index == null) {
-            throw new IllegalArgumentException("Index '" + indexName + "' not found");
+            throw new IllegalArgumentException(StorageMessageConstants.INDEX_PREFIX + indexName + "' not found");
         }
         
         index.clear();

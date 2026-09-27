@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import diesel.ConfigKeys;
 
 /**
  * Writes rows to a TSV (Tab-Separated Values) file. Values are
@@ -214,7 +215,7 @@ public class TsvRowWriter implements AutoCloseable {
     private static Properties loadRootProps() {
         Properties props = new Properties();
         try {
-            File configFile = new File("config.properties");
+            File configFile = new File(ConfigKeys.CONFIG_FILE);
             if (configFile.exists()) {
                 try (FileInputStream fis = new FileInputStream(configFile)) {
                     props.load(fis);

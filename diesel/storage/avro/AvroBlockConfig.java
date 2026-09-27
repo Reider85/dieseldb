@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Locale;
 import java.util.Properties;
+import diesel.ConfigKeys;
 
 /**
  * Resolved AVRO block configuration (Prompt 68).
@@ -159,7 +160,7 @@ public final class AvroBlockConfig {
         String override = System.getProperty(CONFIG_FILE_KEY);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);

@@ -27,6 +27,7 @@ public final class ErrorMessages {
     public static final String CONFIG_FILE = "config.properties";
     public static final String TABLE_EXTENSION = ".table";
     public static final String BIN_EXTENSION = ".bin";
+    public static final String JSONL_EXTENSION = ".jsonl";
 
     public static final String STAGE_JOIN = "join";
     public static final String STAGE_RESULT = "result";

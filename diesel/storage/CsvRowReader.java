@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
+import diesel.ConfigKeys;
 
 /**
  * Streaming reader for CSV files. Reads rows one at a time from a
@@ -225,7 +226,7 @@ LOGGER.warn(msg);
         }
         try {
             java.util.Properties props = new java.util.Properties();
-            File configFile = new File("config.properties");
+            File configFile = new File(ConfigKeys.CONFIG_FILE);
             if (configFile.exists()) {
                 try (FileInputStream fis = new FileInputStream(configFile)) {
                     props.load(fis);
@@ -377,7 +378,7 @@ LOGGER.warn(msg);
         DataFields raw = parseDataFields(line);
         if (raw.values.size() > columns.size() && !extraFieldsWarned) {
             extraFieldsWarned = true;
-            LOGGER.warn(contextPrefix() + "line " + currentRowLine
+            LOGGER.warn(contextPrefix() + StorageMessageConstants.LINE_PREFIX + currentRowLine
                     + ": row has " + raw.values.size() + " fields but schema expects " + columns.size()
                     + " - ignoring extra fields");
         }
@@ -520,7 +521,7 @@ LOGGER.warn(msg);
      * {@link DieselIOException} carrying the file/line/column context.
      */
     private Object handleConversionError(RuntimeException e, String raw, String typeName, String colName) {
-        String msg = contextPrefix() + "line " + currentRowLine + ": column '" + colName
+        String msg = contextPrefix() + StorageMessageConstants.LINE_PREFIX + currentRowLine + ": column '" + colName
                 + "': cannot parse \"" + raw + "\" as " + typeName;
         String mode = readLoadErrorMode();
         if ("skip_value".equalsIgnoreCase(mode)) {
@@ -537,7 +538,7 @@ LOGGER.warn(msg);
 
     /** Applies the load-error policy to a row terminated by an unterminated quoted field. */
     private Object[] handleTruncatedRowArray() {
-        String msg = contextPrefix() + "line " + currentRowLine
+        String msg = contextPrefix() + StorageMessageConstants.LINE_PREFIX + currentRowLine
                 + ": unterminated quoted field (truncated or malformed row)";
         String mode = readLoadErrorMode();
         if ("skip_row".equalsIgnoreCase(mode)) {
@@ -565,7 +566,7 @@ LOGGER.warn(msg);
         }
         try {
             java.util.Properties props = new java.util.Properties();
-            File configFile = new File("config.properties");
+            File configFile = new File(ConfigKeys.CONFIG_FILE);
             if (configFile.exists()) {
                 try (FileInputStream fis = new FileInputStream(configFile)) {
                     props.load(fis);

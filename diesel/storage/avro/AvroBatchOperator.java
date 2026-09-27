@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicLong;
+import diesel.ConfigKeys;
 
 /**
  * High-throughput batch operations for AVRO storage (Prompt 81).
@@ -593,7 +594,7 @@ public final class AvroBatchOperator implements AutoCloseable {
         if (overridePath != null && !overridePath.isBlank()) {
             configFile = new File(overridePath);
         } else {
-            configFile = new File(System.getProperty("user.dir", "."), "config.properties");
+            configFile = new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         }
         if (configFile.exists()) {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {

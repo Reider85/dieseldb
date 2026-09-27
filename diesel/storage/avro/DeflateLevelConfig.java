@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.zip.Deflater;
 import java.util.zip.Inflater;
+import diesel.ConfigKeys;
 
 /**
  * Deflate compression level configuration for AVRO data files with adaptive
@@ -142,7 +143,7 @@ public final class DeflateLevelConfig {
     private static String readProperty(String key) {
         try {
             Properties props = new Properties();
-            try (java.io.InputStream in = new java.io.FileInputStream("config.properties")) {
+            try (java.io.InputStream in = new java.io.FileInputStream(ConfigKeys.CONFIG_FILE)) {
                 props.load(in);
                 return props.getProperty(key);
             }

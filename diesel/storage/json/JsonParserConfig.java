@@ -5,6 +5,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.Properties;
+import diesel.ConfigKeys;
 
 /**
  * Common configuration for the streaming JSON abstraction (prompt 42).
@@ -410,7 +411,7 @@ public final class JsonParserConfig {
         private static Properties loadRootProps() {
             Properties props = new Properties();
             try {
-                File configFile = new File("config.properties");
+                File configFile = new File(ConfigKeys.CONFIG_FILE);
                 if (configFile.exists()) {
                     try (FileInputStream fis = new FileInputStream(configFile)) {
                         props.load(fis);

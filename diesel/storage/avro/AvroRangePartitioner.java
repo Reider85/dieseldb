@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * AVRO range partitioning for DieselDB: distributes rows across partitions
@@ -456,7 +457,7 @@ public class AvroRangePartitioner {
         if (target == null) {
             return new RangeSplitReport(boundaries.size(), boundaries.size(),
                     0L, 0, 0, false,
-                    List.of("Range index " + rangeIndex + " not found"));
+                    List.of(StorageMessageConstants.RANGE_INDEX_PREFIX + rangeIndex + StorageMessageConstants.NOT_FOUND_SUFFIX));
         }
 
         List<String> errors = new ArrayList<>();
@@ -540,8 +541,8 @@ public class AvroRangePartitioner {
         RangeBoundary b = findBoundaryByIndex(indexB);
         if (a == null || b == null) {
             List<String> errs = new ArrayList<>();
-            if (a == null) errs.add("Range index " + indexA + " not found");
-            if (b == null) errs.add("Range index " + indexB + " not found");
+            if (a == null) errs.add(StorageMessageConstants.RANGE_INDEX_PREFIX + indexA + StorageMessageConstants.NOT_FOUND_SUFFIX);
+            if (b == null) errs.add(StorageMessageConstants.RANGE_INDEX_PREFIX + indexB + StorageMessageConstants.NOT_FOUND_SUFFIX);
             return new RangeSplitReport(boundaries.size(), boundaries.size(),
                     0L, 0, 0, false, Collections.unmodifiableList(errs));
         }

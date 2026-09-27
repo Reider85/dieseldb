@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicLong;
+import diesel.ConfigKeys;
 
 /**
  * Structured audit logger for AVRO storage operations (Prompt 95).
@@ -532,7 +533,7 @@ public class AvroAuditLogger implements AutoCloseable {
         String override = System.getProperty(CONFIG_FILE_KEY);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (InputStream in = Files.newInputStream(configFile.toPath())) {
                 props.load(in);

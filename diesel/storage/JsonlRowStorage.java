@@ -335,7 +335,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
      */
     private void saveRewriteMode(String tableName) {
         CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
-        File base = new File(resolveFilePath(".jsonl"));
+        File base = new File(resolveFilePath(ErrorMessages.JSONL_EXTENSION));
         String fileName = CompressionFactory.delimitedWriteTarget(base, codec).getPath();
         try {
             if (codec.isNone()) {
@@ -429,7 +429,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
             saveRewriteMode(tableName);
             return;
         }
-        String fileName = resolveFilePath(".jsonl");
+        String fileName = resolveFilePath(ErrorMessages.JSONL_EXTENSION);
         String deltaFileName = resolveFilePath(JsonlDeltaManager.DELTA_FILE_SUFFIX);
         List<Object[]> pendingNew = deltaManager.getPendingNewRows();
         List<boolean[]> pendingPresence = deltaManager.getPendingNewPresence();
@@ -1046,7 +1046,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     /** Resolves the physical JSONL file and its codec, transparent to the configured codec (prompt 52). */
     private CompressionFactory.ResolvedDelimitedFile resolveJsonlFile() {
-        return CompressionFactory.resolveActual(new File(resolveFilePath(".jsonl")), COMPRESSION_CODEC_KEY);
+        return CompressionFactory.resolveActual(new File(resolveFilePath(ErrorMessages.JSONL_EXTENSION)), COMPRESSION_CODEC_KEY);
     }
 
     /** Returns the internal row list directly (no copy). */

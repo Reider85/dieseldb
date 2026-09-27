@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.DieselIOException;
+import diesel.ConfigKeys;
 
 /**
  * Streaming reader for TSV files. Reads rows one at a time from a
@@ -225,7 +226,7 @@ LOGGER.warn(msg);
         }
         try {
             java.util.Properties props = new java.util.Properties();
-            File configFile = new File("config.properties");
+            File configFile = new File(ConfigKeys.CONFIG_FILE);
             if (configFile.exists()) {
                 try (FileInputStream fis = new FileInputStream(configFile)) {
                     props.load(fis);
@@ -427,7 +428,7 @@ LOGGER.warn(msg);
         }
         try {
             java.util.Properties props = new java.util.Properties();
-            File configFile = new File("config.properties");
+            File configFile = new File(ConfigKeys.CONFIG_FILE);
             if (configFile.exists()) {
                 try (FileInputStream fis = new FileInputStream(configFile)) {
                     props.load(fis);

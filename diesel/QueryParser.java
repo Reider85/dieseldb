@@ -105,7 +105,7 @@ class QueryParser {
     private static final Pattern GROUP_BY_COLUMN_PATTERN = Pattern.compile(ErrorMessages.CASE_INSENSITIVE_START_PATTERN + "" + QUALIFIED_IDENTIFIER_PATTERN + "|\\(\\s*+SELECT\\s++[^()]*+\\))$", Pattern.DOTALL);
     private static final Pattern CLAUSE_BOUNDARY_PATTERN = Pattern.compile("(?i)\\b(WHERE|LIMIT|OFFSET|ORDER BY|GROUP BY)\\b");
     private static final List<Map.Entry<String, Pattern>> TOKEN_PATTERNS = List.of(
-            Map.entry("Quoted String", Pattern.compile("'(?:''|\\\\.|[^'\\\\])*+'")),
+            Map.entry(SubqueryConstants.TOKEN_QUOTED_STRING, Pattern.compile("'(?:''|\\\\.|[^'\\\\])*+'")),
             Map.entry(MessageConstants.TOKEN_LIKE_CONDITION,
                     Pattern.compile("(?i)" + QUALIFIED_IDENTIFIER_PATTERN + "\\s*(?:NOT\\s+)?LIKE\\s*'(?:''|\\\\.|[^'\\\\])*+'")),
             Map.entry("SubQuery",

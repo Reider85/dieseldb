@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
+import diesel.ConfigKeys;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * Validates data rows against an Avro {@link Schema} before they are written
@@ -432,12 +434,12 @@ public final class AvroDataValidator {
                 return List.of();
             }
             return List.of(new FieldError(fieldName, ErrorType.NULL_NOT_ALLOWED,
-                    "field '" + fieldName + "' is not nullable but received null", null));
+                    StorageMessageConstants.JSON_FIELD_PREFIX + fieldName + "' is not nullable but received null", null));
         }
         List<Schema> branches = nonNullBranches(fieldSchema);
         if (branches.isEmpty() || (branches.size() == 1 && branches.get(0).getType() == Schema.Type.NULL)) {
             return List.of(new FieldError(fieldName, ErrorType.TYPE_MISMATCH,
-                    "field '" + fieldName + "' is NULL-typed but received a value", value));
+                    StorageMessageConstants.JSON_FIELD_PREFIX + fieldName + "' is NULL-typed but received a value", value));
         }
         for (Schema branch : branches) {
             FieldError failure = checkAgainstBranch(fieldName, value, branch);
@@ -450,7 +452,7 @@ public final class AvroDataValidator {
         }
         String expected = describe(fieldSchema);
         return List.of(new FieldError(fieldName, ErrorType.TYPE_MISMATCH,
-                "field '" + fieldName + "' expects " + expected + " but received "
+                StorageMessageConstants.JSON_FIELD_PREFIX + fieldName + "' expects " + expected + " but received "
                         + describeValue(value), value));
     }
 
@@ -520,7 +522,7 @@ public final class AvroDataValidator {
             return l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE
                     ? null
                     : new FieldError(fieldName, ErrorType.VALUE_OUT_OF_RANGE,
-                    "field '" + fieldName + "' is INT but the value " + l
+                    StorageMessageConstants.JSON_FIELD_PREFIX + fieldName + "' is INT but the value " + l
                             + " is outside the int range", value);
         }
         return mismatch(fieldName, value, "INT");
@@ -534,13 +536,13 @@ public final class AvroDataValidator {
             return null;
         }
         return new FieldError(fieldName, ErrorType.NOT_IN_ENUM,
-                "field '" + fieldName + "' value '" + cs + "' is not in the ENUM symbols "
+                StorageMessageConstants.JSON_FIELD_PREFIX + fieldName + "' value '" + cs + "' is not in the ENUM symbols "
                         + branch.getEnumSymbols(), value);
     }
 
     private static FieldError mismatch(String fieldName, Object value, String expected) {
         return new FieldError(fieldName, ErrorType.TYPE_MISMATCH,
-                "field '" + fieldName + "' expects " + expected + " but received "
+                StorageMessageConstants.JSON_FIELD_PREFIX + fieldName + "' expects " + expected + " but received "
                         + describeValue(value), value);
     }
 
@@ -692,10 +694,10 @@ public final class AvroDataValidator {
 
     private static Properties rootProps() {
         Properties props = new Properties();
-        String override = System.getProperty("avro.schema.config.file");
+        String override = System.getProperty(AvroFileConstants.PROP_SCHEMA_CONFIG_FILE);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                 props.load(in);

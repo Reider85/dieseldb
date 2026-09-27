@@ -5,6 +5,7 @@ import org.apache.avro.generic.GenericData;
 
 import java.util.ArrayList;
 import java.util.List;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * Handler for Avro ENUM types in DieselDB (Prompt 75). Enum columns expose a
@@ -88,7 +89,7 @@ public final class AvroEnumHandler {
      */
     public static String canonicalSymbol(Schema enumSchema, String symbol) {
         if (enumSchema == null || enumSchema.getType() != Schema.Type.ENUM) {
-            throw new IllegalArgumentException("Schema must be an ENUM, got: " + enumSchema);
+            throw new IllegalArgumentException(StorageMessageConstants.SCHEMA_NOT_ENUM + enumSchema);
         }
         if (caseSensitive()) {
             if (enumSchema.getEnumSymbols().contains(symbol)) {
@@ -115,7 +116,7 @@ public final class AvroEnumHandler {
             return null;
         }
         if (enumSchema == null || enumSchema.getType() != Schema.Type.ENUM) {
-            throw new IllegalArgumentException("Schema must be an ENUM, got: " + enumSchema);
+            throw new IllegalArgumentException(StorageMessageConstants.SCHEMA_NOT_ENUM + enumSchema);
         }
         String symbol = value instanceof GenericData.EnumSymbol es ? es.toString() : value.toString();
         return new GenericData.EnumSymbol(enumSchema, canonicalSymbol(enumSchema, symbol));
@@ -133,7 +134,7 @@ public final class AvroEnumHandler {
      */
     public static List<String> symbols(Schema enumSchema) {
         if (enumSchema == null || enumSchema.getType() != Schema.Type.ENUM) {
-            throw new IllegalArgumentException("Schema must be an ENUM, got: " + enumSchema);
+            throw new IllegalArgumentException(StorageMessageConstants.SCHEMA_NOT_ENUM + enumSchema);
         }
         return List.copyOf(enumSchema.getEnumSymbols());
     }

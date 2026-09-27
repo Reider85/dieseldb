@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import diesel.ConfigKeys;
 
 /**
  * Central handler for Apache Avro {@code UNION} types in DieselDB.
@@ -446,7 +447,7 @@ public final class AvroUnionHandler {
         if (sysValue != null && !sysValue.isBlank()) {
             return Boolean.parseBoolean(sysValue);
         }
-        String userDir = System.getProperty("user.dir", ".");
+        String userDir = System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, ".");
         String configPath = System.getProperty(UNION_CONFIG_FILE_KEY, DEFAULT_CONFIG_FILE);
         File configFile = new File(userDir, configPath);
         if (configFile.exists()) {

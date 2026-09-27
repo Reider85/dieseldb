@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
+import diesel.ConfigKeys;
 
 /**
  * AVRO crash detection (Prompt 82).
@@ -309,7 +310,7 @@ public final class AvroCrashDetector {
         String override = System.getProperty(CONFIG_FILE_KEY);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = Files.newInputStream(configFile.toPath())) {
                 props.load(in);

@@ -25,6 +25,7 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
+import diesel.ConfigKeys;
 
 /**
  * AVRO block integrity checking - CRC checksums per block, validation at read
@@ -417,7 +418,7 @@ public final class AvroIntegrityChecker {
     public IntegrityReport validateFile(File avroFile) throws IOException {
         long start = System.nanoTime();
         if (avroFile == null || !avroFile.isFile()) {
-            throw new IOException("Avro data file does not exist: " + avroFile);
+            throw new IOException(AvroFileConstants.MSG_FILE_NOT_FOUND + avroFile);
         }
 
         HeaderProbe probe = readHeader(avroFile);
@@ -512,7 +513,7 @@ public final class AvroIntegrityChecker {
         }
         if (count < 0 || size < 0 || size > Integer.MAX_VALUE) {
             return mismatchOrInvalid(headerPos, blockStart, blockIndex,
-                    "Invalid Avro block header (count=" + count + ", size=" + size
+                    AvroFileConstants.MSG_INVALID_BLOCK_HEADER + count + AvroFileConstants.MSG_SIZE_FIELD + size
                             + ") at offset " + headerPos);
         }
 
@@ -520,8 +521,8 @@ public final class AvroIntegrityChecker {
         long syncPos = payloadStart + size;
         if (syncPos + SYNC_SIZE > fileLen) {
             return mismatchOrInvalid(headerPos, blockStart, blockIndex,
-                    "Truncated Avro block at " + headerPos + ": expected sync marker at "
-                            + syncPos + ", file ends at " + fileLen);
+                    AvroFileConstants.MSG_TRUNCATED_BLOCK + headerPos + AvroFileConstants.MSG_EXPECTED_SYNC_MARKER
+                            + syncPos + AvroFileConstants.MSG_FILE_ENDS_AT + fileLen);
         }
 
         byte[] compressed = new byte[(int) size];
@@ -531,7 +532,7 @@ public final class AvroIntegrityChecker {
         readFully(ch, syncPos, sync, fileLen, avroFile);
         if (!Arrays.equals(sync, probe.sync())) {
             return mismatchOrInvalid(headerPos, blockStart, blockIndex,
-                    "Avro block sync marker mismatch at offset " + syncPos
+                    AvroFileConstants.MSG_SYNC_MARKER_MISMATCH + syncPos
                             + " (corrupt file or interrupted write)");
         }
 
@@ -869,7 +870,7 @@ public final class AvroIntegrityChecker {
             createInstance.setAccessible(true);
             return (Codec) createInstance.invoke(CodecFactory.fromString(codecName));
         } catch (ReflectiveOperationException | SecurityException e) {
-            throw new IOException("Unsupported Avro codec '" + codecName + "': " + e.getMessage(), e);
+            throw new IOException(AvroFileConstants.MSG_UNSUPPORTED_CODEC + codecName + "': " + e.getMessage(), e);
         }
     }
 
@@ -902,14 +903,14 @@ public final class AvroIntegrityChecker {
     private static void readFully(FileChannel ch, long position, byte[] out, long fileLen, File avroFile)
             throws IOException {
         if (position < 0 || position + out.length > fileLen) {
-            throw new IOException("Truncated Avro data file " + avroFile + ": expected " + out.length
-                    + " bytes at offset " + position + ", file ends at " + fileLen);
+            throw new IOException(AvroFileConstants.MSG_TRUNCATED_FILE + avroFile + AvroFileConstants.MSG_EXPECTED + out.length
+                    + AvroFileConstants.MSG_BYTES_AT_OFFSET + position + AvroFileConstants.MSG_FILE_ENDS_AT + fileLen);
         }
         int off = 0;
         while (off < out.length) {
             int got = ch.read(ByteBuffer.wrap(out, off, out.length - off), position + off);
             if (got < 0) {
-                throw new IOException("Truncated Avro data file " + avroFile + " at offset " + position);
+                throw new IOException(AvroFileConstants.MSG_TRUNCATED_FILE + avroFile + " at offset " + position);
             }
             off += got;
         }
@@ -950,7 +951,7 @@ public final class AvroIntegrityChecker {
         String override = System.getProperty(CONFIG_FILE_KEY);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = Files.newInputStream(configFile.toPath())) {
                 props.load(in);

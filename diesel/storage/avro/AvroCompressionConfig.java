@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
+import diesel.ConfigKeys;
 
 /**
  * Resolved AVRO compression configuration (Prompt 62).
@@ -219,8 +220,8 @@ public final class AvroCompressionConfig {
 
         private static Properties load() {
             Properties props = new Properties();
-            String userDir = System.getProperty("user.dir", ".");
-            File configFile = new File(userDir, "config.properties");
+            String userDir = System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, ".");
+            File configFile = new File(userDir, ConfigKeys.CONFIG_FILE);
             if (configFile.exists()) {
                 try (var in = java.nio.file.Files.newInputStream(configFile.toPath())) {
                     props.load(in);

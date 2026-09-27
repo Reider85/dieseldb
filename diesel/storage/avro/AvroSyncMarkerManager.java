@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
+import diesel.ConfigKeys;
 
 /**
  * Centralised AVRO sync marker management (Prompt 77).
@@ -491,13 +492,13 @@ public final class AvroSyncMarkerManager {
 
         // ── validate header values ──
         if (count < 0 || size < 0 || size > Integer.MAX_VALUE) {
-            IOException problem = new IOException("Invalid Avro block header (count=" + count
-                    + ", size=" + size + ") at offset " + headerPos + " in " + avroFile);
+            IOException problem = new IOException(AvroFileConstants.MSG_INVALID_BLOCK_HEADER + count
+                    + AvroFileConstants.MSG_SIZE_FIELD + size + ") at offset " + headerPos + " in " + avroFile);
             if (strict) {
                 throw problem;
             }
             return BlockScanResult.problem(
-                    "Invalid Avro block header (count=" + count + ", size=" + size
+                    AvroFileConstants.MSG_INVALID_BLOCK_HEADER + count + AvroFileConstants.MSG_SIZE_FIELD + size
                             + ") at offset " + headerPos, pos);
         }
 
@@ -505,15 +506,15 @@ public final class AvroSyncMarkerManager {
         long payloadStart = pos;
         long syncPos = payloadStart + size;
         if (syncPos + SYNC_SIZE > fileLen) {
-            IOException truncated = new IOException("Truncated Avro block at " + headerPos
-                    + " in " + avroFile + ": expected sync marker at " + syncPos
-                    + ", file ends at " + fileLen);
+            IOException truncated = new IOException(AvroFileConstants.MSG_TRUNCATED_BLOCK + headerPos
+                    + " in " + avroFile + AvroFileConstants.MSG_EXPECTED_SYNC_MARKER + syncPos
+                    + AvroFileConstants.MSG_FILE_ENDS_AT + fileLen);
             if (strict) {
                 throw truncated;
             }
             return BlockScanResult.problem(
-                    "Truncated Avro block at " + headerPos + ": expected sync marker at "
-                            + syncPos + ", file ends at " + fileLen, pos);
+                    AvroFileConstants.MSG_TRUNCATED_BLOCK + headerPos + AvroFileConstants.MSG_EXPECTED_SYNC_MARKER
+                            + syncPos + AvroFileConstants.MSG_FILE_ENDS_AT + fileLen, pos);
         }
 
         byte[] actual = new byte[SYNC_SIZE];
@@ -529,7 +530,7 @@ public final class AvroSyncMarkerManager {
         }
         if (!Arrays.equals(actual, sync)) {
             return BlockScanResult.problem(
-                    "Avro block sync marker mismatch at offset " + syncPos
+                    AvroFileConstants.MSG_SYNC_MARKER_MISMATCH + syncPos
                             + " in " + avroFile + " (corrupt file or interrupted write)", pos);
         }
 
@@ -544,7 +545,7 @@ public final class AvroSyncMarkerManager {
      */
     private static HeaderProbe readHeader(File avroFile) throws IOException {
         if (avroFile == null || !avroFile.isFile()) {
-            throw new IOException("Avro data file does not exist: " + avroFile);
+            throw new IOException(AvroFileConstants.MSG_FILE_NOT_FOUND + avroFile);
         }
         try (AvroDataFileReader probe = new AvroDataFileReader(avroFile)) {
             return new HeaderProbe(probe.getSyncMarker(), probe.getPosition());
@@ -572,7 +573,7 @@ public final class AvroSyncMarkerManager {
         String override = System.getProperty(CONFIG_FILE_KEY);
         File configFile = (override != null && !override.isBlank())
                 ? new File(override)
-                : new File(System.getProperty("user.dir", "."), "config.properties");
+                : new File(System.getProperty(ConfigKeys.SYS_PROP_USER_DIR, "."), ConfigKeys.CONFIG_FILE);
         if (configFile.exists()) {
             try (var in = Files.newInputStream(configFile.toPath())) {
                 props.load(in);
@@ -612,14 +613,14 @@ public final class AvroSyncMarkerManager {
     private static void readFully(FileChannel ch, long position, byte[] out, long fileLen, File avroFile)
             throws IOException {
         if (position < 0 || position + out.length > fileLen) {
-            throw new IOException("Truncated Avro data file " + avroFile + ": expected " + out.length
-                    + " bytes at offset " + position + ", file ends at " + fileLen);
+            throw new IOException(AvroFileConstants.MSG_TRUNCATED_FILE + avroFile + AvroFileConstants.MSG_EXPECTED + out.length
+                    + AvroFileConstants.MSG_BYTES_AT_OFFSET + position + AvroFileConstants.MSG_FILE_ENDS_AT + fileLen);
         }
         int off = 0;
         while (off < out.length) {
             int got = ch.read(ByteBuffer.wrap(out, off, out.length - off), position + off);
             if (got < 0) {
-                throw new IOException("Truncated Avro data file " + avroFile + " at offset " + position);
+                throw new IOException(AvroFileConstants.MSG_TRUNCATED_FILE + avroFile + " at offset " + position);
             }
             off += got;
         }

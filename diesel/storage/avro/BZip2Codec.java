@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Properties;
+import diesel.storage.StorageMessageConstants;
 
 /**
  * Dedicated BZip2 codec for AVRO data files — optimised for cold / archival data (Prompt 66).
@@ -160,12 +161,12 @@ public final class BZip2Codec {
     public static String analyzeTradeoff(int blockSize) {
         int effective = resolveBlockSize(blockSize);
         if (effective <= 200_000) {
-            return "Block size " + effective + " (~200KB): faster writes, lower compression ratio — good for frequently accessed warm data";
+            return StorageMessageConstants.BLOCK_SIZE_PREFIX + effective + " (~200KB): faster writes, lower compression ratio — good for frequently accessed warm data";
         }
         if (effective <= 500_000) {
-            return "Block size " + effective + " (~500KB): balanced speed/ratio — good for general use";
+            return StorageMessageConstants.BLOCK_SIZE_PREFIX + effective + " (~500KB): balanced speed/ratio — good for general use";
         }
-        return "Block size " + effective + " (~900KB): best compression ratio, slower writes — ideal for cold/archival data";
+        return StorageMessageConstants.BLOCK_SIZE_PREFIX + effective + " (~900KB): best compression ratio, slower writes — ideal for cold/archival data";
     }
 
     /**
