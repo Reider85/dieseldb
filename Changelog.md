@@ -770,6 +770,9 @@ Update PROMPT_STATUS.md for Prompt 96
 3.1.86 Sonar-prompt8 S1192 fix: close duplicated literals in SubqueryParser.java - new SubqueryConstants class (QUOTED_STRING_PATTERN 12x, NESTED_EXPR_BODY 8x, WHITESPACE_PATTERN 6x, DOT_SEPARATOR 5x, COLON_SPACE 3x, OPTIONAL_GROUP_CLOSE 3x, LIMIT_OFFSET_TAIL_PATTERN 2x, LEADING_WHERE_PATTERN 2x, TOKEN_TABLE_ALIAS 2x + 9 token names) = 38 replacements; also reuse existing QUOTED_IDENTIFIER_PATTERN instead of inline duplicate at line 214; tia-mapping updated; fast 186/0/0, core 2157 tests, all 12 runtime tokenization patterns verified byte-identical to pre-refactor
 
 3.1.87 Prompt 13 - extract remaining duplicated SQL keyword literals into SqlKeywords/MessageConstants constants (java:S1192)
+
 3.1.88 Prompt 14 S1192 automated scan: extract duplicated literals into 4 new constants classes (ConfigKeys, AvroFileConstants, StorageMessageConstants, ErrorMessages.JSONL_EXTENSION); fix config.properties (37 occurrences/35 files), user.dir (29/27), AVRO error messages (60/12), manifest keys (30), storage message fragments (99/16), plus Quoted String reuse; 55 files, 586 ins/228 del; fast 186/0/0, core 2157/0/0, jsonl 1618/0/0, csv 1618/0/0
 
 3.1.89 perf: eliminate redundant full-file read during JSONL load — reuse parallel pre-scan byte buffer for schema inference (inferFromPreScanned) so plain JSONL files are read from disk only once instead of twice; fast 186/0/0
+
+3.1.90 Sonar-prompt8 S1948 fix: make AvroSecondaryIndex.indexMap transient to fix non-serializable ConcurrentSkipListMap; add readObject for post-deserialization init
