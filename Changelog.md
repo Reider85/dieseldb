@@ -1,3 +1,5 @@
+0.5.1 Fix NOT keyword handling in WHERE conditions - NOT keyword was being lost during parsing, causing conditions like "NOT AGE = 30" to be evaluated as "AGE = 30"
+
 0.0.1 simple database only select
 0.0.2 logging
 0.0.3 query logging

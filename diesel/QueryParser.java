@@ -2903,12 +2903,16 @@ class QueryParser {
                             new Object[]{token.value, conjunction});
                 }
                 case CONDITION -> {
-                    Condition condition = processConditionToken(token.value, ctx, conjunction, not);
-                    if (condition != null) {
-                        conditions.add(condition);
+                    if (token.value.equalsIgnoreCase(SqlKeywords.NOT)) {
+                        not = true;
+                    } else {
+                        Condition condition = processConditionToken(token.value, ctx, conjunction, not);
+                        if (condition != null) {
+                            conditions.add(condition);
+                        }
+                        conjunction = null;
+                        not = false;
                     }
-                    conjunction = null;
-                    not = false;
                 }
             }
         }

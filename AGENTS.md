@@ -12,36 +12,48 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 1. Read `PROMPT_STATUS.md` → select next TODO with highest priority.
 2. Read `prompt3.md` → find detailed prompt description.
 3. Implement changes.
-4. **Run quick (fast) tests first** – this catches trivial errors early, saving time on the heavy suite:
-   ```bash
-   make test
-   ```
-   (This runs the **fast** profile: `mvn -B clean test -P fast` – smoke + index + query tags, <30s.)  
-   If it fails, fix and repeat until it passes **before** moving to the full acceptance gate. **Max 3 fix attempts** — if still failing, stop and report.
+4. **Choose test depth based on change type:**
 
-5. Run **full acceptance gate** (includes heavy joins) with `make timing` – this automatically:
-  - Builds the project
-  - Runs the **large** profile (`@LargeTest`, 600x600 joins, 4GB heap)
-  - Collects per-test times from surefire reports into `timing/timingN.md`
-  - Compares it against the baseline `timing/timing.md` **and fails if real degradation** (see below)
-  - For a full release run of ALL profiles use `make all-tests`.
+   | Change type | Step 4 (fast gate) | Step 5 (acceptance) |
+   |-------------|--------------------|---------------------|
+   | Sonar fix, rename, constant extract, comment-only | `make compile` → `make test-incr` | Skip → go to step 7 |
+   | New feature, query logic, bugfix | `make test` | `make timing` |
+   | JOIN, hash join, performance, schema change | `make test` | `make timing` + `make check-profile` |
 
+5. Run full acceptance gate with `make timing` (if needed per step 4 table).
 6. **Profile check (Strict Condition):** Look at the current task description in `prompt2.md`. If the description does **NOT** contain the words "JOIN", "hash join", or "performance" — **SKIP this step entirely**. Otherwise, run:
    ```bash
    make check-profile
    ```
    *Check exit code only: 1 = failure, 0 = success.*
 
-7. Create changelog entry: `make changelog DESC="short description of changes"` – this script:
-   - Reads the last commit's version prefix (e.g. `3.1.32` from `3.1.32 fix(build-cache): ...`)
-   - Auto-increments the patch number (e.g. `3.1.33`)
-   - Appends `3.1.33 <description>` to `Changelog.md`
-   - Creates `changelog_entry.txt` with the full versioned message for git commit
-   - You only provide the one-sentence description; the version prefix is calculated automatically.
+7. Create changelog + commit (one command):
+   ```bash
+   make release DESC="short description of changes"
+   ```
+   This auto-increments the version, appends to `Changelog.md`, commits, and pushes.
+   Use `make release-local DESC="..."` if you need to commit without pushing.
 
-8. Commit with `git commit -F changelog_entry.txt` (the script creates this file with `X.Y.Z description`).
+8. Update `PROMPT_STATUS.md` → mark as DONE.
 
-9. Update `PROMPT_STATUS.md` → mark as DONE.
+---
+
+## Fast-Path Workflow (for simple changes)
+
+For Sonar fixes, renames, constant extraction, comment-only changes:
+
+1. `make compile` — verify syntax (3-5s)
+2. `make test-incr` — fast suite without clean (~15s faster than `make test`)
+3. `make release DESC="..."` — changelog + commit + push
+
+Skip `make timing` and `make check-profile` for non-performance changes.
+
+## Debugging Workflow (for test failures)
+
+1. Isolate the test: `make test-one T=TestClassName#methodName`
+2. Fix the code
+3. Re-run isolated: `make test-one T=TestClassName#methodName`
+4. Full gate (only after isolated passes): `make test`
 
 ---
 
@@ -77,6 +89,17 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 
 ## Tests
 
+### Quick Test Reference
+
+| Goal | Command | Time |
+|------|---------|------|
+| Check it compiles | `make compile` | 3-5s |
+| Run one test | `make test-one T=QueryParserTest#testSelect` | 5-10s |
+| Fast suite (incremental) | `make test-incr` | ~15s |
+| Fast suite (clean) | `make test` | ~30s |
+| Core suite | `make test-core` | 2-4 min |
+| Full acceptance | `make timing` | 10-30 min |
+
 - **Fast profile** – `make test` (= `mvn -B clean test -P fast`, tags: smoke, query, index) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate.
 - **Other profiles:** `make test-core` (query-full, storage), `make test-concurrency` (concurrency), `make test-network` (network), `make test-perf` (perf), `make large-test` (large, 4GB heap).
 - **Format-specific storage profiles:** When `storage.type` is set in `config.properties` (or via `-Ddiesel.storage.type=`), only tests matching that format run. The `@StorageType` annotation gates format-specific test classes.
@@ -111,7 +134,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 - **TIA** – `make tia` (recommend profiles) / `make tia-run` (recommend + run).
 - **Isolation Rule for Failures:** If `make timing` fails, DO NOT immediately re-run `make timing`. Find the exact failing test name in the log. Fix the code and run ONLY that specific test:
   ```bash
-  $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; mvn test -P <profile> -Dtest=TestClassName#methodName
+  make test-one T=TestClassName#methodName
   ```
   Re-run `make timing` **ONLY AFTER** the isolated test passes. This saves minutes on heavy workloads.
 - The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` will automatically ignore sub-11ms micro-queries and only treat degradation >20% on **heavy (>100ms)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
@@ -195,13 +218,14 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 ## Changelog automation
 
-- Use `make changelog DESC="your change description"` – for example:
+- Use `make release DESC="your change description"` – the one-command workflow:
   ```bash
-  make changelog DESC="Fix JOIN OR OOM by implementing hash join spilling"
+  make release DESC="Fix JOIN OR OOM by implementing hash join spilling"
   ```
-  This script auto-appends the versioned entry to `Changelog.md` and creates `changelog_entry.txt` for the commit message.
+  This auto-appends the versioned entry to `Changelog.md`, commits, and pushes. Version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`).
 
-- The version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`). No manual versioning needed.
+- Use `make release-local DESC="..."` if you need to commit without pushing.
+- Use `make changelog DESC="..."` to only create the entry (no commit/push).
 
 ---
 

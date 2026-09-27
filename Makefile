@@ -14,7 +14,7 @@ else
 TIA = ./scripts/tia.sh
 endif
 
-.PHONY: all build test test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run changelog
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run changelog release release-local
 
 # Default target
 all: build
@@ -23,6 +23,22 @@ all: build
 build:
 	@echo "Building DieselDB..."
 	$(MVN) -B package -DskipTests
+
+## Quick compile check (3-5s, no tests — use for syntax verification)
+compile:
+	@echo "Compiling (no tests)..."
+	$(MVN) -B compile -q
+
+## Run single test (usage: make test-one T=QueryParserTest#testSelect)
+test-one:
+	@if [ -z "$(T)" ]; then echo "Usage: make test-one T=ClassName#methodName"; exit 1; fi
+	@echo "Running single test: $(T)..."
+	$(MVN) -B test -P fast -Dtest=$(T)
+
+## Fast incremental test without clean (~15s faster than make test)
+test-incr:
+	@echo "Running fast profile (incremental, no clean)..."
+	$(MVN) -B test -P fast
 
 ## Create changelog entry with auto-incrementing version prefix
 ## Usage: make changelog "short description"
@@ -33,6 +49,21 @@ changelog:
 		exit 1; \
 	fi
 	powershell -ExecutionPolicy Bypass -File ./scripts/commit-and-changelog.ps1 "$(DESC)"
+
+## Changelog + commit + push in one step (usage: make release DESC="fix: ...")
+release:
+	@if [ -z "$(DESC)" ]; then echo "Usage: make release DESC=\"description\""; exit 1; fi
+	powershell -ExecutionPolicy Bypass -File ./scripts/commit-and-changelog.ps1 "$(DESC)"
+	git add Changelog.md changelog_entry.txt
+	git commit -F changelog_entry.txt
+	git push
+
+## Changelog + commit only, no push (usage: make release-local DESC="fix: ...")
+release-local:
+	@if [ -z "$(DESC)" ]; then echo "Usage: make release-local DESC=\"description\""; exit 1; fi
+	powershell -ExecutionPolicy Bypass -File ./scripts/commit-and-changelog.ps1 "$(DESC)"
+	git add Changelog.md changelog_entry.txt
+	git commit -F changelog_entry.txt
 
 ## Run fast profile: smoke + index + query (<30s)
 test:
@@ -169,6 +200,12 @@ tia-run:
 ## Show help
 help:
 	@echo "DieselDB Makefile - Quick Reference"
+	@echo ""
+	@echo "Quick workflow (simple changes):"
+	@echo "  make compile            - Compile only, no tests (3-5s)"
+	@echo "  make test-incr          - Fast profile without clean (~15s faster)"
+	@echo "  make test-one T=X#m     - Run a single test method"
+	@echo "  make release DESC=\"...\"  - Changelog + commit + push"
 	@echo ""
 	@echo "Targets:"
 	@echo "  make build              - Build project (package, skip tests)"
