@@ -1327,7 +1327,6 @@ class Table implements Serializable {
     public void compact() {
         tableLock.writeLock().lock();
         try {
-            int oldSize = rows.size();
             int deleted = getDeletedCount();
             if (deleted == 0) {
                 return;

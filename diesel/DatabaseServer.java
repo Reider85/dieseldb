@@ -425,7 +425,6 @@ public class DatabaseServer {
                 Object pendingInput = performHandshake();
 
                 Object input = readNextInput(pendingInput);
-                pendingInput = null;
                 while (input != null && dispatchMessage(input)) {
                     input = readNextInput(null);
                 }

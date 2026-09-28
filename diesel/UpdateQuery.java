@@ -4,7 +4,6 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
@@ -239,8 +238,6 @@ class UpdateQuery implements Query<Void> {
                         columnTypes.get(condition.column));
                 rowsToUpdate.addAll(index.search(convertedValue));
             }
-            rowsToUpdate = rowsToUpdate.stream().distinct().sorted()
-                    .collect(Collectors.toList());
             LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} IN (...)",
                     new Object[]{index instanceof HashIndex ? "hash"
                             : index instanceof BTreeIndex ? "B-tree" : "unique",

@@ -443,7 +443,7 @@ public final class AvroBackupManager {
         String[] lines = content.split("\n");
         String type = "", source = "", backup = "", started = "", completed = "";
         long totalBytes = 0, durationNanos = 0;
-        int totalFiles = 0, filesFailed = 0;
+        int filesFailed = 0;
         List<BackedUpFile> files = new ArrayList<>();
 
         for (String line : lines) {
@@ -459,8 +459,6 @@ public final class AvroBackupManager {
                 started = line.substring(AvroFileConstants.MANIFEST_KEY_STARTED_AT.length());
             } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_COMPLETED_AT)) {
                 completed = line.substring(AvroFileConstants.MANIFEST_KEY_COMPLETED_AT.length());
-            } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_TOTAL_FILES)) {
-                totalFiles = Integer.parseInt(line.substring(AvroFileConstants.MANIFEST_KEY_TOTAL_FILES.length()));
             } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_TOTAL_BYTES)) {
                 totalBytes = Long.parseLong(line.substring(AvroFileConstants.MANIFEST_KEY_TOTAL_BYTES.length()));
             } else if (line.startsWith(AvroFileConstants.MANIFEST_KEY_DURATION_NANOS)) {
