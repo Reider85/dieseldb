@@ -20,6 +20,11 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $repoRoot) { $repoRoot = (Get-Location).Path }
 Set-Location -LiteralPath $repoRoot
 
+. (Join-Path $PSScriptRoot "native.ps1")
+
+$gitCmd = Get-NativeTool -Name "git"
+$mvnPs = Join-Path $PSScriptRoot "mvn.ps1"
+
 $mappingFile = "$repoRoot\scripts\tia-mapping.txt"
 if (-not (Test-Path $mappingFile)) {
     Write-Error "Mapping file not found: $mappingFile"
@@ -38,7 +43,7 @@ if ($Ref -eq "--run") {
 if ($Ref -eq "") { $Ref = "origin/main...HEAD" }
 
 # Get changed files
-$changed = git diff --name-only $Ref 2>$null | Sort-Object -Unique
+$changed = (Invoke-Native -FilePath $gitCmd -Arguments @("diff", "--name-only", $Ref)) | Sort-Object -Unique
 if (-not $changed) {
     Write-Host "No changes detected against $Ref"
     if ($TagsOnly) { Write-Host "" }
@@ -170,11 +175,15 @@ if ($Run -and $profiles.Count -gt 0) {
     foreach ($p in $profiles) {
         Write-Host ""
         Write-Host "--- $p ---"
-        mvn -B clean test -P $p
+        # Go through mvn.ps1, not a bare "mvn": Maven is not on PATH on this
+        # machine, and mvn.ps1 also sets JAVA_HOME and resolves the install dir.
+        $startedAt = Get-Date
+        Invoke-Native -FilePath $mvnPs -Arguments @("-B", "clean", "test", "-P", $p)
         if ($LASTEXITCODE -ne 0) {
             Write-Error "FAILED: $p"
             exit 1
         }
+        Assert-TestsRan -StartedAt $startedAt -Target "profile '$p'"
     }
     Write-Host ""
     Write-Host "=== All impacted profiles passed ==="

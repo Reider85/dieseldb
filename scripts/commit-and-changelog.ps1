@@ -5,8 +5,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "native.ps1")
+
+$gitCmd = Get-NativeTool -Name "git"
+
 # Get the last commit message
-$lastCommit = git log --format="%s" -1 2>$null
+$lastCommit = (Invoke-Native -FilePath $gitCmd -Arguments @("log", "--format=%s", "-1") | Select-Object -First 1)
 if (-not $lastCommit) {
     Write-Host "No commits found. Using version 0.0.1"
     $major = 0; $minor = 0; $patch = 1

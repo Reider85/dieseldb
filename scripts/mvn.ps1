@@ -4,13 +4,25 @@
 # Usage:
 #   .\scripts\mvn.ps1 -B compile -q
 #   .\scripts\mvn.ps1 -B clean test -P fast
-#   .\scripts\mvn.ps1 -B package -DskipTests
+#   .\scripts\mvn.ps1 -B clean test -P core "-Ddiesel.storage.type=avro"
 #   .\scripts\mvn.ps1 --version
+#
+# ARGUMENT PASSTHROUGH - do not reintroduce a param block here.
+#
+# Arguments arrive in the automatic $args variable, not via param(). With a
+# param block PowerShell tries to bind "-P" and "-D..." as parameter names and
+# silently drops them, so "mvn.ps1 -B clean test -P fast" would really run
+# "mvn -B clean test" with no profile. Verified behaviour of the three variants:
+#
+#   $args (no param block)              -> -B | clean | test | -P | fast | -D...
+#   param(ValueFromRemainingArguments)  -> -B | clean | test          (loses -P)
+#   param([string[]])                   -> test                     (loses more)
+#
+# Dropping "-P" is not a cosmetic error here: the default surefire config in
+# pom.xml excludes every source file, so the run executes zero tests and still
+# reports BUILD SUCCESS.
 
-param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$MvnArgs
-)
+. (Join-Path $PSScriptRoot "native.ps1")
 
 $ErrorActionPreference = "Stop"
 
@@ -65,6 +77,8 @@ if (-not $mvnCmd) {
 }
 
 # --- Invoke Maven ---
+# $args holds every argument the caller passed, unfiltered.
 Write-Host "[mvn.ps1] JAVA_HOME=$javaHome" -ForegroundColor DarkGray
-& $mvnCmd @MvnArgs
+Write-Host "[mvn.ps1] args: $($args -join ' ')" -ForegroundColor DarkGray
+Invoke-Native -FilePath $mvnCmd -Arguments $args
 exit $LASTEXITCODE

@@ -19,6 +19,10 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
+. (Join-Path $PSScriptRoot "native.ps1")
+
+$gitCmd = Get-NativeTool -Name "git"
+
 function Fix-GitLock {
     $lockFiles = @(
         ".git\index.lock",
@@ -59,7 +63,11 @@ function Push-WithRetry {
 
     for ($i = 1; $i -le $MaxRetries; $i++) {
         Write-Host "Push attempt $i/$MaxRetries to $remote $branch..." -ForegroundColor Cyan
-        git push $remote $branch 2>&1
+        # No 2>&1 here: merging native stderr into the PowerShell stream under
+        # $ErrorActionPreference="Stop" turns git's progress output (and CRLF
+        # warnings) into a terminating NativeCommandError, so a perfectly normal
+        # push would abort the script.
+        Invoke-Native -FilePath $gitCmd -Arguments @("push", $remote, $branch)
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Push succeeded." -ForegroundColor Green
             return $true
@@ -98,8 +106,12 @@ switch ($Command) {
             Write-Error "Usage: .\scripts\git-helpers.ps1 commit -m 'your message'"
             exit 1
         }
-        git add -A
-        git commit -m $Message
+        Invoke-Native -FilePath $gitCmd -Arguments @("add", "-A")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "git add failed."
+            exit 1
+        }
+        Invoke-Native -FilePath $gitCmd -Arguments @("commit", "-m", $Message)
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Commit failed."
             exit 1

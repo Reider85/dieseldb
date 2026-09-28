@@ -21,120 +21,189 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
+. (Join-Path $PSScriptRoot "native.ps1")
+
 # Resolve mvn via mvn.ps1 wrapper
 $mvnPs = Join-Path $PSScriptRoot "mvn.ps1"
 $gitHelpers = Join-Path $PSScriptRoot "git-helpers.ps1"
 $compareTiming = Join-Path $PSScriptRoot "compare-timing.ps1"
+$commitChangelog = Join-Path $PSScriptRoot "commit-and-changelog.ps1"
+$tiaScript = Join-Path $PSScriptRoot "tia.ps1"
+$gitCmd = Get-NativeTool -Name "git"
 
-function Invoke-Mvn {
-    param([string[]]$Args)
-    & $mvnPs @Args
+# THE ONLY WAY TO RUN TESTS.
+#
+# Every test target in this script routes through here so that a single place
+# owns the Maven invocation, the "-P <profile>" argument and the post-run
+# assertion that tests actually executed. Previously each target spelled out its
+# own `Invoke-Mvn -B clean test -P X` line, and mvn.ps1 silently dropped the
+# "-P" argument - so every target ran zero tests and still reported
+# BUILD SUCCESS. Do not add a test target that calls mvn.ps1 directly.
+function Invoke-ProfileTests {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Profile,
+
+        [string[]]$ExtraArgs = @(),
+
+        [switch]$NoClean
+    )
+
+    $mvnArgs = @("-B")
+    if (-not $NoClean) {
+        $mvnArgs += "clean"
+    }
+    $mvnArgs += @("test", "-P", $Profile)
+    if ($ExtraArgs.Count -gt 0) {
+        $mvnArgs += $ExtraArgs
+    }
+
+    $label = "profile '$Profile'"
+    if ($ExtraArgs.Count -gt 0) {
+        $label += " $($ExtraArgs -join ' ')"
+    }
+    if ($NoClean) {
+        $label += " (no clean)"
+    }
+    Write-Host "Running $label..."
+
+    # Captured before Maven so Assert-TestsRan can reject stale reports.
+    $startedAt = Get-Date
+
+    Invoke-Native -FilePath $mvnPs -Arguments $mvnArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Test run failed: $label (exit $LASTEXITCODE)."
+        exit 1
+    }
+
+    Assert-TestsRan -StartedAt $startedAt -Target $label
+}
+
+# Creates the changelog entry, then commits it. Shared by release/release-local.
+function Invoke-ChangelogCommit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Description,
+
+        [switch]$Push
+    )
+
+    Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $commitChangelog, "-Description", $Description)
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "commit-and-changelog.ps1 failed (exit $LASTEXITCODE)."
+        exit 1
+    }
+
+    Invoke-Native -FilePath $gitCmd -Arguments @("add", "Changelog.md", "changelog_entry.txt")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "git add failed (exit $LASTEXITCODE)."
+        exit 1
+    }
+
+    Invoke-Native -FilePath $gitCmd -Arguments @("commit", "-F", "changelog_entry.txt")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "git commit failed (exit $LASTEXITCODE)."
+        exit 1
+    }
+
+    if ($Push) {
+        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $gitHelpers, "push")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "git push failed (exit $LASTEXITCODE)."
+            exit 1
+        }
+    }
 }
 
 switch ($Target) {
     "compile" {
         Write-Host "Compiling (no tests)..."
-        Invoke-Mvn -B compile -q
+        Invoke-Native -FilePath $mvnPs -Arguments @("-B", "compile", "-q")
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     "test" {
-        Write-Host "Running fast profile (smoke + index + query)..."
-        Invoke-Mvn -B clean test -P fast
+        Invoke-ProfileTests -Profile "fast"
     }
     "test-incr" {
-        Write-Host "Running fast profile (incremental, no clean)..."
-        Invoke-Mvn -B test -P fast
+        Invoke-ProfileTests -Profile "fast" -NoClean
     }
     "test-one" {
         if (-not $T) {
-            Write-Error "Usage: .\scripts\make.ps1 test-one -T ClassName#methodName"
+            Write-Error "Usage: .\scripts\make.ps1 test-one -T ""ClassName#methodName"""
             exit 1
         }
-        Write-Host "Running single test: $T..."
-        Invoke-Mvn -B test -P fast -Dtest=$T
+        Invoke-ProfileTests -Profile "fast" -ExtraArgs @("-Dtest=$T") -NoClean
     }
     "test-core" {
-        Write-Host "Running core profile..."
-        Invoke-Mvn -B clean test -P core
+        Invoke-ProfileTests -Profile "core"
     }
     "test-network" {
-        Write-Host "Running network profile..."
-        Invoke-Mvn -B clean test -P network
+        Invoke-ProfileTests -Profile "network"
     }
     "test-concurrency" {
-        Write-Host "Running concurrency profile..."
-        Invoke-Mvn -B clean test -P concurrency
+        Invoke-ProfileTests -Profile "concurrency"
     }
     "test-perf" {
-        Write-Host "Running perf profile..."
-        Invoke-Mvn -B clean test -P perf
+        Invoke-ProfileTests -Profile "perf"
     }
     "large-test" {
-        Write-Host "Running large profile (@LargeTest)..."
-        Invoke-Mvn -B clean test -P large
+        Invoke-ProfileTests -Profile "large"
     }
     "all-tests" {
-        Write-Host "Running ALL profiles sequentially..."
+        Write-Host "Running ALL profiles sequentially (release gate)..."
         foreach ($p in @("fast", "core", "concurrency", "network", "perf", "large")) {
-            Write-Host "--- $p ---"
-            Invoke-Mvn -B clean test -P $p
-            if ($LASTEXITCODE -ne 0) {
-                Write-Error "FAILED: profile $p"
-                exit 1
-            }
+            Write-Host ""
+            Invoke-ProfileTests -Profile $p
         }
+        Write-Host ""
+        Write-Host "All profiles passed." -ForegroundColor Green
     }
     "build" {
         Write-Host "Building DieselDB..."
-        Invoke-Mvn -B package -DskipTests
+        Invoke-Native -FilePath $mvnPs -Arguments @("-B", "package", "-DskipTests")
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     "test-storage-csv" {
-        Write-Host "Running CSV storage tests..."
-        Invoke-Mvn -B clean test -P storage-csv
+        Invoke-ProfileTests -Profile "storage-csv"
     }
     "test-storage-tsv" {
-        Write-Host "Running TSV storage tests..."
-        Invoke-Mvn -B clean test -P storage-tsv
+        Invoke-ProfileTests -Profile "storage-tsv"
     }
     "test-storage-jsonl" {
-        Write-Host "Running JSONL storage tests..."
-        Invoke-Mvn -B clean test -P storage-jsonl
+        Invoke-ProfileTests -Profile "storage-jsonl"
     }
     "test-storage-avro" {
-        Write-Host "Running AVRO storage tests..."
-        Invoke-Mvn -B clean test -P storage-avro
+        Invoke-ProfileTests -Profile "storage-avro"
     }
     "changelog" {
         if (-not $Desc) {
-            Write-Error "Usage: .\scripts\make.ps1 changelog -Desc 'description'"
+            Write-Error "Usage: .\scripts\make.ps1 changelog -Desc ""description"""
             exit 1
         }
-        & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "scripts\commit-and-changelog.ps1") -Description $Desc
+        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $commitChangelog, "-Description", $Desc)
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     "release" {
         if (-not $Desc) {
-            Write-Error "Usage: .\scripts\make.ps1 release -Desc 'description'"
+            Write-Error "Usage: .\scripts\make.ps1 release -Desc ""description"""
             exit 1
         }
-        & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "scripts\commit-and-changelog.ps1") -Description $Desc
-        git add Changelog.md changelog_entry.txt
-        git commit -F changelog_entry.txt
-        & $gitHelpers push
+        Invoke-ChangelogCommit -Description $Desc -Push
     }
     "release-local" {
         if (-not $Desc) {
-            Write-Error "Usage: .\scripts\make.ps1 release-local -Desc 'description'"
+            Write-Error "Usage: .\scripts\make.ps1 release-local -Desc ""description"""
             exit 1
         }
-        & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "scripts\commit-and-changelog.ps1") -Description $Desc
-        git add Changelog.md changelog_entry.txt
-        git commit -F changelog_entry.txt
+        Invoke-ChangelogCommit -Description $Desc
     }
     "timing" {
-        Write-Host "Running acceptance gate: large profile (600x600 joins, 4GB heap)..."
-        Invoke-Mvn -B clean test -P large
-        python scripts/collect-timing.py
+        Invoke-ProfileTests -Profile "large"
+        Write-Host "Collecting timing data..."
+        Invoke-Native -FilePath "python" -Arguments @("scripts/collect-timing.py")
         if (Test-Path "timing\timing.md") {
-            & $compareTiming -Base "timing\timing.md" -New "timing\timingN.md"
+            Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $compareTiming, "-Base", "timing/timing.md", "-New", "timing/timingN.md")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         } else {
             Write-Host "Baseline timing/timing.md not found - creating it from this run."
             Copy-Item "timing\timingN.md" "timing\timing.md"
@@ -146,19 +215,22 @@ switch ($Target) {
             Write-Error "Usage: .\scripts\make.ps1 compare-timing -BASE timing\timing.md -NEW timing\timingN.md"
             exit 1
         }
-        & $compareTiming -Base $BASE -New $NEW
+        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $compareTiming, "-Base", $BASE, "-New", $NEW)
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     "tia" {
         Write-Host "Running test-impact analysis..."
-        & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "scripts\tia.ps1")
+        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $tiaScript)
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     "tia-run" {
         Write-Host "Running TIA + impacted tests..."
-        & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "scripts\tia.ps1") -Run
+        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $tiaScript, "-Run")
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     "clean" {
         Write-Host "Cleaning..."
-        Invoke-Mvn clean
+        Invoke-Native -FilePath $mvnPs -Arguments @("clean")
         if (Test-Path "target\.cache") { Remove-Item -Recurse -Force "target\.cache" }
         Get-ChildItem "data\*.csv", "data\*.table", "*.log", "timing\timingN.md", "classpath.txt" -ErrorAction SilentlyContinue | Remove-Item -Force
     }
@@ -175,12 +247,10 @@ switch ($Target) {
     }
     "setup" {
         Write-Host "Checking build environment..."
-        $ErrorActionPreference = "SilentlyContinue"
-        $javaVer = & cmd /c "java -version 2>&1" | Select-Object -First 1
+        $javaVer = (Invoke-Native -FilePath "cmd" -Arguments @("/c", "java -version 2>&1") | Select-Object -First 1)
         if ($javaVer) { Write-Host "Java: $javaVer" } else { Write-Host "Java: not found" -ForegroundColor Red }
-        $mvnOut = (& $mvnPs --version 2>&1 | Out-String).Trim()
+        $mvnOut = (Invoke-Native -FilePath $mvnPs -Arguments @("--version") | Out-String).Trim()
         Write-Host $mvnOut.Split("`n")[0]
-        $ErrorActionPreference = "Stop"
         Write-Host "Build environment OK." -ForegroundColor Green
     }
     "help" {
@@ -189,7 +259,7 @@ switch ($Target) {
         Write-Host "Quick workflow (simple changes):"
         Write-Host "  .\scripts\make.ps1 compile             - Compile only, no tests (3-5s)"
         Write-Host "  .\scripts\make.ps1 test-incr           - Fast profile without clean"
-        Write-Host "  .\scripts\make.ps1 test-one -T X#m     - Run a single test method"
+        Write-Host "  .\scripts\make.ps1 test-one -T X#m     - Run a single test method (quote it: -T ""X#m"")"
         Write-Host "  .\scripts\make.ps1 release -Desc '...' - Changelog + commit + push"
         Write-Host ""
         Write-Host "Targets:"
@@ -202,9 +272,12 @@ switch ($Target) {
         Write-Host "  setup, help"
         Write-Host ""
         Write-Host "Parameters:"
-        Write-Host "  -T ClassName#method    for test-one"
+        Write-Host "  -T ClassName#method    for test-one (quote in PowerShell, escape as \# in make)"
         Write-Host "  -Desc 'description'    for changelog, release, release-local"
         Write-Host "  -BASE / -NEW           for compare-timing"
+        Write-Host ""
+        Write-Host "Every test target asserts that surefire actually produced reports and"
+        Write-Host "fails if Maven reported success without running a single test."
     }
     default {
         Write-Error "Unknown target: $Target. Run '.\scripts\make.ps1 help' for available targets."

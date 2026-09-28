@@ -4,17 +4,72 @@
 # Usage: make [target]
 
 JAVA_HOME ?= /usr/lib/jvm/java-21-openjdk-amd64
-MVN ?= mvn
-MVN_PATH ?= $(shell which mvn)
+
+# Must be exported, not just assigned: a variable set only inside a Makefile is
+# not visible to the environment of the recipe's child processes, so Maven never
+# saw the JAVA_HOME defined two lines above.
+export JAVA_HOME
+
+# Resolve Maven once, JAVA_HOME before PATH. An explicit MVN=... on the command
+# line still wins. The previous "MVN_PATH ?= $(shell which mvn)" was declared
+# and then never referenced, so every target actually executed a bare "mvn" and
+# failed on machines where Maven is not on PATH.
+MVN ?= $(if $(wildcard $(JAVA_HOME)/bin/mvn),$(JAVA_HOME)/bin/mvn,$(shell command -v mvn 2>/dev/null || echo mvn))
+
 PY ?= python3
 
 ifeq ($(OS),Windows_NT)
-TIA = powershell -ExecutionPolicy Bypass -File ./scripts/tia.ps1
+PS = powershell -ExecutionPolicy Bypass -File
+# git-helpers.ps1 adds retry + stale-lock cleanup, so use it where it can run.
+GIT_PUSH = $(PS) ./scripts/git-helpers.ps1 push
+# commit-and-changelog.ps1 has no POSIX counterpart, so on Linux fall back to
+# pwsh (the cross-platform PowerShell). Fail loudly rather than silently
+# dropping the changelog if it is not installed.
+CHANGELOG = pwsh -File ./scripts/commit-and-changelog.ps1
+else
+# git push is the portable primitive; retry is a nicety, not a requirement.
+GIT_PUSH = git push origin main
+CHANGELOG = pwsh -File ./scripts/commit-and-changelog.ps1
+endif
+
+# tia.ps1 is the Windows entry point, tia.sh the POSIX one. Both exist in
+# scripts/; picking the right one keeps `make tia` working on Linux.
+ifeq ($(OS),Windows_NT)
+TIA = $(PS) ./scripts/tia.ps1
 else
 TIA = ./scripts/tia.sh
 endif
 
-.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-test-cache help check-timing tia tia-run changelog release release-local setup doctor
+ASSERT_TESTS = ./scripts/assert-tests-ran.sh
+
+# ---------------------------------------------------------------------------
+# The only two ways to run tests.
+#
+# Usage: $(call run-tests,fast)
+#        $(call run-tests-incr,fast,-Dtest=JoinTest#joinKeys)
+#
+# Every test target routes through these macros on purpose. Each target used to
+# spell out its own "$(MVN) -B clean test -P <profile>" line, and a broken
+# argument passthrough in mvn.ps1 once made all of them run zero tests while
+# still reporting BUILD SUCCESS. Centralising the invocation means the
+# "-P <profile>" argument has exactly one owner, and the post-run assertion that
+# tests actually executed is never forgotten.
+# ---------------------------------------------------------------------------
+define run-tests
+	@stamp=$$(mktemp); \
+	echo "Running profile '$(1)'..."; \
+	$(MVN) -B clean test -P $(1) $(2) || exit 1; \
+	$(ASSERT_TESTS) "$$stamp"
+endef
+
+define run-tests-incr
+	@stamp=$$(mktemp); \
+	echo "Running profile '$(1)' (no clean)..."; \
+	$(MVN) -B test -P $(1) $(2) || exit 1; \
+	$(ASSERT_TESTS) "$$stamp"
+endef
+
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro
 
 # Default target
 all: build
@@ -29,101 +84,95 @@ compile:
 	@echo "Compiling (no tests)..."
 	$(MVN) -B compile -q
 
-## Run single test (usage: make test-one T=QueryParserTest#testSelect)
+## Run single test (usage: make test-one T=QueryParserTest\#testSelect)
+## Note: in make, '#' starts a comment, so it MUST be escaped as '\#'.
 test-one:
-	@if [ -z "$(T)" ]; then echo "Usage: make test-one T=ClassName#methodName"; exit 1; fi
-	@echo "Running single test: $(T)..."
-	$(MVN) -B test -P fast -Dtest=$(T)
+	@if [ -z "$(T)" ]; then \
+		echo "Usage: make test-one T=ClassName\\#methodName"; \
+		echo "       The hash must be escaped for make: T=ClassName\\#methodName"; \
+		exit 1; \
+	fi
+	$(call run-tests-incr,fast,-Dtest=$(T))
 
-## Fast incremental test without clean (~15s faster than make test)
+## Fast incremental test without clean
 test-incr:
-	@echo "Running fast profile (incremental, no clean)..."
-	$(MVN) -B test -P fast
+	$(call run-tests-incr,fast)
 
 ## Create changelog entry with auto-incrementing version prefix
-## Usage: make changelog "short description"
+## Usage: make changelog DESC="short description"
 changelog:
 	@if [ -z "$(DESC)" ]; then \
 		echo "Usage: make changelog DESC=\"description\""; \
-		echo "  or: make changelog \"description\" (requires DESC variable)"; \
 		exit 1; \
 	fi
-	powershell -ExecutionPolicy Bypass -File ./scripts/commit-and-changelog.ps1 "$(DESC)"
+	$(CHANGELOG) "$(DESC)"
 
 ## Changelog + commit + push in one step (usage: make release DESC="fix: ...")
 release:
 	@if [ -z "$(DESC)" ]; then echo "Usage: make release DESC=\"description\""; exit 1; fi
-	powershell -ExecutionPolicy Bypass -File ./scripts/commit-and-changelog.ps1 "$(DESC)"
+	$(CHANGELOG) "$(DESC)"
 	git add Changelog.md changelog_entry.txt
 	git commit -F changelog_entry.txt
-	git push
+	$(GIT_PUSH)
 
 ## Changelog + commit only, no push (usage: make release-local DESC="fix: ...")
 release-local:
 	@if [ -z "$(DESC)" ]; then echo "Usage: make release-local DESC=\"description\""; exit 1; fi
-	powershell -ExecutionPolicy Bypass -File ./scripts/commit-and-changelog.ps1 "$(DESC)"
+	$(CHANGELOG) "$(DESC)"
 	git add Changelog.md changelog_entry.txt
 	git commit -F changelog_entry.txt
 
-## Run fast profile: smoke + index + query (<30s)
+## Run fast profile: smoke + index + query
 test:
-	@echo "Running fast profile (smoke + index + query)..."
-	$(MVN) -B clean test -P fast
+	$(call run-tests,fast)
 
 ## Run core profile: full query + storage (2-4 min)
 test-core:
-	@echo "Running core profile..."
-	$(MVN) -B clean test -P core
+	$(call run-tests,core)
 
 ## Run network profile: server + sockets
 test-network:
-	@echo "Running network profile..."
-	$(MVN) -B clean test -P network
+	$(call run-tests,network)
 
 ## Run concurrency profile: txn + threads
 test-concurrency:
-	@echo "Running concurrency profile..."
-	$(MVN) -B clean test -P concurrency
+	$(call run-tests,concurrency)
 
 ## Run perf profile: benchmarks
 test-perf:
-	@echo "Running perf profile..."
-	$(MVN) -B clean test -P perf
+	$(call run-tests,perf)
 
 ## Run large profile: @LargeTest (4GB heap)
 large-test:
-	@echo "Running large profile (@LargeTest)..."
-	$(MVN) -B clean test -P large
+	$(call run-tests,large)
 
 ## Run format-specific storage tests (only tests matching diesel.storage.type run)
 test-storage-csv:
-	@echo "Running CSV storage tests..."
-	$(MVN) -B clean test -P storage-csv
+	$(call run-tests,storage-csv)
 
 test-storage-tsv:
-	@echo "Running TSV storage tests..."
-	$(MVN) -B clean test -P storage-tsv
+	$(call run-tests,storage-tsv)
 
 test-storage-jsonl:
-	@echo "Running JSONL storage tests..."
-	$(MVN) -B clean test -P storage-jsonl
+	$(call run-tests,storage-jsonl)
 
 test-storage-avro:
-	@echo "Running AVRO storage tests..."
-	$(MVN) -B clean test -P storage-avro
+	$(call run-tests,storage-avro)
 
 ## Run ALL profiles sequentially (release gate)
 all-tests:
-	@echo "Running ALL profiles sequentially..."
-	for p in fast core concurrency network perf large; do \
+	@echo "Running ALL profiles sequentially (release gate)..."
+	@for p in fast core concurrency network perf large; do \
+		echo ""; \
 		echo "--- $$p ---"; \
-		$(MVN) -B clean test -P $$p || exit 1; \
+		$(call run-tests,$$p) || exit 1; \
 	done
+	@echo ""
+	@echo "All profiles passed."
 
 ## Full acceptance gate: large profile (4GB heap) + timing compare vs baseline
 timing:
-	@echo "Running acceptance gate: large profile (600x600 joins, 4GB heap)..."
-	$(MVN) -B clean test -P large
+	$(call run-tests,large)
 	$(PY) scripts/collect-timing.py
 	@if [ -f timing/timing.md ]; then \
 		./compare-timing.sh timing/timing.md timing/timingN.md; \
@@ -200,6 +249,7 @@ tia-run:
 ## Verify build environment: JAVA_HOME, mvn, java (exit 1 if broken)
 setup:
 	@echo "Checking build environment..."
+	@echo "MVN=$(MVN)"
 	@java -version 2>&1 | head -1
 	@$(MVN) -version 2>&1 | head -1
 	@echo "Build environment OK."
@@ -215,7 +265,8 @@ doctor:
 	@if [ -n "$$JAVA_HOME" ]; then echo "JAVA_HOME=$$JAVA_HOME"; else echo "WARNING: JAVA_HOME not set"; fi
 	@echo ""
 	@echo "--- Maven ---"
-	@$(MVN) -version 2>&1 || echo "ERROR: mvn not found on PATH"
+	@echo "resolved MVN: $(MVN)"
+	@$(MVN) -version 2>&1 || echo "ERROR: mvn not found (set MVN=/path/to/mvn)"
 	@echo ""
 	@echo "--- Git ---"
 	@git --version 2>&1 || echo "ERROR: git not found"
@@ -239,14 +290,14 @@ help:
 	@echo ""
 	@echo "Quick workflow (simple changes):"
 	@echo "  make compile            - Compile only, no tests (3-5s)"
-	@echo "  make test-incr          - Fast profile without clean (~15s faster)"
-	@echo "  make test-one T=X#m     - Run a single test method"
+	@echo "  make test-incr          - Fast profile without clean"
+	@echo "  make test-one T=X\\#m    - Run a single test method (hash must be escaped: \\#)"
 	@echo "  make release DESC=\"...\"  - Changelog + commit + push"
 	@echo ""
 	@echo "Targets:"
 	@echo "  make build              - Build project (package, skip tests)"
 	@echo "  make changelog          - Create changelog entry with auto version prefix"
-	@echo "  make test               - Fast profile: smoke + index + query (<30s)"
+	@echo "  make test               - Fast profile: smoke + index + query"
 	@echo "  make test-core          - Core profile: query + storage (2-4 min)"
 	@echo "  make test-network       - Network profile: server + sockets (1-2 min)"
 	@echo "  make test-concurrency   - Concurrency profile: txn + threads (<30s)"
@@ -264,7 +315,11 @@ help:
 	@echo "  make doctor             - Full environment diagnostic"
 	@echo "  make help               - Show this help"
 	@echo ""
+	@echo "Every test target asserts that surefire produced reports and fails if"
+	@echo "Maven reported success without running a single test."
+	@echo ""
 	@echo "PowerShell (Windows agents):"
+	@echo "  .\scripts\make.ps1 <target>         - Full Makefile equivalent"
 	@echo "  .\scripts\mvn.ps1 <args>            - Maven with auto JAVA_HOME"
 	@echo "  .\scripts\git-helpers.ps1 push      - Git push with retry (origin main)"
 	@echo "  .\scripts\git-helpers.ps1 fix-lock  - Remove stale git lock files"
@@ -273,3 +328,6 @@ help:
 	@echo "Variables:"
 	@echo "  JAVA_HOME=/path/to/java"
 	@echo "  MVN=/path/to/mvn"
+	@echo "  T=ClassName\\#method   for test-one"
+	@echo "  DESC=\"...\"            for changelog, release, release-local"
+	@echo "  BASE=/NEW=            for compare-timing"

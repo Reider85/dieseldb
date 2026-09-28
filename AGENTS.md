@@ -84,7 +84,7 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 | Task | Command |
 |------|---------|
 | Compile check | `.\scripts\make.ps1 compile` |
-| Run one test | `.\scripts\make.ps1 test-one -T QueryParserTest#testSelect` |
+| Run one test | `.\scripts\make.ps1 test-one -T "QueryParserTest#testSelect"` |
 | Fast test suite | `.\scripts\make.ps1 test` |
 | Core test suite | `.\scripts\make.ps1 test-core` |
 | Build JAR | `.\scripts\make.ps1 build` |
@@ -95,7 +95,7 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 | Task | Command |
 |------|---------|
 | Compile check | `.\scripts\mvn.ps1 -B compile -q` |
-| Run one test | `.\scripts\mvn.ps1 -B test -P fast -Dtest=ClassName#method` |
+| Run one test | `.\scripts\mvn.ps1 -B test -P fast -Dtest="ClassName#method"` |
 | Fast test suite | `.\scripts\mvn.ps1 -B clean test -P fast` |
 | Core test suite | `.\scripts\mvn.ps1 -B clean test -P core` |
 | Build JAR | `.\scripts\mvn.ps1 -B package -DskipTests` |
@@ -143,6 +143,28 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 | Fast suite (clean) | `make test` | ~30s |
 | Core suite | `make test-core` | 2-4 min |
 | Full acceptance | `make timing` | 10-30 min |
+
+### Guard: "no tests ran" fails the build
+
+The default surefire `<configuration>` in `pom.xml` excludes **every** source file
+(`<exclude>**/*.java</exclude>`). A run without `-P <profile>` therefore selects
+zero tests and still prints `BUILD SUCCESS`. A commit that did not compile once
+passed the local gate this way.
+
+Every test target now asserts that surefire actually wrote at least one report
+newer than the moment Maven was invoked:
+
+- PowerShell: `scripts/native.ps1` → `Assert-TestsRan` (used by `make.ps1` and `tia.ps1`)
+- Make: `scripts/assert-tests-ran.sh` (used by the `run-tests` macros)
+
+A successful run prints `Verified: N surefire report(s) written by profile 'fast'.`
+If you see `ERROR: no surefire reports were written ...` the profile was lost from
+the Maven command line — treat it as a hard failure, not a pass.
+
+**Do not add a `param()` block to `scripts/mvn.ps1`.** A `param([string[]]$MvnArgs)`
+with `ValueFromRemainingArguments` silently drops `-P <profile>` and every `-D`
+property, which is exactly the failure this guard exists to catch. The wrapper
+relies on the automatic `$args` variable, which preserves them.
 
 - **Fast profile** – `make test` (= `mvn -B clean test -P fast`, tags: smoke, query, index) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate.
 - **Other profiles:** `make test-core` (query-full, storage), `make test-concurrency` (concurrency), `make test-network` (network), `make test-perf` (perf), `make large-test` (large, 4GB heap).
