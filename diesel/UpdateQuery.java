@@ -136,7 +136,7 @@ class UpdateQuery implements Query<Void> {
                     String column = update.getKey();
                     Object newValue = update.getValue();
                     Class<?> columnType = columnTypes.get(column);
-                    Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType, columnTypes);
+                    Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType);
                     Object oldValue = row.get(column);
                     if (!Objects.equals(oldValue, convertedValue)) {
                         row.put(column, convertedValue);
@@ -157,7 +157,7 @@ class UpdateQuery implements Query<Void> {
                 String column = update.getKey();
                 Object newValue = update.getValue();
                 Class<?> columnType = columnTypes.get(column);
-                Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType, columnTypes);
+                Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType);
                 Object oldValue = row.get(column);
 
                 if (!Objects.equals(oldValue, convertedValue)) {
@@ -213,7 +213,7 @@ class UpdateQuery implements Query<Void> {
         if (index instanceof HashIndex || index instanceof UniqueIndex) {
             Object conditionValue = EVAL.convertConditionValue(
                     condition.value, condition.column,
-                    columnTypes.get(condition.column), columnTypes);
+                    columnTypes.get(condition.column));
             rowsToUpdate.addAll(index.search(conditionValue));
             LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} = {2}",
                     new Object[]{index instanceof HashIndex ? "hash" : "unique",
@@ -221,7 +221,7 @@ class UpdateQuery implements Query<Void> {
         } else if (index instanceof BTreeIndex btree) {
             Object conditionValue = EVAL.convertConditionValue(
                     condition.value, condition.column,
-                    columnTypes.get(condition.column), columnTypes);
+                    columnTypes.get(condition.column));
             rowsToUpdate.addAll(btree.search(conditionValue));
             LOGGER.log(Level.INFO, "Using B-tree index for UPDATE WHERE {0} = {1}",
                     new Object[]{condition.column, conditionValue});
@@ -236,7 +236,7 @@ class UpdateQuery implements Query<Void> {
             for (Object value : condition.inValues) {
                 Object convertedValue = EVAL.convertConditionValue(
                         value, condition.column,
-                        columnTypes.get(condition.column), columnTypes);
+                        columnTypes.get(condition.column));
                 rowsToUpdate.addAll(index.search(convertedValue));
             }
             rowsToUpdate = rowsToUpdate.stream().distinct().sorted()
@@ -255,7 +255,7 @@ class UpdateQuery implements Query<Void> {
         if (index instanceof BTreeIndex btree) {
             Object conditionValue = EVAL.convertConditionValue(
                     condition.value, condition.column,
-                    columnTypes.get(condition.column), columnTypes);
+                    columnTypes.get(condition.column));
             switch (condition.operator) {
                 case GREATER_THAN_OR_EQUALS -> rowsToUpdate.addAll(btree.rangeSearchLow(conditionValue));
                 case LESS_THAN_OR_EQUALS -> rowsToUpdate.addAll(btree.rangeSearchHigh(conditionValue));

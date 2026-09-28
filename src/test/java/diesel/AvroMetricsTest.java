@@ -324,7 +324,9 @@ class AvroMetricsTest {
 
     @Test
     void prometheusOutputContainsExpectedMetrics() {
+        System.setProperty(AvroMetrics.PROMETHEUS_ENABLED_KEY, "true");
         AvroMetrics m = AvroMetrics.getInstance();
+        m.resolveConfig();
         m.resetMetrics();
         m.recordRead("t", 512, 1_000_000L);
         m.recordWrite("t", 256, 2_000_000L);
@@ -340,7 +342,9 @@ class AvroMetricsTest {
 
     @Test
     void prometheusCounterFormat() {
+        System.setProperty(AvroMetrics.PROMETHEUS_ENABLED_KEY, "true");
         AvroMetrics m = AvroMetrics.getInstance();
+        m.resolveConfig();
         m.resetMetrics();
         m.recordRead("t", 100, 1_000_000L);
         m.recordRead("t", 200, 1_000_000L);
@@ -352,7 +356,9 @@ class AvroMetricsTest {
 
     @Test
     void prometheusGaugeFormat() {
+        System.setProperty(AvroMetrics.PROMETHEUS_ENABLED_KEY, "true");
         AvroMetrics m = AvroMetrics.getInstance();
+        m.resolveConfig();
         m.resetMetrics();
         m.incrementActiveTables();
         String prom = m.renderPrometheus();
@@ -362,7 +368,9 @@ class AvroMetricsTest {
 
     @Test
     void prometheusEmptyState() {
+        System.setProperty(AvroMetrics.PROMETHEUS_ENABLED_KEY, "true");
         AvroMetrics m = AvroMetrics.getInstance();
+        m.resolveConfig();
         m.resetMetrics();
         String prom = m.renderPrometheus();
         assertTrue(prom.contains("avro_total_reads 0"), "Empty state should show 0");

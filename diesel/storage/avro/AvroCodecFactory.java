@@ -1,8 +1,6 @@
 package diesel.storage.avro;
 
 import org.apache.avro.file.CodecFactory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Locale;
 
@@ -34,8 +32,6 @@ import java.util.Locale;
  * @since Prompt 62 (enhanced in Prompt 65)
  */
 public final class AvroCodecFactory {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(AvroCodecFactory.class);
 
     // Deflate levels use 1-9 range (Prompt 65) instead of 0-9 for clearer semantics
 

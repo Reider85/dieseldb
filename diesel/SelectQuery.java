@@ -1004,7 +1004,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             // Prompt 82: record execution outcome for adaptive learning.
             if (adaptiveState != null) {
-                OPTIMIZER.recordExecution(adaptiveState, lastExecuteNanos + lastSortNanos, result.size());
+                OPTIMIZER.recordExecution(adaptiveState, result.size());
             }
 
             return result;
@@ -2821,7 +2821,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         if (a instanceof Comparable && b instanceof Comparable) {
             try {
-                return ((Comparable<Object>) a).compareTo(b);
+                @SuppressWarnings("unchecked")
+                Comparable<Object> ca = (Comparable<Object>) a;
+                return ca.compareTo(b);
             } catch (ClassCastException e) {
                 return a.toString().compareTo(b.toString());
             }
@@ -2980,7 +2982,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     // the typed keys stored in the composite index (e.g. Integer→Long).
                     Class<?> colType = table.getColumnTypes().get(unqualified);
                     Object converted = colType != null
-                            ? new ConditionEvaluator().convertConditionValue(condition.value, unqualified, colType, table.getColumnTypes())
+                            ? new ConditionEvaluator().convertConditionValue(condition.value, unqualified, colType)
                             : condition.value;
                     equalityColumns.put(unqualified, converted);
                 }
@@ -3076,7 +3078,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         Class<?> colType = table.getColumnTypes().get(unqualifiedColumn);
         ConditionEvaluator evaluator = new ConditionEvaluator();
         if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
-            Object val = colType != null ? evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType, table.getColumnTypes()) : condition.value;
+            Object val = colType != null ? evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType) : condition.value;
             List<Integer> rowIndices = index.search(val);
             LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
                     new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
@@ -3085,7 +3087,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         if (condition.isInOperator() && condition.inValues != null) {
             List<Integer> rowIndices = new ArrayList<>();
             for (Object inValue : condition.inValues) {
-                Object val = colType != null ? evaluator.convertConditionValue(inValue, unqualifiedColumn, colType, table.getColumnTypes()) : inValue;
+                Object val = colType != null ? evaluator.convertConditionValue(inValue, unqualifiedColumn, colType) : inValue;
                 rowIndices.addAll(index.search(val));
             }
             LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
@@ -3095,7 +3097,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         if (index instanceof BTreeIndex bTreeIndex) {
             // Convert condition value for range searches too.
             if (colType != null && condition.value != null) {
-                Object converted = evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType, table.getColumnTypes());
+                Object converted = evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType);
                 QueryParser.Condition adjusted = new QueryParser.Condition(condition.column, converted, condition.operator, condition.conjunction, condition.not);
                 return lookupBTreeRange(bTreeIndex, adjusted, tableName, unqualifiedColumn);
             }

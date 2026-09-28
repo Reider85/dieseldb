@@ -106,14 +106,14 @@ public class PerformanceTest {
         Table table = database.getTable(tableName);
 
         for (int i = 1; i <= count; i++) {
-            List<Object> values = generateRecordValues(i, random);
+            List<Object> values = generateRecordValues(i);
             InsertQuery insertQuery = new InsertQuery(columns, values);
             insertQuery.execute(table);
             table.saveToFile(tableName); // Save after each insert
         }
     }
 
-    private List<Object> generateRecordValues(int index, Random random) {
+    private List<Object> generateRecordValues(int index) {
         List<Object> values = new ArrayList<>();
         String id = String.valueOf(index);
         String userCode = "CODE" + index; // Ensure unique USER_CODE for clustered index

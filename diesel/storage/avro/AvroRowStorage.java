@@ -595,7 +595,7 @@ static Object[] fromRecord(GenericRecord avroRecord, List<String> columns,
         if (fieldSchema.getLogicalType() != null) {
             return switch (fieldSchema.getLogicalType().getName()) {
                 case "decimal" -> {
-                    BigDecimal bd = (value instanceof BigDecimal) ? (BigDecimal) value : new BigDecimal(value.toString());
+                    BigDecimal bd = (value instanceof BigDecimal bdVal) ? bdVal : new BigDecimal(value.toString());
                     int avroScale = 18; // default from AvroTypeMapper
                     if (fieldSchema.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
                         avroScale = d.getScale();
@@ -604,11 +604,11 @@ static Object[] fromRecord(GenericRecord avroRecord, List<String> columns,
                     yield ByteBuffer.wrap(scaled.unscaledValue().toByteArray());
                 }
                 case "date" -> {
-                    LocalDate ld = (value instanceof LocalDate) ? (LocalDate) value : LocalDate.parse(value.toString());
+                    LocalDate ld = (value instanceof LocalDate ldVal) ? ldVal : LocalDate.parse(value.toString());
                     yield (int) ld.toEpochDay();
                 }
                 case "timestamp-millis", "timestamp-micros" -> {
-                    LocalDateTime ldt = (value instanceof LocalDateTime) ? (LocalDateTime) value
+                    LocalDateTime ldt = (value instanceof LocalDateTime ldtVal) ? ldtVal
                             : LocalDateTime.parse(value.toString());
                     yield ldt.toInstant(ZoneOffset.UTC).toEpochMilli();
                 }

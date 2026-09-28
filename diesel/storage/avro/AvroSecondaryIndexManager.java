@@ -21,7 +21,6 @@ import diesel.storage.StorageMessageConstants;
 public class AvroSecondaryIndexManager implements Serializable {
     private static final long serialVersionUID = 1L;
     
-    private final String tableName;
     private transient List<String> columns;
     private transient Map<String, Class<?>> columnTypes;
     
@@ -32,7 +31,6 @@ public class AvroSecondaryIndexManager implements Serializable {
     private static final String INDEX_FILE_EXTENSION = ".asi";
     
     public AvroSecondaryIndexManager(String tableName, List<String> columns, Map<?, ?> columnTypes) {
-        this.tableName = tableName;
         this.columns = new ArrayList<>(columns);
         this.columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         if (columnTypes != null) {

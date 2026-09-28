@@ -97,16 +97,16 @@ public class AvroDatePartitioner {
         }
         
         try {
-            if (value instanceof LocalDate) {
-                return (LocalDate) value;
-            } else if (value instanceof LocalDateTime) {
-                return ((LocalDateTime) value).toLocalDate();
-            } else if (value instanceof String) {
-                return parseDateString((String) value);
-            } else if (value instanceof Integer) {
-                return LocalDate.ofEpochDay((Integer) value);
-            } else if (value instanceof Long) {
-                return Instant.ofEpochMilli((Long) value).atZone(config.getZoneId()).toLocalDate();
+            if (value instanceof LocalDate ld) {
+                return ld;
+            } else if (value instanceof LocalDateTime ldt) {
+                return ldt.toLocalDate();
+            } else if (value instanceof String s) {
+                return parseDateString(s);
+            } else if (value instanceof Integer integer) {
+                return LocalDate.ofEpochDay(integer);
+            } else if (value instanceof Long longVal) {
+                return Instant.ofEpochMilli(longVal).atZone(config.getZoneId()).toLocalDate();
             } else {
                 logger.warn("Unsupported partition value type: {}", value.getClass());
                 return null;

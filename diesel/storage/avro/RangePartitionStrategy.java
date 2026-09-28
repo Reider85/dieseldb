@@ -162,9 +162,9 @@ public RedistributionResult redistributeRows(String tableName,
             return converter.apply(value);
         }
 
-        if (value instanceof String) {
+        if (value instanceof String s) {
             try {
-                return Double.parseDouble(((String) value).trim());
+                return Double.parseDouble(s.trim());
             } catch (NumberFormatException e) {
                 return null;
             }

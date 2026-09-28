@@ -1261,12 +1261,12 @@ for (int i = 0; i < input.length(); i++) {
                 Pattern.DOTALL);
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
-            return parseInValuesCondition(condStr, ctx, conjunction, not);
+            return parseInValuesCondition(condStr, ctx, conjunction);
         }
-        return parseInSubQueryCondition(inMatcher, ctx, conjunction, not);
+        return parseInSubQueryCondition(inMatcher, ctx, conjunction);
     }
 
-    private QueryParser.Condition parseInValuesCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
+    private QueryParser.Condition parseInValuesCondition(String condStr, ParseContext ctx, String conjunction) {
         Pattern valuesInPattern = Pattern.compile(
                 ErrorMessages.CASE_INSENSITIVE_START_PATTERN + QUALIFIED_IDENTIFIER_PATTERN + ")\\s+(NOT\\s+)?IN\\s*\\(([^)]*+)\\)$",
                 Pattern.DOTALL);
@@ -1300,7 +1300,7 @@ for (int i = 0; i < input.length(); i++) {
                  .collect(Collectors.toList());
      }
 
-    private QueryParser.Condition parseInSubQueryCondition(Matcher inMatcher, ParseContext ctx, String conjunction, boolean not) {
+    private QueryParser.Condition parseInSubQueryCondition(Matcher inMatcher, ParseContext ctx, String conjunction) {
         String column = unquoteQualifiedIdentifier(inMatcher.group(1).trim());
         boolean inNot = inMatcher.group(2) != null;
         String subQueryStr = inMatcher.group(3).trim();
@@ -1519,7 +1519,7 @@ for (int i = 0; i < input.length(); i++) {
         RightPartResult rightResult = parseRightOperand(rightPart, normalizedColumn, ctx);
         QueryParser.Operator operator = parseOperator(operatorInfo.operator);
 
-        if (ctx.isJoinCondition && !rightColumnIsFromDifferentTable(normalizedColumn, rightResult.rightColumn, ctx.tableAliases)) {
+        if (ctx.isJoinCondition && !rightColumnIsFromDifferentTable(normalizedColumn, rightResult.rightColumn)) {
             throw new IllegalArgumentException("Join condition must compare columns from different tables: " + condStr);
         }
 
@@ -1597,7 +1597,7 @@ for (int i = 0; i < input.length(); i++) {
         return null;
     }
 
-    private boolean rightColumnIsFromDifferentTable(String leftColumn, String rightColumn, Map<String, String> tableAliases) {
+    private boolean rightColumnIsFromDifferentTable(String leftColumn, String rightColumn) {
         if (rightColumn == null) {
             return true;
         }
@@ -1640,7 +1640,7 @@ for (int i = 0; i < input.length(); i++) {
                 state.inQuotes = !state.inQuotes;
                 state.currentCondition.append(c);
             } else if (!state.inQuotes && c == '(') {
-                handleOpenParen(c, i, havingClause, state);
+                handleOpenParen(c, state);
             } else if (!state.inQuotes && c == ')') {
                 handleCloseParen(state, conditions, ctx, aggregates);
             } else if (!state.inQuotes && state.parenDepth == 0 && c == ' ') {
@@ -1664,7 +1664,7 @@ for (int i = 0; i < input.length(); i++) {
 
     private static final int AND_OR_BREAK_SENTINEL = -1;
 
-    private void handleOpenParen(char c, int i, String havingClause, HavingParseState state) {
+    private void handleOpenParen(char c, HavingParseState state) {
         state.parenDepth++;
         state.currentCondition.append(c);
     }

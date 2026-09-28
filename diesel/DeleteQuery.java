@@ -144,12 +144,12 @@ class DeleteQuery implements Query<Void> {
         QueryParser.Condition condition = conditions.get(0);
         Index index = table.getIndex(condition.column);
         if (index instanceof HashIndex || index instanceof UniqueIndex) {
-            Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+            Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column));
             rowsToDelete.addAll(index.search(conditionValue));
             LOGGER.log(Level.INFO, "Using {0} index for column {1} with value {2}",
                     new Object[]{index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue});
         } else if (index instanceof BTreeIndex btree) {
-            Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column), columnTypes);
+            Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column));
             rowsToDelete.addAll(btree.search(conditionValue));
             LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
         }
@@ -164,7 +164,7 @@ class DeleteQuery implements Query<Void> {
         Index index = table.getIndex(condition.column);
         if (index instanceof HashIndex || index instanceof UniqueIndex || index instanceof BTreeIndex) {
             for (Object value : condition.inValues) {
-                Object convertedValue = EVAL.convertConditionValue(value, condition.column, columnTypes.get(condition.column), columnTypes);
+                Object convertedValue = EVAL.convertConditionValue(value, condition.column, columnTypes.get(condition.column));
                 List<Integer> indices = index.search(convertedValue);
                 rowsToDelete.addAll(indices);
             }

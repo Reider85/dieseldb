@@ -226,8 +226,8 @@ public final class AvroBufferManager implements Closeable {
      * @return a {@link BufferedInputStream} of {@link AvroBufferConfig#readBufferSize()} bytes
      */
     public BufferedInputStream newReadBuffer(InputStream in) {
-        if (in instanceof BufferedInputStream) {
-            return (BufferedInputStream) in;
+        if (in instanceof BufferedInputStream buffered) {
+            return buffered;
         }
         return new BufferedInputStream(in, config.readBufferSize());
     }

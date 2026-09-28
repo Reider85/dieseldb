@@ -342,6 +342,9 @@ public class AvroMetrics implements DynamicMBean {
     // ─── Prometheus text-format export ─────────────────────────────────
 
     public String renderPrometheus() {
+        if (!prometheusEnabled) {
+            return "";
+        }
         StringBuilder sb = new StringBuilder(2048);
         long uptimeMs = System.currentTimeMillis() - startTimeMs;
 

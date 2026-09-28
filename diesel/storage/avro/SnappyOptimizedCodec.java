@@ -86,11 +86,10 @@ public final class SnappyOptimizedCodec {
     public static int estimateDataSize(List<?> data) {
         int size = 0;
         for (Object row : data) {
-            if (row instanceof Object[]) {
-                Object[] rowArray = (Object[]) row;
+            if (row instanceof Object[] rowArray) {
                 for (Object cell : rowArray) {
-                    if (cell instanceof String) {
-                        size += ((String) cell).getBytes().length;
+                    if (cell instanceof String s) {
+                        size += s.getBytes().length;
                     } else if (cell instanceof Number) {
                         size += 8; // Approximate size for numbers
                     } else if (cell instanceof Boolean) {
@@ -117,8 +116,7 @@ public final class SnappyOptimizedCodec {
         int otherCount = 0;
 
         for (Object row : data) {
-            if (row instanceof Object[]) {
-                Object[] rowArray = (Object[]) row;
+            if (row instanceof Object[] rowArray) {
                 for (Object cell : rowArray) {
                     if (cell instanceof String) {
                         stringCount++;

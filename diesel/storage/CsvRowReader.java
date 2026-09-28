@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -250,7 +251,7 @@ LOGGER.warn(msg);
     public Map<String, Object> next() {
         Object[] values = nextArray();
         if (values == null) {
-            return null;
+            return Collections.emptyMap();
         }
         Map<String, Object> row = new HashMap<>();
         for (int i = 0; i < columns.size(); i++) {
@@ -287,7 +288,7 @@ LOGGER.warn(msg);
         List<Map<String, Object>> result = new ArrayList<>();
         while (hasNext()) {
             Map<String, Object> row = next();
-            if (row != null) {
+            if (!row.isEmpty()) {
                 result.add(row);
             }
         }
@@ -392,7 +393,7 @@ LOGGER.warn(msg);
         }
         if (rowSkipped) {
             rowSkipped = false;
-            return null;
+            return new Object[0];
         }
         return values;
     }
@@ -544,7 +545,7 @@ LOGGER.warn(msg);
         if ("skip_row".equalsIgnoreCase(mode)) {
             LOGGER.warn(msg);
             prefetch();
-            return null;
+            return new Object[0];
         }
         if ("skip_value".equalsIgnoreCase(mode)) {
             LOGGER.warn(msg);

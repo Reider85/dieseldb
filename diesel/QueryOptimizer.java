@@ -122,8 +122,7 @@ final class QueryOptimizer {
      * Called after the query finishes
      * ────────────────────────────────────────────── */
 
-    void recordExecution(QueryExecutionState state, long durationNanos,
-                         long totalRows) {
+    void recordExecution(QueryExecutionState state, long totalRows) {
         if (!enabled || !learning || state == QueryExecutionState.DISABLED
                 || state.fingerprint == null || state.chosenAlgorithms.isEmpty()) {
             return;

@@ -6,6 +6,7 @@ import java.io.StringWriter;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -247,7 +248,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     public Map<String, Object> next() {
         Object[] values = nextArray();
         if (values == null) {
-            return null;
+            return Collections.emptyMap();
         }
         Map<String, Object> row = new HashMap<>(Math.max(columns.size() * 2, 4));
         for (int i = 0; i < columns.size(); i++) {
@@ -274,7 +275,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                 prefetch();
             }
             if (parser == null) {
-                return null;
+                return new Object[0];
             }
             Object[] row = tryParseRow();
             if (row != null) {
@@ -308,14 +309,14 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                     + (atPhysicalEof() ? StorageMessageConstants.JSONL_TRUNCATED_RECORD : "")
                     + ": " + e.getMessage();
             if (skipRow(msg, e)) {
-                return null;
+                return new Object[0];
             }
             throw new DieselIOException(msg, e);
         } catch (DieselIOException e) {
             closeQuietly(p);
             parser = null;
             if (skipRow(null, e)) {
-                return null;
+                return new Object[0];
             }
             throw e;
         }
@@ -325,7 +326,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             enforceMissingFieldPolicy(seen);
         } catch (DieselIOException e) {
             if (skipRow(null, e)) {
-                return null;
+                return new Object[0];
             }
             throw e;
         }
@@ -818,7 +819,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         List<Map<String, Object>> result = new ArrayList<>();
         while (hasNext()) {
             Map<String, Object> row = next();
-            if (row != null) {
+            if (!row.isEmpty()) {
                 result.add(row);
             }
         }

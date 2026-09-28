@@ -222,7 +222,9 @@ public class PreparedStatement {
             throw new IllegalArgumentException(
                     "Prepared statement is not a SELECT: " + sqlTemplate);
         }
-        return (List<Map<String, Object>>) result;
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> castResult = (List<Map<String, Object>>) result;
+        return castResult;
     }
 
     /**

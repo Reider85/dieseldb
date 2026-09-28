@@ -74,7 +74,7 @@ class ConditionEvaluator {
             return evaluateInCondition(rowValue, condition, columnTypes);
         }
 
-        Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass(), columnTypes);
+        Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass());
         if (conditionValue == null) {
             LOGGER.log(Level.FINE, "Condition value for column {0} is null, condition is UNKNOWN", condition.column);
             return UNKNOWN;
@@ -108,7 +108,7 @@ class ConditionEvaluator {
     private ThreeValuedLogic evaluateInCondition(Object rowValue, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
         boolean inResult = false;
         for (Object value : condition.inValues) {
-            Object convertedValue = convertConditionValue(value, condition.column, rowValue.getClass(), columnTypes);
+            Object convertedValue = convertConditionValue(value, condition.column, rowValue.getClass());
             if (valuesEqual(rowValue, convertedValue)) {
                 inResult = true;
                 break;
@@ -181,13 +181,10 @@ class ConditionEvaluator {
      * Converts a condition value to the target column type.
      */
     @Nullable
-    Object convertConditionValue(Object value, String column, Class<?> targetType, Map<String, Class<?>> columnTypes) {
+    Object convertConditionValue(Object value, String column, Class<?> targetType) {
         if (value == null) {
             return null;
         }
-        // Prompt 22 (java:S2259): columnTypes.get(column) may be null when the
-        // table schema lacks the column; pass the value through rather than
-        // NPE on targetType.isAssignableFrom below.
         if (targetType == null) {
             return value;
         }

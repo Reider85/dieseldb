@@ -1210,7 +1210,7 @@ class QueryParser {
             if (result.hasSequence) {
                 parseSequenceColumn(result.colName, result.type, result.constraints, colDef, result.colParts, sequences, columnTypes);
             } else {
-                columnTypes.put(result.colName, resolveColumnJavaType(result.type, colDef));
+                columnTypes.put(result.colName, resolveColumnJavaType(result.type));
             }
 
             if (result.isPrimaryKey) {
@@ -1292,7 +1292,7 @@ class QueryParser {
         columnTypes.put(colName, seqType);
     }
 
-    private Class<?> resolveColumnJavaType(String type, String colDef) {
+    private Class<?> resolveColumnJavaType(String type) {
         return switch (type) {
             case SqlKeywords.TYPE_STRING -> String.class;
             case SqlKeywords.TYPE_INTEGER -> Integer.class;
@@ -1346,7 +1346,7 @@ class QueryParser {
             if (inQuotes[0]) {
                 i = processCharInQuotes(c, i, input, current, inQuotes);
             } else {
-                processCharOutsideQuotes(c, input, current, inQuotes, parenDepth, parts);
+                processCharOutsideQuotes(c, current, inQuotes, parenDepth, parts);
             }
         }
 
@@ -1374,7 +1374,7 @@ class QueryParser {
         return i;
     }
 
-    private void processCharOutsideQuotes(char c, String input, StringBuilder current,
+    private void processCharOutsideQuotes(char c, StringBuilder current,
                                           boolean[] inQuotes, int[] parenDepth, List<String> parts) {
         if (c == '\'') {
             inQuotes[0] = true;
@@ -2933,7 +2933,7 @@ class QueryParser {
         
         return switch (getConditionType(condStr)) {
             case GROUPED -> parseGroupedCondition(condStr, ctx, conjunction, not);
-            case IN -> parseInCondition(condStr, ctx, conjunction, not);
+                        case IN -> parseInCondition(condStr, ctx, conjunction);
             case SINGLE -> parseSingleCondition(condStr, ctx, conjunction, not, condStr);
         };
     }
@@ -3026,7 +3026,7 @@ class QueryParser {
         }
 
         if (isInCondition(normalizedCondStr)) {
-            return parseInCondition(normalizedCondStr, ctx, conjunction, not);
+            return parseInCondition(normalizedCondStr, ctx, conjunction);
         }
 
         if (isNullCondition(normalizedCondStr)) {
@@ -3082,7 +3082,7 @@ class QueryParser {
         return inPattern.matcher(condStr).matches();
     }
 
-    private Condition parseInCondition(String condStr, ParseContext ctx, String conjunction, boolean not) {
+    private Condition parseInCondition(String condStr, ParseContext ctx, String conjunction) {
         Pattern inPattern = IN_CONDITION_PATTERN;
         Matcher inMatcher = inPattern.matcher(condStr);
         if (!inMatcher.matches()) {
@@ -3236,7 +3236,7 @@ class QueryParser {
 
         Operator operator = parseOperator(operatorInfo.operator);
 
-        if (ctx.isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn, ctx.tableAliases)) {
+        if (ctx.isJoinCondition && !rightColumnIsFromDifferentTable(actualColumn, rightColumn)) {
             throw new IllegalArgumentException("Join condition must compare columns from different tables: " + condStr);
         }
 
@@ -3391,7 +3391,7 @@ class QueryParser {
         return rightPart.trim();
     }
 
-    private boolean rightColumnIsFromDifferentTable(String leftColumn, String rightColumn, Map<String, String> tableAliases) {
+    private boolean rightColumnIsFromDifferentTable(String leftColumn, String rightColumn) {
         if (rightColumn == null) {
             return true;
         }

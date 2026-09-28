@@ -3,8 +3,6 @@ package diesel.storage.avro;
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.avro.SchemaBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import diesel.SqlKeywords;
 
@@ -50,8 +48,6 @@ import java.util.UUID;
  * @since Prompt 58
  */
 public final class AvroTypeMapper {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(AvroTypeMapper.class);
 
     private AvroTypeMapper() { }
 
