@@ -800,3 +800,5 @@ chore: test-profiles-audit changelog entry
 3.2.13 Replace instanceof+cast with pattern matching in SelectQuery.java (S6201)
 
 3.2.14 Fix S6201: Replace instanceof+cast with pattern matching in AVRO module and storage files
+
+3.2.15 Revert broken null-to-emptyList refactor in SelectQuery.java: commit 4278756 was mislabeled S6201 but was an S1168 mass refactor that dropped the durationNanos arg from QueryOptimizer.recordExecution (line 1007) and the columnTypes arg from ConditionEvaluator.convertConditionValue (lines 2983/3079/3088/3098), breaking compilation; it also conflated 'index not applicable' with 'index matched 0 rows' via isEmpty() in place of ==null, collapsing the hash-join build side to a full table scan (OOM risk), and terminated spill-partition reads early on legitimate zero-column rows via while(!(row=readBinaryRow(in)).isEmpty()). Restores correct null semantics. Re-applies only the 3 genuine S6201 pattern-matching hunks (avroCompareValues, avroValuesEqual, collectNumericValues). fast 186/0/0/0, core 2157/0/0/1351 BUILD SUCCESS
