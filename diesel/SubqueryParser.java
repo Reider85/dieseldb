@@ -628,12 +628,16 @@ public class SubqueryParser {
         if (onIndex == -1) {
             return "";
         }
+        int endIndex = findNextClausePosition(joinPart, onIndex + 2);
+        return joinPart.substring(onIndex + 2, endIndex).trim();
+    }
+
+    private int findNextClausePosition(String joinPart, int startPos) {
         int parenDepth = 0;
         boolean inQuotes = false;
-        int endIndex = joinPart.length();
-
         Pattern clausePattern = Pattern.compile("(?i)\\b(WHERE|GROUP\\s+BY|ORDER\\s+BY|LIMIT)\\b");
-        for (int i = onIndex + 2; i < joinPart.length(); i++) {
+        
+        for (int i = startPos; i < joinPart.length(); i++) {
             char c = joinPart.charAt(i);
             if (c == '\'') {
                 inQuotes = !inQuotes;
@@ -645,13 +649,12 @@ public class SubqueryParser {
                 } else if (parenDepth == 0) {
                     Matcher clauseMatcher = clausePattern.matcher(joinPart).region(i, joinPart.length());
                     if (clauseMatcher.lookingAt()) {
-                        endIndex = i;
-                        break;
+                        return i;
                     }
                 }
             }
         }
-        return joinPart.substring(onIndex + 2, endIndex).trim();
+        return joinPart.length();
     }
 
     private void validateJoinCondition(QueryParser.Condition cond, String leftTable, String rightTable, Map<String, String> tableAliases) {
@@ -825,26 +828,25 @@ public class SubqueryParser {
             TokenMatchResult match = matchClauseToken(query, currentPos, quotedStringPattern, openParenPattern,
                     closeParenPattern, clausePattern, wordPattern);
 
-            if (match == null) {
+            if (match != null) {
+                int newDepth = updateParenDepth(match, parenDepth);
+                inSubQuery = updateSubQueryFlag(match, newDepth, inSubQuery, query);
+                parenDepth = newDepth;
+
+                if (parenDepth < 0) {
+                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
+                            new Object[]{match.start(), query});
+                    return -1;
+                }
+                if (match.tokenType().equals(MessageConstants.TOKEN_CLAUSE) && parenDepth == 0 && !inSubQuery) {
+                    LOGGER.log(Level.FINEST, "Considering clause {0} at position {1}, query: {2}",
+                            new Object[]{match.token(), match.start(), query});
+                    clauseIndex = match.start();
+                }
+                currentPos = match.nextPos();
+            } else {
                 currentPos++;
-                continue;
             }
-
-            int newDepth = updateParenDepth(match, parenDepth);
-            inSubQuery = updateSubQueryFlag(match, newDepth, inSubQuery, query);
-            parenDepth = newDepth;
-
-            if (parenDepth < 0) {
-                LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                        new Object[]{match.start(), query});
-                return -1;
-            }
-            if (match.tokenType().equals(MessageConstants.TOKEN_CLAUSE) && parenDepth == 0 && !inSubQuery) {
-                LOGGER.log(Level.FINEST, "Considering clause {0} at position {1}, query: {2}",
-                        new Object[]{match.token(), match.start(), query});
-                clauseIndex = match.start();
-            }
-            currentPos = match.nextPos();
         }
 
         if (parenDepth != 0) {
@@ -1397,8 +1399,15 @@ for (int i = 0; i < input.length(); i++) {
     }
 
     private String extractSubQueryString(String subQueryContent) {
+        int endIndex = findMatchingClosingParen(subQueryContent);
+        if (endIndex == -1) {
+            throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryContent);
+        }
+        return subQueryContent.substring(0, endIndex).trim();
+    }
+
+    private int findMatchingClosingParen(String subQueryContent) {
         int parenDepth = 1;
-        int endIndex = -1;
         boolean inQuotes = false;
         for (int i = 0; i < subQueryContent.length(); i++) {
             char c = subQueryContent.charAt(i);
@@ -1410,16 +1419,12 @@ for (int i = 0; i < input.length(); i++) {
                 } else if (c == ')') {
                     parenDepth--;
                     if (parenDepth == 0) {
-                        endIndex = i;
-                        break;
+                        return i;
                     }
                 }
             }
         }
-        if (endIndex == -1) {
-            throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subQueryContent);
-        }
-        return subQueryContent.substring(0, endIndex).trim();
+        return -1;
     }
 
     private void validateSubQuery(String subQueryStr) {
@@ -1645,7 +1650,7 @@ for (int i = 0; i < input.length(); i++) {
                 handleCloseParen(state, conditions, ctx, aggregates);
             } else if (!state.inQuotes && state.parenDepth == 0 && c == ' ') {
                 int newI = handleSpaceSeparator(i, havingClause, state, conditions, ctx, aggregates);
-                if (newI == AND_OR_BREAK_SENTINEL) {
+                if (shouldBreakHavingProcessing(newI)) {
                     break;
                 }
                 if (newI != i) {
@@ -1706,6 +1711,10 @@ for (int i = 0; i < input.length(); i++) {
             return i + nextToken.length();
         }
         return i;
+    }
+
+    private boolean shouldBreakHavingProcessing(int result) {
+        return result == AND_OR_BREAK_SENTINEL;
     }
 
     private void appendFinalCondition(HavingParseState state, List<QueryParser.HavingCondition> conditions,
