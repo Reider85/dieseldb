@@ -220,7 +220,6 @@ public class AvroDataFileWriter {
                     byte[] payload = new byte[(int) size];
                     readFully(ch, payloadStart, payload);
                     byte[] data = decompress(codecName, payload);
-                    long crc = AvroBlockManager.computeCRC32(data);
                     mgr.addBlock(index, count, size, data.length, data, payloadStart, syncPos);
                     index++;
                     pos = syncPos + AvroBlockManager.SYNC_SIZE;

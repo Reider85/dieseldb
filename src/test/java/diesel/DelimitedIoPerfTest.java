@@ -158,7 +158,6 @@ class DelimitedIoPerfTest {
         // TSV baseline: legacy streaming via TsvRowReader(BufferedReader)
         long tsvLegacyMs = timeTsvLegacyRead(tsv);
         long tsvFastMs = timeStorageLoad("BASE_TSV", false, false);
-        double tsvSpeedup = (double) tsvLegacyMs / tsvFastMs;
 
         System.out.printf(Locale.ROOT,
                 "[DELIM-IO-BASELINE] csvLegacy=%dms csvFast=%dms csvSpeedup=%.2fx "

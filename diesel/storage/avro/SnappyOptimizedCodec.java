@@ -138,7 +138,6 @@ public final class SnappyOptimizedCodec {
 
         double stringRatio = (double) stringCount / total;
         double numberRatio = (double) numberCount / total;
-        double booleanRatio = (double) booleanCount / total;
 
         if (stringRatio > 0.7) {
             return DataTypePattern.TEXT;
@@ -279,7 +278,7 @@ public final class SnappyOptimizedCodec {
      */
     public static BenchmarkResult benchmarkCompression(List<?> data, int bufferSize) {
         long startTime = System.nanoTime();
-        CodecFactory factory = newCodec();
+        newCodec();
         long factoryTime = System.nanoTime() - startTime;
 
         // Simulate compression (in real implementation, this would actually compress data)

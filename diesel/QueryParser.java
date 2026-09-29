@@ -3229,9 +3229,8 @@ class QueryParser {
         String normalizedColumn = normalizeColumnName(actualColumn, ctx.defaultTableName, ctx.tableAliases);
         validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
-        String rightColumn = null;
         RightPart rightPartResult = parseRightPart(actualRightPart, actualColumn, ctx);
-        rightColumn = rightPartResult.column();
+        String rightColumn = rightPartResult.column();
         Object value = rightPartResult.value();
 
         Operator operator = parseOperator(operatorInfo.operator);

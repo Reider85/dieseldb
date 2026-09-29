@@ -473,7 +473,7 @@ class AvroIntegrityCheckerTest {
     @Test
     void scanAllDetectsCorruptFile() throws IOException {
         System.setProperty(AvroIntegrityChecker.STORE_SIDECAR_KEY, "true");
-        File good = writeMultiBlock(200);
+        writeMultiBlock(200);
         File bad = writeMultiBlock(300);
 
         AvroIntegrityChecker base = AvroIntegrityChecker.resolve();

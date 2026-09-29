@@ -95,7 +95,7 @@ public class SocketTimeoutTest {
             out.flush();
 
             ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-            int marker = in.read();
+            in.read();
             int dataLength = in.readInt();
             byte[] data = new byte[dataLength];
             in.readFully(data);
