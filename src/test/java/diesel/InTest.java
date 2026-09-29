@@ -229,7 +229,10 @@ public class InTest {
     @Test
     void updateInWithDuplicatedValuesAppliesUpdateOnce() {
         database.executeQuery("UPDATE USERS SET BALANCE = 0 WHERE AGE IN (50, 50, 51, 51, 52, 52)", null);
-        assertEquals(21L, runSelect("SELECT COUNT(*) FROM USERS WHERE BALANCE = 0").size());
+        List<Map<String, Object>> rows = runSelect("SELECT COUNT(*) FROM USERS WHERE BALANCE = 0");
+        assertEquals(1, rows.size(), "COUNT(*) must collapse the matched rows into a single aggregate row");
+        assertEquals(21L, ((Number) rows.get(0).get("COUNT(*)")).longValue(),
+                "the duplicated IN list must update each of the 21 matching rows exactly once");
     }
 
     @Test
