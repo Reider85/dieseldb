@@ -271,28 +271,37 @@ public final class AvroRestoreManager {
         LOGGER.info("Avro restore: validating {} files in backup...", manifest.files().size());
         int invalid = 0;
         for (AvroBackupManager.BackedUpFile entry : manifest.files()) {
-            if (!entry.success()) continue;
-            Path filePath = backupDir.toPath().resolve(entry.path());
-            if (!Files.exists(filePath)) {
-                LOGGER.error("Avro restore: backup file missing: {}", entry.path());
+            if (!validateSingleEntry(backupDir, entry)) {
                 invalid++;
-                continue;
-            }
-            if (entry.crc32() >= 0) {
-                long actualCrc = computeCrc(filePath);
-                if (actualCrc != entry.crc32()) {
-                    LOGGER.error("Avro restore: CRC mismatch for {} (expected={}, actual={})",
-                            entry.path(),
-                            Long.toHexString(entry.crc32()),
-                            Long.toHexString(actualCrc));
-                    invalid++;
-                }
             }
         }
         if (invalid > 0) {
             throw new IOException("Backup validation failed: " + invalid + " file(s) invalid");
         }
         LOGGER.info("Avro restore: validation passed — all files OK");
+    }
+
+    private static boolean validateSingleEntry(File backupDir, AvroBackupManager.BackedUpFile entry)
+            throws IOException {
+        if (!entry.success()) {
+            return false;
+        }
+        Path filePath = backupDir.toPath().resolve(entry.path());
+        if (!Files.exists(filePath)) {
+            LOGGER.error("Avro restore: backup file missing: {}", entry.path());
+            return false;
+        }
+        if (entry.crc32() >= 0) {
+            long actualCrc = computeCrc(filePath);
+            if (actualCrc != entry.crc32()) {
+                LOGGER.error("Avro restore: CRC mismatch for {} (expected={}, actual={})",
+                        entry.path(),
+                        Long.toHexString(entry.crc32()),
+                        Long.toHexString(actualCrc));
+                return false;
+            }
+        }
+        return true;
     }
 
     private static long computeCrc(Path file) throws IOException {

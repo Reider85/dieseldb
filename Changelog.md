@@ -818,3 +818,5 @@ chore: test-profiles-audit changelog entry
 3.2.25 S135: Remove break/continue from SubqueryParser.java loops, extract decision logic into helper methods
 
 3.2.26 Prompt 34: Remove break/continue from SubqueryParser.java loops, extract decision logic into helper methods
+
+3.2.27 S135: extract validateSingleEntry to eliminate 2 continues in same loop in AvroRestoreManager.validateManifest
