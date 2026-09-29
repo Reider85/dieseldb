@@ -55,6 +55,12 @@ public class InTest {
         return (List<Map<String, Object>>) database.executeQuery(sql, null);
     }
 
+    private long updateAffectedRows(String sql) {
+        UpdateQuery query = (UpdateQuery) new QueryParser().parse(sql, database);
+        query.execute(database.getTable("USERS"));
+        return query.getLastAffectedRows();
+    }
+
     @Test
     void selectWithWhereInBTreeIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)", null), "selectWithWhereInBTreeIndex");
@@ -208,6 +214,32 @@ public class InTest {
             database.executeQuery("UPDATE USERS SET BALANCE = 6000 WHERE ID IN (500, 501, 502) AND BALANCE > 5000", null);
             database.getTable("USERS").saveToFile("USERS");
         }, "updateWithWhereInPrimaryKeyAndNonIndexed");
+    }
+
+    @Test
+    void updateInWithDistinctValuesCountsEveryRow() {
+        assertEquals(21L, updateAffectedRows("UPDATE USERS SET BALANCE = 6000 WHERE AGE IN (50, 51, 52)"));
+    }
+
+    @Test
+    void updateInWithDuplicatedValuesCountsEachRowOnce() {
+        assertEquals(21L, updateAffectedRows("UPDATE USERS SET BALANCE = 6000 WHERE AGE IN (50, 50, 51, 51, 52, 52)"));
+    }
+
+    @Test
+    void updateInWithDuplicatedValuesAppliesUpdateOnce() {
+        database.executeQuery("UPDATE USERS SET BALANCE = 0 WHERE AGE IN (50, 50, 51, 51, 52, 52)", null);
+        assertEquals(21L, runSelect("SELECT COUNT(*) FROM USERS WHERE BALANCE = 0").size());
+    }
+
+    @Test
+    void updateInWithDuplicatedHashIndexValuesCountsEachRowOnce() {
+        assertEquals(2L, updateAffectedRows("UPDATE USERS SET BALANCE = 6000 WHERE NAME IN ('User500', 'User500', 'User501')"));
+    }
+
+    @Test
+    void updateInWithSingleDuplicatedValueCountsEachRowOnce() {
+        assertEquals(7L, updateAffectedRows("UPDATE USERS SET BALANCE = 6000 WHERE AGE IN (50, 50)"));
     }
 
     @Test

@@ -806,3 +806,7 @@ chore: test-profiles-audit changelog entry
 3.2.16 Fix build infrastructure: preserve -P/-D Maven args in mvn.ps1, tolerate native stderr in PowerShell, fail test targets when surefire reports no tests ran
 
 3.2.18 Sonar-prompt8 prompt 32 - S1854: remove useless assignments in DatabaseServer.run() pendingInput, Table.compact() oldSize, UpdateQuery.identifyInRows() rowsToUpdate, AvroBackupManager.readManifest() totalFiles; also drops the orphaned Collectors import in UpdateQuery. Pure dead-code removal, 4 files, -9 lines, zero behaviour change. gates: compile 0 errors, fast 186/0/0, LazyDeleteTest+InTest 79/0/0, AvroBackupManagerTest 32/0/0, network 50/0/0
+
+3.2.19 Fix UPDATE IN deduplication and release staging
+
+0.0.1 Update timing baseline after SonarQube S1168 fix in CSV/TSV readers

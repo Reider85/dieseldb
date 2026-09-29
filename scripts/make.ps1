@@ -94,7 +94,7 @@ function Invoke-ChangelogCommit {
         exit 1
     }
 
-    Invoke-Native -FilePath $gitCmd -Arguments @("add", "Changelog.md", "changelog_entry.txt")
+    Invoke-Native -FilePath $gitCmd -Arguments @("add", "-A")
     if ($LASTEXITCODE -ne 0) {
         Write-Error "git add failed (exit $LASTEXITCODE)."
         exit 1

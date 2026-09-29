@@ -250,7 +250,7 @@ LOGGER.warn(msg);
     @Override
     public Map<String, Object> next() {
         Object[] values = nextArray();
-        if (values == null) {
+        if (values == null || values.length == 0) {
             return Collections.emptyMap();
         }
         Map<String, Object> row = new HashMap<>();
@@ -393,7 +393,7 @@ LOGGER.warn(msg);
         }
         if (rowSkipped) {
             rowSkipped = false;
-            return new Object[0];
+            return null;
         }
         return values;
     }
@@ -545,7 +545,7 @@ LOGGER.warn(msg);
         if ("skip_row".equalsIgnoreCase(mode)) {
             LOGGER.warn(msg);
             prefetch();
-            return new Object[0];
+            return null;
         }
         if ("skip_value".equalsIgnoreCase(mode)) {
             LOGGER.warn(msg);

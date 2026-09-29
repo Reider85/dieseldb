@@ -2,6 +2,7 @@ package diesel;
 
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
@@ -188,7 +189,8 @@ class UpdateQuery implements Query<Void> {
                 && !conditions.get(0).not) {
             identifyEqualsRows(table, columnTypes, rowsToUpdate);
         } else if (conditions.size() == 1 && !conditions.get(0).isGrouped()
-                && conditions.get(0).isInOperator() && !conditions.get(0).not) {
+                && conditions.get(0).isInOperator() && !conditions.get(0).not
+                && conditions.get(0).subQuery == null) {
             identifyInRows(table, columnTypes, rowsToUpdate);
         } else if (conditions.size() == 1 && !conditions.get(0).isGrouped()
                 && !conditions.get(0).not && !conditions.get(0).isInOperator()
@@ -238,6 +240,9 @@ class UpdateQuery implements Query<Void> {
                         columnTypes.get(condition.column));
                 rowsToUpdate.addAll(index.search(convertedValue));
             }
+            List<Integer> deduped = rowsToUpdate.stream().distinct().sorted().collect(Collectors.toList());
+            rowsToUpdate.clear();
+            rowsToUpdate.addAll(deduped);
             LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} IN (...)",
                     new Object[]{index instanceof HashIndex ? "hash"
                             : index instanceof BTreeIndex ? "B-tree" : "unique",

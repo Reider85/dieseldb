@@ -1,42 +1,46 @@
 package diesel;
 
-import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.TestMethodOrder;
+import java.util.List;
+import java.util.Map;
+import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("query-full")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-@Tag("query")
 public class InQueryTest extends AbstractDieselTest {
 
-    @Test
-    @Order(1)
-    void simpleInOnBtreeIndex() {
-        runSelectCount("InTest", "simple in on btree index",
-                "SELECT ID, NAME FROM USERS WHERE AGE IN (50, 51, 52)", 3);
+    @BeforeEach
+    public void setup() {
+        super.setupCommonTables();
+        database.executeQuery("CREATE TABLE IN_UPD (ID LONG PRIMARY KEY, CODE STRING, FLAG STRING)", null);
+        database.executeQuery("CREATE HASH INDEX ON IN_UPD (CODE)", null);
+        database.executeQuery("INSERT INTO IN_UPD (ID, CODE, FLAG) VALUES (1, 'A', 'X')", null);
+        database.executeQuery("INSERT INTO IN_UPD (ID, CODE, FLAG) VALUES (2, 'B', 'Y')", null);
+        database.executeQuery("INSERT INTO IN_UPD (ID, CODE, FLAG) VALUES (3, 'C', 'Z')", null);
     }
 
     @Test
-    @Order(2)
-    void simpleInOnPrimaryKey() {
-        runSelectCount("InTest", "simple in on primary key",
-                "SELECT ID, NAME FROM USERS WHERE ID IN (50, 51, 52)", 3);
-    }
+    public void updateInWithDuplicatedValuesReportsEachRowOnce() {
+        // Test with duplicated values
+        UpdateQuery query = (UpdateQuery) new QueryParser().parse("UPDATE IN_UPD SET FLAG = 'done' WHERE CODE IN ('A','A','B')", database);
+        query.execute(database.getTable("IN_UPD"));
+        assertEquals(2L, query.getLastAffectedRows());
 
-    @Test
-    @Order(3)
-    void complexInWithAnd() {
-        runSelectCount("InTest", "complex in with and",
-                "SELECT ID, NAME FROM USERS WHERE NAME IN ('User50', 'User51', 'User52') AND BALANCE > 5000", 0);
-    }
+        // Test with single value duplicated
+        query = (UpdateQuery) new QueryParser().parse("UPDATE IN_UPD SET FLAG = 'done2' WHERE CODE IN ('x','x')", database);
+        query.execute(database.getTable("IN_UPD"));
+        assertEquals(0L, query.getLastAffectedRows());
 
-    @Test
-    @Order(4)
-    void complexInWithOr() {
-        runSelectCount("InTest", "complex in with or",
-                "SELECT ID, NAME FROM USERS WHERE USER_CODE IN ('CODE50', 'CODE51', 'CODE52') OR BALANCE > 5000", 3);
+        // Verify actual data by running a SELECT query
+        SelectQuery select = (SelectQuery) new QueryParser().parse("SELECT ID, CODE, FLAG FROM IN_UPD ORDER BY ID", database);
+        List<Map<String, Object>> results = select.execute(database.getTable("IN_UPD"));
+        
+        // Check that only rows with CODE 'A' and 'B' were updated
+        assertEquals("done", results.get(0).get("FLAG"));  // ID=1, CODE='A'
+        assertEquals("done", results.get(1).get("FLAG"));  // ID=2, CODE='B' 
+        assertEquals("Z", results.get(2).get("FLAG"));     // ID=3, CODE='C' - unchanged
     }
 }

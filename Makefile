@@ -111,7 +111,7 @@ changelog:
 release:
 	@if [ -z "$(DESC)" ]; then echo "Usage: make release DESC=\"description\""; exit 1; fi
 	$(CHANGELOG) "$(DESC)"
-	git add Changelog.md changelog_entry.txt
+	git add -A
 	git commit -F changelog_entry.txt
 	$(GIT_PUSH)
 
@@ -119,7 +119,7 @@ release:
 release-local:
 	@if [ -z "$(DESC)" ]; then echo "Usage: make release-local DESC=\"description\""; exit 1; fi
 	$(CHANGELOG) "$(DESC)"
-	git add Changelog.md changelog_entry.txt
+	git add -A
 	git commit -F changelog_entry.txt
 
 ## Run fast profile: smoke + index + query
