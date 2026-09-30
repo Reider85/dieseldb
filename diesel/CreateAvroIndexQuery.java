@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 public class CreateAvroIndexQuery {
 
     private static final Pattern INDEX_PATTERN = Pattern.compile(
-        "CREATE\\s+(UNIQUE\\s+)?INDEX\\s+(IF\\s+NOT\\s+EXISTS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\\s+ON\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(([^)]+)\\)",
+        "CREATE\\s+(UNIQUE\\s+)?INDEX\\s+(IF\\s+NOT\\s+EXISTS\\s+)?([a-zA-Z_]\\w*)\\s+ON\\s+([a-zA-Z_]\\w*)\\s*\\(([^)]+)\\)",
         Pattern.CASE_INSENSITIVE
     );
 
