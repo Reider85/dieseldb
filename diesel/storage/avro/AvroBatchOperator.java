@@ -611,7 +611,7 @@ public final class AvroBatchOperator implements AutoCloseable {
         if (val == null) return fallback;
         try {
             int parsed = Integer.parseInt(val.trim());
-            int clamped = Math.max(min, Math.min(max, parsed));
+            int clamped = Math.clamp(parsed, min, max);
             if (clamped != parsed) {
                 LOGGER.warn("{} value {} out of range [{}, {}] — clamped to {}", key, parsed, min, max, clamped);
             }
@@ -627,7 +627,7 @@ public final class AvroBatchOperator implements AutoCloseable {
         if (val == null) return fallback;
         try {
             double parsed = Double.parseDouble(val.trim());
-            double clamped = Math.max(min, Math.min(max, parsed));
+            double clamped = Math.clamp(parsed, min, max);
             if (clamped != parsed) {
                 LOGGER.warn("{} value {} out of range [{}, {}] — clamped to {}", key, parsed, min, max, clamped);
             }

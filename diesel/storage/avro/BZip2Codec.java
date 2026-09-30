@@ -74,7 +74,7 @@ public final class BZip2Codec {
         if (blockSize < MIN_BLOCK_SIZE || blockSize > MAX_BLOCK_SIZE) {
             LOGGER.warn("AVRO bzip2 block size {} is outside the valid range [{}, {}], clamping",
                     blockSize, MIN_BLOCK_SIZE, MAX_BLOCK_SIZE);
-            return Math.max(MIN_BLOCK_SIZE, Math.min(MAX_BLOCK_SIZE, blockSize));
+            return Math.clamp(blockSize, MIN_BLOCK_SIZE, MAX_BLOCK_SIZE);
         }
         return blockSize;
     }
@@ -187,7 +187,7 @@ public final class BZip2Codec {
                 default -> 0.25;
             };
         }
-        return Math.max(0.05, Math.min(1.0, baseRatio));
+        return Math.clamp(baseRatio, 0.05, 1.0);
     }
 
     /**

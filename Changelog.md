@@ -822,3 +822,13 @@ chore: test-profiles-audit changelog entry
 3.2.27 S135: extract validateSingleEntry to eliminate 2 continues in same loop in AvroRestoreManager.validateManifest
 
 0.0.1 S6885: Replace Math.max/min clamp with Math.clamp in SelectQuery, AvroBloomFilter, AvroBloomFilterConfig
+
+3.2.30 S6885: Replace Math.max/min clamp with Math.clamp in 10 files (12 replacements)
+
+3.2.31 Update PROMPT_STATUS.md for Prompt 37
+
+3.2.32 S6485: Replace new HashMap<>(N) with HashMap.newHashMap(N) in 5 files (14 replacements)
+
+3.2.33 Update PROMPT_STATUS.md for Prompt 38
+
+3.2.34 Sonar-prompt8 S1481: remove unused marker variable in OomHandlingTest

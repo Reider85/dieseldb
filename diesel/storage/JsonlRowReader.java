@@ -250,7 +250,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
         if (values == null || values.length == 0) {
             return Collections.emptyMap();
         }
-        Map<String, Object> row = new HashMap<>(Math.max(columns.size() * 2, 4));
+        Map<String, Object> row = HashMap.newHashMap(Math.max(columns.size() * 2, 4));
         for (int i = 0; i < columns.size(); i++) {
             row.put(columns.get(i), values[i]);
         }
@@ -791,13 +791,13 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     public Map<String, Object> nextProjectedMap() {
         Object[] values = nextProjected();
         if (projectionSlots == null || projectionSlots.isEmpty()) {
-            Map<String, Object> row = new HashMap<>(Math.max(columns.size() * 2, 4));
+            Map<String, Object> row = HashMap.newHashMap(Math.max(columns.size() * 2, 4));
             for (int i = 0; i < columns.size(); i++) {
                 row.put(columns.get(i), values[i]);
             }
             return row;
         }
-        Map<String, Object> row = new HashMap<>(Math.max(projectionSlots.size() * 2, 4));
+        Map<String, Object> row = HashMap.newHashMap(Math.max(projectionSlots.size() * 2, 4));
         for (int s = 0; s < projectionSlots.size(); s++) {
             row.put(projectionSlots.get(s).key(), values[s]);
         }

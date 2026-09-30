@@ -211,7 +211,7 @@ public class OomHandlingTest {
                 out.flush();
 
                 // Read cursor ID: marker byte + length + serialized object
-                byte marker = in.readByte();
+                in.readByte(); // protocol marker byte, value intentionally discarded
                 int len = in.readInt();
                 byte[] data = in.readNBytes(len);
                 Object cursorIdResponse = deserializeBytes(data);

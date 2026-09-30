@@ -404,7 +404,7 @@ public final class DeflateLevelConfig {
                 default -> 1.0;
             };
         }
-        return Math.max(0.05, Math.min(1.0, baseRatio));
+        return Math.clamp(baseRatio, 0.05, 1.0);
     }
 
     /**

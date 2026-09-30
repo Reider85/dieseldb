@@ -1152,7 +1152,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
         List<Object[]> projected = readProjectedArrays(items);
         List<Map<String, Object>> result = new ArrayList<>(projected.size());
         for (Object[] values : projected) {
-            Map<String, Object> row = new HashMap<>(Math.max(items.size() * 2, 4));
+            Map<String, Object> row = HashMap.newHashMap(Math.max(items.size() * 2, 4));
             for (int s = 0; s < items.size(); s++) {
                 row.put(items.get(s), values[s]);
             }

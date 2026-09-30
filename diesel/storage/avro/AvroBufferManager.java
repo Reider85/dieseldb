@@ -260,7 +260,7 @@ public final class AvroBufferManager implements Closeable {
             return Optional.empty();
         }
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
-            long mapSize = Math.max(0L, Math.min(size, channel.size() - Math.max(0L, position)));
+            long mapSize = Math.clamp(size, 0L, channel.size() - Math.max(0L, position));
             if (mapSize == 0L) {
                 return Optional.of(channel.map(FileChannel.MapMode.READ_ONLY, Math.max(0L, position), 0L));
             }

@@ -82,7 +82,7 @@ final class RowArrays {
 
     /** Builds a column-to-value map from an array row (canonical column names). */
     Map<String, Object> toMap(Object[] row) {
-        Map<String, Object> map = new HashMap<>(Math.max(columnNames.size() * 2, 4));
+        Map<String, Object> map = HashMap.newHashMap(Math.max(columnNames.size() * 2, 4));
         for (int i = 0; i < columnNames.size() && row != null && i < row.length; i++) {
             map.put(columnNames.get(i), row[i]);
         }

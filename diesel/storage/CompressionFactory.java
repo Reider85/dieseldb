@@ -111,7 +111,7 @@ public final class CompressionFactory {
         if (level < ZSTD_MIN_LEVEL || level > ZSTD_MAX_LEVEL) {
             LOGGER.warn("{} value {} is outside the valid ZSTD range [{}, {}], clamping",
                     levelKey, level, ZSTD_MIN_LEVEL, ZSTD_MAX_LEVEL);
-            return Math.max(ZSTD_MIN_LEVEL, Math.min(ZSTD_MAX_LEVEL, level));
+            return Math.clamp(level, ZSTD_MIN_LEVEL, ZSTD_MAX_LEVEL);
         }
         return level;
     }

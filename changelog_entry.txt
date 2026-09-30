@@ -1,1 +1,1 @@
-0.0.1 S6885: Replace Math.max/min clamp with Math.clamp in SelectQuery, AvroBloomFilter, AvroBloomFilterConfig
+3.2.34 Sonar-prompt8 S1481: remove unused marker variable in OomHandlingTest

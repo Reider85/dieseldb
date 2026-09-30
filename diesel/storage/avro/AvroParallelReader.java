@@ -212,7 +212,7 @@ public final class AvroParallelReader implements Closeable {
         if (blocks.isEmpty()) {
             return List.of();
         }
-        int effective = Math.min(Math.max(1, workers), blocks.size());
+        int effective = Math.clamp(workers, 1, blocks.size());
         long total = 0;
         for (BlockEntry b : blocks) {
             total += b.payloadSize;

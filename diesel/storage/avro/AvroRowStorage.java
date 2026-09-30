@@ -177,7 +177,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     private Map<String, Object> toMap(Object[] row) {
-        Map<String, Object> map = new HashMap<>(Math.max(colNames.size() * 2, 4));
+        Map<String, Object> map = HashMap.newHashMap(Math.max(colNames.size() * 2, 4));
         for (int i = 0; i < colNames.size() && row != null && i < row.length; i++) {
             map.put(colNames.get(i), row[i]);
         }

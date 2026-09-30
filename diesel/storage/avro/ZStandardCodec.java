@@ -55,7 +55,7 @@ public final class ZStandardCodec {
         if (level < MIN_LEVEL || level > MAX_LEVEL) {
             LOGGER.warn("AVRO zstandard level {} is outside the valid range [{}, {}], clamping",
                     level, MIN_LEVEL, MAX_LEVEL);
-            return Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, level));
+            return Math.clamp(level, MIN_LEVEL, MAX_LEVEL);
         }
         return level;
     }

@@ -960,7 +960,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             List<Map<String, Map<String, Object>>> joinedRows = new ArrayList<>();
             for (Map<String, Object> mainRow : mainRows) {
                 checkResultRowLimit(joinedRows.size(), "main scan");
-                Map<String, Map<String, Object>> wrapped = new HashMap<>(2);
+                Map<String, Map<String, Object>> wrapped = HashMap.newHashMap(2);
                 wrapped.put(mainTableName, mainRow);
                 joinedRows.add(wrapped);
             }
@@ -1607,13 +1607,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                                List<Map<String, Map<String, Object>>> newJoinedRows, JoinContext ctx) {
         if (ctx.onlyEquality) {
             if (ctx.lastStream) {
-                Map<String, Object> flatRow = new HashMap<>((probeRow.size() + buildRow.size()) * 4 / 3 + 1);
+                Map<String, Object> flatRow = HashMap.newHashMap(probeRow.size() + buildRow.size());
                 flattenInto(flatRow, probeRow, ctx.probeTableName);
                 flattenInto(flatRow, buildRow, ctx.buildTableName);
                 spillFilteredRow(ctx.spill, ctx.spillActive, ctx.spillFallback, flatRow,
                         ctx.whereConditions, ctx.combinedColumnTypes, ctx.tables);
             } else {
-                Map<String, Map<String, Object>> newRow = new HashMap<>(2);
+                Map<String, Map<String, Object>> newRow = HashMap.newHashMap(2);
                 newRow.put(ctx.probeTableName, probeRow);
                 newRow.put(ctx.buildTableName, buildRow);
                 checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
@@ -1626,7 +1626,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     spillFilteredRow(ctx.spill, ctx.spillActive, ctx.spillFallback, flattenedRow,
                             ctx.whereConditions, ctx.combinedColumnTypes, ctx.tables);
                 } else {
-                    Map<String, Map<String, Object>> newRow = new HashMap<>(2);
+                    Map<String, Map<String, Object>> newRow = HashMap.newHashMap(2);
                     newRow.put(ctx.probeTableName, probeRow);
                     newRow.put(ctx.buildTableName, buildRow);
                     checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
@@ -1674,7 +1674,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         Object leftValue = keyMapping.equalsJoin() ? leftRow.get(keyMapping.leftJoinKey()) : null;
         for (int j = 0; j < joinRows.size(); j++) {
             Map<String, Object> rightRow = joinRows.get(j);
-            Map<String, Object> flatRow = new HashMap<>(evalRow.size() + keyMapping.rightSrcKeys().size() + 1);
+            Map<String, Object> flatRow = HashMap.newHashMap(evalRow.size() + keyMapping.rightSrcKeys().size() + 1);
             flatRow.putAll(evalRow);
             for (int k = 0; k < keyMapping.rightSrcKeys().size(); k++) {
                 flatRow.put(keyMapping.rightTargetKeys().get(k), rightRow.get(keyMapping.rightSrcKeys().get(k)));
@@ -1880,7 +1880,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         } catch (EOFException eof) {
             return null;
         }
-        Map<String, Object> row = new HashMap<>(n);
+        Map<String, Object> row = HashMap.newHashMap(n);
         for (int k = 0; k < n; k++) {
             String key = in.readUTF();
             byte t = in.readByte();
@@ -3161,7 +3161,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         for (Map<String, Object> row : joinedRow.values()) {
             capacity += row.size();
         }
-        Map<String, Object> flattened = new HashMap<>(capacity);
+        Map<String, Object> flattened = HashMap.newHashMap(capacity);
         for (Map.Entry<String, Map<String, Object>> tableEntry : joinedRow.entrySet()) {
             String tableName = tableEntry.getKey();
             flattenInto(flattened, tableEntry.getValue(), tableName);
@@ -3176,7 +3176,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
      */
     private Map<String, Object> flattenJoinedPair(Map<String, Object> leftRow, String leftTable,
                                                   Map<String, Object> rightRow, String rightTable) {
-        Map<String, Object> flat = new HashMap<>((leftRow.size() + rightRow.size()) * 4 / 3 + 1);
+        Map<String, Object> flat = HashMap.newHashMap(leftRow.size() + rightRow.size());
         flattenInto(flat, leftRow, leftTable);
         flattenInto(flat, rightRow, rightTable);
         return flat;

@@ -172,11 +172,11 @@ public final class SnappyOptimizedCodec {
         // Select based on data type pattern
         switch (pattern) {
             case TEXT:
-                return Math.min(32768, Math.max(16384, totalSize / 1024));
+                return Math.clamp(totalSize / 1024, 16384, 32768);
             case NUMERIC:
-                return Math.min(8192, Math.max(4096, avgRowSize * 4));
+                return Math.clamp(avgRowSize * 4, 4096, 8192);
             case MIXED:
-                return Math.min(16384, Math.max(8192, totalSize / 512));
+                return Math.clamp(totalSize / 512, 8192, 16384);
             case BINARY:
                 return DEFAULT_BUFFER_SIZE;
             default:
