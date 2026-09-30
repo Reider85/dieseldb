@@ -4,8 +4,11 @@ import diesel.Database;
 
 import org.junit.jupiter.api.BeforeAll;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
@@ -24,6 +27,8 @@ public abstract class AbstractDieselTest {
     private static final Logger LOGGER = Logger.getLogger(AbstractDieselTest.class.getName());
     protected static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
 
+    protected static Path tempDir;
+
     protected final Database database = new Database();
     protected int passed = 0;
     protected int failed = 0;
@@ -36,7 +41,12 @@ public abstract class AbstractDieselTest {
     /* ------------------------------------------------------------------ */
 
     @BeforeAll
-    void setupCommonTables() {
+    void setupCommonTables() throws IOException {
+        if (tempDir == null) {
+            tempDir = Files.createTempDirectory("dieseldb-test-");
+            tempDir.toFile().deleteOnExit();
+        }
+        database.setDataDir(tempDir.toString());
         dropTable("USERS");
         dropTable("PROFILES");
         dropTable("TRANSACTIONS");

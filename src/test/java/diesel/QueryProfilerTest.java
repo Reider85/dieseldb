@@ -4,10 +4,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 import java.lang.management.ManagementFactory;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -23,12 +25,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("query-full")
 public class QueryProfilerTest {
 
+    @TempDir
+    static Path tempDir;
+
     private Database database;
     private QueryProfiler profiler;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         dropTable();
         database.executeQuery("CREATE TABLE PROFILER_TEST (ID LONG PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         profiler = QueryProfiler.getInstance();

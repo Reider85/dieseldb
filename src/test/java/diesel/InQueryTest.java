@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
@@ -13,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class InQueryTest extends AbstractDieselTest {
 
     @BeforeEach
-    public void setup() {
+    public void setup() throws IOException {
         super.setupCommonTables();
         database.executeQuery("CREATE TABLE IN_UPD (ID LONG PRIMARY KEY, CODE STRING, FLAG STRING)", null);
         database.executeQuery("CREATE HASH INDEX ON IN_UPD (CODE)", null);
@@ -28,11 +29,13 @@ public class InQueryTest extends AbstractDieselTest {
         UpdateQuery query = (UpdateQuery) new QueryParser().parse("UPDATE IN_UPD SET FLAG = 'done' WHERE CODE IN ('A','A','B')", database);
         query.execute(database.getTable("IN_UPD"));
         assertEquals(2L, query.getLastAffectedRows());
+        database.getTable("IN_UPD").saveToFile("IN_UPD");
 
         // Test with single value duplicated
         query = (UpdateQuery) new QueryParser().parse("UPDATE IN_UPD SET FLAG = 'done2' WHERE CODE IN ('x','x')", database);
         query.execute(database.getTable("IN_UPD"));
         assertEquals(0L, query.getLastAffectedRows());
+        database.getTable("IN_UPD").saveToFile("IN_UPD");
 
         // Verify actual data by running a SELECT query
         SelectQuery select = (SelectQuery) new QueryParser().parse("SELECT ID, CODE, FLAG FROM IN_UPD ORDER BY ID", database);

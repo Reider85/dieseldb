@@ -91,9 +91,14 @@ public final class AvroQueryExecutor {
                 return fallbackScan(storage, allColumns);
             }
 
-            List<Map<String, Object>> rows;
-            long totalScanned;
+            // Collect (or reuse cached) statistics first — this provides the
+            // row count without a separate full-file decode pass.
+            AvroStatistics stats = collectOrReuseStatistics(avroFile, allColumns, columnTypes);
+            long totalScanned = stats != null && stats.getRowCount() >= 0
+                    ? stats.getRowCount()
+                    : estimateTotalRows(avroFile, allColumns, columnTypes);
 
+            List<Map<String, Object>> rows;
             if (config.pushdownEnabled() && predicate != null) {
                 rows = readWithPushdown(avroFile, requiredColumns, allColumns,
                         columnTypes, predicate, limit);
@@ -102,13 +107,11 @@ public final class AvroQueryExecutor {
             } else {
                 rows = readFull(avroFile, allColumns, columnTypes, limit);
             }
-            totalScanned = estimateTotalRows(avroFile, allColumns, columnTypes);
 
             long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
             LOGGER.debug("AvroQueryExecutor: {} rows returned, {} scanned in {} ms (file={})",
                     rows.size(), totalScanned, elapsedMs, avroFile.getName());
 
-            AvroStatistics stats = collectOrReuseStatistics(avroFile, allColumns, columnTypes);
             return new QueryResult(rows, totalScanned, stats);
 
         } catch (IOException e) {

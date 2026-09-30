@@ -161,9 +161,7 @@ public class SidecarSerializer {
     }
 
     private byte[] getFilterBits(AvroBloomFilter filter, int index) {
-        // This would need to access the internal BlockFilter bits
-        // For now, return empty array - actual implementation would need reflection or API change
-        return new byte[0];
+        return filter.getBlockBits(index);
     }
 
     private boolean parseHeaderLine(String line, SidecarState state) {
@@ -222,19 +220,14 @@ public class SidecarSerializer {
     private AvroBloomFilter reconstructFilter(SidecarState state) {
         AvroBloomFilterConfig config = AvroBloomFilterConfig.resolveFor(
                 state.bitsPerKey, state.numHashes, state.fpp, state.enabled);
-        
+
         AvroBloomFilter filter = AvroBloomFilter.create(config);
-        
+
         for (LoadedBlock block : state.loaded) {
             if (block.bits == null) continue;
-            
-            // This would need access to the internal BlockFilter constructor
-            // For now, we'll create a simplified version
-            // In a real implementation, this would call BlockFilter.fromBytes()
-            
-            filter.put(block.index, "placeholder"); // Simplified for now
+            filter.restoreBlock(block.index, block.bits, block.bitSize, block.keys);
         }
-        
+
         return filter;
     }
 

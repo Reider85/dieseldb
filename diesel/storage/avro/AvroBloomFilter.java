@@ -3,15 +3,9 @@ package diesel.storage.avro;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
@@ -259,6 +253,34 @@ public final class AvroBloomFilter {
         return filter == null ? -1.0 : filter.estimatedFpp();
     }
 
+    // ─── Sidecar accessors (package-private for SidecarSerializer) ──
+
+    /**
+     * Returns the serialized BitSet bytes for the given block, or an
+     * empty array when the block has no filter.
+     *
+     * @param blockIndex the zero-based block index
+     */
+    byte[] getBlockBits(int blockIndex) {
+        BlockFilter filter = filters.get(blockIndex);
+        return filter == null ? new byte[0] : filter.bits.toByteArray();
+    }
+
+    /**
+     * Restores a block filter from serialized BitSet bytes, replacing
+     * any existing filter for that block. Also restores the key count.
+     *
+     * @param blockIndex the zero-based block index
+     * @param bits       the serialized BitSet bytes (may be empty)
+     * @param bitSize    the bit-array size in bits
+     * @param keyCount   the number of distinct keys in the block
+     */
+    void restoreBlock(int blockIndex, byte[] bits, int bitSize, int keyCount) {
+        BlockFilter restored = BlockFilter.fromBytes(bits, bitSize, numHashes);
+        restored.keyCount.set(Math.max(0, keyCount));
+        filters.put(blockIndex, restored);
+    }
+
     // ─── Persistence ────────────────────────────────────────────────
 
     /**
@@ -297,79 +319,6 @@ public final class AvroBloomFilter {
                                                   long dataFileSize,
                                                   long dataFileModified) {
         return sidecarSerializer.deserialize(sidecarPath, dataFileSize, dataFileModified);
-    }
-
-    // ─── Internal helpers ───────────────────────────────────────────
-
-    private static final class SidecarState {
-        boolean enabled = true;
-        int bitsPerKey = AvroBloomFilterConfig.DEFAULT_BITS_PER_KEY;
-        int numHashes = AvroBloomFilterConfig.DEFAULT_NUM_HASHES;
-        double fpp = AvroBloomFilterConfig.DEFAULT_FPP;
-        long fileSize = -2;
-        long fileModified = -2;
-        int expectedBlocks = -1;
-        final List<LoadedBlock> loaded = new ArrayList<>();
-    }
-
-    /**
-     * Parses a single metadata header line from the sidecar file.
-     *
-     * @return {@code true} if the line was processed, {@code false} if the
-     *         version is incompatible (caller should return null)
-     */
-    private static boolean parseHeaderLine(String line, SidecarState state) {
-        if (line.startsWith("VERSION=")) {
-            int version = Integer.parseInt(line.substring(8));
-            if (version != SIDECAR_VERSION) return false;
-        } else if (line.startsWith("ENABLED=")) {
-            state.enabled = Boolean.parseBoolean(line.substring(8));
-        } else if (line.startsWith("BITS_PER_KEY=")) {
-            state.bitsPerKey = Integer.parseInt(line.substring(13));
-        } else if (line.startsWith("NUM_HASHES=")) {
-            state.numHashes = Integer.parseInt(line.substring(11));
-        } else if (line.startsWith("FPP=")) {
-            state.fpp = Double.parseDouble(line.substring(4));
-        } else if (line.startsWith("DATA_FILE_SIZE=")) {
-            state.fileSize = Long.parseLong(line.substring(15));
-        } else if (line.startsWith("DATA_FILE_MODIFIED=")) {
-            state.fileModified = Long.parseLong(line.substring(19));
-        } else if (line.startsWith("BLOCK_COUNT=")) {
-            state.expectedBlocks = Integer.parseInt(line.substring(12));
-        }
-        return true;
-    }
-
-    /**
-     * Parses a single data line (BLOCK/KEYS/BIT_SIZE/BITS) from the sidecar file.
-     */
-    private static void parseDataLine(String line, List<LoadedBlock> loaded) {
-        if (line.startsWith("BLOCK=")) {
-            int key = Integer.parseInt(line.substring(6));
-            LoadedBlock block = new LoadedBlock();
-            block.index = key;
-            loaded.add(block);
-        } else if (line.startsWith("KEYS=")) {
-            if (!loaded.isEmpty()) {
-                loaded.get(loaded.size() - 1).keys = Integer.parseInt(line.substring(5));
-            }
-        } else if (line.startsWith("BIT_SIZE=")) {
-            if (!loaded.isEmpty()) {
-                loaded.get(loaded.size() - 1).bitSize = Integer.parseInt(line.substring(9));
-            }
-        } else if (line.startsWith("BITS=")) {
-            if (!loaded.isEmpty()) {
-                loaded.get(loaded.size() - 1).bits =
-                        Base64.getDecoder().decode(line.substring(5));
-            }
-        }
-    }
-
-    private static final class LoadedBlock {
-        int index;
-        int keys;
-        int bitSize;
-        byte[] bits;
     }
 
     private static final class BlockFilter {

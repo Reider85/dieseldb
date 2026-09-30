@@ -2862,11 +2862,27 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     private static Class<?> resolveAvroColumnType(String columnName, Map<String, Class<?>> columnTypes) {
-        if (columnTypes == null) return null;
+        if (columnTypes == null || columnName == null) return null;
         Class<?> t = columnTypes.get(columnName);
         if (t != null) return t;
+        // Strip table qualifier: "DIAG.BALANCE" -> "BALANCE"
+        String unqualified = columnName;
+        int dot = columnName.lastIndexOf('.');
+        if (dot >= 0) {
+            unqualified = columnName.substring(dot + 1);
+            t = columnTypes.get(unqualified);
+            if (t != null) return t;
+        }
         for (Map.Entry<String, Class<?>> e : columnTypes.entrySet()) {
-            if (e.getKey().equalsIgnoreCase(columnName)) return e.getValue();
+            String key = e.getKey();
+            if (key.equalsIgnoreCase(columnName) || key.equalsIgnoreCase(unqualified)) {
+                return e.getValue();
+            }
+            // Also match qualified keys: "DIAG.BALANCE" vs "BALANCE"
+            int keyDot = key.lastIndexOf('.');
+            if (keyDot >= 0 && key.substring(keyDot + 1).equalsIgnoreCase(unqualified)) {
+                return e.getValue();
+            }
         }
         return null;
     }
