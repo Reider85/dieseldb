@@ -157,6 +157,7 @@ public class TsvRowWriter implements AutoCloseable {
     }
 
     /** Closes the underlying writer. */
+    @Override
     public void close() throws IOException {
         flushBatch();
         writer.close();

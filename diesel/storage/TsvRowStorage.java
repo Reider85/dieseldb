@@ -324,6 +324,7 @@ public class TsvRowStorage extends AbstractRowStorage {
     }
 
     /** Replaces the internal row list. */
+    @Override
     public void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
         for (Map<String, Object> row : newRows) {

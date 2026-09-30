@@ -844,3 +844,5 @@ chore: test-profiles-audit changelog entry
 3.2.37 Sonar-prompt8 S1905: remove 32 unnecessary casts across 22 files (12 production in AvroAuditLogger/AvroMetrics/CompositeBTreeIndex/AvroBloomFilter/AggregateFunctions/SchemaEvolutionManager + 20 test same-type casts); zero behavioural change via binary numeric promotion
 
 3.2.38 Sonar-prompt8 S6126 verification: baseline stale, 0 remaining List.of().stream()/Arrays.asList().stream() constructs
+
+3.2.39 Sonar-prompt8 S1123: add @Override to 15 override methods (CreateAvroIndexQuery.toString, CoveringBTreeIndex Index defaults, Csv/TsvRowReader DelimitedRowReader methods, Csv/TsvRowWriter AutoCloseable.close, setRows in 4 RowStorage impls); annotation-only

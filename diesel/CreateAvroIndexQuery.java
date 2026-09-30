@@ -66,6 +66,7 @@ public class CreateAvroIndexQuery {
         return new CreateAvroIndexQuery(indexName, tableName, columns, unique, ifNotExists);
     }
 
+    @Override
     public String toString() {
         return String.format("CREATE%sINDEX %s%s ON %s (%s)",
                 unique ? " UNIQUE" : "",

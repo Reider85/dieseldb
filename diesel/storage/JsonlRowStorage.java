@@ -1081,6 +1081,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     }
 
     /** Replaces the internal row list. Used by compaction (prompt 49). */
+    @Override
     public void setRows(List<Map<String, Object>> newRows) {
         dropDeferredState();
         rows.clear();

@@ -65,6 +65,7 @@ class CoveringBTreeIndex extends BTreeIndex implements Serializable {
      * @param rowIndex the row index
      * @return the stored values, or null if not found
      */
+    @Override
     public Map<String, Object> getCoveredValues(int rowIndex) {
         return coverData.get(rowIndex);
     }
@@ -82,6 +83,7 @@ class CoveringBTreeIndex extends BTreeIndex implements Serializable {
     /**
      * Returns true when this index stores all of the given columns.
      */
+    @Override
     public boolean coversColumns(Set<String> requiredColumns) {
         return getAllCoveredColumns().containsAll(requiredColumns);
     }

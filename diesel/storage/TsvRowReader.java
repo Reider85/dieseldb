@@ -168,6 +168,7 @@ public class TsvRowReader implements DelimitedRowReader {
     }
 
     /** Reads and validates the header line. Returns parsed file header columns. */
+    @Override
     public List<String> readHeader() throws IOException {
         String header = source.nextLine();
         if (header == null) {
@@ -265,6 +266,7 @@ LOGGER.warn(msg);
      * value of schema column {@code i} (prompt 36). Returns {@code null} when
      * the whole row was skipped by the {@code storage.load.error.mode} policy.
      */
+    @Override
     public Object[] nextArray() {
         if (finished) {
             throw new NoSuchElementException("No more rows in TSV file");
@@ -279,6 +281,7 @@ LOGGER.warn(msg);
     }
 
     /** Reads all remaining rows into a list and closes the reader. */
+    @Override
     public List<Map<String, Object>> readAll() throws IOException {
         List<Map<String, Object>> result = new ArrayList<>();
         while (hasNext()) {

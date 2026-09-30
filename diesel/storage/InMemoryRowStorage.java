@@ -86,6 +86,7 @@ public class InMemoryRowStorage extends AbstractRowStorage {
      *
      * @param newRows the new row list
      */
+    @Override
     public void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
         rows.addAll(newRows);
