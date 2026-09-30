@@ -1,1 +1,1 @@
-3.2.37 Sonar-prompt8 S1905: remove 32 unnecessary casts across 22 files (12 production in AvroAuditLogger/AvroMetrics/CompositeBTreeIndex/AvroBloomFilter/AggregateFunctions/SchemaEvolutionManager + 20 test same-type casts); zero behavioural change via binary numeric promotion
+3.2.38 Sonar-prompt8 S6126 verification: baseline stale, 0 remaining List.of().stream()/Arrays.asList().stream() constructs
