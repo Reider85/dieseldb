@@ -846,3 +846,5 @@ chore: test-profiles-audit changelog entry
 3.2.38 Sonar-prompt8 S6126 verification: baseline stale, 0 remaining List.of().stream()/Arrays.asList().stream() constructs
 
 3.2.39 Sonar-prompt8 S1123: add @Override to 15 override methods (CreateAvroIndexQuery.toString, CoveringBTreeIndex Index defaults, Csv/TsvRowReader DelimitedRowReader methods, Csv/TsvRowWriter AutoCloseable.close, setRows in 4 RowStorage impls); annotation-only
+
+3.2.40 Record S1123 follow-up: parallel CSV load loses numeric width fidelity (CompressionTest.parallelLoadOfCompressedFileFallsBackToSequential), proven pre-existing; docs-only
