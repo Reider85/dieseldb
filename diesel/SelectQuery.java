@@ -5,7 +5,6 @@ import static diesel.ThreeValuedLogic.FALSE;
 import static diesel.ThreeValuedLogic.UNKNOWN;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;

@@ -3,7 +3,6 @@ package diesel.storage;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.StringWriter;
-import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;

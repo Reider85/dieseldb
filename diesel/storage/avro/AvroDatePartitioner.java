@@ -1,7 +1,6 @@
 package diesel.storage.avro;
 
 import diesel.storage.AbstractRowStorage;
-import diesel.storage.StorageFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

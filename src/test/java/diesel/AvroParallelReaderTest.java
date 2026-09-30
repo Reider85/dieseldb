@@ -1,6 +1,5 @@
 package diesel;
 
-import diesel.storage.avro.AvroBlockConfig;
 import diesel.storage.avro.AvroDataFileReader;
 import diesel.storage.avro.AvroDataFileWriter;
 import diesel.storage.avro.AvroParallelReader;

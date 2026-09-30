@@ -1,7 +1,6 @@
 package diesel;
 
 import diesel.storage.avro.AvroCodecFactory;
-import diesel.storage.avro.AvroCompressionConfig;
 import diesel.storage.avro.AvroDataFileReader;
 import diesel.storage.avro.AvroDataFileWriter;
 import diesel.storage.avro.AvroRowStorage;
@@ -11,7 +10,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;

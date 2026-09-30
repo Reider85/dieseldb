@@ -1,6 +1,5 @@
 package diesel.storage;
 
-import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.Charset;

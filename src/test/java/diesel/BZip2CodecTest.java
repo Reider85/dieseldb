@@ -1,7 +1,6 @@
 package diesel;
 
 import diesel.storage.avro.AvroCodecFactory;
-import diesel.storage.avro.AvroCompressionConfig;
 import diesel.storage.avro.AvroDataFileReader;
 import diesel.storage.avro.AvroDataFileWriter;
 import diesel.storage.avro.BZip2Codec;
@@ -18,13 +17,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**

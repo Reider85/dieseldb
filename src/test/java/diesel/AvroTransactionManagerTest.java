@@ -4,7 +4,6 @@ import diesel.storage.avro.AvroTransactionManager;
 import diesel.storage.avro.AvroTransactionManager.AvroTransaction;
 import diesel.storage.avro.AvroTransactionManager.LockTimeoutException;
 import diesel.storage.avro.AvroTransactionManager.RecoveryReport;
-import diesel.storage.avro.AvroTransactionManager.TransactionConflictException;
 import diesel.storage.avro.AvroTransactionManager.TransactionState;
 import diesel.storage.avro.AvroTransactionManager.WalEntry;
 import diesel.storage.avro.AvroTransactionManager.WalOperation;
@@ -14,10 +13,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -26,8 +22,6 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 

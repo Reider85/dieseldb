@@ -1,6 +1,5 @@
 package diesel;
 
-import diesel.storage.JsonlRowReader;
 import diesel.storage.JsonlRowWriter;
 import diesel.storage.JsonlSchemaManager;
 import diesel.storage.json.JsonParserConfig;

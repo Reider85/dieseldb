@@ -7,7 +7,6 @@ import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 import java.util.zip.GZIPOutputStream;
-import java.util.zip.Deflater;
 
 /**
  * TCP server that accepts client connections and executes their SQL queries

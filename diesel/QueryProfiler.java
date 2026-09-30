@@ -12,10 +12,7 @@ import javax.management.MBeanInfo;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 import javax.management.ReflectionException;
-import java.io.File;
-import java.io.FileInputStream;
 import java.lang.management.ManagementFactory;
-import java.util.Properties;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
