@@ -247,7 +247,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     @Override
     public Map<String, Object> next() {
         Object[] values = nextArray();
-        if (values == null) {
+        if (values == null || values.length == 0) {
             return Collections.emptyMap();
         }
         Map<String, Object> row = new HashMap<>(Math.max(columns.size() * 2, 4));
@@ -309,14 +309,14 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
                     + (atPhysicalEof() ? StorageMessageConstants.JSONL_TRUNCATED_RECORD : "")
                     + ": " + e.getMessage();
             if (skipRow(msg, e)) {
-                return new Object[0];
+                return null;
             }
             throw new DieselIOException(msg, e);
         } catch (DieselIOException e) {
             closeQuietly(p);
             parser = null;
             if (skipRow(null, e)) {
-                return new Object[0];
+                return null;
             }
             throw e;
         }
@@ -326,7 +326,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             enforceMissingFieldPolicy(seen);
         } catch (DieselIOException e) {
             if (skipRow(null, e)) {
-                return new Object[0];
+                return null;
             }
             throw e;
         }
