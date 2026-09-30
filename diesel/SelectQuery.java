@@ -1804,7 +1804,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         }
         long perPartition = Math.max(1, maxInMemoryRows);
         int byRows = (int) Math.max(1, Math.ceil((double) buildRowCount / perPartition));
-        return Math.max(1, Math.min(256, byRows));
+        return Math.clamp(byRows, 1, 256);
     }
 
     private static final byte BIN_NULL = 0;

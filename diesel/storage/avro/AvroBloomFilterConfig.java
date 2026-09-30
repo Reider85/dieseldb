@@ -90,7 +90,7 @@ public final class AvroBloomFilterConfig {
      */
     public int bitSizeFor(int expectedInsertions) {
         long bits = (long) Math.max(1, expectedInsertions) * bitsPerKey;
-        return (int) Math.max(8, Math.min(bits, Integer.MAX_VALUE - 64));
+        return (int) Math.clamp(bits, 8, Integer.MAX_VALUE - 64);
     }
 
     /**
@@ -106,8 +106,8 @@ public final class AvroBloomFilterConfig {
      */
     public static AvroBloomFilterConfig resolveFor(int bitsPerKey, int numHashes,
                                                    double fpp, boolean enabled) {
-        int bk = Math.max(1, Math.min(64, bitsPerKey));
-        int nh = Math.max(1, Math.min(32, numHashes));
+        int bk = Math.clamp(bitsPerKey, 1, 64);
+        int nh = Math.clamp(numHashes, 1, 32);
         double f = (fpp > 0.0 && fpp < 1.0) ? fpp : DEFAULT_FPP;
         return new AvroBloomFilterConfig(enabled, bk, nh, f);
     }
@@ -123,12 +123,12 @@ public final class AvroBloomFilterConfig {
         int bitsPerKey = getInt(BITS_PER_KEY_KEY, DEFAULT_BITS_PER_KEY);
         if (bitsPerKey < 1 || bitsPerKey > 64) {
             LOGGER.warn("Invalid {} value {}, clamping to [1, 64]", BITS_PER_KEY_KEY, bitsPerKey);
-            bitsPerKey = Math.max(1, Math.min(64, bitsPerKey));
+            bitsPerKey = Math.clamp(bitsPerKey, 1, 64);
         }
         int numHashes = getInt(NUM_HASHES_KEY, DEFAULT_NUM_HASHES);
         if (numHashes < 1 || numHashes > 32) {
             LOGGER.warn("Invalid {} value {}, clamping to [1, 32]", NUM_HASHES_KEY, numHashes);
-            numHashes = Math.max(1, Math.min(32, numHashes));
+            numHashes = Math.clamp(numHashes, 1, 32);
         }
         double fpp = getDouble(FPP_KEY, DEFAULT_FPP);
         if (fpp <= 0.0 || fpp >= 1.0) {

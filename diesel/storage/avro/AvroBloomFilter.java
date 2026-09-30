@@ -426,7 +426,7 @@ public final class AvroBloomFilter {
             double m = bitSize;
             double k = numHashes;
             double p = Math.pow(1 - Math.exp(-k * n / m), k);
-            return Math.max(0.0, Math.min(1.0, p));
+            return Math.clamp(p, 0.0, 1.0);
         }
 
         private static long hash1(Object key) {
