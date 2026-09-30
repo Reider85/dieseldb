@@ -80,6 +80,12 @@ function Invoke-ProfileTests {
 }
 
 # Creates the changelog entry, then commits it. Shared by release/release-local.
+#
+# PROMPT_STATUS.md must be updated BEFORE this runs (AGENTS.md workflow step 7)
+# so its DONE entry joins the same commit instead of becoming a separate
+# "Update PROMPT_STATUS.md" commit. We stage it explicitly (not just via the
+# blanket add -A) so the intent is visible in the script and the file is
+# guaranteed to be part of the release commit.
 function Invoke-ChangelogCommit {
     param(
         [Parameter(Mandatory = $true)]
@@ -92,6 +98,20 @@ function Invoke-ChangelogCommit {
     if ($LASTEXITCODE -ne 0) {
         Write-Error "commit-and-changelog.ps1 failed (exit $LASTEXITCODE)."
         exit 1
+    }
+
+    Invoke-Native -FilePath $gitCmd -Arguments @("add", "PROMPT_STATUS.md")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "git add PROMPT_STATUS.md failed (exit $LASTEXITCODE)."
+        exit 1
+    }
+
+    $promptStatus = Invoke-Native -FilePath $gitCmd -Arguments @("diff", "--cached", "--name-only", "--", "PROMPT_STATUS.md")
+    if ($promptStatus -match "PROMPT_STATUS\.md") {
+        Write-Host "PROMPT_STATUS.md staged - its DONE entry joins this commit." -ForegroundColor Green
+    }
+    else {
+        Write-Host "PROMPT_STATUS.md unchanged - if a prompt was completed, update it BEFORE make release." -ForegroundColor Yellow
     }
 
     Invoke-Native -FilePath $gitCmd -Arguments @("add", "-A")
@@ -261,6 +281,7 @@ switch ($Target) {
         Write-Host "  .\scripts\make.ps1 test-incr           - Fast profile without clean"
         Write-Host "  .\scripts\make.ps1 test-one -T X#m     - Run a single test method (quote it: -T ""X#m"")"
         Write-Host "  .\scripts\make.ps1 release -Desc '...' - Changelog + commit + push"
+        Write-Host "    (update PROMPT_STATUS.md FIRST so its DONE entry joins the commit)"
         Write-Host ""
         Write-Host "Targets:"
         Write-Host "  build, compile, test, test-incr, test-one, test-core"

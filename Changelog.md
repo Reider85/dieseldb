@@ -832,3 +832,5 @@ chore: test-profiles-audit changelog entry
 3.2.33 Update PROMPT_STATUS.md for Prompt 38
 
 3.2.34 Sonar-prompt8 S1481: remove unused marker variable in OomHandlingTest
+
+3.2.31 Workflow: PROMPT_STATUS.md joins the main release commit - AGENTS.md steps reordered so status updates happen BEFORE make release; make.ps1/Makefile stage PROMPT_STATUS.md explicitly and log whether it is included; new DONE entries omit the Committed as X.Y.Z (hash) line

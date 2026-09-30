@@ -108,9 +108,17 @@ changelog:
 	$(CHANGELOG) "$(DESC)"
 
 ## Changelog + commit + push in one step (usage: make release DESC="fix: ...")
+## PROMPT_STATUS.md must be updated BEFORE this target runs (AGENTS.md workflow
+## step 7); it is staged explicitly so the DONE entry joins this commit.
 release:
 	@if [ -z "$(DESC)" ]; then echo "Usage: make release DESC=\"description\""; exit 1; fi
 	$(CHANGELOG) "$(DESC)"
+	git add PROMPT_STATUS.md
+	@if git diff --cached --name-only | grep -q 'PROMPT_STATUS\.md'; then \
+		echo "PROMPT_STATUS.md staged - its DONE entry joins this commit."; \
+	else \
+		echo "PROMPT_STATUS.md unchanged - if a prompt was completed, update it BEFORE make release."; \
+	fi
 	git add -A
 	git commit -F changelog_entry.txt
 	$(GIT_PUSH)
@@ -119,6 +127,12 @@ release:
 release-local:
 	@if [ -z "$(DESC)" ]; then echo "Usage: make release-local DESC=\"description\""; exit 1; fi
 	$(CHANGELOG) "$(DESC)"
+	git add PROMPT_STATUS.md
+	@if git diff --cached --name-only | grep -q 'PROMPT_STATUS\.md'; then \
+		echo "PROMPT_STATUS.md staged - its DONE entry joins this commit."; \
+	else \
+		echo "PROMPT_STATUS.md unchanged - if a prompt was completed, update it BEFORE make release."; \
+	fi
 	git add -A
 	git commit -F changelog_entry.txt
 

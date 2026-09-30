@@ -53,3 +53,17 @@ if (Test-Path $changelogPath) {
 # Create changelog_entry.txt for git commit -F (UTF-8 without BOM)
 [System.IO.File]::WriteAllText($entryPath, $entry)
 Write-Host "changelog_entry.txt created: $entry"
+
+# Informational only: PROMPT_STATUS.md must be updated BEFORE this script runs
+# (AGENTS.md workflow step 7) so its DONE entry joins the release commit.
+# The release targets (make.ps1 / Makefile) stage it explicitly.
+$promptStatusPath = Join-Path $repoRoot "PROMPT_STATUS.md"
+if (Test-Path $promptStatusPath) {
+    $promptStatus = Invoke-Native -FilePath $gitCmd -Arguments @("status", "--porcelain", "--", "PROMPT_STATUS.md")
+    if ($promptStatus -match "PROMPT_STATUS\.md") {
+        Write-Host "PROMPT_STATUS.md has pending changes - they will be included in the release commit." -ForegroundColor Green
+    }
+    else {
+        Write-Host "PROMPT_STATUS.md unchanged - if a prompt was completed, update it BEFORE running make release." -ForegroundColor Yellow
+    }
+}

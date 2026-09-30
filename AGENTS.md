@@ -27,14 +27,18 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
    ```
    *Check exit code only: 1 = failure, 0 = success.*
 
-7. Create changelog + commit (one command):
+7. Update `PROMPT_STATUS.md` → mark as DONE. Write this **before** running
+   `make release` so it lands in the same commit — never as a separate
+   "Update PROMPT_STATUS.md" commit. The entry must **not** contain a
+   `Committed as X.Y.Z (hash)` line (the commit does not exist yet);
+   `Changelog.md` + git history are the authoritative version record.
+8. Create changelog + commit (one command):
    ```bash
    make release DESC="short description of changes"
    ```
    This auto-increments the version, appends to `Changelog.md`, commits, and pushes.
    Use `make release-local DESC="..."` if you need to commit without pushing.
-
-8. Update `PROMPT_STATUS.md` → mark as DONE.
+   The release target stages `PROMPT_STATUS.md` explicitly along with everything else.
 
 ---
 
@@ -44,7 +48,8 @@ For Sonar fixes, renames, constant extraction, comment-only changes:
 
 1. `make compile` — verify syntax (3-5s)
 2. `make test-incr` — fast suite without clean (~15s faster than `make test`)
-3. `make release DESC="..."` — changelog + commit + push
+3. Update `PROMPT_STATUS.md` → mark as DONE (same rule: no `Committed as ...` line).
+4. `make release DESC="..."` — changelog + commit + push
 
 Skip `make timing` and `make check-profile` for non-performance changes.
 
@@ -289,6 +294,10 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
   make release DESC="Fix JOIN OR OOM by implementing hash join spilling"
   ```
   This auto-appends the versioned entry to `Changelog.md`, commits, and pushes. Version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`).
+  **PROMPT_STATUS.md joins this commit:** update it before running `make release`
+  (step 7 of the workflow); the release target stages it explicitly, so a DONE
+  entry never becomes its own commit. Do not write `Committed as ...` into
+  PROMPT_STATUS.md — the commit does not exist yet when the entry is written.
 
 - Use `make release-local DESC="..."` if you need to commit without pushing.
 - Use `make changelog DESC="..."` to only create the entry (no commit/push).
