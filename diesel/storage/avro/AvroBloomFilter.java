@@ -348,7 +348,7 @@ public final class AvroBloomFilter {
             long h1 = hash1(key);
             long h2 = hash2(key);
             for (int i = 0; i < numHashes; i++) {
-                int idx = (int) (Math.abs(h1 + (long) i * h2) % bitSize);
+                int idx = (int) (Math.abs(h1 + i * h2) % bitSize);
                 bits.set(idx);
             }
         }
@@ -357,7 +357,7 @@ public final class AvroBloomFilter {
             long h1 = hash1(key);
             long h2 = hash2(key);
             for (int i = 0; i < numHashes; i++) {
-                int idx = (int) (Math.abs(h1 + (long) i * h2) % bitSize);
+                int idx = (int) (Math.abs(h1 + i * h2) % bitSize);
                 if (!bits.get(idx)) {
                     return false;
                 }

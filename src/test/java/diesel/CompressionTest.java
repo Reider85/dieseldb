@@ -378,7 +378,7 @@ class CompressionTest {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("ID", i);
             row.put("NAME", "name" + i);
-            row.put("AGE", (int) (i % 100));
+            row.put("AGE", i % 100);
             expected.add(row);
         }
         CsvRowStorage storage = csvStorage(table);

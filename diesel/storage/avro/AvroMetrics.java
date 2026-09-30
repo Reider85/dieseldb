@@ -243,10 +243,10 @@ public class AvroMetrics implements DynamicMBean {
         long comp = totalCompressedBytes.get();
         double avgCompressionRatio = orig > 0 ? (double) comp / orig : 1.0;
         double readThroughput = totalReadNanos.get() > 0
-                ? (double) totalBytesRead.get() / (totalReadNanos.get() / 1_000_000_000.0)
+                ? totalBytesRead.get() / (totalReadNanos.get() / 1_000_000_000.0)
                 : 0.0;
         double writeThroughput = totalWriteNanos.get() > 0
-                ? (double) totalBytesWritten.get() / (totalWriteNanos.get() / 1_000_000_000.0)
+                ? totalBytesWritten.get() / (totalWriteNanos.get() / 1_000_000_000.0)
                 : 0.0;
 
         return new MetricsSnapshot(
@@ -418,11 +418,11 @@ public class AvroMetrics implements DynamicMBean {
             case "CompressionRatio": return lastCompressionRatio100 / 100.0;
             case "ReadThroughput": {
                 long rn = totalReadNanos.get();
-                return rn > 0 ? (double) totalBytesRead.get() / (rn / 1_000_000_000.0) : 0.0;
+                return rn > 0 ? totalBytesRead.get() / (rn / 1_000_000_000.0) : 0.0;
             }
             case "WriteThroughput": {
                 long wn = totalWriteNanos.get();
-                return wn > 0 ? (double) totalBytesWritten.get() / (wn / 1_000_000_000.0) : 0.0;
+                return wn > 0 ? totalBytesWritten.get() / (wn / 1_000_000_000.0) : 0.0;
             }
             case "ActiveTables": return activeTables.get();
             case "AlertCount": return alertCount.get();

@@ -81,7 +81,7 @@ class BZip2CodecTest {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ID", id);
         r.put("NAME", "User" + id);
-        r.put("AGE", (int) (id % 100));
+        r.put("AGE", id % 100);
         r.put("ACTIVE", id % 2 == 0);
         return r;
     }

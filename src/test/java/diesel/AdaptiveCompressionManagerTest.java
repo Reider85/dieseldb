@@ -74,7 +74,7 @@ class AdaptiveCompressionManagerTest {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("ID", (long) i);
             row.put("NAME", "User" + i);
-            row.put("AGE", (int) (i % 100));
+            row.put("AGE", i % 100);
             row.put("ACTIVE", i % 2 == 0);
             rows.add(row);
         }
@@ -218,8 +218,8 @@ class AdaptiveCompressionManagerTest {
         for (int i = 0; i < 50; i++) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("ID", (long) i);
-            row.put("AGE", (int) (i % 100));
-            row.put("SCORE", (double) i * 1.5);
+            row.put("AGE", i % 100);
+            row.put("SCORE", i * 1.5);
             rows.add(row);
         }
         String pattern = AdaptiveCompressionManager.analyzeDataPattern(rows);
@@ -248,7 +248,7 @@ class AdaptiveCompressionManagerTest {
             row.put("NAME", "User" + i);
             row.put("CITY", "City" + (i % 5));
             row.put("ID", (long) i);
-            row.put("AGE", (int) (i % 100));
+            row.put("AGE", i % 100);
             rows.add(row);
         }
         String pattern = AdaptiveCompressionManager.analyzeDataPattern(rows);

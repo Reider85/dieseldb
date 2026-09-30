@@ -270,7 +270,7 @@ public class AggregateFunctions {
         
         // Scalar cleanup for remaining elements
         for (; i < n; i++) {
-            sum += (long) array[i];
+            sum += array[i];
         }
         
         return sum;
@@ -317,7 +317,7 @@ public class AggregateFunctions {
         // Convert float array to double array
         double[] doubleArray = new double[n];
         for (int i = 0; i < n; i++) {
-            doubleArray[i] = (double) array[i];
+            doubleArray[i] = array[i];
         }
         
         return vectorSumDouble(doubleArray);

@@ -142,8 +142,8 @@ class CompositeBTreeIndex implements Index, Serializable {
             else if (n instanceof Integer v) upper.set(lastIdx, v + 1);
             else if (n instanceof Double v) upper.set(lastIdx, v + 1);
             else if (n instanceof Float v) upper.set(lastIdx, (double) (v + 1));
-            else if (n instanceof Short v) upper.set(lastIdx, (int) (v + 1));
-            else if (n instanceof Byte v) upper.set(lastIdx, (int) (v + 1));
+            else if (n instanceof Short v) upper.set(lastIdx, v + 1);
+            else if (n instanceof Byte v) upper.set(lastIdx, v + 1);
             else return null;
         } else if (lastVal instanceof String s) {
             upper.set(lastIdx, s + Character.MAX_VALUE);

@@ -336,7 +336,7 @@ public class AvroAuditLogger implements AutoCloseable {
         if (!enabled) {
             return 0;
         }
-        long cutoff = System.currentTimeMillis() - (long) retentionDays * MILLIS_PER_DAY;
+        long cutoff = System.currentTimeMillis() - retentionDays * MILLIS_PER_DAY;
         File dir = new File(logDir);
         File[] files = dir.listFiles((d, n) -> n.startsWith(logFilePrefix) && n.endsWith(logFileSuffix));
         if (files == null) {

@@ -456,7 +456,7 @@ public final class SchemaEvolutionManager {
                 case '\t' -> sb.append("\\t");
                 default -> {
                     if (c < 0x20) {
-                        sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+                        sb.append(String.format(Locale.ROOT, "\\u%04x", c));
                     } else {
                         sb.append(c);
                     }

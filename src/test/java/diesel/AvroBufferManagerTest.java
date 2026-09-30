@@ -96,7 +96,7 @@ class AvroBufferManagerTest {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("ID", id);
         m.put("NAME", "User-" + id);
-        m.put("AGE", (int) (id % 100));
+        m.put("AGE", id % 100);
         return m;
     }
 
