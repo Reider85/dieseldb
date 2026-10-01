@@ -104,6 +104,15 @@ class AvroCompressionTest {
         return r;
     }
 
+    private static Map<String, Object> simpleRowLinearAge(long id) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ID", id);
+        r.put("NAME", "User" + id);
+        r.put("AGE", (int) id);
+        r.put("ACTIVE", id % 2 == 0);
+        return r;
+    }
+
     /** Writes {@code rows} rows with the given codec (level -1) and returns the file. */
     private File writeRows(String tableName, String codec, List<Map<String, Object>> rows, int level) throws IOException {
         File f = new File(tempDir.toFile(), tableName + "_" + codec + ".avro");
@@ -264,10 +273,27 @@ class AvroCompressionTest {
     @Test
     void codecRoundTrip() throws IOException {
         for (String codec : codecs()) {
-            File f = writeRows("roundtrip", codec, rows(5000), -1);
+            // Create data with linear AGE progression for proper validation
+            List<Map<String, Object>> data = new ArrayList<>(5000);
+            for (int i = 0; i < 5000; i++) {
+                data.add(simpleRowLinearAge(i));
+            }
+            
+            File f = writeRows("roundtrip", codec, data, -1);
             try (AvroDataFileReader r = new AvroDataFileReader(f)) {
                 assertEquals(codec, r.getCodecName());
                 assertEquals(5000, countRecords(r));
+                
+                // Validate AGE preservation in round-trip
+                int n = 0;
+                while (r.hasNext()) {
+                    GenericRecord rec = r.next();
+                    assertEquals((long) n, rec.get("ID"));
+                    assertEquals("User" + n, String.valueOf(rec.get("NAME")));
+                    assertEquals(n, rec.get("AGE"));
+                    n++;
+                }
+                assertEquals(5000, n);
             }
         }
     }
@@ -311,14 +337,21 @@ class AvroCompressionTest {
 
     @Test
     void bzip2RoundTrip() throws IOException {
-        File f = writeRows("bzip2_rt", "bzip2", rows(1000), -1);
-        try (AvroDataFileReader r = new AvroDataFileReader(f, List.of("ID", "NAME"))) {
+        // Create data with linear AGE progression for proper validation
+        List<Map<String, Object>> data = new ArrayList<>(1000);
+        for (int i = 0; i < 1000; i++) {
+            data.add(simpleRowLinearAge(i));
+        }
+        
+        File f = writeRows("bzip2_rt", "bzip2", data, -1);
+        try (AvroDataFileReader r = new AvroDataFileReader(f, List.of("ID", "NAME", "AGE"))) {
             assertTrue(r.isReaderSchemaCompatible());
             int n = 0;
             while (r.hasNext()) {
                 GenericRecord rec = r.next();
                 assertEquals((long) n, rec.get("ID"));
                 assertEquals("User" + n, String.valueOf(rec.get("NAME")));
+                assertEquals(n, rec.get("AGE"));
                 n++;
             }
             assertEquals(1000, n);
@@ -412,7 +445,7 @@ class AvroCompressionTest {
         AvroRowStorage s1 = new AvroRowStorage(table, simpleCols(), simpleTypes());
         s1.setDataDir(tempDir.toString());
         for (int i = 0; i < 1000; i++) {
-            s1.insert(simpleRow(i));
+            s1.insert(simpleRowLinearAge(i));
         }
         s1.saveToFile(table);
 
@@ -425,8 +458,18 @@ class AvroCompressionTest {
         s2.loadFromFile(table);
         List<Map<String, Object>> result = s2.scan();
         assertEquals(1000, result.size());
+        
+        // Validate all fields including AGE preservation
         assertEquals("User0", result.get(0).get("NAME"));
+        assertEquals(0, result.get(0).get("AGE"));
         assertEquals(999L, result.get(999).get("ID"));
+        assertEquals(999, result.get(999).get("AGE"));
+        
+        // Verify AGE values are linear throughout the dataset
+        for (int i = 0; i < result.size(); i++) {
+            assertEquals(i, result.get(i).get("AGE"), 
+                "AGE should match linear progression for row " + i);
+        }
     }
 
     @Test
