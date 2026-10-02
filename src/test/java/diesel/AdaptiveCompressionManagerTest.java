@@ -68,18 +68,7 @@ class AdaptiveCompressionManagerTest {
         AdaptiveCompressionManager.resetMetrics();
     }
 
-    private static List<Map<String, Object>> textRows(int n) {
-        List<Map<String, Object>> rows = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("ID", (long) i);
-            row.put("NAME", "User" + i);
-            row.put("AGE", i % 100);
-            row.put("ACTIVE", i % 2 == 0);
-            rows.add(row);
-        }
-        return rows;
-    }
+    
 
     // ─── Metrics recording ──────────────────────────────────────────
 

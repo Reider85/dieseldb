@@ -133,21 +133,7 @@ public final class DelimitedByteParser {
         return false;
     }
 
-    /**
-     * Validate that the bytes are valid for the given charset.
-     * Uses CharsetDecoder with REPORT action to match DelimitedContent.decode() behavior.
-     */
-    private static void validateCharset(byte[] bytes, Charset charset, String fileName) {
-        java.nio.charset.CharsetDecoder decoder = charset.newDecoder()
-                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
-        try {
-            decoder.decode(java.nio.ByteBuffer.wrap(bytes));
-        } catch (java.nio.charset.CharacterCodingException e) {
-            throw new DieselIOException(
-                    StorageMessageConstants.MALFORMED + charset.name() + StorageMessageConstants.INPUT_IN_DELIMITED_FILE + fileName, e);
-        }
-    }
+    
 
     /**
      * Parse a byte range for the partitioned parallel path.

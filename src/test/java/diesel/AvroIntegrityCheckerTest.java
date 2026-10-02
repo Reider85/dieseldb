@@ -1,13 +1,10 @@
 package diesel;
 
-import diesel.storage.avro.AvroDataFileReader;
 import diesel.storage.avro.AvroDataFileWriter;
 import diesel.storage.avro.AvroIntegrityChecker;
 import diesel.storage.avro.AvroIntegrityChecker.BlockIntegrityResult;
 import diesel.storage.avro.AvroIntegrityChecker.IntegrityReport;
 import diesel.storage.avro.AvroIntegrityChecker.IntegrityStats;
-import diesel.storage.avro.AvroReadIterator;
-import diesel.storage.avro.AvroTypeMapper;
 import diesel.StorageType;
 import org.apache.avro.Schema;
 import org.junit.jupiter.api.AfterEach;
@@ -100,25 +97,7 @@ class AvroIntegrityCheckerTest {
         return m;
     }
 
-    private static Map<String, Class<?>> types(Schema schema) {
-        Map<String, Class<?>> m = new LinkedHashMap<>();
-        for (Schema.Field f : schema.getFields()) {
-            m.put(f.name(), AvroTypeMapper.toJavaType(f.schema()));
-        }
-        return m;
-    }
-
-    private static long countRows(File f) throws IOException {
-        try (AvroDataFileReader reader = new AvroDataFileReader(f);
-             AvroReadIterator it = new AvroReadIterator(reader, cols(), types(reader.getSchema()))) {
-            long n = 0;
-            while (it.hasNext()) {
-                it.next();
-                n++;
-            }
-            return n;
-        }
-    }
+    
 
     /** Flips bit 0 of the byte at {@code offset}. */
     private static void corruptByte(File f, long offset) throws IOException {

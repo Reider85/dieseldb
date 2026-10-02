@@ -858,3 +858,5 @@ chore: test-profiles-audit changelog entry
 3.2.45 Sonar-prompt8 S1133: add @deprecated Javadoc tags to 15 deprecated stub methods (DelimitedIndexManager, CsvRowStorage, TsvRowStorage); Javadoc-only
 
 3.2.46 Sonar-prompt8 prompt 47 - S1066: merge 15 collapsible nested ifs
+
+3.2.47 Sonar-prompt8 S1144: remove 16 unused private methods across diesel/** and src/test/java/diesel/**, preserving short-circuit and behavioral integrity

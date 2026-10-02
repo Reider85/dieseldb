@@ -184,45 +184,7 @@ public final class SnappyOptimizedCodec {
         }
     }
 
-    /**
-     * Gets a cached compressor for the given buffer size.
-     *
-     * @param bufferSize buffer size in bytes
-     * @return cached compressor or null if not available
-     */
-    private static Object getCachedCompressor(int bufferSize) {
-        return COMPRESSOR_CACHE.get(bufferSize);
-    }
-
-    /**
-     * Gets a cached decompressor for the given buffer size.
-     *
-     * @param bufferSize buffer size in bytes
-     * @return cached decompressor or null if not available
-     */
-    private static Object getCachedDecompressor(int bufferSize) {
-        return DECOMPRESSOR_CACHE.get(bufferSize);
-    }
-
-    /**
-     * Puts a compressor in the cache.
-     *
-     * @param bufferSize buffer size in bytes
-     * @param compressor the compressor to cache
-     */
-    private static void cacheCompressor(int bufferSize, Object compressor) {
-        COMPRESSOR_CACHE.put(bufferSize, compressor);
-    }
-
-    /**
-     * Puts a decompressor in the cache.
-     *
-     * @param bufferSize buffer size in bytes
-     * @param decompressor the decompressor to cache
-     */
-    private static void cacheDecompressor(int bufferSize, Object decompressor) {
-        DECOMPRESSOR_CACHE.put(bufferSize, decompressor);
-    }
+    
 
     /**
      * Clears the compressor and decompressor caches.

@@ -89,9 +89,7 @@ class SchemaConflictResolverTest {
         return AvroTypeMapper.nullableOf(longT());
     }
 
-    private static Schema doubleT() {
-        return Schema.create(Schema.Type.DOUBLE);
-    }
+    
 
     private static Schema v1() {
         return createRecord("t1", f("id", str()), f("name", str()));

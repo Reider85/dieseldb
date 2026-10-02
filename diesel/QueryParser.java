@@ -2031,11 +2031,7 @@ class QueryParser {
         }
     }
 
-    private String removeClause(String text, int clauseIndex, int endIndex) {
-        String before = text.substring(0, clauseIndex).trim();
-        String after = (endIndex < text.length()) ? text.substring(endIndex).trim() : "";
-        return (before + " " + after).trim();
-    }
+    
 
     private record ParsedGroupBy(List<String> groupBy, List<HavingCondition> havingConditions, int endIndex) {}
     private record ParsedOrderBy(List<OrderByInfo> orderBy) {}
@@ -2407,24 +2403,6 @@ class QueryParser {
         return groupBy;
     }
 
-    private Integer parseOffsetClause(String offsetClause) {
-        String normalized = offsetClause.toUpperCase().replace(SqlKeywords.OFFSET, "").trim();
-        if (normalized.isEmpty()) {
-            LOGGER.log(Level.WARNING, "Empty OFFSET clause detected");
-            return null;
-        }
-        try {
-            int offsetValue = Integer.parseInt(normalized);
-            if (offsetValue < 0) {
-                throw new IllegalArgumentException("OFFSET value must be non-negative: " + offsetValue);
-            }
-            LOGGER.log(Level.FINE, "Parsed OFFSET clause: {0}", offsetValue);
-            return offsetValue;
-        } catch (NumberFormatException e) {
-            LOGGER.log(Level.SEVERE, "Invalid OFFSET value: {0}", normalized);
-            throw new IllegalArgumentException("Invalid OFFSET value: " + normalized);
-        }
-    }
 
     private void validateJoinCondition(Condition condition, String leftTable, String rightTable, Map<String, String> tableAliases) {
         LOGGER.log(Level.FINEST, "Validating condition: {0} for tables {1}, {2}, aliases: {3}", new Object[]{condition, leftTable, rightTable, tableAliases});
@@ -3313,9 +3291,7 @@ class QueryParser {
         }
     }
 
-    private String resolveRightColumn(String rightPart) {
-        return unquoteQualifiedIdentifier(rightPart);
-    }
+    
 
     private String resolveColumnAlias(String column, Map<String, String> columnAliases) {
         String[] columnParts = column.split("\\.");

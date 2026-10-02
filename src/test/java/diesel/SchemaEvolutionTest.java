@@ -85,13 +85,7 @@ class SchemaEvolutionTest {
         return Schema.create(Schema.Type.FLOAT);
     }
 
-    private static Schema fromSql(String table, String... cols) {
-        TreeMap<String, Class<?>> types = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        for (String c : cols) {
-            types.put(c, String.class);
-        }
-        return AvroSchemaManager.buildTableSchema(table, List.of(cols), types);
-    }
+    
 
     private static Schema fromSqlWithTypes(String table, Map<String, Class<?>> types, String... cols) {
         return AvroSchemaManager.buildTableSchema(table, List.of(cols), types);

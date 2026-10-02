@@ -104,15 +104,7 @@ class DeleteQuery implements Query<Void> {
         }
     }
 
-    /**
-     * Validates WHERE conditions before execution.
-     */
-    private void validateConditions() {
-        // Basic validation - ensure conditions are not null
-        if (conditions == null) {
-            throw new IllegalArgumentException("Delete conditions cannot be null");
-        }
-    }
+    
 
     /**
      * Identifies rows to delete using index acceleration or full scan.

@@ -57,17 +57,7 @@ public class WhereIndexTest {
         }
     }
 
-    private void createSecondTable() {
-        database.executeQuery("CREATE TABLE T2 (ID LONG PRIMARY KEY, T1_ID LONG, SCORE DOUBLE)", null);
-        database.executeQuery("CREATE INDEX ON T2 (T1_ID)", null);
-        for (int i = 1; i <= 50; i++) {
-            Map<String, Object> row = new HashMap<>();
-            row.put("ID", (long) i);
-            row.put("T1_ID", (long) (i % 10));
-            row.put("SCORE", i * 10.5);
-            database.getTable("T2").addRow(row);
-        }
-    }
+    
 
     // ── Range conditions (no exception = index used) ─────────────────
 

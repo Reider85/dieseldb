@@ -382,30 +382,7 @@ public class AvroRowStorage extends AbstractRowStorage {
         return resolveConfigValue("avro.metadata.database", "default");
     }
 
-    private void writeAvroFile(File target, Schema schema) throws IOException {
-        try (AtomicFileWriter afw = AtomicFileWriter.openBinary(target)) {
-            DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
-            OutputStream nonClosing = new OutputStream() {
-                private final OutputStream delegate = afw.outputStream();
-                @Override public void write(int b) throws IOException { delegate.write(b); }
-                @Override public void write(byte[] b, int off, int len) throws IOException { delegate.write(b, off, len); }
-                @Override public void flush() throws IOException { delegate.flush(); }
-                @Override public void close() { /* no-op: AtomicFileWriter owns the channel */ }
-            };
-            DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter);
-            try {
-                dataFileWriter.create(schema, nonClosing);
-                for (Object[] row : rows) {
-                    GenericRecord avroRecord = toRecord(row, schema);
-                    dataFileWriter.append(avroRecord);
-                }
-                dataFileWriter.flush();
-            } finally {
-                dataFileWriter.close();
-            }
-            afw.commit();
-        }
-    }
+    
 
     private List<Object[]> readAvroFile(File file, String tableName) throws IOException {
         File sidecarFile = new File(resolveAvroFilePath()).toPath()

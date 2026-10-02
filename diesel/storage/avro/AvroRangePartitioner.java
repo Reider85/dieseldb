@@ -657,17 +657,7 @@ public class AvroRangePartitioner {
         strategy.reindexBoundaries(boundaries);
     }
 
-    private Object extractPartitionValue(Map<String, Object> row) {
-        if (config.getPartitionColumn().isEmpty()) {
-            return null;
-        }
-        for (Map.Entry<String, Object> e : row.entrySet()) {
-            if (e.getKey().equalsIgnoreCase(config.getPartitionColumn())) {
-                return e.getValue();
-            }
-        }
-        return null;
-    }
+    
 
     private List<Map<String, Object>> readPartitionRows(String tableName, Path partitionDir)
             throws IOException {
