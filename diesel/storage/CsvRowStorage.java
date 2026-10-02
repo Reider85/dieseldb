@@ -412,34 +412,48 @@ public class CsvRowStorage extends AbstractRowStorage {
      *
      * @param blockIndex the zero-based block index
      * @return the sliced block
+     * @deprecated since prompt 33 — delegates to DelimitedIndexManager.getBlock(int),
+     *     which is deprecated. No replacement needed. Retained for API compatibility.
      */
     @Deprecated
     public DelimitedIndexManager.Block getBlock(int blockIndex) {
         return index().getBlock(blockIndex);
     }
 
-    /** Deprecated (prompt 33): assembles the blocks sequentially on demand. */
+    /** Deprecated (prompt 33): assembles the blocks sequentially on demand.
+     * @deprecated since prompt 33 — delegates to DelimitedIndexManager.loadAllBlocksParallel(),
+     *     which is deprecated. No replacement needed. Retained for API compatibility.
+     */
     @Deprecated
     public List<DelimitedIndexManager.Block> loadAllBlocksParallel() {
         DelimitedIndexManager manager = index();
         return manager == null ? List.of() : manager.loadAllBlocksParallel();
     }
 
-    /** Deprecated (prompt 33): the block cache no longer exists. */
+    /** Deprecated (prompt 33): the block cache no longer exists.
+     * @deprecated since prompt 33 — delegates to DelimitedIndexManager.getCacheHitCount(),
+     *     which is deprecated. No replacement needed. Retained for API compatibility.
+     */
     @Deprecated
     public long getCacheHitCount() {
         DelimitedIndexManager manager = index();
         return manager == null ? 0 : manager.getCacheHitCount();
     }
 
-    /** Deprecated (prompt 33): the block cache no longer exists. */
+    /** Deprecated (prompt 33): the block cache no longer exists.
+     * @deprecated since prompt 33 — delegates to DelimitedIndexManager.getCacheMissCount(),
+     *     which is deprecated. No replacement needed. Retained for API compatibility.
+     */
     @Deprecated
     public long getCacheMissCount() {
         DelimitedIndexManager manager = index();
         return manager == null ? 0 : manager.getCacheMissCount();
     }
 
-    /** Deprecated no-op (prompt 33): there is no cache to invalidate. */
+    /** Deprecated no-op (prompt 33): there is no cache to invalidate.
+     * @deprecated since prompt 33 — delegates to DelimitedIndexManager.invalidateCache(),
+     *     which is deprecated. No replacement needed. Retained for API compatibility.
+     */
     @Deprecated
     public void invalidateCache() {
         DelimitedIndexManager manager = index();

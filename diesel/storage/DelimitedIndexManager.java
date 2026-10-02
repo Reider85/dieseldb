@@ -668,6 +668,9 @@ public abstract class DelimitedIndexManager {
      *
      * @param blockIndex the zero-based block index
      * @return a new block holding the rows of the given slice
+     * @deprecated since prompt 33 — LRU block cache removed; rows are fully
+     *     in memory and blocks are sliced on demand. No replacement needed.
+     *     Retained for API compatibility; logs a deprecation warning.
      */
     @Deprecated
     public Block getBlock(int blockIndex) {
@@ -690,6 +693,9 @@ public abstract class DelimitedIndexManager {
      * Deprecated stub (prompt 33): assembles the blocks sequentially on demand.
      *
      * @return the blocks in ascending block order
+     * @deprecated since prompt 33 — LRU block cache removed; blocks are assembled
+     *     sequentially on demand. No replacement needed. Retained for API
+     *     compatibility; logs a deprecation warning.
      */
     @Deprecated
     public List<Block> loadAllBlocksParallel() {
@@ -702,21 +708,30 @@ public abstract class DelimitedIndexManager {
         return result;
     }
 
-    /** Deprecated stub: the block cache no longer exists, so hits are always zero. */
+    /** Deprecated stub: the block cache no longer exists, so hits are always zero.
+     * @deprecated since prompt 33 — block cache removed; cache hits are always zero.
+     *     No replacement needed. Retained for API compatibility; logs a deprecation warning.
+     */
     @Deprecated
     public long getCacheHitCount() {
         logDeprecated("getCacheHitCount()");
         return 0;
     }
 
-    /** Deprecated stub: the block cache no longer exists, so misses are always zero. */
+    /** Deprecated stub: the block cache no longer exists, so misses are always zero.
+     * @deprecated since prompt 33 — block cache removed; cache misses are always zero.
+     *     No replacement needed. Retained for API compatibility; logs a deprecation warning.
+     */
     @Deprecated
     public long getCacheMissCount() {
         logDeprecated("getCacheMissCount()");
         return 0;
     }
 
-    /** Deprecated no-op stub: there is no cache to invalidate. */
+    /** Deprecated no-op stub: there is no cache to invalidate.
+     * @deprecated since prompt 33 — block cache removed; there is no cache to invalidate.
+     *     No replacement needed. Retained for API compatibility; logs a deprecation warning.
+     */
     @Deprecated
     public void invalidateCache() {
         logDeprecated("invalidateCache()");
