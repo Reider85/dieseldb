@@ -421,10 +421,9 @@ public class AvroRangePartitioner {
         List<Path> all = listPartitions(tableName);
         for (Path partition : all) {
             RangeBoundary b = parseBoundary(partition.getFileName().toString());
-            if (b != null && !rangesOverlap(b.lowerInclusive(), b.upperInclusive(), lo, hi)) {
-                if (deleteTree(partition)) {
-                    logger.info("Pruned partition: {}", partition);
-                }
+            if (b != null && !rangesOverlap(b.lowerInclusive(), b.upperInclusive(), lo, hi)
+                    && deleteTree(partition)) {
+                logger.info("Pruned partition: {}", partition);
             }
         }
     }
@@ -492,10 +491,8 @@ public class AvroRangePartitioner {
 
             // Remove the original range directory
             int rangesRemoved = 0;
-            if (Files.exists(oldDir) && !written.contains(oldDir)) {
-                if (deleteTree(oldDir)) {
-                    rangesRemoved = 1;
-                }
+            if (Files.exists(oldDir) && !written.contains(oldDir) && deleteTree(oldDir)) {
+                rangesRemoved = 1;
             }
 
             // Replace boundary: remove old, add sub-ranges
@@ -584,10 +581,8 @@ public class AvroRangePartitioner {
             // Remove old range directories
             int rangesRemoved = 0;
             for (Path old : List.of(dirA, dirB)) {
-                if (Files.exists(old) && !old.equals(mergedDir)) {
-                    if (deleteTree(old)) {
-                        rangesRemoved++;
-                    }
+                if (Files.exists(old) && !old.equals(mergedDir) && deleteTree(old)) {
+                    rangesRemoved++;
                 }
             }
 

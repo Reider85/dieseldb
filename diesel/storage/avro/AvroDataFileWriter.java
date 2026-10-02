@@ -294,10 +294,8 @@ public class AvroDataFileWriter {
             }
             closed.set(true);
         }
-        if (outputFile.exists()) {
-            if (!outputFile.delete()) {
-                throw new IOException("Failed to rollback file: " + outputFile.getAbsolutePath());
-            }
+        if (outputFile.exists() && !outputFile.delete()) {
+            throw new IOException("Failed to rollback file: " + outputFile.getAbsolutePath());
         }
     }
 

@@ -198,11 +198,9 @@ public class SidecarSerializer {
             if (!loaded.isEmpty()) {
                 loaded.get(loaded.size() - 1).bitSize = Integer.parseInt(line.substring(9));
             }
-        } else if (line.startsWith("BITS=")) {
-            if (!loaded.isEmpty()) {
-                loaded.get(loaded.size() - 1).bits =
-                        Base64.getDecoder().decode(line.substring(5));
-            }
+        } else if (line.startsWith("BITS=") && !loaded.isEmpty()) {
+            loaded.get(loaded.size() - 1).bits =
+                    Base64.getDecoder().decode(line.substring(5));
         }
     }
 

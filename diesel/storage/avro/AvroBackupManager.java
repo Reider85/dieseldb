@@ -401,10 +401,8 @@ public final class AvroBackupManager {
         for (File child : children) {
             if (child.isDirectory()) {
                 File manifest = new File(child, AvroFileConstants.MANIFEST_FILE);
-                if (manifest.isFile()) {
-                    if (latest == null || child.lastModified() > latest.lastModified()) {
-                        latest = child;
-                    }
+                if (manifest.isFile() && (latest == null || child.lastModified() > latest.lastModified())) {
+                    latest = child;
                 }
             }
         }

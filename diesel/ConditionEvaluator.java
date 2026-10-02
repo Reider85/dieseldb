@@ -36,10 +36,9 @@ class ConditionEvaluator {
                 if (!result.orIsDetermined()) {
                     result = result.or(evaluateCondition3vl(row, condition, columnTypes));
                 }
-            } else if (conjunction == null || conjunction.equalsIgnoreCase(SqlKeywords.AND)) {
-                if (!result.andIsDetermined()) {
-                    result = result.and(evaluateCondition3vl(row, condition, columnTypes));
-                }
+            } else if ((conjunction == null || conjunction.equalsIgnoreCase(SqlKeywords.AND))
+                    && !result.andIsDetermined()) {
+                result = result.and(evaluateCondition3vl(row, condition, columnTypes));
             }
         }
         return result;

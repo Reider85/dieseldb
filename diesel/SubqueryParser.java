@@ -478,12 +478,11 @@ public class SubqueryParser {
                 SqlKeywords.FULL_JOIN, SqlKeywords.CROSS_JOIN, SqlKeywords.JOIN};
         for (String keyword : keywords) {
             if (pos + keyword.length() <= normalized.length()
-                    && normalized.regionMatches(true, pos, keyword, 0, keyword.length())) {
-                if (pos == 0 || Character.isWhitespace(normalized.charAt(pos - 1))) {
-                    int end = pos + keyword.length();
-                    if (end == normalized.length() || Character.isWhitespace(normalized.charAt(end))) {
-                        return keyword;
-                    }
+                    && normalized.regionMatches(true, pos, keyword, 0, keyword.length())
+                    && (pos == 0 || Character.isWhitespace(normalized.charAt(pos - 1)))) {
+                int end = pos + keyword.length();
+                if (end == normalized.length() || Character.isWhitespace(normalized.charAt(end))) {
+                    return keyword;
                 }
             }
         }

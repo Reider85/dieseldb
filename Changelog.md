@@ -856,3 +856,5 @@ chore: test-profiles-audit changelog entry
 3.2.43 Fixed test failures and performance regressions by addressing coalesced persistence bugs and test isolation issues
 
 3.2.45 Sonar-prompt8 S1133: add @deprecated Javadoc tags to 15 deprecated stub methods (DelimitedIndexManager, CsvRowStorage, TsvRowStorage); Javadoc-only
+
+3.2.46 Sonar-prompt8 prompt 47 - S1066: merge 15 collapsible nested ifs

@@ -804,11 +804,9 @@ public final class AvroTransactionManager {
                 List<WalEntry> entries = readWalFile(wf);
                 if (!entries.isEmpty()) {
                     WalEntry oldest = entries.get(0);
-                    if (oldest.timestampMs() < cutoffMs) {
-                        if (wf.delete()) {
-                            pruned++;
-                            LOGGER.info("Pruned expired WAL file: {}", wf.getName());
-                        }
+                    if (oldest.timestampMs() < cutoffMs && wf.delete()) {
+                        pruned++;
+                        LOGGER.info("Pruned expired WAL file: {}", wf.getName());
                     }
                 }
             } catch (IOException e) {

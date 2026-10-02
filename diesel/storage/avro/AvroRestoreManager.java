@@ -319,11 +319,10 @@ public final class AvroRestoreManager {
             if (!child.isDirectory() || !manifestFile.isFile()) continue;
             try {
                 AvroBackupManager.BackupManifest manifest = AvroBackupManager.readManifest(manifestFile);
-                if (!manifest.startedAt().isAfter(pointInTime)) {
-                    if (best == null || manifest.startedAt().isAfter(
-                            AvroBackupManager.readManifest(new File(best, AvroFileConstants.MANIFEST_FILE)).startedAt())) {
-                        best = child;
-                    }
+                if (!manifest.startedAt().isAfter(pointInTime)
+                        && (best == null || manifest.startedAt().isAfter(
+                                AvroBackupManager.readManifest(new File(best, AvroFileConstants.MANIFEST_FILE)).startedAt()))) {
+                    best = child;
                 }
             } catch (Exception e) {
                 LOGGER.warn("Avro restore: unreadable manifest in {}: {}", child.getName(), e.getMessage());

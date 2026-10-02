@@ -1,1 +1,1 @@
-3.2.45 Sonar-prompt8 S1133: add @deprecated Javadoc tags to 15 deprecated stub methods (DelimitedIndexManager, CsvRowStorage, TsvRowStorage); Javadoc-only
+3.2.46 Sonar-prompt8 prompt 47 - S1066: merge 15 collapsible nested ifs

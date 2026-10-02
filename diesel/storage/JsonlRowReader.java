@@ -632,10 +632,8 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
 
     /** Whether a projected FLATTEN read must keep the subtree at {@code path}. */
     private boolean subtreeNeeded(String path, Integer columnIndex) {
-        if (columnIndex != null) {
-            if (neededByColumn != null && neededByColumn[columnIndex]) {
-                return true;
-            }
+        if (columnIndex != null && neededByColumn != null && neededByColumn[columnIndex]) {
+            return true;
         }
         return neededPrefixes != null && neededPrefixes.contains(path.toLowerCase(Locale.ROOT));
     }

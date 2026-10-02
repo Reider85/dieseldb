@@ -347,11 +347,9 @@ public class AvroAuditLogger implements AutoCloseable {
             if (f.equals(currentLogFile)) {
                 continue;
             }
-            if (f.lastModified() < cutoff) {
-                if (f.delete()) {
-                    pruned++;
-                    LOGGER.info("Avro audit: pruned old log {}", f.getName());
-                }
+            if (f.lastModified() < cutoff && f.delete()) {
+                pruned++;
+                LOGGER.info("Avro audit: pruned old log {}", f.getName());
             }
         }
         return pruned;

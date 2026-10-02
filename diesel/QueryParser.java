@@ -2436,20 +2436,20 @@ class QueryParser {
         }
         if (condition.column != null) {
             String prefix = condition.column.contains(".") ? condition.column.split("\\.")[0] : null;
-            if (prefix != null) {
-                if (!tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(leftTable) && !tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(rightTable)) {
-                    throw new IllegalArgumentException("Invalid table or alias in ON condition: " + prefix +
-                            ", expected " + leftTable + " or " + rightTable);
-                }
+            if (prefix != null
+                    && !tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(leftTable)
+                    && !tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(rightTable)) {
+                throw new IllegalArgumentException("Invalid table or alias in ON condition: " + prefix +
+                        ", expected " + leftTable + " or " + rightTable);
             }
         }
         if (condition.rightColumn != null) {
             String prefix = condition.rightColumn.contains(".") ? condition.rightColumn.split("\\.")[0] : null;
-            if (prefix != null) {
-                if (!tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(leftTable) && !tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(rightTable)) {
-                    throw new IllegalArgumentException("Invalid table or alias in ON condition (right column): " + prefix +
-                            ", expected " + leftTable + " or " + rightTable);
-                }
+            if (prefix != null
+                    && !tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(leftTable)
+                    && !tableAliases.getOrDefault(prefix, prefix).equalsIgnoreCase(rightTable)) {
+                throw new IllegalArgumentException("Invalid table or alias in ON condition (right column): " + prefix +
+                        ", expected " + leftTable + " or " + rightTable);
             }
         }
     }

@@ -1641,11 +1641,10 @@ class Table implements Serializable {
 
     private void checkUniqueConstraint(String column, Object value) {
         Index index = indexes.get(column);
-        if (index instanceof UniqueIndex || index instanceof BTreeClusteredIndex) {
-            if (value != null && !index.search(value).isEmpty()) {
-                LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
-                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + ErrorMessages.IN_COLUMN + column);
-            }
+        if ((index instanceof UniqueIndex || index instanceof BTreeClusteredIndex)
+                && value != null && !index.search(value).isEmpty()) {
+            LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
+            throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + ErrorMessages.IN_COLUMN + column);
         }
     }
 
