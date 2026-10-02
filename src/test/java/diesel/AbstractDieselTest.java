@@ -2,12 +2,12 @@ package diesel;
 
 import diesel.Database;
 
+import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -27,6 +27,17 @@ public abstract class AbstractDieselTest {
     private static final Logger LOGGER = Logger.getLogger(AbstractDieselTest.class.getName());
     protected static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
 
+    /**
+     * Per-test-class data directory. JUnit injects a fresh, distinct directory
+     * into a {@code static @TempDir} field for every test class, so the eleven
+     * subclasses that share the USERS/PROFILES/TRANSACTIONS/USER_DETAILS table
+     * names cannot see each other's files while surefire runs
+     * {@code parallel=classes}. A JVM-wide {@code Files.createTempDirectory}
+     * let concurrent classes stomp on the same {@code USERS.avro}, inflating it
+     * well past {@link #recordCount()} rows and making the scan-heavy
+     * {@code PerformanceRegressionTest} queries report 2-6x regressions.
+     */
+    @TempDir
     protected static Path tempDir;
 
     protected final Database database = new Database();
@@ -41,11 +52,7 @@ public abstract class AbstractDieselTest {
     /* ------------------------------------------------------------------ */
 
     @BeforeAll
-    void setupCommonTables() throws IOException {
-        if (tempDir == null) {
-            tempDir = Files.createTempDirectory("dieseldb-test-");
-            tempDir.toFile().deleteOnExit();
-        }
+    void setupCommonTables() {
         database.setDataDir(tempDir.toString());
         dropTable("USERS");
         dropTable("PROFILES");

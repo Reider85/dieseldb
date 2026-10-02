@@ -944,7 +944,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 // the optimised path that applies column projection and predicate
                 // pushdown at the Avro binary level.
                 if (table.getStorage() instanceof AvroRowStorage avroStorage) {
-                    mainRows = executeAvroPushdown(avroStorage, table, conditions, combinedColumnTypes);
+                    // If table has pending persists, use in-memory scan with isDeleted filter
+                    // to ensure read-your-writes guarantee for coalesced persistence
+                    if (table.hasPendingPersist()) {
+                        List<Map<String, Object>> rawRows = table.getRows();
+                        mainRows = new ArrayList<>(rawRows.size());
+                        for (int i = 0; i < rawRows.size(); i++) {
+                            if (!table.isDeleted(i)) {
+                                mainRows.add(rawRows.get(i));
+                            }
+                        }
+                    } else {
+                        mainRows = executeAvroPushdown(avroStorage, table, conditions, combinedColumnTypes);
+                    }
                 } else {
                     List<Map<String, Object>> rawRows = table.getRows();
                     mainRows = new ArrayList<>(rawRows.size());
@@ -2515,7 +2527,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             // reader is not aware of them. Bypass pushdown and use the in-memory
             // scan (which filters via Table.isDeleted) so deleted rows never leak
             // back into results.
-            if (table.getDeletedCount() > 0) {
+            if (table.getDeletedCount() > 0 || table.hasPendingPersist()) {
                 List<Map<String, Object>> rawRows = table.getRows();
                 List<Map<String, Object>> mainRows = new ArrayList<>(rawRows.size());
                 for (int i = 0; i < rawRows.size(); i++) {

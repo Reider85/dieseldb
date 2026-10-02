@@ -78,6 +78,7 @@ class Database {
         if (!dir.exists()) {
             dir.mkdirs();
         }
+        Table.flushPendingPersistsForDataDir(this.dataDir);
     }
 
     /**
@@ -719,6 +720,7 @@ class Database {
             return executeTransactionDml(parsedQuery, table, tableName, currentTransaction);
         }
         Object dmlResult = parsedQuery.execute(table);
+        Table.flushPendingPersistsForDataDir(this.dataDir);
         table.saveToFile(tableName);
         return dmlResult;
     }
@@ -750,14 +752,22 @@ class Database {
      * COMMIT also writes the serialized table file.
      */
     private void persistModifiedTables(Map<String, Table> modifiedTables, boolean writeSerialized) {
+        // Before any disk read, flush pending writes for read-your-writes guarantee
+        if (!writeSerialized) {
+            Table.flushPendingPersistsForDataDir(this.dataDir);
+        }
+
         for (Map.Entry<String, Table> entry : modifiedTables.entrySet()) {
             String tableName = entry.getKey();
             Table modifiedTable = entry.getValue();
             if (modifiedTable != null) {
                 tables.put(tableName, modifiedTable);
-                modifiedTable.saveToFile(tableName);
                 if (writeSerialized) {
+                    modifiedTable.saveToFile(tableName);
                     modifiedTable.saveToSerializedFile(tableName);
+                } else {
+                    // Auto-commit: use coalesced persistence (write-behind)
+                    modifiedTable.saveToFileDebounced(tableName);
                 }
             } else {
                 tables.remove(tableName);
@@ -1186,6 +1196,8 @@ class Database {
      * @see Table#saveToSerializedFile
      */
     public void saveTablesToDisk() {
+        Table.flushPendingPersistsForDataDir(this.dataDir);
+
         File dir = new File(dataDir);
         if (!dir.exists()) {
             dir.mkdirs();
@@ -1203,6 +1215,9 @@ class Database {
      * @see Table#loadFromFile
      */
     public void loadTablesFromDisk() {
+        // Before any disk read, flush pending writes for read-your-writes guarantee
+        Table.flushPendingPersistsForDataDir(this.dataDir);
+
         File dir = new File(dataDir);
         File[] files = dir.listFiles((d, name) -> name.endsWith(ErrorMessages.TABLE_EXTENSION));
         if (files == null) {
@@ -1232,6 +1247,8 @@ class Database {
     }
 
     private void deleteTableFiles(String tableName) {
+        Table.flushPendingPersistsForDataDir(this.dataDir);
+
         String[] suffixes = {
                 ".csv", ".csv.zst", ".csv.lz4", ".csv.snappy",
                 ".tsv", ".tsv.zst", ".tsv.lz4", ".tsv.snappy",
@@ -1297,5 +1314,13 @@ class Database {
             transaction.snapshotTable(entry.getKey(), entry.getValue());
         }
         return transactionId;
+    }
+
+    /**
+     * Flushes all pending writes and closes the database.
+     * Equivalent to {@code saveTablesToDisk()}.
+     */
+    public void close() {
+        saveTablesToDisk();
     }
 }

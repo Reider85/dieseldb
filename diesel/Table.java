@@ -194,6 +194,15 @@ class Table implements Serializable {
     /** Queued index operations when deferred mode is active; null when not deferring. */
     private transient List<Runnable> deferredIndexOps;
 
+    /**
+     * True when an auto-commit mutation has been persisted only in memory and the
+     * data file is still stale (Prompt: coalesced persistence).
+     */
+    private transient volatile boolean persistDirty;
+
+    /** Number of auto-commit mutations folded into the pending write. */
+    private transient volatile int pendingPersistCount;
+
     /** Tracks positions of tombstoned (logically deleted) rows. Physical removal happens only during {@link #compact()}. */
     private transient BitSet deletedRows;
 
@@ -339,6 +348,8 @@ class Table implements Serializable {
         this.statsRefreshScheduled = false;
         this.indicesDisabled = false;
         this.deferredIndexOps = null;
+        this.persistDirty = false;
+        this.pendingPersistCount = 0;
         this.formatVersion = CURRENT_FORMAT_VERSION;
         this.version = new AtomicLong(0);
     }
@@ -2209,6 +2220,8 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
+        persistDirty = false;
+        pendingPersistCount = 0;
         tableLock.writeLock().lock();
         try {
             if (storage != null && !(storage instanceof InMemoryRowStorage)) {
@@ -2221,6 +2234,146 @@ class Table implements Serializable {
         } finally {
             tableLock.writeLock().unlock();
         }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  Coalesced persistence (auto-commit write-behind)                 */
+    /*                                                                   */
+    /*  Every storage format rewrites the whole data file on saveToFile,  */
+    /*  so an insert burst of N rows used to cost N whole-file writes     */
+    /*  (O(N^2) bytes). Auto-commit DML now marks the table dirty and     */
+    /*  folds the burst into a single write. Reads are served from the    */
+    /*  in-memory rows, so read-your-writes is unaffected; the file is     */
+    /*  flushed before anything can observe it from the outside:         */
+    /*  explicit saveToFile / COMMIT, DDL, loadTablesFromDisk, the        */
+    /*  pending-row threshold and the JVM shutdown hook.                  */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Auto-commit persist that coalesces a burst of mutations into one
+     * whole-file write. Writes immediately when
+     * {@code diesel.persist.max.pending} mutations are still unwritten, when
+     * {@code diesel.persist.deferred} is {@code false}, or when the storage
+     * keeps no durable file (in-memory tables without
+     * {@code diesel.inmemory.persist}).
+     */
+    public void saveToFileDebounced(String tableName) {
+        if (!isPersistFileBacked()) {
+            persistDirty = false;
+            pendingPersistCount = 0;
+            return;
+        }
+        boolean flushNow;
+        synchronized (this) {
+            pendingPersistCount++;
+            persistDirty = true;
+            flushNow = pendingPersistCount >= persistMaxPending();
+        }
+        if (flushNow || !persistDeferredEnabled()) {
+            flushPendingPersist(tableName);
+        } else {
+            registerPendingPersist(this);
+            LOGGER.log(Level.FINE, "Coalesced persist for table {0} ({1} pending mutations)",
+                    new Object[]{name, pendingPersistCount});
+        }
+    }
+
+    /**
+     * Writes the pending whole-file persist, if any. Safe to call when clean.
+     */
+    public void flushPendingPersist(String tableName) {
+        if (!persistDirty) {
+            return;
+        }
+        unregisterPendingPersist(this);
+        saveToFile(tableName);
+    }
+
+    /**
+     * Whether an auto-commit mutation has not reached the data file yet.
+     */
+    public boolean hasPendingPersist() {
+        return persistDirty;
+    }
+
+    /** Tables whose last auto-commit mutation is not on disk yet. */
+    private static final Map<String, Set<Table>> PENDING_PERSISTS = new ConcurrentHashMap<>();
+
+    /**
+     * Flushes the pending persist of every table in this JVM whose file could
+     * be observed by an outside reader.
+     */
+    public static void flushAllPendingPersists() {
+        for (Set<Table> tables : PENDING_PERSISTS.values()) {
+            for (Table table : tables) {
+                try {
+                    table.flushPendingPersist(table.name);
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.WARNING, "Failed to flush pending persist for table " + table.name, e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Flushes the pending persist of every table associated with the given data directory.
+     */
+    public static void flushPendingPersistsForDataDir(String dataDir) {
+        Set<Table> tables = PENDING_PERSISTS.get(dataDir);
+        if (tables != null) {
+            for (Table table : tables) {
+                try {
+                    table.flushPendingPersist(table.name);
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.WARNING, "Failed to flush pending persist for table " + table.name, e);
+                }
+            }
+        }
+    }
+
+    private static void registerPendingPersist(Table table) {
+        PENDING_PERSISTS.computeIfAbsent(table.database.getDataDir(), k -> ConcurrentHashMap.newKeySet()).add(table);
+    }
+
+    private static void unregisterPendingPersist(Table table) {
+        Set<Table> tables = PENDING_PERSISTS.get(table.database.getDataDir());
+        if (tables != null) {
+            tables.remove(table);
+            if (tables.isEmpty()) {
+                PENDING_PERSISTS.remove(table.database.getDataDir());
+            }
+        }
+    }
+
+    /** True when this table has a data file that a save would rewrite. */
+    private boolean isPersistFileBacked() {
+        return storage != null && !(storage instanceof InMemoryRowStorage);
+    }
+
+    private static boolean persistDeferredEnabled() {
+        return !"false".equalsIgnoreCase(resolvePersistConfig("diesel.persist.deferred", "true"));
+    }
+
+    private static int persistMaxPending() {
+        try {
+            int configured = Integer.parseInt(resolvePersistConfig("diesel.persist.max.pending", "64").trim());
+            return configured > 0 ? configured : 64;
+        } catch (NumberFormatException e) {
+            return 64;
+        }
+    }
+
+    /** Sysprop overrides {@code config.properties}, matching the storage-type lookup. */
+    private static String resolvePersistConfig(String key, String defaultValue) {
+        String sysprop = System.getProperty(key);
+        if (sysprop != null && !sysprop.isBlank()) {
+            return sysprop;
+        }
+        return getConfigProperty(key, defaultValue);
+    }
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(Table::flushAllPendingPersists, "diesel-persist-flush"));
     }
 
     /**
