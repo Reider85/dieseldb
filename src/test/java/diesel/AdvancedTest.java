@@ -14,6 +14,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Tag("query-full")
 public class AdvancedTest {
@@ -553,5 +554,20 @@ public class AdvancedTest {
             database.executeQuery("DELETE FROM USERS WHERE AGE = 50 OR BALANCE > 5000", null);
             database.getTable("USERS").saveToFile("USERS");
         }, "deleteWithWhereIndexedOrNonIndexed");
+    }
+
+    @Test
+    void insertWithBackslashAndDoubledQuotes() {
+        // Test regression fix for splitTopLevelComma infinite loop
+        // Backslash escape in quoted value
+        assertDoesNotThrow(() -> database.executeQuery("INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE) VALUES ('CODE_BACKSLASH', 'User\\Name', 25, 1500.00)", null), "insertWithBackslashInQuotes");
+        
+        // Doubled quote in quoted value
+        assertDoesNotThrow(() -> database.executeQuery("INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE) VALUES ('CODE_DOUBLED', ''User Name'', 30, 2000.00)", null), "insertWithDoubledQuotes");
+        
+        // Verify the values were inserted correctly
+        Object result = database.executeQuery("SELECT COUNT(*) FROM USERS WHERE USER_CODE IN ('CODE_BACKSLASH', 'CODE_DOUBLED')", null);
+        assertTrue(result instanceof Integer, "Should return count");
+        assertEquals(2, result, "Both inserted records should exist");
     }
 }

@@ -864,3 +864,5 @@ chore: test-profiles-audit changelog entry
 3.2.48 Mass fix of 10 SonarQube rules covering ~105 problems: S107/S6208/S1141/S1117/S127/S5843/S2925/S3008/S3457/S106 - renamed static fields, replaced System.out.println, fixed switch labels, shadowed variables, loop counters, nested try blocks, Thread.sleep, format strings, and method parameters
 
 3.2.49 Fix max.result.rows guard broken by Sonar S3008 rename
+
+3.2.50 Fixed Java heap space OOM failures caused by infinite loop in QueryParser.splitTopLevelComma

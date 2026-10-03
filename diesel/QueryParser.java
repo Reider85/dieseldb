@@ -1357,20 +1357,20 @@ class QueryParser {
         if (c == '\\' && i + 1 < input.length()) {
             current.append(c);
             current.append(input.charAt(i + 1));
-            return i + 1;
+            return i + 2;
         }
         if (c == '\'') {
             if (i + 1 < input.length() && input.charAt(i + 1) == '\'') {
                 current.append('\'');
                 current.append('\'');
-                return i + 1;
+                return i + 2;
             }
             inQuotes[0] = false;
             current.append(c);
-            return i;
+            return i + 1;
         }
         current.append(c);
-        return i;
+        return i + 1;
     }
 
     private void processCharOutsideQuotes(char c, StringBuilder current,
@@ -3403,8 +3403,7 @@ class QueryParser {
             return new ArrayList<>();
         }
         return null;
-    
-}
+    }
     private List<HavingCondition> parseHavingConditions(String havingClause, ParseContext ctx,
                                                     List<AggregateFunction> aggregates) {
         List<HavingCondition> result = checkForEmptyHavingClause(havingClause);
@@ -3527,7 +3526,7 @@ class QueryParser {
             return AND_OR_BREAK_SENTINEL;
         }
         state.currentCondition.append(' ');
-        return i;
+        return i + 1;
     }
 
     private static final class HavingParseState {
