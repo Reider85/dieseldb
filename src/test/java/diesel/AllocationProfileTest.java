@@ -4,6 +4,7 @@ import diesel.storage.DelimitedByteParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
+import diesel.TestWaitHelper;
 
 import java.io.File;
 import java.lang.management.ManagementFactory;
@@ -71,7 +72,7 @@ class AllocationProfileTest {
 
         // Force GC before measurement
         System.gc();
-        Thread.sleep(100);
+        TestWaitHelper.waitForGcCompletion();
 
         MemoryUsage heapBefore = memoryBean.getHeapMemoryUsage();
 

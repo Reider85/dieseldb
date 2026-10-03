@@ -6,6 +6,7 @@ import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.Future;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.function.Supplier;
@@ -751,14 +752,7 @@ class BTreeIndex implements Index, Serializable {
         try {
             results = INDEX_SCAN_POOL.invokeAll(tasks).stream()
                     .map(future -> {
-                        try {
-                            return future.get();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            return null;
-                        } catch (Exception e) {
-                            throw new QuerySyntaxException("", e.getMessage());
-                        }
+                        return getFutureResult(future);
                     })
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
@@ -770,6 +764,20 @@ class BTreeIndex implements Index, Serializable {
             mergedResult.addAll(result);
         }
         return mergedResult;
+    }
+    
+    /**
+     * Extracts the result from a Future, handling exceptions appropriately.
+     */
+    private List<Integer> getFutureResult(Future<List<Integer>> future) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (Exception e) {
+            throw new QuerySyntaxException("", e.getMessage());
+        }
     }
     
     /**

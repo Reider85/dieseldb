@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import diesel.TestWaitHelper;
 
 import java.io.BufferedOutputStream;
 import java.io.BufferedWriter;
@@ -717,10 +718,9 @@ class JsonlStorageAdvancedTest {
         for (int i = 0; i < 3; i++) {
             System.gc();
             try {
-                Thread.sleep(20);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
+                TestWaitHelper.waitForGcCompletion();
+            } catch (Exception e) {
+                // Ignore exceptions in test
             }
         }
     }

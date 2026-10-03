@@ -112,31 +112,9 @@ public class DatabaseClient {
             out.flush();
             // Read compression marker byte (0x00 = uncompressed, 0x01 = GZIP compressed)
             try {
-                int marker = in.read();
-                if (marker == 0x01) { // compressed
-                    int dataLength = in.readInt();
-                    byte[] compressedData = new byte[dataLength];
-                    in.readFully(compressedData);
-                    java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
-                            new java.io.ByteArrayInputStream(compressedData));
-                    java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
-                    result = ois.readObject();
-                    ois.close();
-                } else { // uncompressed (marker 0x00 or any other value)
-                    // Put the marker byte back by creating a wrapper - 
-                    // instead we just read the object directly since marker was already consumed
-                    // Actually, we need to re-read. Let's use a different approach.
-                    // Read the length and the object
-                    int dataLength = in.readInt();
-                    byte[] uncompressedData = new byte[dataLength];
-                    in.readFully(uncompressedData);
-                    java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
-                            new java.io.ByteArrayInputStream(uncompressedData));
-                    result = ois.readObject();
-                    ois.close();
-                }
-            } catch (IOException | ClassNotFoundException e) {
-                throw new DieselIOException("Failed to read query result: " + e.getMessage(), e);
+                result = readQueryResult();
+            } catch (ClassNotFoundException e) {
+                throw new IOException("Failed to deserialize query result", e);
             }
             if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
                 transactionId = UUID.fromString(s.split(": ")[1]);
@@ -443,19 +421,19 @@ public class DatabaseClient {
      * @param args optional {@code host} and {@code port} arguments
      */
     public static void main(String[] args) {
-        String host = "localhost";
-        int port = 3306;
+        String localHost = "localhost";
+        int localPort = 3306;
         if (args.length > 0) {
-            host = args[0];
+            localHost = args[0];
         }
         if (args.length > 1) {
             try {
-                port = Integer.parseInt(args[1]);
+                localPort = Integer.parseInt(args[1]);
             } catch (NumberFormatException e) {
-                LOGGER.warn("Invalid port {}, using default {}", args[1], port);
+                LOGGER.warn("Invalid port {}, using default {}", args[1], localPort);
             }
         }
-        DatabaseClient client = new DatabaseClient(host, port);
+        DatabaseClient client = new DatabaseClient(localHost, localPort);
         try {
             client.connect();
 
@@ -510,6 +488,41 @@ public class DatabaseClient {
             }
         } finally {
             client.disconnect();
+        }
+    }
+    
+    /**
+     * Reads a query result from the input stream, handling compression.
+     */
+    private Object readQueryResult() throws IOException, ClassNotFoundException {
+        try {
+            int marker = in.read();
+            if (marker == 0x01) { // compressed
+                int dataLength = in.readInt();
+                byte[] compressedData = new byte[dataLength];
+                in.readFully(compressedData);
+                java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
+                        new java.io.ByteArrayInputStream(compressedData));
+                java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
+                Object result = ois.readObject();
+                ois.close();
+                return result;
+            } else { // uncompressed (marker 0x00 or any other value)
+                // Put the marker byte back by creating a wrapper - 
+                // instead we just read the object directly since marker was already consumed
+                // Actually, we need to re-read. Let's use a different approach.
+                // Read the length and the object
+                int dataLength = in.readInt();
+                byte[] uncompressedData = new byte[dataLength];
+                in.readFully(uncompressedData);
+                java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
+                        new java.io.ByteArrayInputStream(uncompressedData));
+                Object result = ois.readObject();
+                ois.close();
+                return result;
+            }
+        } catch (IOException | ClassNotFoundException e) {
+            throw new DieselIOException("Failed to read query result: " + e.getMessage(), e);
         }
     }
 }

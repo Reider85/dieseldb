@@ -1339,12 +1339,13 @@ class QueryParser {
         boolean[] inQuotes = {false};
         int[] parenDepth = {0};
 
-        for (int i = 0; i < input.length(); i++) {
+        for (int i = 0; i < input.length(); ) {
             char c = input.charAt(i);
             if (inQuotes[0]) {
                 i = processCharInQuotes(c, i, input, current, inQuotes);
             } else {
                 processCharOutsideQuotes(c, current, inQuotes, parenDepth, parts);
+                i++;
             }
         }
 
@@ -3413,15 +3414,18 @@ class QueryParser {
         List<HavingCondition> conditions = new ArrayList<>();
         HavingParseState state = new HavingParseState();
 
-        for (int i = 0; i < havingClause.length(); i++) {
+        for (int i = 0; i < havingClause.length(); ) {
             char c = havingClause.charAt(i);
             if (c == '\'') {
                 state.inQuotes = !state.inQuotes;
                 state.currentCondition.append(c);
+                i++;
             } else if (!state.inQuotes && c == '(') {
                 handleOpenParen(c, i, havingClause, state);
+                i++;
             } else if (!state.inQuotes && c == ')') {
                 handleCloseParen(state, conditions, ctx, aggregates);
+                i++;
             } else if (!state.inQuotes && state.parenDepth == 0 && c == ' ' && state.subQueryStart == -1) {
                 i = handleSpaceSeparator(i, havingClause, state, conditions, ctx, aggregates);
                 if (i == AND_OR_BREAK_SENTINEL) {
@@ -3429,6 +3433,7 @@ class QueryParser {
                 }
             } else {
                 state.currentCondition.append(c);
+                i++;
             }
         }
 

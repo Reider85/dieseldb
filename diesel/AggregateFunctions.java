@@ -1,6 +1,8 @@
 package diesel;
 
 import java.util.List;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.DoubleVector;
@@ -15,6 +17,7 @@ import jdk.incubator.vector.VectorSpecies;
  */
 public class AggregateFunctions {
     
+    private static final Logger LOGGER = Logger.getLogger(AggregateFunctions.class.getName());
     private static final VectorSpecies<Integer> INT_SPECIES = IntVector.SPECIES_PREFERRED;
     private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
     private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
@@ -375,8 +378,8 @@ public class AggregateFunctions {
      * @param iterations number of iterations
      */
     public static void benchmark(int arraySize, int iterations) {
-        System.out.println("=== Aggregate Functions Benchmark ===");
-        System.out.println("Array size: " + arraySize + ", Iterations: " + iterations);
+        LOGGER.info("=== Aggregate Functions Benchmark ===");
+        LOGGER.info(String.format("Array size: %d, Iterations: %d", arraySize, iterations));
         
         // Create test data
         int[] intArray = new int[arraySize];
@@ -438,9 +441,12 @@ public class AggregateFunctions {
         }
         long scalarDoubleTime = System.nanoTime() - start;
         
-        System.out.println("INT SUM - Vector: " + (vectorIntTime / 1_000_000) + "ms, Scalar: " + (scalarIntTime / 1_000_000) + ErrorMessages.MS_SPEEDUP + String.format("%.2f", (double)scalarIntTime / vectorIntTime) + "x");
-        System.out.println("LONG SUM - Vector: " + (vectorLongTime / 1_000_000) + "ms, Scalar: " + (scalarLongTime / 1_000_000) + ErrorMessages.MS_SPEEDUP + String.format("%.2f", (double)scalarLongTime / vectorLongTime) + "x");
-        System.out.println("DOUBLE SUM - Vector: " + (vectorDoubleTime / 1_000_000) + "ms, Scalar: " + (scalarDoubleTime / 1_000_000) + ErrorMessages.MS_SPEEDUP + String.format("%.2f", (double)scalarDoubleTime / vectorDoubleTime) + "x");
+        LOGGER.info(String.format("INT SUM - Vector: %dms, Scalar: %d%s%.2fx", 
+            vectorIntTime / 1_000_000, scalarIntTime / 1_000_000, ErrorMessages.MS_SPEEDUP, (double)scalarIntTime / vectorIntTime));
+        LOGGER.info(String.format("LONG SUM - Vector: %dms, Scalar: %d%s%.2fx", 
+            vectorLongTime / 1_000_000, scalarLongTime / 1_000_000, ErrorMessages.MS_SPEEDUP, (double)scalarLongTime / vectorLongTime));
+        LOGGER.info(String.format("DOUBLE SUM - Vector: %dms, Scalar: %d%s%.2fx", 
+            vectorDoubleTime / 1_000_000, scalarDoubleTime / 1_000_000, ErrorMessages.MS_SPEEDUP, (double)scalarDoubleTime / vectorDoubleTime));
     }
     
     private static long scalarSumInt(int[] array) {

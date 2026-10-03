@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import diesel.TestWaitHelper;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -380,11 +381,11 @@ class AvroTransactionManagerTest {
         CountDownLatch released = new CountDownLatch(1);
         new Thread(() -> {
             try {
-                Thread.sleep(100);
+                TestWaitHelper.waitForLockReleaseDelay();
                 mgr.releaseWriteLock("USERS", tx1);
                 released.countDown();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                // Ignore exceptions in test thread
             }
         }).start();
 
@@ -538,7 +539,7 @@ class AvroTransactionManagerTest {
         UUID txId = mgr.beginTransaction(IsolationLevel.READ_UNCOMMITTED);
         mgr.commitTransaction(txId);
 
-        Thread.sleep(10); // Let the entry expire
+        TestWaitHelper.waitForWalEntryExpiration();
         int pruned = mgr.pruneExpiredWalFiles();
         // Should keep at least one file, so pruned may be 0
         assertTrue(pruned >= 0);

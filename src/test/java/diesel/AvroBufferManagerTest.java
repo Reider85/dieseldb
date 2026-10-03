@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import diesel.TestWaitHelper;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
@@ -197,10 +198,7 @@ class AvroBufferManagerTest {
             }
             assertTrue(buf.getBufferedRows() > 0);
 
-            long deadline = System.currentTimeMillis() + 5000;
-            while (System.currentTimeMillis() < deadline && buf.getBufferedRows() > 0) {
-                Thread.sleep(50);
-            }
+            TestWaitHelper.waitForBufferFlush(buf, 5000);
             assertEquals(0, buf.getBufferedRows());
             assertTrue(mgr.getTotalFlushes() > 0, "scheduler should have flushed");
         }

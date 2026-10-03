@@ -39,7 +39,7 @@ public class PreparedStatement {
     private final List<Object> boundParams = new ArrayList<>();
 
     /** Global LRU cache capacity, loaded from {@code query.cache.max.size}. */
-    private static int MAX_CACHE_SIZE = loadMaxCacheSize();
+    private static int maxCacheSize = loadMaxCacheSize();
 
     /**
      * The parsed-AST cache for this statement, keyed by the concrete SQL
@@ -49,7 +49,7 @@ public class PreparedStatement {
     private final Map<String, Query<?>> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Query<?>> eldest) {
-            return size() > MAX_CACHE_SIZE;
+            return size() > maxCacheSize;
         }
     };
 
@@ -264,6 +264,6 @@ public class PreparedStatement {
      * the configured default.
      */
     public static void resetGlobalCacheSize() {
-        MAX_CACHE_SIZE = loadMaxCacheSize();
+        maxCacheSize = loadMaxCacheSize();
     }
 }

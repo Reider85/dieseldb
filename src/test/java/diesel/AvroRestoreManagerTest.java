@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import diesel.TestWaitHelper;
 
 import java.io.File;
 import java.io.IOException;
@@ -332,7 +333,7 @@ class AvroRestoreManagerTest {
         BackupReport first = AvroBackupManager.backupFull(sourceDir,
                 new BackupConfig(backupDir.getAbsolutePath(), 30, true, false));
 
-        Thread.sleep(50);
+        TestWaitHelper.waitForBackupCompletion();
         Files.write(new File(sourceDir, "new.avro").toPath(), "new".getBytes());
         AvroBackupManager.backupFull(sourceDir,
                 new BackupConfig(backupDir.getAbsolutePath(), 30, true, false));
@@ -381,7 +382,7 @@ class AvroRestoreManagerTest {
         File backupDir = tempDir.resolve("backups").toFile();
         BackupConfig cfg = new BackupConfig(backupDir.getAbsolutePath(), 30, true, false);
         AvroBackupManager.backupFull(sourceDir, cfg);
-        Thread.sleep(50);
+        TestWaitHelper.waitForBackupCompletion();
         AvroBackupManager.backupFull(sourceDir, cfg);
 
         List<AvailableBackup> backups = AvroRestoreManager.listBackups(backupDir);

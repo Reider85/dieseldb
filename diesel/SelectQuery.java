@@ -218,7 +218,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * and overridable per query with the MAX_ROWS SQL comment hint
      * (&#47;* MAX_ROWS=N *&#47;), or disabled entirely with {@code /* MAX_ROWS=0 *&#47;}.
      */
-    private static long MAX_RESULT_ROWS = 1_000_000;
+    private static long maxResultRows = 1_000_000;
 
     /**
      * Fixed per-row-unit overhead of building and probing an in-memory hash
@@ -227,7 +227,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * table and hashes every key, which only pays off once the inputs are
      * large enough that the nested-loop row product exceeds this constant.
      */
-    private static long HASH_JOIN_OVERHEAD_ROWS = 1000;
+    private static long hashJoinOverheadRows = 1000;
 
     static {
         loadHashJoinConfig();
@@ -235,7 +235,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     /**
      * (Re)loads {@code maxInMemoryRows}, {@code maxHashTableSizeBytes} and
-     * {@code MAX_RESULT_ROWS} from {@code config.properties}. Package-private so
+     * {@code maxResultRows} from {@code config.properties}. Package-private so
      * tests can force the low-memory hash-join paths by pointing the thresholds
      * at tiny values.
      */
@@ -243,11 +243,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         long inMemoryRows = ConfigLoader.getLong("max.inmemory.rows", 10000);
         long hashMb = ConfigLoader.getLong("max.hash.table.size.mb", 512);
         long maxResultRows = ConfigLoader.getLong("max.result.rows", 1_000_000);
-        HASH_JOIN_OVERHEAD_ROWS = ConfigLoader.getLong("hash.join.overhead.rows", 1000);
-        MEMORY_SAMPLE_INTERVAL = ConfigLoader.getLong("select.memory.sample.interval", 4096);
+        hashJoinOverheadRows = ConfigLoader.getLong("hash.join.overhead.rows", 1000);
+        memorySampleInterval = ConfigLoader.getLong("select.memory.sample.interval", 4096);
         maxInMemoryRows = inMemoryRows;
         maxHashTableSizeBytes = hashMb * 1024L * 1024L;
-        MAX_RESULT_ROWS = maxResultRows;
+        maxResultRows = maxResultRows;
     }
 
     /**
@@ -267,23 +267,23 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param maxResultRows new value for {@code max.result.rows}, or 0 for unlimited
      */
     static void setMaxResultRowsForTest(long maxResultRows) {
-        MAX_RESULT_ROWS = maxResultRows;
+        maxResultRows = maxResultRows;
     }
 
     /** @return the configured default result row limit (0 means unlimited) */
     static long getMaxResultRows() {
-        return MAX_RESULT_ROWS;
+        return maxResultRows;
     }
 
-    /** Per-query row limit, taken from {@link #MAX_RESULT_ROWS} unless overridden
+    /** Per-query row limit, taken from {@link #maxResultRows} unless overridden
      * by the MAX_ROWS SQL hint. A value of 0 (or less) disables the limit. */
-    private long maxResultRows = MAX_RESULT_ROWS;
+    private long queryMaxResultRows = maxResultRows;
 
     /** True once the 80%-of-limit warning has been logged for this query. */
     private boolean resultLimitWarningLogged;
 
     /** Rows produced between two consecutive heap-memory samples. */
-    private static long MEMORY_SAMPLE_INTERVAL = 4096;
+    private static long memorySampleInterval = 4096;
 
     /**
      * Per-thread snapshot of the peak memory and row-count metrics of the most
@@ -295,7 +295,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
     /**
      * Tracks the peak heap usage observed while a SELECT grows its result rows.
-     * Sampled periodically (every {@link #MEMORY_SAMPLE_INTERVAL} rows) and at
+     * Sampled periodically (every {@link #memorySampleInterval} rows) and at
      * pipeline boundaries, so the values are approximate but cheap: sampling
      * adds no per-row overhead.
      */
@@ -345,7 +345,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @param maxRows the limit, or 0 to disable
      */
     void setMaxResultRows(long maxRows) {
-        maxResultRows = maxRows;
+        queryMaxResultRows = maxRows;
     }
 
     /**
@@ -359,7 +359,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      * @throws IllegalArgumentException when {@code size} reaches the row limit
      */
     private void checkResultRowLimit(long size, String stage) {
-        if ((size & (MEMORY_SAMPLE_INTERVAL - 1)) == 0) {
+        if ((size & (memorySampleInterval - 1)) == 0) {
             QUERY_MEMORY.get().sample(size);
         }
         if (maxResultRows <= 0) {
@@ -2338,14 +2338,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         // build is cheap and O(n + m) always beats O(n × m), so we force
         // the hash-join path regardless of the full cost model.
         long smallerRows = Math.min(buildRows, probeRows);
-        if (smallerRows < HASH_JOIN_OVERHEAD_ROWS) {
+        if (smallerRows < hashJoinOverheadRows) {
             return false;
         }
 
         long avgSize = Math.max(1, (buildStats.getAvgRowSizeBytes() + probeStats.getAvgRowSizeBytes()) / 2);
         double sizeWeight = 1.0 + avgSize / 10000.0;
         double nestedLoopCost = buildRows * (double) probeRows * sizeWeight;
-        double hashJoinCost = (buildRows + probeRows) * sizeWeight + HASH_JOIN_OVERHEAD_ROWS;
+        double hashJoinCost = (buildRows + probeRows) * sizeWeight + hashJoinOverheadRows;
         return nestedLoopCost < hashJoinCost;
     }
 

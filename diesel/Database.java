@@ -466,9 +466,9 @@ class Database {
     }
 
     private Object executeSetAutoCommit(SetAutoCommitQuery autoCommitQuery) {
-        boolean autoCommit = autoCommitQuery.isAutoCommit();
-        setAutoCommit(autoCommit);
-        return "AUTOCOMMIT set to " + (autoCommit ? SqlKeywords.ON : "OFF");
+        boolean autoCommitValue = autoCommitQuery.isAutoCommit();
+        setAutoCommit(autoCommitValue);
+        return "AUTOCOMMIT set to " + (autoCommitValue ? SqlKeywords.ON : "OFF");
     }
 
     private Object executeBeginTransaction(BeginTransactionQuery beginQuery, Transaction currentTransaction) {
@@ -1113,35 +1113,7 @@ class Database {
                                           List<List<Integer>> batches, List<Object> results) {
         try (ExecutorService executor = Executors.newFixedThreadPool(
                 Math.min(batches.size(), Runtime.getRuntime().availableProcessors()))) {
-            try {
-                List<Future<?>> futures = new ArrayList<>();
-                
-                for (List<Integer> batch : batches) {
-                    Future<?> future = executor.submit(() -> {
-                        for (Integer queryIdx : batch) {
-                            try {
-                                Object result = executeQuery(queries.get(queryIdx), transactionId);
-                                results.set(queryIdx, result);
-                            } catch (Exception e) {
-                                // Store the exception as the result for this query
-                                results.set(queryIdx, e);
-                            }
-                        }
-                    });
-                    futures.add(future);
-                }
-                
-                for (Future<?> future : futures) {
-                    future.get();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new QuerySyntaxException("", "Batch query execution interrupted");
-            } catch (ExecutionException e) {
-                throw new QuerySyntaxException("", "Error executing batch queries");
-            } finally {
-                executor.shutdownNow();
-            }
+            executeBatchQueries(batches, queries, results, executor, transactionId);
         }
     }
 
@@ -1322,5 +1294,48 @@ class Database {
      */
     public void close() {
         saveTablesToDisk();
+    }
+    
+    /**
+     * Executes a batch of queries in parallel using the given executor.
+     */
+    private void executeBatchQueries(List<List<Integer>> batches, List<String> queries, 
+                                   List<Object> results, ExecutorService executor, UUID transactionId) {
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            
+            for (List<Integer> batch : batches) {
+                Future<?> future = executor.submit(() -> {
+                    for (Integer queryIdx : batch) {
+                        Object result = executeBatchQuery(queries.get(queryIdx), transactionId);
+                        results.set(queryIdx, result);
+                    }
+                });
+                futures.add(future);
+            }
+            
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new QuerySyntaxException("", "Batch query execution interrupted");
+        } catch (ExecutionException e) {
+            throw new QuerySyntaxException("", "Error executing batch queries");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+    
+    /**
+     * Executes a single query in a batch, handling exceptions.
+     */
+    private Object executeBatchQuery(String query, UUID transactionId) {
+        try {
+            return executeQuery(query, transactionId);
+        } catch (Exception e) {
+            // Store the exception as the result for this query
+            return e;
+        }
     }
 }

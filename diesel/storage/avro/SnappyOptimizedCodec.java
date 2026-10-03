@@ -278,21 +278,13 @@ public final class SnappyOptimizedCodec {
      */
     public static int getRecommendedBufferSize(String dataType) {
         switch (dataType.toLowerCase()) {
-            case "text":
-            case "string":
+            case "text", "string":
                 return 32768;
-            case "numeric":
-            case "number":
-            case "int":
-            case "long":
-            case "double":
-            case "float":
+            case "numeric", "number", "int", "long", "double", "float":
                 return 4096;
-            case "mixed":
-            case "json":
+            case "mixed", "json":
                 return 16384;
-            case "binary":
-            case "blob":
+            case "binary", "blob":
                 return 8192;
             default:
                 return DEFAULT_BUFFER_SIZE;

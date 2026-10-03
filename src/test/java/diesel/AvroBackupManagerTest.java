@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import diesel.TestWaitHelper;
 
 import java.io.File;
 import java.io.IOException;
@@ -349,7 +350,7 @@ class AvroBackupManagerTest {
 
         AvroBackupManager.backupFull(sourceDir, cfg);
 
-        Thread.sleep(50);
+        TestWaitHelper.waitForBackupCompletion();
         Files.write(new File(sourceDir, "test.avro").toPath(), "modified_content".getBytes());
         BackupReport report = AvroBackupManager.backupIncremental(sourceDir, cfg);
         assertEquals(1, report.totalFiles());

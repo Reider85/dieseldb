@@ -860,3 +860,5 @@ chore: test-profiles-audit changelog entry
 3.2.46 Sonar-prompt8 prompt 47 - S1066: merge 15 collapsible nested ifs
 
 3.2.47 Sonar-prompt8 S1144: remove 16 unused private methods across diesel/** and src/test/java/diesel/**, preserving short-circuit and behavioral integrity
+
+3.2.48 Mass fix of 10 SonarQube rules covering ~105 problems: S107/S6208/S1141/S1117/S127/S5843/S2925/S3008/S3457/S106 - renamed static fields, replaced System.out.println, fixed switch labels, shadowed variables, loop counters, nested try blocks, Thread.sleep, format strings, and method parameters

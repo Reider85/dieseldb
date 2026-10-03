@@ -16,12 +16,12 @@ import java.util.BitSet;
  */
 class BloomFilter implements Serializable {
     private static final long serialVersionUID = 1L;
-    private static int DEFAULT_NUM_HASHES = 7;
-    private static double DEFAULT_FPP = 0.01;
+    private static int defaultNumHashes = 7;
+    private static double defaultFpp = 0.01;
 
     static {
-        DEFAULT_NUM_HASHES = ConfigLoader.getInt("bloom.filter.hashes", DEFAULT_NUM_HASHES);
-        DEFAULT_FPP = ConfigLoader.getDouble("bloom.filter.fpp", DEFAULT_FPP);
+        defaultNumHashes = ConfigLoader.getInt("bloom.filter.hashes", defaultNumHashes);
+        defaultFpp = ConfigLoader.getDouble("bloom.filter.fpp", defaultFpp);
     }
 
     private final BitSet bits;
@@ -47,7 +47,7 @@ class BloomFilter implements Serializable {
      * @param expectedInsertions the expected number of distinct keys
      */
     BloomFilter(int expectedInsertions) {
-        this(expectedInsertions, DEFAULT_FPP);
+        this(expectedInsertions, defaultFpp);
     }
 
     /** Adds {@code key} to the filter. */

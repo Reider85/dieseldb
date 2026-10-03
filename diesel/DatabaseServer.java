@@ -150,25 +150,15 @@ public class DatabaseServer {
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
 
             while (running) {
-                try {
-                    Socket clientSocket = serverSocket.accept();
-                    LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
-                    try {
-                        executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout, config));
-                    } catch (RejectedExecutionException e) {
-                        LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
-                                new Object[]{clientSocket.getInetAddress(), e.getMessage()});
-                        try {
-                            clientSocket.close();
-                        } catch (IOException io) {
-                            LOGGER.log(Level.SEVERE, "Error closing rejected client socket: {0}", io.getMessage());
+try {
+                        Socket clientSocket = serverSocket.accept();
+                        LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
+                        handleClientConnection(clientSocket, executor, database, effectiveSocketTimeout, config);
+                    } catch (IOException e) {
+                        if (running) {
+                            LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
                         }
                     }
-                } catch (IOException e) {
-                    if (running) {
-                        LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
-                    }
-                }
             }
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to start server: {0}", e.getMessage());
@@ -224,15 +214,15 @@ public class DatabaseServer {
          */
         private final Map<String, Cursor> cursors = new java.util.concurrent.ConcurrentHashMap<>();
         
-        private static int DEFAULT_COMPRESSION_THRESHOLD = 1024;
-        private static int DEFAULT_COMPRESSION_LEVEL = 6;
+        private static int defaultCompressionThreshold = 1024;
+        private static int defaultCompressionLevel = 6;
 
         /** Default rows per cursor fetch when the client does not specify one (Prompt 81). */
         private static final int DEFAULT_CURSOR_FETCH_SIZE = 1000;
 
         static {
-            DEFAULT_COMPRESSION_THRESHOLD = ConfigLoader.getInt("compression.threshold.bytes", DEFAULT_COMPRESSION_THRESHOLD);
-            DEFAULT_COMPRESSION_LEVEL = ConfigLoader.getInt("compression.level", DEFAULT_COMPRESSION_LEVEL);
+            defaultCompressionThreshold = ConfigLoader.getInt("compression.threshold.bytes", defaultCompressionThreshold);
+            defaultCompressionLevel = ConfigLoader.getInt("compression.level", defaultCompressionLevel);
         }
 
         private static final String DEFAULT_ALGORITHM = "GZIP";
@@ -259,8 +249,8 @@ public class DatabaseServer {
                 LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
             }
             // Default values, will be updated by handshake
-            this.compressionThreshold = Integer.parseInt(config.getProperty("compression.threshold.bytes", String.valueOf(DEFAULT_COMPRESSION_THRESHOLD)));
-            this.compressionLevel = Integer.parseInt(config.getProperty("compression.level", String.valueOf(DEFAULT_COMPRESSION_LEVEL)));
+            this.compressionThreshold = Integer.parseInt(config.getProperty("compression.threshold.bytes", String.valueOf(defaultCompressionThreshold)));
+            this.compressionLevel = Integer.parseInt(config.getProperty("compression.level", String.valueOf(defaultCompressionLevel)));
             this.compressionEnabled = true;
         }
 
@@ -708,20 +698,20 @@ public class DatabaseServer {
      */
     public static void main(String[] args) {
         System.setProperty("diesel.inmemory.persist", "true");
-        int port = 3306;
+        int localPort = 3306;
         if (args.length > 0) {
             try {
-                port = Integer.parseInt(args[0]);
+                localPort = Integer.parseInt(args[0]);
             } catch (NumberFormatException e) {
-                LOGGER.log(Level.SEVERE, "Invalid port {0}, using default {1}", new Object[]{args[0], port});
+                LOGGER.log(Level.SEVERE, "Invalid port {0}, using default {1}", new Object[]{args[0], localPort});
             }
         }
-        String dataDir = "data";
+        String localDataDir = "data";
         if (args.length > 1) {
-            dataDir = args[1];
+            localDataDir = args[1];
         }
-        Database database = new Database(dataDir);
-        DatabaseServer server = new DatabaseServer(port, -1, database);
+        Database database = new Database(localDataDir);
+        DatabaseServer server = new DatabaseServer(localPort, -1, database);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
             try {
@@ -735,5 +725,30 @@ public class DatabaseServer {
             server.stop();
         }, "shutdown-hook"));
         server.start();
+    }
+    
+    /**
+     * Handles a client connection, submitting it to the executor or closing it if rejected.
+     */
+    private void handleClientConnection(Socket clientSocket, ThreadPoolExecutor executor, 
+                                     Database database, int effectiveSocketTimeout, Properties config) {
+        try {
+            executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout, config));
+        } catch (RejectedExecutionException e) {
+            LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
+                    new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+            closeClientSocket(clientSocket);
+        }
+    }
+    
+    /**
+     * Closes a client socket with proper error handling.
+     */
+    private void closeClientSocket(Socket clientSocket) {
+        try {
+            clientSocket.close();
+        } catch (IOException io) {
+            LOGGER.log(Level.SEVERE, "Error closing rejected client socket: {0}", io.getMessage());
+        }
     }
 }
