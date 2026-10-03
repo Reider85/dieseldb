@@ -242,12 +242,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     static void loadHashJoinConfig() {
         long inMemoryRows = ConfigLoader.getLong("max.inmemory.rows", 10000);
         long hashMb = ConfigLoader.getLong("max.hash.table.size.mb", 512);
-        long maxResultRows = ConfigLoader.getLong("max.result.rows", 1_000_000);
         hashJoinOverheadRows = ConfigLoader.getLong("hash.join.overhead.rows", 1000);
         memorySampleInterval = ConfigLoader.getLong("select.memory.sample.interval", 4096);
         maxInMemoryRows = inMemoryRows;
         maxHashTableSizeBytes = hashMb * 1024L * 1024L;
-        maxResultRows = maxResultRows;
+        maxResultRows = ConfigLoader.getLong("max.result.rows", 1_000_000);
     }
 
     /**
@@ -264,10 +263,10 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     /**
      * Test override for the maximum result row limit.
      *
-     * @param maxResultRows new value for {@code max.result.rows}, or 0 for unlimited
+     * @param rows new value for {@code max.result.rows}, or 0 for unlimited
      */
-    static void setMaxResultRowsForTest(long maxResultRows) {
-        maxResultRows = maxResultRows;
+    static void setMaxResultRowsForTest(long rows) {
+        maxResultRows = rows;
     }
 
     /** @return the configured default result row limit (0 means unlimited) */
@@ -349,7 +348,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     }
 
     /**
-     * Enforces {@link #maxResultRows} on a growing row collection: logs a single
+     * Enforces {@link #queryMaxResultRows} on a growing row collection: logs a single
      * warning once the collection reaches 80% of the limit, and aborts the query
      * with an explanatory exception as soon as the limit is exceeded. Also keeps
      * the {@link #QUERY_MEMORY} metrics fresh with a cheap periodic heap sample.
@@ -362,17 +361,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if ((size & (memorySampleInterval - 1)) == 0) {
             QUERY_MEMORY.get().sample(size);
         }
-        if (maxResultRows <= 0) {
+        if (queryMaxResultRows <= 0) {
             return;
         }
-        if (!resultLimitWarningLogged && size >= maxResultRows - maxResultRows / 5) {
+        if (!resultLimitWarningLogged && size >= queryMaxResultRows - queryMaxResultRows / 5) {
             LOGGER.warning("WARNING: query result is approaching the maximum allowed row limit: " + size
-                    + " of " + maxResultRows + " rows (80%). Consider adding LIMIT or a MAX_ROWS hint.");
+                    + " of " + queryMaxResultRows + " rows (80%). Consider adding LIMIT or a MAX_ROWS hint.");
             resultLimitWarningLogged = true;
         }
-        if (size >= maxResultRows) {
+        if (size >= queryMaxResultRows) {
             throw new IllegalArgumentException("Query result exceeds the maximum allowed row limit of "
-                    + maxResultRows + " rows at stage '" + stage + "'. Add LIMIT or a /* MAX_ROWS=N */ hint to override.");
+                    + queryMaxResultRows + " rows at stage '" + stage + "'. Add LIMIT or a /* MAX_ROWS=N */ hint to override.");
         }
     }
 
