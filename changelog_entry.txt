@@ -1,1 +1,1 @@
-3.2.50 Fixed Java heap space OOM failures caused by infinite loop in QueryParser.splitTopLevelComma
+3.2.52 Fix test failures and performance regressions - Prompt 51

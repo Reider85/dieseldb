@@ -866,3 +866,5 @@ chore: test-profiles-audit changelog entry
 3.2.49 Fix max.result.rows guard broken by Sonar S3008 rename
 
 3.2.50 Fixed Java heap space OOM failures caused by infinite loop in QueryParser.splitTopLevelComma
+
+3.2.52 Fix test failures and performance regressions - Prompt 51
