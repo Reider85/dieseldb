@@ -56,6 +56,22 @@ public class PerformanceRegressionTest extends AbstractDieselTest {
         List<String> errors = new ArrayList<>();
         List<Measurement> measurements = new ArrayList<>();
 
+        // Fail fast if data pollution inflates row counts
+        try {
+            Object countResult = database.executeQuery("SELECT COUNT(*) FROM USERS", null);
+            if (countResult instanceof List) {
+                List<?> rows = (List<?>) countResult;
+                if (rows.size() == 1 && rows.get(0) instanceof Map) {
+                    int userCount = ((Number) ((Map<?, ?>) rows.get(0)).get("COUNT(*)")).intValue();
+                    if (userCount != recordCount()) {
+                        throw new IllegalStateException("Data pollution detected: USERS table has " + userCount + " rows, expected " + recordCount());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Row count validation failed: " + e.getMessage(), e);
+        }
+
         for (KeyQuery keyQuery : KEY_QUERIES) {
             try {
                 double measured = measure(keyQuery.sql());

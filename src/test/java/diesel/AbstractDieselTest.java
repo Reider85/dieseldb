@@ -90,6 +90,14 @@ public abstract class AbstractDieselTest {
                     "INSERT INTO USER_DETAILS (USER_ID, USER_CODE, NAME, AGE, INFO, BALANCE) VALUES (%d, 'CODE%d', 'User%d', %d, 'Info%d', %s)",
                     i, i, i, 18 + (i % 82), i, balance), null);
         }
+        
+        // Flush tables to enable Avro pushdown for SELECT queries during measurement
+        // This matches GroupByTest/LikeTest pattern and ensures consistent measurement path
+        database.getTable("USERS").saveToFile("USERS");
+        database.getTable("PROFILES").saveToFile("PROFILES");
+        database.getTable("TRANSACTIONS").saveToFile("TRANSACTIONS");
+        database.getTable("USER_DETAILS").saveToFile("USER_DETAILS");
+        
         LOGGER.log(Level.INFO, "Setup completed: {0} records per table", n);
     }
 

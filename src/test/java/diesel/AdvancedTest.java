@@ -5,6 +5,8 @@ import diesel.Database;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -567,7 +569,10 @@ public class AdvancedTest {
         
         // Verify the values were inserted correctly
         Object result = database.executeQuery("SELECT COUNT(*) FROM USERS WHERE USER_CODE IN ('CODE_BACKSLASH', 'CODE_DOUBLED')", null);
-        assertTrue(result instanceof Integer, "Should return count");
-        assertEquals(2, result, "Both inserted records should exist");
+        assertTrue(result instanceof List, "COUNT(*) must return a result set");
+        List<?> rows = (List<?>) result;
+        assertEquals(1, rows.size(), "COUNT(*) must collapse into a single aggregate row");
+        assertEquals(2L, ((Number) ((Map<?, ?>) rows.get(0)).get("COUNT(*)")).longValue(),
+                "Both inserted records should exist");
     }
 }
