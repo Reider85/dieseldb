@@ -872,3 +872,5 @@ chore: test-profiles-audit changelog entry
 3.2.53 Engine-side performance fix: demote hot-path SELECT logging to FINE (SelectQuery INFO->FINE, logging.level.diesel ALL->INFO, logback diesel DEBUG->INFO) and flush pending persists before Avro pushdown to restore the fast path
 
 3.2.54 Fix O(N2) Avro persist, SELECT in-memory threshold, GROUP BY subquery cache, hot-path log demotion, perf isolation, saveToSerializedFile flush
+
+3.2.55 Cross Join streaming implemented with Iterator interface
