@@ -571,6 +571,7 @@ class JsonlStorageTest {
 
             Table table = db.getTable("DBJSONL");
             assertInstanceOf(JsonlRowStorage.class, table.getStorage());
+            table.flushPendingPersist("DBJSONL");
 
             File jsonlFile = new File(tempDir.toString(), "DBJSONL.jsonl");
             assertTrue(jsonlFile.exists(), "JSONL file should be created on disk");

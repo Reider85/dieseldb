@@ -348,6 +348,7 @@ class TsvStorageTest {
 
             Table table = db.getTable("DBTSV");
             assertInstanceOf(TsvRowStorage.class, table.getStorage());
+            table.flushPendingPersist("DBTSV");
 
             File tsvFile = new File(tempDir.toString(), "DBTSV.tsv");
             assertTrue(tsvFile.exists(), "TSV file should be created on disk");
