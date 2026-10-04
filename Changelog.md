@@ -874,3 +874,5 @@ chore: test-profiles-audit changelog entry
 3.2.54 Fix O(N2) Avro persist, SELECT in-memory threshold, GROUP BY subquery cache, hot-path log demotion, perf isolation, saveToSerializedFile flush
 
 3.2.55 Cross Join streaming implemented with Iterator interface
+
+3.2.56 Fixed QueryProfilerTest.orderBySortPhaseIsMeasuredOnlyWhenSorting test failure with ceiling ms conversion and ThreadLocal isolation

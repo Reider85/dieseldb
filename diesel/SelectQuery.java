@@ -965,16 +965,21 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             Iterator<Map<String, Object>> groupedIterator = applyGroupByStreaming(filteredIterator, database, combinedColumnTypes);
             
             // Apply ORDER BY (with external sort if needed)
-            Iterator<Map<String, Object>> sortedIterator = applyOrderByStreaming(groupedIterator, combinedColumnTypes);
+            Iterator<Map<String, Object>> sortedIterator;
+            if (!orderBy.isEmpty()) {
+                long orderByStart = System.nanoTime();
+                sortedIterator = applyOrderByStreaming(groupedIterator, combinedColumnTypes);
+                long orderByEnd = System.nanoTime();
+                lastSortNanos = orderByEnd - orderByStart;
+                lastExecuteNanos += orderByEnd - execStart;
+                execStart = orderByEnd;
+            } else {
+                lastSortNanos = 0;
+                sortedIterator = groupedIterator;
+            }
             
             // Apply LIMIT/OFFSET
             Iterator<Map<String, Object>> limitedIterator = applyLimitOffsetStreaming(sortedIterator, combinedColumnTypes);
-            
-            beforeSort = System.nanoTime();
-            lastExecuteNanos += beforeSort - execStart;
-            sortStart = System.nanoTime();
-            lastSortNanos = sortStart - beforeSort;
-            execStart = sortStart;
 
             LOGGER.log(Level.FINE, "Selected streaming rows from table {0} with joins {1}, aggregates {2}, groupBy {3}, having={4}, limit={5}, offset={6}, orderBy={7}",
                     new Object[]{mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
@@ -1129,7 +1134,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             lastExecuteNanos += beforeSort - execStart;
             applyOrderBy(finalRows, useStreaming);
             sortStart = System.nanoTime();
-            lastSortNanos = sortStart - beforeSort;
+            if (!orderBy.isEmpty()) {
+                lastSortNanos = sortStart - beforeSort;
+            } else {
+                lastSortNanos = 0;
+            }
             execStart = sortStart;
 
             List<Map<String, Object>> result = applyLimitOffset(finalRows, combinedColumnTypes);
@@ -1282,7 +1291,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             finalRows.add(groupedIterator.next());
         }
         
+        // Measure only actual sort time (fix for Prompt 89)
+        long orderByStart = System.nanoTime();
         applyOrderBy(finalRows, false); // Use in-memory sorting for now
+        long orderByEnd = System.nanoTime();
+        lastSortNanos = orderByEnd - orderByStart;
+        
         return finalRows.iterator();
     }
 

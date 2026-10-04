@@ -70,19 +70,33 @@ class QueryProfiler implements DynamicMBean {
     private volatile long slowThresholdMs;
     private volatile String lastSlowQuery = "";
     private volatile long lastSlowTotalMs;
+
+    /** Thread-local last* fields for parallel test isolation */
+    private final ThreadLocal<Long> lastParseMsThreadLocal = new ThreadLocal<>();
+    private final ThreadLocal<Long> lastPlanMsThreadLocal = new ThreadLocal<>();
+    private final ThreadLocal<Long> lastExecuteMsThreadLocal = new ThreadLocal<>();
+    private final ThreadLocal<Long> lastSortMsThreadLocal = new ThreadLocal<>();
+    private final ThreadLocal<Long> lastTotalMsThreadLocal = new ThreadLocal<>();
+    private final ThreadLocal<Long> lastIndexLookupsThreadLocal = new ThreadLocal<>();
+    private final ThreadLocal<Long> lastIndexOnlyScansThreadLocal = new ThreadLocal<>();
+
+    /** Fallback for JMX and cross-thread access */
     private volatile long lastParseMs;
     private volatile long lastPlanMs;
     private volatile long lastExecuteMs;
     private volatile long lastSortMs;
     private volatile long lastTotalMs;
-
-    /** Prompt 83: last-execution index metrics. */
     private volatile long lastIndexLookups;
     private volatile long lastIndexOnlyScans;
 
     private QueryProfiler() {
         slowThresholdMs = loadSlowThresholdMs();
         registerMBean();
+    }
+
+    /** Convert nanoseconds to charged milliseconds: 0 if nanos<=0, else at least 1 */
+    private static long toChargedMs(long nanos) {
+        return nanos <= 0 ? 0 : Math.max(1, (nanos + 500_000) / 1_000_000);
     }
 
     /** @return the JVM-wide profiler singleton */
@@ -106,10 +120,10 @@ class QueryProfiler implements DynamicMBean {
      */
     void record(String sql, long parseNanos, long planNanos, long executeNanos, long sortNanos,
                 long indexLookups, long indexOnlyScans) {
-        long parseMs = parseNanos / 1_000_000;
-        long planMs = planNanos / 1_000_000;
-        long executeMs = executeNanos / 1_000_000;
-        long sortMs = sortNanos / 1_000_000;
+        long parseMs = toChargedMs(parseNanos);
+        long planMs = toChargedMs(planNanos);
+        long executeMs = toChargedMs(executeNanos);
+        long sortMs = toChargedMs(sortNanos);
         long totalMs = parseMs + planMs + executeMs + sortMs;
 
         totalQueries.incrementAndGet();
@@ -122,6 +136,16 @@ class QueryProfiler implements DynamicMBean {
         totalIndexLookups.addAndGet(indexLookups);
         totalIndexOnlyScans.addAndGet(indexOnlyScans);
 
+        // Thread-local assignment for parallel test isolation
+        lastParseMsThreadLocal.set(parseMs);
+        lastPlanMsThreadLocal.set(planMs);
+        lastExecuteMsThreadLocal.set(executeMs);
+        lastSortMsThreadLocal.set(sortMs);
+        lastTotalMsThreadLocal.set(totalMs);
+        lastIndexLookupsThreadLocal.set(indexLookups);
+        lastIndexOnlyScansThreadLocal.set(indexOnlyScans);
+
+        // Fallback for JMX/cross-thread
         lastParseMs = parseMs;
         lastPlanMs = planMs;
         lastExecuteMs = executeMs;
@@ -166,6 +190,17 @@ class QueryProfiler implements DynamicMBean {
         totalIndexOnlyScans.set(0);
         lastSlowQuery = "";
         lastSlowTotalMs = 0;
+        
+        // Clear ThreadLocal for current thread
+        lastParseMsThreadLocal.remove();
+        lastPlanMsThreadLocal.remove();
+        lastExecuteMsThreadLocal.remove();
+        lastSortMsThreadLocal.remove();
+        lastTotalMsThreadLocal.remove();
+        lastIndexLookupsThreadLocal.remove();
+        lastIndexOnlyScansThreadLocal.remove();
+        
+        // Clear fallback
         lastParseMs = 0;
         lastPlanMs = 0;
         lastExecuteMs = 0;
@@ -212,23 +247,28 @@ class QueryProfiler implements DynamicMBean {
     }
 
     long getLastParseMs() {
-        return lastParseMs;
+        Long value = lastParseMsThreadLocal.get();
+        return value != null ? value : lastParseMs;
     }
 
     long getLastPlanMs() {
-        return lastPlanMs;
+        Long value = lastPlanMsThreadLocal.get();
+        return value != null ? value : lastPlanMs;
     }
 
     long getLastExecuteMs() {
-        return lastExecuteMs;
+        Long value = lastExecuteMsThreadLocal.get();
+        return value != null ? value : lastExecuteMs;
     }
 
     long getLastSortMs() {
-        return lastSortMs;
+        Long value = lastSortMsThreadLocal.get();
+        return value != null ? value : lastSortMs;
     }
 
     long getLastTotalMs() {
-        return lastTotalMs;
+        Long value = lastTotalMsThreadLocal.get();
+        return value != null ? value : lastTotalMs;
     }
 
     long getTotalIndexLookups() {
@@ -240,11 +280,13 @@ class QueryProfiler implements DynamicMBean {
     }
 
     long getLastIndexLookups() {
-        return lastIndexLookups;
+        Long value = lastIndexLookupsThreadLocal.get();
+        return value != null ? value : lastIndexLookups;
     }
 
     long getLastIndexOnlyScans() {
-        return lastIndexOnlyScans;
+        Long value = lastIndexOnlyScansThreadLocal.get();
+        return value != null ? value : lastIndexOnlyScans;
     }
 
     private static long loadSlowThresholdMs() {

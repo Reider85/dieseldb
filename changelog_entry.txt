@@ -1,1 +1,1 @@
-3.2.55 Cross Join streaming implemented with Iterator interface
+3.2.56 Fixed QueryProfilerTest.orderBySortPhaseIsMeasuredOnlyWhenSorting test failure with ceiling ms conversion and ThreadLocal isolation
