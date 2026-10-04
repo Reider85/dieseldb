@@ -868,3 +868,5 @@ chore: test-profiles-audit changelog entry
 3.2.50 Fixed Java heap space OOM failures caused by infinite loop in QueryParser.splitTopLevelComma
 
 3.2.52 Fix test failures and performance regressions - Prompt 51
+
+3.2.53 Engine-side performance fix: demote hot-path SELECT logging to FINE (SelectQuery INFO->FINE, logging.level.diesel ALL->INFO, logback diesel DEBUG->INFO) and flush pending persists before Avro pushdown to restore the fast path

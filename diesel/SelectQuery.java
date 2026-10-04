@@ -943,9 +943,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 // the optimised path that applies column projection and predicate
                 // pushdown at the Avro binary level.
                 if (table.getStorage() instanceof AvroRowStorage avroStorage) {
-                    // If table has pending persists, use in-memory scan with isDeleted filter
-                    // to ensure read-your-writes guarantee for coalesced persistence
+                    // Flush write-behind state first so the Avro file matches
+                    // memory; the pushdown reader can then be used instead of
+                    // the slower in-memory scan. Read-your-writes holds: the
+                    // file equals memory right after the flush (same principle
+                    // as flushPendingPersistsForDataDir before disk reads).
                     if (table.hasPendingPersist()) {
+                        table.flushPendingPersist(table.getName());
+                    }
+                    if (table.getDeletedCount() > 0) {
+                        // Tombstoned rows still live in the Avro file and the
+                        // pushdown reader is not aware of them. Scan in memory
+                        // so deleted rows never leak back into results.
                         List<Map<String, Object>> rawRows = table.getRows();
                         mainRows = new ArrayList<>(rawRows.size());
                         for (int i = 0; i < rawRows.size(); i++) {
@@ -1007,7 +1016,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             List<Map<String, Object>> result = applyLimitOffset(finalRows, combinedColumnTypes);
 
-            LOGGER.log(Level.INFO, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, having={5}, limit={6}, offset={7}, orderBy={8}",
+            LOGGER.log(Level.FINE, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, having={5}, limit={6}, offset={7}, orderBy={8}",
                     new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
             lastExecuteNanos += System.nanoTime() - execStart;
             QUERY_MEMORY.get().sample(result.size());

@@ -27,5 +27,5 @@
         <appender-ref ref="FILE"/>
     </root>
 
-    <logger name="diesel" level="DEBUG"/>
+    <logger name="diesel" level="INFO"/>
 </configuration>
