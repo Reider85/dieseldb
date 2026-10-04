@@ -1595,7 +1595,7 @@ class Table implements Serializable {
         rowCount++;
         version.incrementAndGet();
         markStatsDirty();
-        LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
+        LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
     }
 
     private void checkUniqueConstraint(String column, Object value) {
@@ -2410,6 +2410,7 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToSerializedFile(String tableName) {
+        flushPendingPersist(tableName);
         tableLock.writeLock().lock();
         try {
             if (getDeletedCount() > 0) {

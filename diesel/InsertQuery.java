@@ -228,7 +228,7 @@ class InsertQuery implements Query<Void> {
         try {
             table.addRow(row);
             lastAffectedRows = 1;
-            LOGGER.log(Level.INFO, "Inserted row into table {0}: {1}", new Object[]{table.getName(), row});
+            LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{table.getName(), row});
         } catch (IllegalStateException e) {
             LOGGER.log(Level.SEVERE, "Insert failed due to unique constraint violation: {0}", e.getMessage());
             throw new IllegalStateException("Insert failed: " + e.getMessage(), e);

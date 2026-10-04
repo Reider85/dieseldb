@@ -325,8 +325,8 @@
         <profile>
             <id>all</id>
             <properties>
-                <surefire.groups>smoke, query, index, query-full, storage, concurrency, network, perf</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.groups>smoke, query, index, query-full, storage, concurrency, network</surefire.groups>
+                <surefire.excludedGroups>large,perf</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>

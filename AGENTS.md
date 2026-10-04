@@ -202,6 +202,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 - `@StorageType({"csv","tsv"})` — Delimited tests (4 classes): CharsetEncodingTest, CompressionTest, AtomicFileWriteTest, CsvTsvHeaderMappingTest
 - `@StorageType({"avro","csv","tsv","jsonl"})` — Codec/cross tests (5 classes): SnappyOptimizedCodecTest, SnappyOptimizationBenchmark, DelimitedByteParserTest, ReaderCorrectnessTest, JsonStreamAbstractionTest
 - **Full release gate** – `make all-tests` runs all 6 profiles sequentially. This is the **required** gate before commit.
+- **Perf test isolation** – Performance tests (`perf` profile) run with `forkCount=1` and no parallel execution to avoid CPU contention. The `all` profile excludes `perf` to prevent interference with other test types. Run performance regression checks with `make test-perf` or `make check-profile` (JOINs only).
 - **TIA** – `make tia` (recommend profiles) / `make tia-run` (recommend + run).
 - **Isolation Rule for Failures:** If `make timing` fails, DO NOT immediately re-run `make timing`. Find the exact failing test name in the log. Fix the code and run ONLY that specific test:
   ```bash

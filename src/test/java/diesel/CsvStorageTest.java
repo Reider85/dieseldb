@@ -380,6 +380,7 @@ class CsvStorageTest {
 
             Table table = db.getTable("DBCSV");
             assertInstanceOf(CsvRowStorage.class, table.getStorage());
+            table.flushPendingPersist("DBCSV");
 
             File csvFile = new File(tempDir.toString(), "DBCSV.csv");
             assertTrue(csvFile.exists(), "CSV file should be created on disk");

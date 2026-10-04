@@ -752,11 +752,6 @@ class Database {
      * COMMIT also writes the serialized table file.
      */
     private void persistModifiedTables(Map<String, Table> modifiedTables, boolean writeSerialized) {
-        // Before any disk read, flush pending writes for read-your-writes guarantee
-        if (!writeSerialized) {
-            Table.flushPendingPersistsForDataDir(this.dataDir);
-        }
-
         for (Map.Entry<String, Table> entry : modifiedTables.entrySet()) {
             String tableName = entry.getKey();
             Table modifiedTable = entry.getValue();

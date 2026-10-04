@@ -59,6 +59,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private final Map<String, String> groupBySubQueries;
     private final Map<String, Object> scalarSubQueryCache = new HashMap<>();
     private final Map<String, List<Object>> inSubQueryCache = new HashMap<>();
+    private final Map<String, Object> groupBySubQueryCache = new HashMap<>();
     private final UUID transactionId; // Changed from String to UUID
 
     /** Prompt 82: adaptive optimizer singleton. */
@@ -912,6 +913,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         pathResolutionCache.clear();
         groupAggregateKeys.clear();
         orderByKeys.clear();
+        groupBySubQueryCache.clear();
         orderByKeys.addAll(resolveOrderByKeys());
         lastHashJoinTableSize = 0;
         lastHashJoinBuildTimeMs = 0;
@@ -943,18 +945,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 // the optimised path that applies column projection and predicate
                 // pushdown at the Avro binary level.
                 if (table.getStorage() instanceof AvroRowStorage avroStorage) {
-                    // Flush write-behind state first so the Avro file matches
-                    // memory; the pushdown reader can then be used instead of
-                    // the slower in-memory scan. Read-your-writes holds: the
-                    // file equals memory right after the flush (same principle
-                    // as flushPendingPersistsForDataDir before disk reads).
-                    if (table.hasPendingPersist()) {
-                        table.flushPendingPersist(table.getName());
-                    }
-                    if (table.getDeletedCount() > 0) {
-                        // Tombstoned rows still live in the Avro file and the
-                        // pushdown reader is not aware of them. Scan in memory
-                        // so deleted rows never leak back into results.
+                    // Use in-memory scan for small tables or tables with pending changes
+                    // to avoid flush overhead and ensure read-your-writes correctness
+                    int threshold = Integer.parseInt(System.getProperty("avro.pushdown.min.rows", "1000"));
+                    if (table.getDeletedCount() > 0 || table.hasPendingPersist() || table.getLiveRowCount() < threshold) {
+                        // Tombstoned rows or small/dirty tables: scan in memory
+                        // so deleted rows never leak back into results and RYW is guaranteed
                         List<Map<String, Object>> rawRows = table.getRows();
                         mainRows = new ArrayList<>(rawRows.size());
                         for (int i = 0; i < rawRows.size(); i++) {
@@ -963,6 +959,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                             }
                         }
                     } else {
+                        // Clean, large table: use Avro pushdown for better performance
                         mainRows = executeAvroPushdown(avroStorage, table, conditions, combinedColumnTypes);
                     }
                 } else {
@@ -1096,7 +1093,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
                 List<Map<String, Map<String, Object>>> result = runPartitionedHashJoin(setup.buildRows(), setup.buildTable(), setup.probeTable(),
                         setup.buildColumnKey(), setup.probeColumnKey(), ctx);
-                LOGGER.log(Level.INFO, "Partitioned hash join completed: {0} rows produced for join on {1}",
+                LOGGER.log(Level.FINE, "Partitioned hash join completed: {0} rows produced for join on {1}",
                         new Object[]{result.size(), join.tableName});
                 return result;
             } catch (IOException e) {
@@ -1236,12 +1233,14 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         return finalRows;
     }
 
-    private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map<String, Object>> filteredRows,
-                                                                            Database database) {
+private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map<String, Object>> filteredRows,
+                                                                             Database database) {
         return filteredRows.stream()
                 .collect(Collectors.groupingBy(row -> groupBy.stream()
                         .map(col -> groupBySubQueries.containsKey(col)
-                                ? evaluateGroupBySubQuery(groupBySubQueries.get(col), row, database)
+                                ? groupBySubQueryCache.computeIfAbsent(
+                                    substituteOuterReferences(groupBySubQueries.get(col), row),
+                                    key -> evaluateGroupBySubQuery(key, Collections.emptyMap(), database))
                                 : row.get(normalizeColumnName(col, mainTableName)))
                         .collect(Collectors.toList())));
     }

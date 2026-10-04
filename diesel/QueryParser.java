@@ -954,7 +954,7 @@ class QueryParser {
                         toUpperCasePreservingQuotedIdentifiers(normalized.substring(1, normalized.length() - 1).trim()))
                         .orElse(normalized);
             }
-            LOGGER.log(Level.INFO, "Normalized query: {0}", normalized);
+            LOGGER.log(Level.FINE, "Normalized query: {0}", normalized);
             Query<?> lexerResult = parseWithLexer(query, normalized, database);
             if (lexerResult != null) {
                 return lexerResult;
