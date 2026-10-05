@@ -84,6 +84,7 @@ DelimitedByteParserTest	storage
 ConcurrentSaveTest	concurrency
 ConcurrentConflictTest	concurrency
 CopyOnWriteIsolationTest	concurrency
+TupleVisibilityTest	concurrency
 ServerConnectionLimitTest	network
 SocketTimeoutTest	network
 GracefulShutdownTest	network

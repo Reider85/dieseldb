@@ -23,6 +23,8 @@ diesel/CommitTransactionQuery.java	concurrency
 diesel/RollbackTransactionQuery.java	concurrency
 diesel/SetAutoCommitQuery.java		concurrency
 diesel/SetIsolationLevelQuery.java	concurrency
+diesel/Row.java				concurrency
+diesel/TupleVisibility.java		concurrency
 diesel/QueryExecutor.java		query,query-full
 diesel/QueryOptimizer.java		query,query-full
 diesel/QueryCache.java			query,query-full

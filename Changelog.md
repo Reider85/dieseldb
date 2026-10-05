@@ -874,3 +874,5 @@ chore: test-profiles-audit changelog entry
 3.2.57 Fix TsvStorageTest/JsonlStorageTest file-existence asserts under write-behind persist: flush pending before checking .tsv/.jsonl on disk
 
 3.2.58 analytics
+
+3.2.59 MVCC foundation with versioned row (xmin/xmax/commandId) + TupleVisibility visibility logic
