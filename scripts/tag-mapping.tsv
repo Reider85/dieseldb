@@ -132,3 +132,7 @@ AvroCompressionTest	storage
 AvroRecoveryTest	storage
 AvroMetricsTest	storage
 AvroAuditLoggerTest	storage
+RollbackTest	concurrency
+UndoLogTest	concurrency
+UndoLogSpillTest	concurrency
+TransactionTableSnapshotTest	concurrency

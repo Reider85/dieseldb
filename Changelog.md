@@ -876,3 +876,5 @@ chore: test-profiles-audit changelog entry
 3.2.58 analytics
 
 3.2.59 MVCC foundation with versioned row (xmin/xmax/commandId) + TupleVisibility visibility logic
+
+3.2.60 MVCC step 2 (prompt4 #2): UndoLog with spill + TransactionTableSnapshot (BEGIN without table cloning), hybrid INSERT=MVCC / UPDATE+DELETE=CoW; fix O(n2) delimited append and streaming single-table >10k-row SELECT returning 0 rows

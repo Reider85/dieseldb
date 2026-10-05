@@ -1080,8 +1080,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         List<Map<String, Object>> rawRows = table.getRows();
                         mainRows = new ArrayList<>(rawRows.size());
                         for (int i = 0; i < rawRows.size(); i++) {
-                            if (!table.isDeleted(i)) {
-                                mainRows.add(rawRows.get(i));
+                            if (table.isRowVisibleToReader(i)) {
+                                mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
                             }
                         }
                     } else {
@@ -1092,8 +1092,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     List<Map<String, Object>> rawRows = table.getRows();
                     mainRows = new ArrayList<>(rawRows.size());
                     for (int i = 0; i < rawRows.size(); i++) {
-                        if (!table.isDeleted(i)) {
-                            mainRows.add(rawRows.get(i));
+                        if (table.isRowVisibleToReader(i)) {
+                            mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
                         }
                     }
                 }
@@ -1172,8 +1172,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 // Tombstoned rows or small/dirty tables: scan in memory
                 List<Map<String, Object>> rawRows = table.getRows();
                 for (int i = 0; i < rawRows.size(); i++) {
-                    if (!table.isDeleted(i)) {
-                        iterator.add(rawRows.get(i));
+                    if (table.isRowVisibleToReader(i)) {
+                        iterator.add(table.getVisibleRowForReader(i, rawRows.get(i)));
                     }
                 }
             } else {
@@ -1184,11 +1184,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 }
             }
         } else {
-            // Non-Avro tables: scan in memory with tombstone filtering
+            // Non-Avro tables: scan in memory with tombstone and MVCC filtering
             List<Map<String, Object>> rawRows = table.getRows();
             for (int i = 0; i < rawRows.size(); i++) {
-                if (!table.isDeleted(i)) {
-                    iterator.add(rawRows.get(i));
+                if (table.isRowVisibleToReader(i)) {
+                    iterator.add(table.getVisibleRowForReader(i, rawRows.get(i)));
                 }
             }
         }
@@ -1500,6 +1500,18 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
             if (!spillActive[0] && spillFallback != null) {
                 filteredRows = spillFallback;
+            }
+            // Only join processing feeds the spill iterator (and streaming
+            // joins leave joinedRows empty). A single-table query has no join
+            // stage, so its rows are still sitting in joinedRows — filter them
+            // here, otherwise a no-join query over a table larger than
+            // max.inmemory.rows drains an empty spill and returns nothing.
+            for (Map<String, Map<String, Object>> joinedRow : joinedRows) {
+                Map<String, Object> flattenedRow = flattenJoinedRow(joinedRow);
+                if (conditions.isEmpty() || evaluateConditions(flattenedRow, conditions, combinedColumnTypes, tables)) {
+                    checkResultRowLimit(filteredRows.size(), "filter");
+                    filteredRows.add(flattenedRow);
+                }
             }
         } else {
             filteredRows = new ArrayList<>();
@@ -2855,8 +2867,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                 List<Map<String, Object>> rawRows = table.getRows();
                 List<Map<String, Object>> mainRows = new ArrayList<>(rawRows.size());
                 for (int i = 0; i < rawRows.size(); i++) {
-                    if (!table.isDeleted(i)) {
-                        mainRows.add(rawRows.get(i));
+                    if (table.isRowVisibleToReader(i)) {
+                        mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
                     }
                 }
                 return mainRows;
@@ -2912,8 +2924,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             List<Map<String, Object>> rawRows = table.getRows();
             List<Map<String, Object>> mainRows = new ArrayList<>(rawRows.size());
             for (int i = 0; i < rawRows.size(); i++) {
-                if (!table.isDeleted(i)) {
-                    mainRows.add(rawRows.get(i));
+                if (table.isRowVisibleToReader(i)) {
+                    mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
                 }
             }
             return mainRows;
@@ -3309,8 +3321,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         int tableSize = table.getRawRowCount();
         List<Map<String, Object>> rawRows = table.getRows();
         for (int idx : sortedResult) {
-            if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
-                indexedRows.add(rawRows.get(idx));
+            if (idx >= 0 && idx < tableSize && table.isRowVisibleToReader(idx)) {
+                indexedRows.add(table.getVisibleRowForReader(idx, rawRows.get(idx)));
             }
         }
         return indexedRows;
@@ -3382,10 +3394,10 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         List<Map<String, Object>> coveredRows = new ArrayList<>(rowIndices.size());
         int tableSize = table.getRawRowCount();
         for (int idx : rowIndices) {
-            if (idx >= 0 && idx < tableSize && !table.isDeleted(idx)) {
+            if (idx >= 0 && idx < tableSize && table.isRowVisibleToReader(idx)) {
                 Map<String, Object> covered = coverIndex.getCoveredValues(idx);
                 if (covered != null) {
-                    coveredRows.add(covered);
+                    coveredRows.add(table.getVisibleRowForReader(idx, covered));
                 }
             }
         }

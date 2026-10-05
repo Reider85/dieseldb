@@ -21,12 +21,17 @@ import java.util.UUID;
  */
 class Transaction {
     private final UUID transactionId;
+    private final Database database; // Reference to the database
+    private long txid; // MVCC transaction id
+    private long snapshotTxid; // Snapshot of txid counter at BEGIN
+    private long snapshotCsn; // Snapshot of commitCsn counter at BEGIN
     private final IsolationLevel isolationLevel;
     private final Map<String, Table> originalTables;
     private final Map<String, Table> modifiedTables;
     private final Map<String, Long> snapshotVersions;
     private boolean active;
     private boolean batchMode;
+    private UndoLog undoLog; // MVCC: undo log for rollback support
 
     /**
      * Starts a transaction at the given isolation level, defaulting to
@@ -34,18 +39,85 @@ class Transaction {
      *
      * @param isolationLevel the isolation level, or null for the default
      */
-    public Transaction(IsolationLevel isolationLevel) {
+    public Transaction(Database database, IsolationLevel isolationLevel) {
+        this.database = database;
         this.transactionId = UUID.randomUUID();
+        this.txid = 0; // Will be set by Database.executeBeginTransaction
+        this.snapshotTxid = 0; // Will be set by Database.executeBeginTransaction  
+        this.snapshotCsn = 0; // Will be set by Database.executeBeginTransaction
         this.isolationLevel = isolationLevel != null ? isolationLevel : IsolationLevel.READ_UNCOMMITTED;
         this.originalTables = new HashMap<>();
         this.modifiedTables = new HashMap<>();
         this.snapshotVersions = new HashMap<>();
+        // MVCC undo log: spills to a temp file once undo.spill.threshold.mb is exceeded
+        long spillThresholdBytes = Long.getLong("undo.spill.threshold.mb", 1L) * 1024L * 1024L;
+        this.undoLog = new UndoLog(spillThresholdBytes);
         this.active = true;
         this.batchMode = false;
     }
 
     public UUID getTransactionId() {
         return transactionId;
+    }
+
+    /** Returns the MVCC transaction id (long). */
+    public long getTxid() {
+        return txid;
+    }
+
+    /** Returns the snapshot txid counter value at BEGIN time. */
+    public long getSnapshotTxid() {
+        return snapshotTxid;
+    }
+
+    /** Returns the snapshot commit CSN counter value at BEGIN time. */
+    public long getSnapshotCsn() {
+        return snapshotCsn;
+    }
+
+    /** Sets the MVCC transaction id (package-private for MVCC implementation). */
+    void setTxid(long txid) {
+        this.txid = txid;
+    }
+
+    /** Sets the snapshot txid counter value (package-private for MVCC implementation). */
+    void setSnapshotTxid(long snapshotTxid) {
+        this.snapshotTxid = snapshotTxid;
+    }
+
+    /** Sets the snapshot commit CSN counter value (package-private for MVCC implementation). */
+    void setSnapshotCsn(long snapshotCsn) {
+        this.snapshotCsn = snapshotCsn;
+    }
+
+    /** Returns the transaction's undo log for MVCC rollback support. */
+    public UndoLog getUndoLog() {
+        return undoLog;
+    }
+
+    /**
+     * Rolls back the transaction by applying undo records in reverse order.
+     * This restores the database to its state before the transaction began.
+     */
+    public void rollback() {
+        if (!active) {
+            throw new IllegalStateException("Transaction is not active");
+        }
+        
+        try {
+            // Apply undo records in reverse order to rollback changes
+            undoLog.rollback(database);
+            // The log has served its purpose: free records and the spill file
+            undoLog.clear();
+            
+            // Clear modified tables since all changes are rolled back
+            modifiedTables.clear();
+            
+            // Mark transaction as inactive
+            active = false;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to rollback transaction", e);
+        }
     }
 
     public IsolationLevel getIsolationLevel() {
@@ -96,6 +168,37 @@ class Transaction {
     /** Returns the version of each table at snapshot time. */
     public Map<String, Long> getSnapshotVersions() {
         return snapshotVersions;
+    }
+
+    /** Returns a table from the database (for MVCC undo log access). */
+    public Table getTableForNameFromDatabase(String tableName) {
+        return database.getTable(tableName);
+    }
+
+    /**
+     * Returns an MVCC snapshot view of the given table for this transaction.
+     * The snapshot provides filtered rows based on transaction visibility rules.
+     * 
+     * @param tableName the name of the table
+     * @return transaction table snapshot
+     * @throws IllegalArgumentException if table not found
+     */
+    public TransactionTableSnapshot getSnapshot(String tableName) {
+        Table table = database.getTable(tableName);
+        if (table == null) {
+            throw new IllegalArgumentException("Table not found: " + tableName);
+        }
+        
+        // Use the transaction's own metadata for visibility
+        return new TransactionTableSnapshot(
+            tableName,
+            table,
+            txid,
+            snapshotTxid,
+            snapshotCsn,
+            isolationLevel,
+            database.getTxStatusTracker()
+        );
     }
 
     /**

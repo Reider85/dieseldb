@@ -388,13 +388,15 @@ public abstract class DelimitedIndexManager {
         long rid = nextRowId++;
         rowIdToPosition.put(rid, rowIndex);
         if (rowIndex >= rows.size()) {
+            // Append: no existing row sits at or after rowIndex, so no
+            // stored position changes — skip the O(n) shift entirely.
             rows.add(row);
         } else {
             rows.add(rowIndex, row);
-        }
-        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-            if (e.getValue() >= rowIndex && e.getKey() != rid) {
-                e.setValue(e.getValue() + 1);
+            for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
+                if (e.getValue() >= rowIndex && e.getKey() != rid) {
+                    e.setValue(e.getValue() + 1);
+                }
             }
         }
         insertIndexedRow(row, rid);

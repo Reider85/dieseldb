@@ -226,7 +226,18 @@ class InsertQuery implements Query<Void> {
 
     private void insertRow(Table table, Map<String, Object> row) {
         try {
-            table.addRow(row);
+            // MVCC: the dispatch installed the caller's context; an explicit
+            // (non-batch) transaction inserts in place with version metadata and
+            // an undo record, everything else uses the plain fast path.
+            MvccReadContext.Context context = MvccReadContext.get();
+            Transaction transaction = context == null ? null : context.getTransaction();
+            if (transaction != null && transaction.isActive() && !context.isBatch()) {
+                int rowIndex = table.addRowWithMVCC(row, transaction.getTxid());
+                transaction.getUndoLog().addUndoRecord(new UndoLog.InsertUndo(table.getName(), rowIndex));
+            } else {
+                table.addRow(row);
+            }
+            
             lastAffectedRows = 1;
             LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{table.getName(), row});
         } catch (IllegalStateException e) {

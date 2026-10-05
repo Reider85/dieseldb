@@ -52,6 +52,7 @@ class Database {
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
     private final QueryCache queryCache = new QueryCache();
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
+    private final TxStatusTracker txStatusTracker = new TxStatusTracker();        // MVCC: tracks transaction status and commit CSNs
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
     private String dataDir = "data";
@@ -274,8 +275,15 @@ class Database {
             throw new IllegalArgumentException(
                     "Cursor can only be opened over a SELECT query, got: " + cleanQuery.trim());
         }
-        Iterator<Map<String, Object>> iterator = selectQuery.executeAsIterator(table);
-        return new Cursor(UUID.randomUUID(), cleanQuery.trim(), fetchSize, iterator);
+        // MVCC: install the caller's reader context while the cursor query runs.
+        MvccReadContext.Context previousContext = MvccReadContext.get();
+        MvccReadContext.set(MvccReadContext.contextFor(currentTransaction));
+        try {
+            Iterator<Map<String, Object>> iterator = selectQuery.executeAsIterator(table);
+            return new Cursor(UUID.randomUUID(), cleanQuery.trim(), fetchSize, iterator);
+        } finally {
+            MvccReadContext.set(previousContext);
+        }
     }
 
     /**
@@ -331,6 +339,18 @@ class Database {
      * the query profiler.
      */
     private Object dispatch(Query<?> parsedQuery, String cleanQuery, Transaction currentTransaction, UUID transactionId) {
+        // MVCC: every statement runs with the caller's reader identity so read
+        // paths can apply snapshot/dirty-read visibility (prompt 67/68).
+        MvccReadContext.Context previousContext = MvccReadContext.get();
+        MvccReadContext.set(MvccReadContext.contextFor(currentTransaction));
+        try {
+            return dispatchInternal(parsedQuery, cleanQuery, currentTransaction, transactionId);
+        } finally {
+            MvccReadContext.set(previousContext);
+        }
+    }
+
+    private Object dispatchInternal(Query<?> parsedQuery, String cleanQuery, Transaction currentTransaction, UUID transactionId) {
         if (parsedQuery instanceof SetIsolationLevelQuery q) {
             return executeSetIsolationLevel(q);
         }
@@ -476,8 +496,19 @@ class Database {
             throw new TransactionException("Another transaction is already active for this client");
         }
         IsolationLevel isolationLevel = Objects.requireNonNullElse(beginQuery.getIsolationLevel(), defaultIsolationLevel);
-        Transaction transaction = new Transaction(isolationLevel);
+        Transaction transaction = new Transaction(this, isolationLevel);
         UUID newTransactionId = transaction.getTransactionId();
+        
+        // MVCC: allocate txid and register with status tracker
+        long txid = txStatusTracker.registerTransaction();
+        long snapshotTxid = txid; // Snapshot of txid counter at BEGIN
+        long snapshotCsn = txStatusTracker.getCurrentCommitCsn(); // Snapshot of commit CSN counter at BEGIN
+        
+        // Set MVCC fields using package-private setters
+        transaction.setTxid(txid);
+        transaction.setSnapshotTxid(snapshotTxid);
+        transaction.setSnapshotCsn(snapshotCsn);
+        
         activeTransactions.put(newTransactionId, transaction);
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             transaction.snapshotTable(entry.getKey(), entry.getValue());
@@ -492,6 +523,19 @@ class Database {
         }
         checkCommitConflicts(currentTransaction);
         persistModifiedTables(currentTransaction.getModifiedTables(), true);
+        
+        // MVCC: mark transaction as committed in status tracker (batch
+        // transactions never register a txid, so there is nothing to mark).
+        if (currentTransaction.getTxid() > 0) {
+            txStatusTracker.markCommitted(currentTransaction.getTxid());
+        }
+        // The undo log is only needed until COMMIT or ROLLBACK resolves it.
+        try {
+            currentTransaction.getUndoLog().clear();
+        } catch (java.io.IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to clean up undo log after COMMIT", e);
+        }
+        
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
@@ -504,7 +548,10 @@ class Database {
             Table modifiedTable = entry.getValue();
             if (modifiedTable != null) {
                 Table sharedTable = tables.get(tableName);
-                if (sharedTable != null) {
+                // MVCC transactions modify the shared table in place, so a
+                // version change is their own doing — only a CoW copy (batch)
+                // can still be compared against the BEGIN-time version.
+                if (sharedTable != null && modifiedTable != sharedTable) {
                     Long snapshotVersion = currentTransaction.getSnapshotVersions().get(tableName);
                     if (snapshotVersion != null && sharedTable.getVersion() != snapshotVersion) {
                         throw new TransactionException(
@@ -521,7 +568,15 @@ class Database {
         if (currentTransaction == null || !currentTransaction.isActive()) {
             throw new TransactionException("No active transaction to rollback");
         }
-        currentTransaction.setInactive();
+        
+        // MVCC: hide the transaction's rows from every reader first, then apply
+        // the undo log in reverse so the shared tables return to their
+        // pre-BEGIN state (inserts removed, updates restored).
+        if (currentTransaction.getTxid() > 0) {
+            txStatusTracker.markAborted(currentTransaction.getTxid());
+        }
+        currentTransaction.rollback();
+        
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
         return ErrorMessages.TRANSACTION_ROLLED_BACK;
@@ -539,7 +594,7 @@ class Database {
         if (currentTransaction != null && currentTransaction.isActive()) {
             throw new TransactionException("Another transaction is already active for this client");
         }
-        Transaction transaction = new Transaction(defaultIsolationLevel);
+        Transaction transaction = new Transaction(this, defaultIsolationLevel);
         transaction.setBatchMode(true);
         UUID newTransactionId = transaction.getTransactionId();
         activeTransactions.put(newTransactionId, transaction);
@@ -726,7 +781,7 @@ class Database {
     }
 
     private Object executeAutoCommitDml(Query<?> parsedQuery, Table table, String tableName) {
-        Transaction implicitTransaction = new Transaction(defaultIsolationLevel);
+        Transaction implicitTransaction = new Transaction(this, defaultIsolationLevel);
         try {
             Object implicitResult = parsedQuery.execute(table);
             implicitTransaction.registerModifiedTable(tableName, table);
@@ -738,11 +793,34 @@ class Database {
     }
 
     private Object executeTransactionDml(Query<?> parsedQuery, Table table, String tableName, Transaction currentTransaction) {
-        if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
-            currentTransaction.updateTable(tableName, table);
+        if (currentTransaction.isBatchMode()) {
+            // Batch keeps copy-on-write: the DML runs against the transaction's
+            // private copy, published wholesale at END BATCH.
+            if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
+                currentTransaction.updateTable(tableName, table);
+            }
+            Table batchCopy = currentTransaction.getModifiedTables().get(tableName);
+            return parsedQuery.execute(batchCopy);
         }
-        Table txnTable = currentTransaction.getModifiedTables().get(tableName);
-        return parsedQuery.execute(txnTable);
+        // UPDATE/DELETE stay copy-on-write until they are adapted to MVCC
+        // undo logs (prompt4.md step 2 scope: INSERT only). The copy is
+        // published at COMMIT and discarded at ROLLBACK, so uncommitted
+        // changes never touch the shared table; it also restores the
+        // version-swap write-write conflict detection at commit time.
+        if (!(parsedQuery instanceof InsertQuery)) {
+            Table target = currentTransaction.getModifiedTables().get(tableName);
+            if (target == null || target == table) {
+                currentTransaction.updateTable(tableName, table);
+            }
+            return parsedQuery.execute(currentTransaction.getModifiedTables().get(tableName));
+        }
+        // INSERT: MVCC path — mutate the shared table in place with undo
+        // logging; the row stays invisible to other transactions through
+        // its RowVersionMeta until this transaction commits.
+        if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
+            currentTransaction.registerModifiedTable(tableName, table);
+        }
+        return parsedQuery.execute(table);
     }
 
     /**
@@ -1274,7 +1352,7 @@ class Database {
      * @see Transaction
      */
     public UUID beginTransaction(IsolationLevel isolationLevel) {
-        Transaction transaction = new Transaction(isolationLevel);
+        Transaction transaction = new Transaction(this, isolationLevel);
         UUID transactionId = transaction.getTransactionId();
         activeTransactions.put(transactionId, transaction);
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
@@ -1332,5 +1410,30 @@ class Database {
             // Store the exception as the result for this query
             return e;
         }
+    }
+    
+    /**
+     * Returns the MVCC transaction status tracker.
+     */
+    public TxStatusTracker getTxStatusTracker() {
+        return txStatusTracker;
+    }
+
+    /**
+     * Returns the current transaction (MVCC support).
+     */
+    public Transaction getCurrentTransaction() {
+        if (activeTransactions.size() == 1) {
+            return activeTransactions.values().iterator().next();
+        }
+        return null;
+    }
+
+    /**
+     * Returns the current transaction id (MVCC support).
+     */
+    public long getCurrentTxid() {
+        Transaction current = getCurrentTransaction();
+        return current != null ? current.getTxid() : -1;
     }
 }

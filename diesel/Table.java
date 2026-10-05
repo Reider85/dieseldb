@@ -157,6 +157,7 @@ class Table implements Serializable {
     private String clusteredIndexColumn;
     private transient BTreeClusteredIndex clusteredIndex;
     private transient Database database;
+    private transient ReentrantReadWriteLock tableLock;
     private int formatVersion = CURRENT_FORMAT_VERSION;
 
     /**
@@ -189,7 +190,7 @@ class Table implements Serializable {
      * without holding any lock; only the final atomic swap acquires the write
      * lock, minimising read disruption.
      */
-    private transient ReentrantReadWriteLock tableLock = new ReentrantReadWriteLock();
+    // tableLock is initialized in constructor
 
     /** Queued index operations when deferred mode is active; null when not deferring. */
     private transient List<Runnable> deferredIndexOps;
@@ -208,6 +209,12 @@ class Table implements Serializable {
 
     /** Tracks positions of tombstoned (logically deleted) rows. Physical removal happens only during {@link #compact()}. */
     private transient BitSet deletedRows;
+
+    /**
+     * MVCC metadata per row: maps row index to version information.
+     * Null/empty means no MVCC versioning (bootstrap or auto-commit path).
+     */
+    private transient ConcurrentHashMap<Integer, RowVersionMeta> rowVersions;
 
     /** Fraction of rows that must be tombstoned before automatic compaction triggers. */
     private static final double COMPACT_THRESHOLD = 0.3;
@@ -285,6 +292,7 @@ class Table implements Serializable {
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.sequences = sequences != null ? new ConcurrentHashMap<>(sequences) : new ConcurrentHashMap<>();
+        this.tableLock = new ReentrantReadWriteLock();
         this.isFileInitialized = false;
         this.hasClusteredIndex = false;
         this.clusteredIndexColumn = null;
@@ -318,6 +326,11 @@ class Table implements Serializable {
         return database;
     }
 
+    /** Returns the table-level read-write lock for MVCC operations. */
+    public ReentrantReadWriteLock getTableLock() {
+        return tableLock;
+    }
+
     /**
      * Attaches a database to this table, used to restore the transient
      * reference after deserialization.
@@ -345,6 +358,7 @@ class Table implements Serializable {
         this.indexes = new ConcurrentHashMap<>();
         this.sequences = new ConcurrentHashMap<>();
         this.deletedRows = new BitSet();
+        this.rowVersions = new ConcurrentHashMap<>();
         this.tableLock = new ReentrantReadWriteLock();
         this.statsLock = new Object();
         this.statsDirty = false;
@@ -1208,21 +1222,87 @@ class Table implements Serializable {
     }
 
     /**
-     * Returns a copy of the table rows with tombstoned (deleted) rows filtered out.
+     * Returns a copy of the table rows with rows hidden from the current reader
+     * filtered out: tombstoned rows, rows created by transactions the reader may
+     * not see, and rows deleted within the reader's snapshot.
      */
     public List<Map<String, Object>> getLiveRows() {
         tableLock.readLock().lock();
         try {
             List<Map<String, Object>> result = new ArrayList<>();
             for (int i = 0; i < rows.size(); i++) {
-                if (!isDeleted(i)) {
-                    result.add(rows.get(i));
+                if (isRowVisibleToReader(i)) {
+                    result.add(getVisibleRowForReader(i));
                 }
             }
             return result;
         } finally {
             tableLock.readLock().unlock();
         }
+    }
+
+    /**
+     * Returns true if the row at {@code rowIndex} must be returned to the reader
+     * identified by the {@link MvccReadContext} of the current thread.
+     *
+     * <p>Combines the tombstone check with MVCC visibility: a row is hidden when
+     * it was created by a transaction that is aborted, or by an active
+     * transaction whose writes this reader may not observe (no dirty reads), or
+     * committed after the reader's snapshot; and when it was deleted by a
+     * transaction visible to this reader's snapshot. Without a reader context
+     * (query executed outside {@code Database.dispatch}) only the tombstone
+     * check and the legacy {@link RowVersionMeta#isAlive()} rule apply.
+     *
+     * @param rowIndex the raw row index
+     * @return true if the row is visible to the current reader
+     */
+    public boolean isRowVisibleToReader(int rowIndex) {
+        if (isDeleted(rowIndex)) {
+            return false;
+        }
+        if (rowVersions == null || rowVersions.isEmpty()) {
+            return true;
+        }
+        RowVersionMeta meta = rowVersions.get(rowIndex);
+        if (meta == null) {
+            return true;
+        }
+        return MvccReadContext.isRowVisible(database, meta, MvccReadContext.get());
+    }
+
+    /**
+     * Returns the row values the current reader must see at {@code rowIndex}:
+     * the live row normally, or a copy of the committed values while an
+     * uncommitted change from another transaction must stay hidden.
+     *
+     * @param rowIndex the raw row index
+     * @return the reader-visible row values
+     */
+    public Map<String, Object> getVisibleRowForReader(int rowIndex) {
+        return getVisibleRowForReader(rowIndex, rows.get(rowIndex));
+    }
+
+    /**
+     * Same as {@link #getVisibleRowForReader(int)} but with the current row
+     * values supplied by the caller. Query scans over a storage-backed table
+     * pass {@code storage.scan()} rows here, because the internal {@code rows}
+     * list is not updated by {@link #updateRowInPlace} when a {@code storage}
+     * backend is attached.
+     *
+     * @param rowIndex   the raw row index
+     * @param currentRow the reader's current row values (used when no
+     *                   committed pre-image must be returned)
+     * @return the reader-visible row values
+     */
+    public Map<String, Object> getVisibleRowForReader(int rowIndex, Map<String, Object> currentRow) {
+        if (rowVersions == null || rowVersions.isEmpty()) {
+            return currentRow;
+        }
+        RowVersionMeta meta = rowVersions.get(rowIndex);
+        if (meta == null || meta.getCommittedValues() == null) {
+            return currentRow;
+        }
+        return new HashMap<>(meta.getCommittedValues());
     }
 
     /**
@@ -1371,6 +1451,9 @@ class Table implements Serializable {
 
             rebuildAllIndexes();
 
+            // Rebuild MVCC metadata after row index shifts
+            rebuildRowVersionsAfterCompact();
+
             rowLocks = new ConcurrentHashMap<>();
 
             rowCount = rows.size();
@@ -1381,6 +1464,116 @@ class Table implements Serializable {
         } finally {
             tableLock.writeLock().unlock();
         }
+    }
+
+    // ─── MVCC row version metadata support ─────────────────────────────
+
+    /**
+     * Returns the MVCC metadata for the row at the given index.
+     * Returns null if no MVCC metadata is available for this row.
+     */
+    public RowVersionMeta getRowVersionMeta(int rowIndex) {
+        return rowVersions != null ? rowVersions.get(rowIndex) : null;
+    }
+
+    /**
+     * Sets MVCC metadata for the row at the given index.
+     */
+    public void setRowVersionMeta(int rowIndex, RowVersionMeta meta) {
+        if (rowVersions == null) {
+            rowVersions = new ConcurrentHashMap<>();
+        }
+        rowVersions.put(rowIndex, meta);
+    }
+
+    /**
+     * Removes MVCC metadata for the row at the given index.
+     */
+    public void removeRowVersionMeta(int rowIndex) {
+        if (rowVersions != null) {
+            rowVersions.remove(rowIndex);
+        }
+    }
+
+    /**
+     * Updates row metadata for an INSERT operation by the given transaction.
+     */
+    public void markInsert(int rowIndex, long txid, Map<String, Object> committedValues) {
+        RowVersionMeta meta = new RowVersionMeta(txid, committedValues);
+        setRowVersionMeta(rowIndex, meta);
+    }
+
+    /**
+     * Updates row metadata for a DELETE operation by the given transaction.
+     */
+    public void markDelete(int rowIndex, long txid) {
+        RowVersionMeta meta = getRowVersionMeta(rowIndex);
+        if (meta == null) {
+            // Bootstrap row being deleted
+            meta = new RowVersionMeta(0, 0, 0, null, false, false);
+            setRowVersionMeta(rowIndex, meta);
+        }
+        meta.setXmax(txid);
+        meta.setUncommittedDelete(true);
+    }
+
+    /**
+     * Updates row metadata for an UPDATE operation by the given transaction.
+     * Saves the old values in committedValues for undo.
+     */
+    public void markUpdate(int rowIndex, long txid, Map<String, Object> oldValues) {
+        RowVersionMeta meta = getRowVersionMeta(rowIndex);
+        if (meta == null) {
+            // Bootstrap row being updated
+            meta = new RowVersionMeta(0, 0, 0, oldValues, false, false);
+            setRowVersionMeta(rowIndex, meta);
+        } else {
+            // Save old values before updating
+            meta.setCommittedValues(oldValues);
+        }
+        // Note: UPDATE doesn't change xmin/xmax in this shadow model
+    }
+
+    /**
+     * Rebuilds row version metadata after compact() due to row index shifts.
+     * This must be called after compact() to maintain correct row index mapping.
+     */
+    public void rebuildRowVersionsAfterCompact() {
+        if (rowVersions == null || rowVersions.isEmpty()) {
+            return;
+        }
+
+        // Create a new map with updated indices
+        ConcurrentHashMap<Integer, RowVersionMeta> newRowVersions = new ConcurrentHashMap<>();
+        rowVersions.forEach((oldIndex, meta) -> {
+            // Find the new index of this row by checking if it's not deleted
+            int newIndex = findNewIndexAfterCompact(oldIndex);
+            if (newIndex != -1) {
+                newRowVersions.put(newIndex, meta);
+            }
+        });
+        rowVersions = newRowVersions;
+    }
+
+    /**
+     * Helper method to find the new index of a row after compact().
+     * Returns -1 if the row was removed during compact.
+     */
+    private int findNewIndexAfterCompact(int oldIndex) {
+        int newIndex = 0;
+        for (int i = 0; i < oldIndex; i++) {
+            if (!isDeleted(i)) {
+                newIndex++;
+            }
+        }
+        return isDeleted(oldIndex) ? -1 : newIndex;
+    }
+
+    /**
+     * Clears all MVCC metadata (called after transaction commit/rollback).
+     */
+    public void clearRowVersions() {
+        rowVersions = null;
     }
 
     private static byte[] serializeToBytes(Serializable obj) throws IOException {
@@ -1598,6 +1791,76 @@ class Table implements Serializable {
         LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
     }
 
+    /**
+     * Adds a row to this table with MVCC support.
+     *
+     * @param row the row to add, keys are column names, values are the values
+     * @param txid the transaction id for MVCC tracking
+     * @return the index of the added row
+     * @throws IllegalStateException if a unique constraint is violated
+     */
+    public int addRowWithMVCC(Map<String, Object> row, long txid) {
+        Map<String, Object> validatedRow = new HashMap<>();
+        columns.forEach(col -> {
+            Object value;
+            Sequence sequence = sequences.get(col);
+            if (sequence != null) {
+                if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
+                    throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
+                }
+                value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
+            } else if (!row.containsKey(col)) {
+                throw new IllegalArgumentException("Missing value for column: " + col);
+            } else {
+                value = row.get(col);
+            }
+
+            if (deferredIndexOps == null) {
+                checkUniqueConstraint(col, value);
+            }
+
+            Class<?> expectedType = columnTypes.get(col);
+            if (expectedType == null) {
+                throw new IllegalArgumentException("Invalid value or type for column: " + col);
+            }
+            if (value == null) {
+                validatedRow.put(col, null);
+            } else {
+                validateColumnValueType(col, expectedType, value);
+                validatedRow.put(col, value);
+            }
+        });
+
+        int rowIndex;
+        if (hasClusteredIndex) {
+            Object key = validatedRow.get(clusteredIndexColumn);
+            if (key == null) {
+                throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
+            }
+            List<Integer> existing = clusteredIndex.search(key);
+            if (!existing.isEmpty()) {
+                LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
+                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
+            }
+            if (getDeletedCount() > 0) {
+                compact();
+            }
+            rowIndex = insertIntoClusteredPosition(validatedRow, key);
+        } else {
+            rowIndex = insertAtEnd(validatedRow);
+        }
+        rowCount++;
+        version.incrementAndGet();
+        markStatsDirty();
+        
+        // Mark as insert in MVCC metadata (no committed values: the row is
+        // invisible to every other reader until this transaction commits).
+        markInsert(rowIndex, txid, null);
+        
+        LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
+        return rowIndex;
+    }
+
     private void checkUniqueConstraint(String column, Object value) {
         Index index = indexes.get(column);
         if ((index instanceof UniqueIndex || index instanceof BTreeClusteredIndex)
@@ -1628,7 +1891,7 @@ class Table implements Serializable {
         }
     }
 
-    private void insertIntoClusteredPosition(Map<String, Object> row, Object clusteredKey) {
+    private int insertIntoClusteredPosition(Map<String, Object> row, Object clusteredKey) {
         int insertIndex = findInsertPosition(clusteredKey);
         ReentrantReadWriteLock lock = getRowLock(insertIndex);
         lock.writeLock().lock();
@@ -1643,9 +1906,10 @@ class Table implements Serializable {
         } finally {
             lock.writeLock().unlock();
         }
+        return insertIndex;
     }
 
-    private void insertAtEnd(Map<String, Object> row) {
+    private int insertAtEnd(Map<String, Object> row) {
         int rowIndex = rows.size();
         ReentrantReadWriteLock lock = getRowLock(rowIndex);
         lock.writeLock().lock();
@@ -1658,6 +1922,7 @@ class Table implements Serializable {
         } finally {
             lock.writeLock().unlock();
         }
+        return rowIndex;
     }
 
     /** Inserts {@code row} into every secondary index at {@code rowIndex}, skipping NULL keys. */

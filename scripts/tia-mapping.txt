@@ -129,3 +129,9 @@ diesel/SubqueryConstants.java		query,query-full
 pom.xml					all
 .github/workflows/ci.yml		none
 Makefile				none
+diesel/UndoLog.java		concurrency
+diesel/RowVersionMeta.java		concurrency
+diesel/MvccReadContext.java		concurrency
+diesel/TxStatusTracker.java		concurrency
+diesel/TransactionTableSnapshot.java		concurrency
+diesel/storage/DelimitedIndexManager.java	storage-csv,storage-tsv
