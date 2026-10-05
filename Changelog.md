@@ -872,3 +872,5 @@ chore: test-profiles-audit changelog entry
 3.2.56 Fixed QueryProfilerTest.orderBySortPhaseIsMeasuredOnlyWhenSorting test failure with ceiling ms conversion and ThreadLocal isolation
 
 3.2.57 Fix TsvStorageTest/JsonlStorageTest file-existence asserts under write-behind persist: flush pending before checking .tsv/.jsonl on disk
+
+3.2.58 analytics
