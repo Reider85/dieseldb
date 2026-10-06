@@ -25,6 +25,7 @@ import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
+import diesel.concurrency.ConflictDetector;
 
 /**
  * Central database engine. Owns the shared table map, the active client
@@ -55,6 +56,7 @@ class Database {
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private final TxStatusTracker txStatusTracker = new TxStatusTracker();        // MVCC: tracks transaction status and commit CSNs
     private final VacuumManager vacuumManager = new VacuumManager(this);           // MVCC: dead row version reclamation
+    private final ConflictDetector conflictDetector = new ConflictDetector();     // MVCC: SERIALIZABLE SSI conflict detection (prompt4 #5)
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
     private String dataDir = "data";
@@ -536,6 +538,11 @@ class Database {
         transaction.setSnapshotTxid(snapshotTxid);
         transaction.setSnapshotCsn(snapshotCsn);
         
+        // MVCC SSI: begin tracking for SERIALIZABLE transactions
+        if (isolationLevel == IsolationLevel.SERIALIZABLE) {
+            conflictDetector.beginTracking(txid, snapshotCsn);
+        }
+        
         activeTransactions.put(newTransactionId, transaction);
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             transaction.snapshotTable(entry.getKey(), entry.getValue());
@@ -597,6 +604,24 @@ class Database {
             LOGGER.log(Level.WARNING, "Failed to clean up undo log after COMMIT", e);
         }
         
+        // MVCC SSI: check for rw-conflicts at commit for SERIALIZABLE transactions
+        if (currentTransaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
+            // Build writeSet for conflict detection
+            Map<String, Set<Integer>> writeSet = new HashMap<>();
+            for (Map.Entry<String, Set<Integer>> entry : currentTransaction.getModifiedRows().entrySet()) {
+                writeSet.put(entry.getKey(), new HashSet<>(entry.getValue()));
+            }
+            for (Map.Entry<String, Set<Integer>> entry : currentTransaction.getDeletedRows().entrySet()) {
+                writeSet.computeIfAbsent(entry.getKey(), k -> new HashSet<>()).addAll(entry.getValue());
+            }
+            
+            conflictDetector.noteCommit(
+                currentTransaction.getTxid(), 
+                commitCsn, 
+                writeSet
+            );
+        }
+        
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
@@ -654,6 +679,11 @@ class Database {
             txStatusTracker.markAborted(currentTransaction.getTxid());
         }
         currentTransaction.rollback();
+        
+        // MVCC SSI: cleanup tracking for SERIALIZABLE transactions
+        if (currentTransaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
+            conflictDetector.noteRollback(currentTransaction.getTxid());
+        }
         
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
@@ -1514,6 +1544,17 @@ class Database {
      */
     public VacuumManager getVacuumManager() {
         return vacuumManager;
+    }
+
+    /**
+     * Returns this database's SERIALIZABLE SSI conflict detector (prompt4.md #5),
+     * which tracks read/write sets for SERIALIZABLE transactions and detects
+     * write-write and read-write conflicts.
+     *
+     * @return the conflict detector, never null
+     */
+    public ConflictDetector getConflictDetector() {
+        return conflictDetector;
     }
 
     /**

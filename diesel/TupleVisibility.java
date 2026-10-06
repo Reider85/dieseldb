@@ -174,4 +174,35 @@ public final class TupleVisibility {
         }
         return true;
     }
+
+    /**
+     * SSI (Serializable Snapshot Isolation) conflict detection predicate for write operations.
+     * Encapsulates the write-side conflict check for SERIALIZABLE transactions:
+     * - A row has a write conflict if another transaction has an uncommitted change (pending foreign change)
+     * - Or if the row was committed by another transaction after the writer's snapshot (stale snapshot)
+     * 
+     * <p>This is the same logic as {@code Table.checkWriteWriteConflict} but as a standalone
+     * predicate for use in SSI conflict detection (prompt4.md #5).
+     * 
+     * @param pendingOwnerTxid  txid of transaction with pending change on the row, or 0 if none
+     * @param lastCommittedCsn  commit CSN of the last committed change to the row, or 0 if unknown/bootstrap
+     * @param writerTxid        the transaction ID of the writer (to exclude self from pending check)
+     * @param snapshotCsn       the writer's snapshot commit sequence number (BEGIN-time for SERIALIZABLE)
+     * @return true if a write conflict is detected (row cannot be safely written by this transaction)
+     */
+    public static boolean hasSerializableWriteConflict(
+            long pendingOwnerTxid, long lastCommittedCsn, long writerTxid, long snapshotCsn) {
+        
+        // Condition 1: Pending foreign change (another transaction owns this row)
+        if (pendingOwnerTxid != 0 && pendingOwnerTxid != writerTxid) {
+            return true;
+        }
+        
+        // Condition 2: Stale snapshot (row committed after our snapshot)
+        if (lastCommittedCsn > snapshotCsn) {
+            return true;
+        }
+        
+        return false;
+    }
 }

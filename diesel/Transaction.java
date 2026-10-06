@@ -221,6 +221,11 @@ class Transaction {
         return snapshotVersions;
     }
 
+    /** Returns the database this transaction belongs to. */
+    public Database getDatabase() {
+        return database;
+    }
+
     /** Returns a table from the database (for MVCC undo log access). */
     public Table getTableForNameFromDatabase(String tableName) {
         return database.getTable(tableName);

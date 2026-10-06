@@ -136,3 +136,4 @@ RollbackTest	concurrency
 UndoLogTest	concurrency
 UndoLogSpillTest	concurrency
 TransactionTableSnapshotTest	concurrency
+SerializationConflictTest	concurrency

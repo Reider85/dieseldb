@@ -137,3 +137,5 @@ diesel/TransactionTableSnapshot.java		concurrency
 diesel/storage/DelimitedIndexManager.java	storage-csv,storage-tsv
 diesel/VacuumManager.java		smoke,query,concurrency
 diesel/VacuumQuery.java		smoke,query
+diesel/SerializationFailureException.java	query,query-full
+diesel/concurrency/ConflictDetector.java	concurrency

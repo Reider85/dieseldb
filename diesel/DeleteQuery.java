@@ -120,7 +120,13 @@ class DeleteQuery implements Query<Void> {
         long txid = transaction.getTxid();
         long snapshotCsn = transaction.getSnapshotCsn();
         for (int rowIndex : rowsToDelete) {
-            table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn);
+            if (transaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
+                table.checkSerializableWriteConflict(rowIndex, txid, snapshotCsn);
+                // Track read for SSI: we're reading this row to delete it
+                transaction.getDatabase().getConflictDetector().noteRead(txid, table.getName(), rowIndex);
+            } else {
+                table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn);
+            }
         }
         for (int rowIndex : rowsToDelete) {
             Map<String, Object> preImage = new HashMap<>(rows.get(rowIndex));
@@ -130,6 +136,11 @@ class DeleteQuery implements Query<Void> {
             transaction.getUndoLog().addUndoRecord(
                     new UndoLog.DeleteUndo(table.getName(), rowIndex, oldMetaCopy));
             transaction.noteDeletedRow(table.getName(), rowIndex);
+            
+            // Track write for SSI
+            if (transaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
+                transaction.getDatabase().getConflictDetector().noteWrite(txid, table.getName(), rowIndex);
+            }
         }
     }
 

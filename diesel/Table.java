@@ -1275,6 +1275,16 @@ class Table implements Serializable {
      * @return true if the row is visible to the current reader
      */
     public boolean isRowVisibleToReader(int rowIndex) {
+        // Track read for SERIALIZABLE transactions
+        MvccReadContext.Context context = MvccReadContext.get();
+        if (context != null && context.getTransaction() != null 
+                && context.getTransaction().getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
+            long txid = context.getTransaction().getTxid();
+            if (txid > 0) {
+                database.getConflictDetector().noteRead(txid, name, rowIndex);
+            }
+        }
+        
         if (isDeleted(rowIndex)) {
             // COMMIT-time tombstones for MVCC deletes keep their xmax: a reader
             // whose snapshot predates the delete still has to see the row
@@ -1691,6 +1701,33 @@ class Table implements Serializable {
                     "Write-write conflict on table " + name + ", row " + rowIndex
                     + ": row committed at CSN " + meta.getLastCommittedCsn()
                     + " after the writer's snapshot " + snapshotCsn);
+        }
+    }
+
+    /**
+     * SERIALIZABLE isolation write conflict check for SSI conflict detection.
+     * Same logic as checkWriteWriteConflict but throws SerializationFailureException
+     * instead of TransactionException for SERIALIZABLE isolation.
+     *
+     * @param rowIndex    the raw row index
+     * @param txid        the transaction ID of the writer
+     * @param snapshotCsn  the writer's snapshot commit CSN
+     * @throws SerializationFailureException on a write-write conflict
+     */
+    public void checkSerializableWriteConflict(int rowIndex, long txid, long snapshotCsn) {
+        RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
+        if (meta == null) {
+            return;
+        }
+        long owner = meta.getOwnerTxid();
+        if (meta.hasUncommittedChanges() && owner != 0 && owner != txid) {
+            throw new SerializationFailureException(
+                    "Serialization failure: transaction " + owner + " has an uncommitted change on table " + name + ", row " + rowIndex);
+        }
+        if (meta.getLastCommittedCsn() > snapshotCsn) {
+            throw new SerializationFailureException(
+                    "Serialization failure: row committed at CSN " + meta.getLastCommittedCsn()
+                    + " after the writer's snapshot " + snapshotCsn + " on table " + name + ", row " + rowIndex);
         }
     }
 

@@ -174,7 +174,13 @@ class UpdateQuery implements Query<Void> {
         long txid = transaction.getTxid();
         long snapshotCsn = transaction.getSnapshotCsn();
         for (int rowIndex : rowsToUpdate) {
-            table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn);
+            if (transaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
+                table.checkSerializableWriteConflict(rowIndex, txid, snapshotCsn);
+                // Track read for SSI: we're reading this row to update it
+                transaction.getDatabase().getConflictDetector().noteRead(txid, table.getName(), rowIndex);
+            } else {
+                table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn);
+            }
         }
         for (int rowIndex : rowsToUpdate) {
             Map<String, Object> oldValues = new HashMap<>(rows.get(rowIndex));
@@ -184,6 +190,11 @@ class UpdateQuery implements Query<Void> {
             transaction.getUndoLog().addUndoRecord(
                     new UndoLog.UpdateUndo(table.getName(), rowIndex, oldValues, oldMetaCopy));
             transaction.noteModifiedRow(table.getName(), rowIndex);
+            
+            // Track write for SSI
+            if (transaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
+                transaction.getDatabase().getConflictDetector().noteWrite(txid, table.getName(), rowIndex);
+            }
         }
     }
 
