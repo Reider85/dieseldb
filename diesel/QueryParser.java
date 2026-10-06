@@ -921,6 +921,17 @@ class QueryParser {
                 return parseAnalyzeTableQuery(n);
             }
         });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.VACUUM);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseVacuumQuery(n);
+            }
+        });
         return strategies;
     }
 
@@ -1108,6 +1119,35 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid ANALYZE TABLE syntax: expected 'ANALYZE TABLE <table name>'");
         }
         return new AnalyzeTableQuery(tableName.toUpperCase());
+    }
+
+    /**
+     * Parses a {@code VACUUM} statement (case-insensitive) into a
+     * {@link VacuumQuery}. Accepted forms: bare {@code VACUUM} (all tables),
+     * {@code VACUUM <name>} and {@code VACUUM TABLE <name>}. A trailing
+     * semicolon is tolerated; any other malformed remainder is rejected with
+     * a descriptive error.
+     *
+     * @param normalized the uppercased query text
+     * @return the parsed vacuum query
+     * @throws IllegalArgumentException on malformed VACUUM input
+     */
+    private Query<?> parseVacuumQuery(String normalized) {
+        String rest = normalized.substring(SqlKeywords.VACUUM.length()).trim();
+        if (rest.endsWith(";")) {
+            rest = rest.substring(0, rest.length() - 1).trim();
+        }
+        if (rest.isEmpty()) {
+            return new VacuumQuery(null);
+        }
+        if (rest.startsWith(SqlKeywords.TABLE)) {
+            rest = rest.substring(SqlKeywords.TABLE.length()).trim();
+        }
+        if (rest.isEmpty() || CharOps.containsWhitespace(rest) || rest.contains("(")) {
+            throw new IllegalArgumentException(
+                    "Invalid VACUUM syntax: expected 'VACUUM [TABLE <table name>]'");
+        }
+        return new VacuumQuery(rest.toUpperCase());
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

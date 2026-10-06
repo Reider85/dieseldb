@@ -456,6 +456,46 @@ public abstract class DelimitedIndexManager {
         return deletedRowIds.size();
     }
 
+    /**
+     * Disassociates the index entries of rows the caller identified as dead
+     * (the vacuum's physical reclamation step). Unlike
+     * {@link #deleteRow(int)} this performs <b>no</b> position shifting and
+     * touches neither the mirror row list nor the tombstone accounting: the
+     * caller immediately follows this call with a full rebuild
+     * ({@code Table.compact()}), which reindexes every surviving row and
+     * reassigns rowIds from scratch. Until that rebuild the position mappings
+     * of live rows stay valid because dead rows are still physically present
+     * in the storage file.
+     *
+     * <p>No-op inside a bulk-update window. Must be called while the owning
+     * table's write lock is held.
+     *
+     * @param deadPositions physical row positions whose entries are removed
+     * @return the number of rowIds disassociated from the indexes
+     */
+    public int removeDeadEntries(Set<Integer> deadPositions) {
+        if (bulkMode || deadPositions == null || deadPositions.isEmpty()) {
+            return 0;
+        }
+        List<Long> deadRowIds = new ArrayList<>(deadPositions.size());
+        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
+            if (deadPositions.contains(e.getValue())) {
+                deadRowIds.add(e.getKey());
+            }
+        }
+        for (Long rid : deadRowIds) {
+            Integer pos = rowIdToPosition.remove(rid);
+            if (pos == null) {
+                continue;
+            }
+            Object[] row = (pos >= 0 && pos < rows.size()) ? rows.get(pos) : null;
+            if (row != null) {
+                removeIndexedRow(row, rid);
+            }
+        }
+        return deadRowIds.size();
+    }
+
     // ─── Deferred bulk updates (prompt 35) ─────────────────────────
 
     /**

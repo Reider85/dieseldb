@@ -135,3 +135,5 @@ diesel/MvccReadContext.java		concurrency
 diesel/TxStatusTracker.java		concurrency
 diesel/TransactionTableSnapshot.java		concurrency
 diesel/storage/DelimitedIndexManager.java	storage-csv,storage-tsv
+diesel/VacuumManager.java		smoke,query,concurrency
+diesel/VacuumQuery.java		smoke,query

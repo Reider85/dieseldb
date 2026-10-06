@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -151,6 +152,19 @@ public abstract class AbstractRowStorage implements RowStorage {
      */
     public DelimitedIndexManager getIndexManager() {
         return indexManager;
+    }
+
+    /**
+     * Delegates the dead-row disassociation to the index manager when one has
+     * been initialised. Does <b>not</b> lazily create the manager: a storage
+     * that never built one has no index entries to remove.
+     */
+    @Override
+    public int removeDeadEntries(Set<Integer> deadPositions) {
+        if (indexManager == null || deadPositions == null || deadPositions.isEmpty()) {
+            return 0;
+        }
+        return indexManager.removeDeadEntries(deadPositions);
     }
 
     /** Returns whether this storage maintains an index manager. */

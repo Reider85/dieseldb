@@ -145,6 +145,7 @@ public class DatabaseServer {
 
         running = true;
         database.loadTablesFromDisk();
+        database.getVacuumManager().startAutoVacuum();
         try {
             serverSocket = new ServerSocket(port, backlog);
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
@@ -171,6 +172,7 @@ try {
      */
     public void stop() {
         running = false;
+        database.getVacuumManager().stop();
         try {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();

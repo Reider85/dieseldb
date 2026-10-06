@@ -45,6 +45,7 @@ public final class SqlKeywords {
     public static final String AVG = "AVG";
     public static final String SET = "SET";
     public static final String ANALYZE = "ANALYZE";
+    public static final String VACUUM = "VACUUM";
     public static final String EXPLAIN = "EXPLAIN";
     public static final String NULL = "NULL";
     public static final String INSERT_INTO = "INSERT INTO";

@@ -1331,6 +1331,32 @@ class Table implements Serializable {
     }
 
     /**
+     * Executes the given action while holding the table write lock.
+     * The lock is reentrant, so nested compaction inside the action is allowed.
+     */
+    public void withWriteLock(Runnable action) {
+        tableLock.writeLock().lock();
+        try {
+            action.run();
+        } finally {
+            tableLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Executes the given callable while holding the table write lock.
+     * The lock is reentrant, so nested compaction inside the callable is allowed.
+     */
+    public <T> T withWriteLock(Callable<T> action) throws Exception {
+        tableLock.writeLock().lock();
+        try {
+            return action.call();
+        } finally {
+            tableLock.writeLock().unlock();
+        }
+    }
+
+    /**
      * Enters a deferred bulk-update window on this table's storage (prompt 35).
      * Index-aware backends skip per-operation index rebuilds and position
      * shifting until {@link #endBulkUpdate()} runs the single rebuild. A
@@ -1447,12 +1473,16 @@ class Table implements Serializable {
                 }
             }
 
+            // Remap MVCC metadata while the old tombstone marks are still in
+            // place: findNewIndexAfterCompact() counts non-deleted rows before
+            // the compacted position. Resetting deletedRows first would make
+            // every row look alive and leave the metadata keyed by stale
+            // pre-compact positions.
+            rebuildRowVersionsAfterCompact();
+
             deletedRows = new BitSet();
 
             rebuildAllIndexes();
-
-            // Rebuild MVCC metadata after row index shifts
-            rebuildRowVersionsAfterCompact();
 
             rowLocks = new ConcurrentHashMap<>();
 

@@ -116,19 +116,21 @@ public final class TxStatusTracker {
     }
 
     /**
-     * Returns the oldest active transaction id (for vacuum planning).
-     * Returns Long.MAX_VALUE if no active transactions.
+     * Returns the lowest transaction id currently in the ACTIVE state, or
+     * {@link Long.MAX_VALUE} when no transaction is active. Used for vacuum
+     * planning: every row version written by a txid at or above the returned
+     * value may still change, so it must not be reclaimed yet.
+     *
+     * @return the oldest active transaction id, or {@link Long.MAX_VALUE}
      */
     public long getOldestActiveTxid() {
         long oldest = Long.MAX_VALUE;
-        for (TxInfo info : txInfoMap.values()) {
-            if (info.status == TxStatus.ACTIVE) {
-                // Note: this is a placeholder; in a real system we'd track tx start time.
-                // For now, just return any active txid.
-                return oldest; // Simplified: return first active found
+        for (java.util.Map.Entry<Long, TxInfo> entry : txInfoMap.entrySet()) {
+            if (entry.getValue().status == TxStatus.ACTIVE) {
+                oldest = Math.min(oldest, entry.getKey());
             }
         }
-        return Long.MAX_VALUE;
+        return oldest;
     }
 
     /**

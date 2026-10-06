@@ -2,6 +2,7 @@ package diesel.storage;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Storage contract for table row data. Implementations handle the physical
@@ -127,5 +128,20 @@ public interface RowStorage {
      */
     default void endBulkUpdate() {
         // No-op for storages without a dedicated index manager.
+    }
+
+    /**
+     * Removes index entries for rows the caller has identified as dead, so
+     * that the subsequent full rebuild ({@code Table.compact()}) no longer
+     * indexes them. The caller guarantees the dead rows are physically
+     * removed right after, so implementations must not shift surviving
+     * rows' positions. The default implementation is a no-op for storages
+     * that do not maintain indexes.
+     *
+     * @param deadPositions physical row positions of dead rows
+     * @return the number of index entries removed
+     */
+    default int removeDeadEntries(Set<Integer> deadPositions) {
+        return 0;
     }
 }

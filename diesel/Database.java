@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,6 +54,7 @@ class Database {
     private final QueryCache queryCache = new QueryCache();
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
     private final TxStatusTracker txStatusTracker = new TxStatusTracker();        // MVCC: tracks transaction status and commit CSNs
+    private final VacuumManager vacuumManager = new VacuumManager(this);           // MVCC: dead row version reclamation
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
     private String dataDir = "data";
@@ -386,6 +388,9 @@ class Database {
         }
         if (parsedQuery instanceof AnalyzeTableQuery q) {
             return executeAnalyzeTable(q);
+        }
+        if (parsedQuery instanceof VacuumQuery q) {
+            return executeVacuum(q);
         }
         return executeDataQuery(parsedQuery, cleanQuery, currentTransaction);
     }
@@ -736,6 +741,24 @@ class Database {
     private Object executeAnalyzeTable(AnalyzeTableQuery analyzeQuery) {
         Table table = getTable(analyzeQuery.getTableName());
         Object result = analyzeQuery.execute(table);
+        queryCache.invalidateAll();
+        return result;
+    }
+
+    /**
+     * Executes a {@code VACUUM} statement: reclaims dead row versions on the
+     * named table (or on every registered table for a bare {@code VACUUM})
+     * and invalidates the query-plan cache, since physical row positions and
+     * indexes may have changed.
+     *
+     * @param vacuumQuery the parsed VACUUM query
+     * @return the status message describing the reclaimed tuples
+     */
+    private Object executeVacuum(VacuumQuery vacuumQuery) {
+        String tableName = vacuumQuery.getTableName();
+        String result = tableName == null
+                ? vacuumManager.vacuumAll()
+                : vacuumManager.vacuumTable(getTable(tableName));
         queryCache.invalidateAll();
         return result;
     }
@@ -1363,9 +1386,11 @@ class Database {
 
     /**
      * Flushes all pending writes and closes the database.
-     * Equivalent to {@code saveTablesToDisk()}.
+     * Equivalent to {@code saveTablesToDisk()}. Also stops the auto-vacuum
+     * daemon and unregisters its JMX MBean.
      */
     public void close() {
+        vacuumManager.stop();
         saveTablesToDisk();
     }
     
@@ -1417,6 +1442,48 @@ class Database {
      */
     public TxStatusTracker getTxStatusTracker() {
         return txStatusTracker;
+    }
+
+    /**
+     * Returns this database's vacuum manager (prompt4.md step 3), which
+     * reclaims dead row versions on demand and via its auto-vacuum schedule.
+     *
+     * @return the vacuum manager, never null
+     */
+    public VacuumManager getVacuumManager() {
+        return vacuumManager;
+    }
+
+    /**
+     * Returns a live view of the registered tables, used by
+     * {@link VacuumManager#vacuumAll()}.
+     *
+     * @return the registered tables
+     */
+    Collection<Table> getTables() {
+        return tables.values();
+    }
+
+    /**
+     * Computes the vacuum horizon: the minimum snapshot CSN of every active
+     * non-batch transaction, or {@link Long#MAX_VALUE} when none is active. A
+     * row whose deleting transaction committed at or below this CSN is
+     * invisible to all current and future readers and may be reclaimed.
+     *
+     * <p>Commit CSNs (not transaction ids) are used because commit order does
+     * not follow txid order: a transaction with a higher txid may commit first
+     * and receive the lower CSN.
+     *
+     * @return the vacuum horizon CSN
+     */
+    long computeVacuumHorizonCsn() {
+        long horizon = Long.MAX_VALUE;
+        for (Transaction transaction : activeTransactions.values()) {
+            if (transaction.isActive() && !transaction.isBatchMode()) {
+                horizon = Math.min(horizon, transaction.getSnapshotCsn());
+            }
+        }
+        return horizon;
     }
 
     /**
