@@ -221,4 +221,48 @@ public class UpdateTest {
                 "SELECT * FROM USERS WHERE USER_CODE = 'CODE5'");
         assertEquals(0, oldResult.size(), "old value must not be findable via index");
     }
+
+    // ── MVCC transaction tests (prompt4.md #4, acceptance) ──────────
+
+    private java.util.UUID beginTransaction() {
+        String result = (String) database.executeQuery("BEGIN TRANSACTION", null);
+        return java.util.UUID.fromString(result.substring("Transaction started: ".length()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> runSelect(String sql, java.util.UUID tx) {
+        return (List<Map<String, Object>>) database.executeQuery(sql, tx);
+    }
+
+    @Test
+    void updateInsideTransactionIsVisibleToTheWriterUntilRollback() {
+        java.util.UUID tx = beginTransaction();
+        database.executeQuery("UPDATE USERS SET NAME = 'Renamed' WHERE ID = 1", tx);
+
+        List<Map<String, Object>> inTx =
+                runSelect("SELECT NAME FROM USERS WHERE ID = 1", tx);
+        assertEquals(1, inTx.size());
+        assertEquals("Renamed", inTx.get(0).get("NAME"),
+                "the writer must read its own update");
+
+        database.executeQuery("ROLLBACK", tx);
+        List<Map<String, Object>> after =
+                runSelect("SELECT NAME FROM USERS WHERE ID = 1", null);
+        assertEquals(1, after.size());
+        assertEquals("User1", after.get(0).get("NAME"),
+                "ROLLBACK must restore the old value");
+    }
+
+    @Test
+    void updateInsideTransactionPersistsAfterCommit() {
+        java.util.UUID tx = beginTransaction();
+        database.executeQuery("UPDATE USERS SET NAME = 'Committed' WHERE ID = 1", tx);
+        database.executeQuery("COMMIT", tx);
+
+        List<Map<String, Object>> after =
+                runSelect("SELECT NAME FROM USERS WHERE ID = 1", null);
+        assertEquals(1, after.size());
+        assertEquals("Committed", after.get(0).get("NAME"),
+                "the committed value must be durable");
+    }
 }

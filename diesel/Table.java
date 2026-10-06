@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -215,6 +216,14 @@ class Table implements Serializable {
      * Null/empty means no MVCC versioning (bootstrap or auto-commit path).
      */
     private transient ConcurrentHashMap<Integer, RowVersionMeta> rowVersions;
+
+    /**
+     * Row indexes with a pending (uncommitted) MVCC change. Idempotent
+     * add/remove set (a row can accrue several undo records and be rolled back
+     * more than once); guards the Avro storage pushdown, which reads only the
+     * physical rows and would otherwise miss shadow pre-images.
+     */
+    private transient java.util.Set<Integer> uncommittedMvccRows = ConcurrentHashMap.newKeySet();
 
     /** Fraction of rows that must be tombstoned before automatic compaction triggers. */
     private static final double COMPACT_THRESHOLD = 0.3;
@@ -994,10 +1003,17 @@ class Table implements Serializable {
      *                 applied the mutations)
      */
     public void updateRowInPlace(int rowIndex, Map<String, Object> row) {
-        if (storage != null) {
-            storage.update(rowIndex, row);
-        } else {
+        tableLock.writeLock().lock();
+        try {
+            if (storage != null) {
+                storage.update(rowIndex, row);
+            }
+            // The internal mirror must stay in sync so that reads keep using
+            // the shared-map fast path (getLiveRows iterates {@code rows})
+            // instead of re-materializing every row from the storage backend.
             rows.set(rowIndex, row);
+        } finally {
+            tableLock.writeLock().unlock();
         }
     }
 
@@ -1224,7 +1240,9 @@ class Table implements Serializable {
     /**
      * Returns a copy of the table rows with rows hidden from the current reader
      * filtered out: tombstoned rows, rows created by transactions the reader may
-     * not see, and rows deleted within the reader's snapshot.
+     * not see, and rows deleted within the reader's snapshot. Values come from
+     * the shared in-memory mirror ({@link #updateRowInPlace} keeps it in sync
+     * with the storage backend), so no per-row copies are materialized.
      */
     public List<Map<String, Object>> getLiveRows() {
         tableLock.readLock().lock();
@@ -1258,7 +1276,15 @@ class Table implements Serializable {
      */
     public boolean isRowVisibleToReader(int rowIndex) {
         if (isDeleted(rowIndex)) {
-            return false;
+            // COMMIT-time tombstones for MVCC deletes keep their xmax: a reader
+            // whose snapshot predates the delete still has to see the row
+            // (only vacuum removes it unconditionally, horizon-aware). Legacy
+            // tombstones (no MVCC xmax) stay hidden from everyone.
+            RowVersionMeta tombstoneMeta = rowVersions == null ? null : rowVersions.get(rowIndex);
+            if (tombstoneMeta == null || tombstoneMeta.getXmax() == 0) {
+                return false;
+            }
+            return MvccReadContext.isRowVisible(database, tombstoneMeta, MvccReadContext.get());
         }
         if (rowVersions == null || rowVersions.isEmpty()) {
             return true;
@@ -1284,10 +1310,17 @@ class Table implements Serializable {
 
     /**
      * Same as {@link #getVisibleRowForReader(int)} but with the current row
-     * values supplied by the caller. Query scans over a storage-backed table
-     * pass {@code storage.scan()} rows here, because the internal {@code rows}
-     * list is not updated by {@link #updateRowInPlace} when a {@code storage}
-     * backend is attached.
+     * values supplied by the caller. Callers that already hold the current
+     * physical values (e.g. an AS-OF snapshot built from
+     * {@code storage.scan()}) pass them here to avoid a mirror re-read; the
+     * mirror is kept in sync by {@link #updateRowInPlace}, so the two always
+     * agree.
+     *
+     * <p>Shadow-model rules (prompt4.md #4): the physical row always holds the
+     * latest values of its owner; readers see the retained pre-image
+     * ({@link RowVersionMeta#getCommittedValues()}) when the physical values
+     * are not theirs to see — a pending change by another transaction, or a
+     * commit that landed after their snapshot.
      *
      * @param rowIndex   the raw row index
      * @param currentRow the reader's current row values (used when no
@@ -1302,7 +1335,25 @@ class Table implements Serializable {
         if (meta == null || meta.getCommittedValues() == null) {
             return currentRow;
         }
-        return new HashMap<>(meta.getCommittedValues());
+        MvccReadContext.Context ctx = MvccReadContext.get();
+        if (ctx == null) {
+            // No reader context (query outside Database.dispatch): legacy rule —
+            // return the retained pre-image whenever one exists.
+            return new HashMap<>(meta.getCommittedValues());
+        }
+        if (meta.getOwnerTxid() != 0 && meta.getOwnerTxid() == ctx.readTxid) {
+            return currentRow; // own write: the physical row is authoritative
+        }
+        if (meta.hasUncommittedChanges()) {
+            if (ctx.allowsDirtyReads()) {
+                return currentRow; // dirty readers observe the pending change
+            }
+            return new HashMap<>(meta.getCommittedValues());
+        }
+        if (meta.getLastCommittedCsn() > ctx.snapshotCsn) {
+            return new HashMap<>(meta.getCommittedValues()); // commit after snapshot
+        }
+        return currentRow;
     }
 
     /**
@@ -1447,6 +1498,23 @@ class Table implements Serializable {
     public void compact() {
         tableLock.writeLock().lock();
         try {
+            if (hasUncommittedMvccChanges()) {
+                // Undo records hold raw row indexes; compacting now would
+                // invalidate every pending record. Defer until the open
+                // transactions commit or roll back.
+                LOGGER.log(Level.FINE,
+                        "Skipping compaction of table {0}: rows carry pending MVCC changes", name);
+                return;
+            }
+            if (hasSnapshotDependentTombstones()) {
+                // A tombstone committed after the oldest active snapshot must
+                // survive physical removal: REPEATABLE READ readers still need
+                // the row (and its pre-image) until their transaction ends.
+                // Vacuum clears it later once the horizon passes the delete.
+                LOGGER.log(Level.FINE,
+                        "Skipping compaction of table {0}: tombstones still visible to an open snapshot", name);
+                return;
+            }
             int deleted = getDeletedCount();
             if (deleted == 0) {
                 return;
@@ -1531,37 +1599,218 @@ class Table implements Serializable {
     public void markInsert(int rowIndex, long txid, Map<String, Object> committedValues) {
         RowVersionMeta meta = new RowVersionMeta(txid, committedValues);
         setRowVersionMeta(rowIndex, meta);
+        uncommittedMvccRows.add(rowIndex);
+    }
+
+    /**
+     * Updates row metadata for a DELETE operation by the given transaction,
+     * capturing the pre-image values so other readers keep seeing them while
+     * the delete is pending. Index entries stay in place until vacuum.
+     */
+    public void markDelete(int rowIndex, long txid) {
+        markDelete(rowIndex, txid, getRows().get(rowIndex));
     }
 
     /**
      * Updates row metadata for a DELETE operation by the given transaction.
+     *
+     * @param rowIndex the raw row index
+     * @param txid     the deleting transaction
+     * @param preImage the row values before the delete (captured by the
+     *                 caller while it still holds the row lock)
      */
-    public void markDelete(int rowIndex, long txid) {
+    public void markDelete(int rowIndex, long txid, Map<String, Object> preImage) {
         RowVersionMeta meta = getRowVersionMeta(rowIndex);
         if (meta == null) {
             // Bootstrap row being deleted
-            meta = new RowVersionMeta(0, 0, 0, null, false, false);
+            meta = new RowVersionMeta(0, 0, 0, preImage, false, false, false, txid, 0);
             setRowVersionMeta(rowIndex, meta);
+        } else if (preImage != null) {
+            // Refresh the retained image with the pre-delete physical values:
+            // a delete does not alter data, so readers falling back to the
+            // image (pending delete or old snapshot after the delete commits)
+            // must see exactly what the row held before it. Undo records keep
+            // their own pre-change copies, so chained own-changes are unaffected.
+            meta.setCommittedValues(preImage);
         }
         meta.setXmax(txid);
         meta.setUncommittedDelete(true);
+        meta.setOwnerTxid(txid);
+        uncommittedMvccRows.add(rowIndex);
     }
 
     /**
      * Updates row metadata for an UPDATE operation by the given transaction.
-     * Saves the old values in committedValues for undo.
+     * Saves the old values in committedValues for undo (shadow model: the
+     * physical row is mutated in place; other readers see the pre-image).
      */
     public void markUpdate(int rowIndex, long txid, Map<String, Object> oldValues) {
         RowVersionMeta meta = getRowVersionMeta(rowIndex);
         if (meta == null) {
             // Bootstrap row being updated
-            meta = new RowVersionMeta(0, 0, 0, oldValues, false, false);
+            meta = new RowVersionMeta(0, 0, 0, oldValues, false, false, false, txid, 0);
             setRowVersionMeta(rowIndex, meta);
-        } else {
-            // Save old values before updating
+        } else if (!(meta.isUncommittedInsert()
+                || (meta.hasUncommittedChanges() && meta.getOwnerTxid() == txid))) {
+            // First pending change by another state: capture this pre-image.
+            // Own pending changes keep the original pre-image (first wins), so
+            // a rollback of several chained undos restores the oldest values.
             meta.setCommittedValues(oldValues);
         }
-        // Note: UPDATE doesn't change xmin/xmax in this shadow model
+        meta.setUncommittedUpdate(true);
+        meta.setOwnerTxid(txid);
+        uncommittedMvccRows.add(rowIndex);
+    }
+
+    /**
+     * Fails fast when the row at {@code rowIndex} carries a pending change from
+     * another transaction, or was committed after this writer's snapshot.
+     * Must be called for <em>every</em> target row before the first
+     * {@code markUpdate}/{@code markDelete} of a statement: marking one row
+     * and then failing on another would leave stale pending flags with no undo
+     * record to clear them.
+     *
+     * @param rowIndex    the raw row index
+     * @param txid        the writing transaction
+     * @param snapshotCsn the writer's snapshot commit CSN
+     * @throws TransactionException on a write-write conflict
+     */
+    public void checkWriteWriteConflict(int rowIndex, long txid, long snapshotCsn) {
+        RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
+        if (meta == null) {
+            return;
+        }
+        long owner = meta.getOwnerTxid();
+        if (meta.hasUncommittedChanges() && owner != 0 && owner != txid) {
+            throw new TransactionException(
+                    "Write-write conflict on table " + name + ", row " + rowIndex
+                    + ": transaction " + owner + " has an uncommitted change");
+        }
+        if (meta.getLastCommittedCsn() > snapshotCsn) {
+            throw new TransactionException(
+                    "Write-write conflict on table " + name + ", row " + rowIndex
+                    + ": row committed at CSN " + meta.getLastCommittedCsn()
+                    + " after the writer's snapshot " + snapshotCsn);
+        }
+    }
+
+    /**
+     * Marks every pending change of the row as committed at {@code commitCsn}.
+     * The retained pre-image is kept for readers whose snapshot predates the
+     * commit; {@code commitCsn} of 0 (batch/legacy paths) keeps the row CSN
+     * unchanged.
+     *
+     * @param rowIndex   the raw row index
+     * @param commitCsn  the commit sequence number of the committing transaction
+     */
+    public void markRowCommitted(int rowIndex, long commitCsn) {
+        RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
+        if (meta != null) {
+            meta.markCommitted(commitCsn);
+        }
+        uncommittedMvccRows.remove(rowIndex);
+    }
+
+    /**
+     * Resolves a rolled-back row: the pending flags are cleared (the
+     * TxStatusTracker entry already hides the row from every reader) and the
+     * row leaves the uncommitted set. The meta itself is kept so visibility
+     * still sees the ABORTED creator; physical reclamation happens at
+     * compaction.
+     *
+     * @param rowIndex the raw row index
+     */
+    public void markRowRolledBack(int rowIndex) {
+        RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
+        if (meta != null) {
+            meta.markAborted();
+        }
+        uncommittedMvccRows.remove(rowIndex);
+    }
+
+    /**
+     * Restores the row's version metadata captured before a change (undo).
+     *
+     * @param rowIndex the raw row index
+     * @param oldMeta  the meta to restore, or null to drop the meta entirely
+     */
+    public void restoreMetaAfterUndo(int rowIndex, RowVersionMeta oldMeta) {
+        if (oldMeta == null) {
+            removeRowVersionMeta(rowIndex);
+        } else {
+            setRowVersionMeta(rowIndex, oldMeta);
+            if (oldMeta.hasUncommittedChanges()) {
+                uncommittedMvccRows.add(rowIndex);
+                return;
+            }
+        }
+        uncommittedMvccRows.remove(rowIndex);
+    }
+
+    /**
+     * Restores a row mutated by UPDATE (undo): rewrites the physical values,
+     * adjusting secondary indexes for the keys that change back. The clustered
+     * index keys cannot change through UPDATE, so it is left untouched —
+     * mirroring {@code UpdateQuery.applyPerRowUpdate}.
+     *
+     * @param rowIndex  the raw row index
+     * @param oldValues the pre-update values
+     * @param oldMeta   the pre-update version metadata, or null
+     */
+    public void restoreRowAfterUpdateUndo(int rowIndex, Map<String, Object> oldValues,
+                                          RowVersionMeta oldMeta) {
+        if (oldValues != null) {
+            Map<String, Object> current = rows.get(rowIndex);
+            for (Map.Entry<String, Object> entry : oldValues.entrySet()) {
+                String column = entry.getKey();
+                Object oldValue = entry.getValue();
+                Object newValue = current.get(column);
+                if (Objects.equals(oldValue, newValue)) {
+                    continue;
+                }
+                Index index = indexes == null ? null : indexes.get(column);
+                if (index != null) {
+                    if (newValue != null) {
+                        index.remove(newValue, rowIndex);
+                    }
+                    if (oldValue != null) {
+                        evictDeadUniqueEntries(column, oldValue);
+                        index.insert(oldValue, rowIndex);
+                    }
+                }
+            }
+            updateRowInPlace(rowIndex, new HashMap<>(oldValues));
+        }
+        restoreMetaAfterUndo(rowIndex, oldMeta);
+    }
+
+    /** Returns true when any row carries a pending (uncommitted) MVCC change. */
+    public boolean hasUncommittedMvccChanges() {
+        return uncommittedMvccRows != null && !uncommittedMvccRows.isEmpty();
+    }
+
+    /**
+     * Returns true when a committed MVCC tombstone is newer than the oldest
+     * active snapshot, so physically removing it would hide the row from a
+     * REPEATABLE READ reader that must still see the pre-image. Legacy
+     * tombstones (no version metadata) are always compactable.
+     */
+    boolean hasSnapshotDependentTombstones() {
+        if (deletedRows == null || deletedRows.isEmpty()
+                || rowVersions == null || rowVersions.isEmpty()) {
+            return false;
+        }
+        long horizon = database != null ? database.computeVacuumHorizonCsn() : Long.MAX_VALUE;
+        for (int i = deletedRows.nextSetBit(0); i >= 0; i = deletedRows.nextSetBit(i + 1)) {
+            RowVersionMeta meta = rowVersions.get(i);
+            if (meta != null && meta.getXmax() != 0 && meta.getLastCommittedCsn() > horizon) {
+                return true;
+            }
+            if (i == Integer.MAX_VALUE) {
+                break;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1569,6 +1818,18 @@ class Table implements Serializable {
      * This must be called after compact() to maintain correct row index mapping.
      */
     public void rebuildRowVersionsAfterCompact() {
+        // The uncommitted-row set holds raw indexes too: remap it alongside
+        // the metadata so commit/rollback clears the right entries.
+        if (uncommittedMvccRows != null && !uncommittedMvccRows.isEmpty()) {
+            java.util.Set<Integer> remapped = ConcurrentHashMap.newKeySet();
+            for (Integer oldIndex : uncommittedMvccRows) {
+                int newIndex = findNewIndexAfterCompact(oldIndex);
+                if (newIndex != -1) {
+                    remapped.add(newIndex);
+                }
+            }
+            uncommittedMvccRows = remapped;
+        }
         if (rowVersions == null || rowVersions.isEmpty()) {
             return;
         }
@@ -1676,6 +1937,7 @@ class Table implements Serializable {
         this.columnTypes.clear();
         this.columnTypes.putAll(tempColumnTypes);
         this.rowLocks = new ConcurrentHashMap<>();
+        this.uncommittedMvccRows = ConcurrentHashMap.newKeySet();
         this.indexes = new ConcurrentHashMap<>();
         this.tableLock = new ReentrantReadWriteLock();
         this.storage = StorageFactory.create(
@@ -1803,8 +2065,7 @@ class Table implements Serializable {
             if (key == null) {
                 throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
             }
-            List<Integer> existing = clusteredIndex.search(key);
-            if (!existing.isEmpty()) {
+            if (clusteredKeyBlocked(key)) {
                 LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
                 throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
             }
@@ -1867,8 +2128,7 @@ class Table implements Serializable {
             if (key == null) {
                 throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
             }
-            List<Integer> existing = clusteredIndex.search(key);
-            if (!existing.isEmpty()) {
+            if (clusteredKeyBlocked(key)) {
                 LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
                 throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
             }
@@ -1891,13 +2151,165 @@ class Table implements Serializable {
         return rowIndex;
     }
 
-    private void checkUniqueConstraint(String column, Object value) {
+    void checkUniqueConstraint(String column, Object value) {
         Index index = indexes.get(column);
         if ((index instanceof UniqueIndex || index instanceof BTreeClusteredIndex)
-                && value != null && !index.search(value).isEmpty()) {
-            LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
-            throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + ErrorMessages.IN_COLUMN + column);
+                && value != null) {
+            for (int hit : index.search(value)) {
+                if (blocksUniqueInsert(hit, column, value)) {
+                    LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
+                    throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + ErrorMessages.IN_COLUMN + column);
+                }
+                if (isIndexEntryDead(hit)) {
+                    // Stale unique slot: the holder was deleted by a committed
+                    // MVCC transaction (or its creator aborted) and vacuum has
+                    // not reclaimed it yet. Free the slot for key reuse.
+                    index.remove(value, hit);
+                    continue;
+                }
+                // Hidden only because it committed after this reader's
+                // snapshot: a future reader would see both rows.
+                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + ErrorMessages.IN_COLUMN + column);
+            }
         }
+    }
+
+    /**
+     * Returns true when the clustered key of the given hit is already taken
+     * by a row this insert must respect. Unique slots held by rows no future
+     * reader can see are recycled (removed) on the way.
+     *
+     * @param key the clustered key being inserted
+     * @return true when the insert must fail with a duplicate-key error
+     */
+    private boolean clusteredKeyBlocked(Object key) {
+        for (int hit : clusteredIndex.search(key)) {
+            if (blocksUniqueInsert(hit, clusteredIndexColumn, key)) {
+                return true;
+            }
+            if (isIndexEntryDead(hit)) {
+                clusteredIndex.remove(key, hit);
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns true when the index entry of {@code rowIndex} can never become
+     * visible to any future reader: legacy tombstones, committed MVCC deletes
+     * and rows whose creator aborted all hold unique slots that only vacuum
+     * reclaims. Pending changes and alive rows keep their entries.
+     *
+     * @param rowIndex the index-hit row
+     * @return true when the unique slot may be recycled
+     */
+    boolean isIndexEntryDead(int rowIndex) {
+        if (isDeleted(rowIndex)) {
+            return true;
+        }
+        RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
+        if (meta == null || meta.hasUncommittedChanges()) {
+            return false;
+        }
+        TxStatusTracker tracker = database == null ? null : database.getTxStatusTracker();
+        if (tracker == null) {
+            return false;
+        }
+        if (meta.getXmin() != 0
+                && tracker.getStatus(meta.getXmin()) == TxStatusTracker.TxStatus.ABORTED) {
+            return true;
+        }
+        return meta.getXmax() != 0
+                && tracker.getStatus(meta.getXmax()) == TxStatusTracker.TxStatus.COMMITTED;
+    }
+
+    /**
+     * Frees unique slots of {@code column} held by rows no future reader can
+     * see. Index maintenance that re-inserts a key (UPDATE, undo) runs this
+     * before {@link Index#insert} so a committed MVCC delete does not look
+     * like a duplicate. Alive entries are left for the index to reject.
+     *
+     * @param column the indexed column
+     * @param value  the key being (re)inserted
+     */
+    void evictDeadUniqueEntries(String column, Object value) {
+        Index index = indexes.get(column);
+        if (value == null || !(index instanceof UniqueIndex)) {
+            return;
+        }
+        for (int hit : index.search(value)) {
+            if (isIndexEntryDead(hit)) {
+                index.remove(value, hit);
+            }
+        }
+    }
+
+    /**
+     * Decides whether an existing index entry for a unique key blocks an INSERT.
+     *
+     * <p>Index entries survive MVCC deletes until vacuum, so raw hits are not
+     * enough: a pending insert by another transaction is a write-write conflict
+     * ({@link TransactionException}); every other entry is judged by reader
+     * visibility — aborted rows, rows deleted from this reader's viewpoint and
+     * rows created after its snapshot do not block the insert.
+     *
+     * @param rowIndex the index-hit row
+     * @param column   the constrained column (message only)
+     * @param value    the rejected key (message only)
+     * @return true when the entry must be treated as a duplicate
+     * @throws TransactionException when another transaction is inserting the key
+     */
+    private boolean blocksUniqueInsert(int rowIndex, String column, Object value) {
+        RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
+        if (meta != null && meta.isUncommittedInsert() && meta.getOwnerTxid() != 0) {
+            MvccReadContext.Context ctx = MvccReadContext.get();
+            long readerTxid = ctx == null ? -1L : ctx.readTxid;
+            if (meta.getOwnerTxid() != readerTxid) {
+                throw new TransactionException(
+                        "Write-write conflict: transaction " + meta.getOwnerTxid()
+                        + " is inserting duplicate key '" + value
+                        + "' into column " + column + " of table " + name);
+            }
+            return true; // own pending insert of the same key → duplicate
+        }
+        return isRowVisibleToReader(rowIndex);
+    }
+
+    /**
+     * Returns the physical row values at a raw index in O(1) by reading the
+     * in-memory mirror (kept in sync by {@link #updateRowInPlace}), without
+     * materializing the whole table the way {@link #getRows()} does. Index
+     * lookups use this to fetch only the matched rows.
+     *
+     * @param rowIndex the raw row index
+     * @return the physical values, or null when the index is out of bounds
+     */
+    Map<String, Object> readPhysicalRow(int rowIndex) {
+        tableLock.readLock().lock();
+        try {
+            return rowIndex >= 0 && rowIndex < rows.size() ? rows.get(rowIndex) : null;
+        } finally {
+            tableLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Returns the physical row values at a raw index, reading through the
+     * storage backend when one is attached (undo/rollback paths need the
+     * storage representation, which is kept in sync with the internal
+     * {@code rows} mirror by {@link #updateRowInPlace}).
+     *
+     * @param rowIndex the raw row index
+     * @return the physical values, or null when the index is out of bounds
+     */
+    Map<String, Object> getPhysicalRow(int rowIndex) {
+        if (storage != null) {
+            List<Map<String, Object>> snapshot = storage.scan();
+            return rowIndex >= 0 && rowIndex < snapshot.size() ? snapshot.get(rowIndex) : null;
+        }
+        return rowIndex >= 0 && rowIndex < rows.size() ? rows.get(rowIndex) : null;
     }
 
     private void validateColumnValueType(String column, Class<?> expectedType, Object value) {
@@ -2003,7 +2415,11 @@ class Table implements Serializable {
             } else if (cmp > 0) {
                 low = mid + 1;
             } else {
-                throw new IllegalStateException("Duplicate key found: " + key);
+                // Equal physical key: the holder was already ruled dead by
+                // clusteredKeyBlocked() (unique slots are recycled there).
+                // Place the new row after it; genuine duplicates never get
+                // this far.
+                low = mid + 1;
             }
         }
         return low;

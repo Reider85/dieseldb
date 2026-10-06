@@ -234,6 +234,7 @@ class InsertQuery implements Query<Void> {
             if (transaction != null && transaction.isActive() && !context.isBatch()) {
                 int rowIndex = table.addRowWithMVCC(row, transaction.getTxid());
                 transaction.getUndoLog().addUndoRecord(new UndoLog.InsertUndo(table.getName(), rowIndex));
+                transaction.noteModifiedRow(table.getName(), rowIndex);
             } else {
                 table.addRow(row);
             }

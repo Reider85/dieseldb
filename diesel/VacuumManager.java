@@ -323,7 +323,15 @@ public class VacuumManager implements DynamicMBean {
      */
     private boolean isDead(Table table, int row, long horizon, TxStatusTracker tracker) {
         if (table.isDeleted(row)) {
-            return true;
+            // MVCC tombstones stay alive while an open snapshot can still see
+            // them (delete committed after the vacuum horizon); legacy
+            // tombstones carry no metadata and are always reclaimable.
+            RowVersionMeta deletedMeta = table.getRowVersionMeta(row);
+            if (deletedMeta == null) {
+                return true;
+            }
+            return !deletedMeta.hasUncommittedChanges()
+                    && deletedMeta.getLastCommittedCsn() <= horizon;
         }
         RowVersionMeta meta = table.getRowVersionMeta(row);
         if (meta == null) {

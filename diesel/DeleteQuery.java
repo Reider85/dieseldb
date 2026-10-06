@@ -60,10 +60,23 @@ class DeleteQuery implements Query<Void> {
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         List<Integer> rowsToDelete = prepareDelete(table, rows, columnTypes);
+        // Reader visibility: index hits can carry MVCC tombstones (index
+        // entries survive until vacuum) and rows the reader may not touch.
+        filterRowsForReader(table, rowsToDelete);
         List<ReentrantReadWriteLock> locks = acquireLock(table, rows, rowsToDelete);
         table.beginBulkUpdate();
         try {
-            performDelete(table, rows, rowsToDelete);
+            MvccReadContext.Context context = MvccReadContext.get();
+            Transaction transaction = context == null ? null : context.getTransaction();
+            boolean mvcc = transaction != null && transaction.isActive()
+                    && !context.isBatch() && transaction.getTxid() > 0;
+            if (mvcc) {
+                // Pending delete: keep the physical row and its index entries
+                // (undo would have to restore them); COMMIT tombstones the row.
+                markRowsDeleted(table, rows, rowsToDelete, transaction);
+            } else {
+                performDelete(table, rows, rowsToDelete);
+            }
             updateIndexes(table);
         } finally {
             table.endBulkUpdate();
@@ -72,6 +85,60 @@ class DeleteQuery implements Query<Void> {
         LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
         lastAffectedRows = rowsToDelete.size();
         return null;
+    }
+
+    /**
+     * Drops rows the current reader must not delete: already-tombstoned rows,
+     * rows created by a transaction whose writes this reader cannot observe,
+     * and rows committed after the reader's snapshot.
+     *
+     * @param table        the table being deleted from
+     * @param rowsToDelete candidate raw row indexes, filtered in place
+     */
+    private void filterRowsForReader(Table table, List<Integer> rowsToDelete) {
+        if (rowsToDelete.isEmpty()) {
+            return;
+        }
+        rowsToDelete.removeIf(rowIndex ->
+                rowIndex < 0 || rowIndex >= table.getRawRowCount()
+                || !table.isRowVisibleToReader(rowIndex));
+    }
+
+    /**
+     * Registers every matched row as pending-deleted by this transaction:
+     * optimistic write-write conflicts throw before the first mark, then each
+     * row keeps its pre-delete metadata for {@link UndoLog.DeleteUndo} and is
+     * recorded for COMMIT (tombstone + commit CSN stamping).
+     *
+     * @param table        the table being deleted from
+     * @param rows         the reader's row values (shared with the storage mirror)
+     * @param rowsToDelete the locked target row indexes
+     * @param transaction  the explicit transaction performing the delete
+     */
+    private void markRowsDeleted(Table table, List<Map<String, Object>> rows,
+                                 List<Integer> rowsToDelete, Transaction transaction) {
+        long txid = transaction.getTxid();
+        long snapshotCsn = transaction.getSnapshotCsn();
+        for (int rowIndex : rowsToDelete) {
+            table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn);
+        }
+        for (int rowIndex : rowsToDelete) {
+            Map<String, Object> preImage = new HashMap<>(rows.get(rowIndex));
+            RowVersionMeta liveMeta = table.getRowVersionMeta(rowIndex);
+            RowVersionMeta oldMetaCopy = liveMeta == null ? null : liveMeta.copy();
+            table.markDelete(rowIndex, txid, preImage);
+            transaction.getUndoLog().addUndoRecord(
+                    new UndoLog.DeleteUndo(table.getName(), rowIndex, oldMetaCopy));
+            transaction.noteDeletedRow(table.getName(), rowIndex);
+        }
+    }
+
+    /** True when an explicit (non-batch) MVCC transaction drives this statement. */
+    private boolean isMvccReader() {
+        MvccReadContext.Context context = MvccReadContext.get();
+        Transaction transaction = context == null ? null : context.getTransaction();
+        return transaction != null && transaction.isActive()
+                && !context.isBatch() && transaction.getTxid() > 0;
     }
 
     private void validateInput() {
@@ -116,6 +183,16 @@ class DeleteQuery implements Query<Void> {
      */
     private List<Integer> prepareDelete(Table table, List<Map<String, Object>> rows, Map<String, Class<?>> columnTypes) {
         List<Integer> rowsToDelete = new ArrayList<>();
+        if (isMvccReader()) {
+            // Index keys track physical (possibly newer) values; a snapshot
+            // reader must match against the versions it can actually see.
+            if (conditions.isEmpty()) {
+                collectAllRows(table, rows, rowsToDelete);
+            } else {
+                fullScanWithConditions(table, rows, columnTypes, rowsToDelete);
+            }
+            return rowsToDelete;
+        }
         tryIndexEqualsLookup(table, columnTypes, rowsToDelete);
         if (rowsToDelete.isEmpty()) {
             tryIndexInLookup(table, columnTypes, rowsToDelete);
@@ -179,7 +256,10 @@ class DeleteQuery implements Query<Void> {
         IntStream.range(0, rows.size())
                 .filter(i -> !table.isDeleted(i))
                 .forEach(i -> {
-                    if (evaluateConditions(rows.get(i), conditions, columnTypes)) {
+                    // Match against the reader-visible version: a snapshot
+                    // reader must not target rows through another writer's
+                    // newer values (shadow model, prompt4.md #4).
+                    if (evaluateConditions(table.getVisibleRowForReader(i, rows.get(i)), conditions, columnTypes)) {
                         rowsToDelete.add(i);
                     }
                 });

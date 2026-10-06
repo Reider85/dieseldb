@@ -1076,26 +1076,17 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     int threshold = Integer.parseInt(System.getProperty("avro.pushdown.min.rows", "1000"));
                     if (table.getDeletedCount() > 0 || table.hasPendingPersist() || table.getLiveRowCount() < threshold) {
                         // Tombstoned rows or small/dirty tables: scan in memory
-                        // so deleted rows never leak back into results and RYW is guaranteed
-                        List<Map<String, Object>> rawRows = table.getRows();
-                        mainRows = new ArrayList<>(rawRows.size());
-                        for (int i = 0; i < rawRows.size(); i++) {
-                            if (table.isRowVisibleToReader(i)) {
-                                mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
-                            }
-                        }
+                        // so deleted rows never leak back into results and RYW
+                        // is guaranteed (shared-map fast path).
+                        mainRows = table.getLiveRows();
                     } else {
                         // Clean, large table: use Avro pushdown for better performance
                         mainRows = executeAvroPushdown(avroStorage, table, conditions, combinedColumnTypes);
                     }
                 } else {
-                    List<Map<String, Object>> rawRows = table.getRows();
-                    mainRows = new ArrayList<>(rawRows.size());
-                    for (int i = 0; i < rawRows.size(); i++) {
-                        if (table.isRowVisibleToReader(i)) {
-                            mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
-                        }
-                    }
+                    // Non-Avro tables: in-memory visible-row scan (shared-map
+                    // fast path, no per-row materialization).
+                    mainRows = table.getLiveRows();
                 }
             }
 
@@ -1170,11 +1161,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             int threshold = Integer.parseInt(System.getProperty("avro.pushdown.min.rows", "1000"));
             if (table.getDeletedCount() > 0 || table.hasPendingPersist() || table.getLiveRowCount() < threshold) {
                 // Tombstoned rows or small/dirty tables: scan in memory
-                List<Map<String, Object>> rawRows = table.getRows();
-                for (int i = 0; i < rawRows.size(); i++) {
-                    if (table.isRowVisibleToReader(i)) {
-                        iterator.add(table.getVisibleRowForReader(i, rawRows.get(i)));
-                    }
+                // (shared-map fast path, no per-row materialization).
+                for (Map<String, Object> row : table.getLiveRows()) {
+                    iterator.add(row);
                 }
             } else {
                 // Clean, large table: use Avro pushdown for better performance
@@ -1185,11 +1174,9 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             }
         } else {
             // Non-Avro tables: scan in memory with tombstone and MVCC filtering
-            List<Map<String, Object>> rawRows = table.getRows();
-            for (int i = 0; i < rawRows.size(); i++) {
-                if (table.isRowVisibleToReader(i)) {
-                    iterator.add(table.getVisibleRowForReader(i, rawRows.get(i)));
-                }
+            // (shared-map fast path, no per-row materialization).
+            for (Map<String, Object> row : table.getLiveRows()) {
+                iterator.add(row);
             }
         }
         
@@ -2853,6 +2840,14 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
      * @param combinedColumnTypes column→type map
      * @return filtered and projected rows
      */
+    /** True when an explicit (non-batch) MVCC transaction drives this statement. */
+    private boolean inExplicitTransaction() {
+        MvccReadContext.Context context = MvccReadContext.get();
+        Transaction transaction = context == null ? null : context.getTransaction();
+        return transaction != null && transaction.isActive()
+                && !context.isBatch() && transaction.getTxid() > 0;
+    }
+
     private List<Map<String, Object>> executeAvroPushdown(AvroRowStorage avroStorage,
                                                            Table table,
                                                            List<QueryParser.Condition> conditions,
@@ -2862,16 +2857,14 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             // Avro file still contains those tombstoned rows and the pushdown
             // reader is not aware of them. Bypass pushdown and use the in-memory
             // scan (which filters via Table.isDeleted) so deleted rows never leak
-            // back into results.
-            if (table.getDeletedCount() > 0 || table.hasPendingPersist()) {
-                List<Map<String, Object>> rawRows = table.getRows();
-                List<Map<String, Object>> mainRows = new ArrayList<>(rawRows.size());
-                for (int i = 0; i < rawRows.size(); i++) {
-                    if (table.isRowVisibleToReader(i)) {
-                        mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
-                    }
-                }
-                return mainRows;
+            // back into results. MVCC pending changes and explicit transactions
+            // bypass it too: the file cannot represent their shadow state (pre-
+            // images, pending inserts) and holds rows committed after their
+            // snapshot — the in-memory scan applies isRowVisibleToReader to all
+            // of that. Auto-commit readers keep the binary pushdown.
+            if (table.getDeletedCount() > 0 || table.hasPendingPersist()
+                    || table.hasUncommittedMvccChanges() || inExplicitTransaction()) {
+                return table.getLiveRows();
             }
 
             AvroQueryExecutor executor = new AvroQueryExecutor();
@@ -2921,14 +2914,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             return result.rows();
         } catch (Exception e) {
             LOGGER.log(Level.FINE, "Avro pushdown failed, falling back to full scan", e);
-            List<Map<String, Object>> rawRows = table.getRows();
-            List<Map<String, Object>> mainRows = new ArrayList<>(rawRows.size());
-            for (int i = 0; i < rawRows.size(); i++) {
-                if (table.isRowVisibleToReader(i)) {
-                    mainRows.add(table.getVisibleRowForReader(i, rawRows.get(i)));
-                }
-            }
-            return mainRows;
+            return table.getLiveRows();
         }
     }
 
@@ -3319,10 +3305,15 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
     private List<Map<String, Object>> collectRowsFromIndices(Table table, List<Integer> sortedResult) {
         List<Map<String, Object>> indexedRows = new ArrayList<>(sortedResult.size());
         int tableSize = table.getRawRowCount();
-        List<Map<String, Object>> rawRows = table.getRows();
+        // Per-index O(1) mirror reads instead of materializing the whole table
+        // via getRows(): index lookups (e.g. scalar-subquery fan-out) resolve
+        // one row per execution and pay an O(table) scan for it otherwise.
         for (int idx : sortedResult) {
             if (idx >= 0 && idx < tableSize && table.isRowVisibleToReader(idx)) {
-                indexedRows.add(table.getVisibleRowForReader(idx, rawRows.get(idx)));
+                Map<String, Object> physicalRow = table.readPhysicalRow(idx);
+                if (physicalRow != null) {
+                    indexedRows.add(table.getVisibleRowForReader(idx, physicalRow));
+                }
             }
         }
         return indexedRows;

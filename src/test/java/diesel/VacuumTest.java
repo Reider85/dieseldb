@@ -93,9 +93,9 @@ class VacuumTest {
             Map<String, Object> row = new HashMap<>();
             row.put("VAL", ABORTED_PAYLOAD);
             int rowIndex = table.addRowWithMVCC(row, abortedTxid);
-            RowVersionMeta meta = table.getRowVersionMeta(rowIndex);
-            assertNotNull(meta, "MVCC metadata must exist for the inserted row");
-            meta.markAborted();
+            assertNotNull(table.getRowVersionMeta(rowIndex),
+                    "MVCC metadata must exist for the inserted row");
+            table.markRowRolledBack(rowIndex);
         }
         assertEquals(LIVE_ROWS + ABORTED_ROWS, table.getRawRowCount());
 

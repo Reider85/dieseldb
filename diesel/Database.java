@@ -278,6 +278,7 @@ class Database {
                     "Cursor can only be opened over a SELECT query, got: " + cleanQuery.trim());
         }
         // MVCC: install the caller's reader context while the cursor query runs.
+        refreshReadCommittedSnapshot(currentTransaction);
         MvccReadContext.Context previousContext = MvccReadContext.get();
         MvccReadContext.set(MvccReadContext.contextFor(currentTransaction));
         try {
@@ -341,6 +342,10 @@ class Database {
      * the query profiler.
      */
     private Object dispatch(Query<?> parsedQuery, String cleanQuery, Transaction currentTransaction, UUID transactionId) {
+        // MVCC (prompt4.md #4): READ COMMITTED refreshes the snapshot at every
+        // statement, so the statement sees everything committed before it
+        // started; REPEATABLE READ keeps the BEGIN-time snapshot untouched.
+        refreshReadCommittedSnapshot(currentTransaction);
         // MVCC: every statement runs with the caller's reader identity so read
         // paths can apply snapshot/dirty-read visibility (prompt 67/68).
         MvccReadContext.Context previousContext = MvccReadContext.get();
@@ -350,6 +355,23 @@ class Database {
         } finally {
             MvccReadContext.set(previousContext);
         }
+    }
+
+    /**
+     * Advances an active READ COMMITTED transaction's snapshot to the current
+     * commit CSN so each statement observes every transaction committed before
+     * it began. Batch transactions and every other isolation level keep their
+     * BEGIN-time snapshot.
+     *
+     * @param transaction the caller's transaction, or null
+     */
+    private void refreshReadCommittedSnapshot(Transaction transaction) {
+        if (transaction == null || !transaction.isActive() || transaction.isBatchMode()
+                || transaction.getTxid() <= 0
+                || transaction.getIsolationLevel() != IsolationLevel.READ_COMMITTED) {
+            return;
+        }
+        transaction.setSnapshotCsn(txStatusTracker.getCurrentCommitCsn());
     }
 
     private Object dispatchInternal(Query<?> parsedQuery, String cleanQuery, Transaction currentTransaction, UUID transactionId) {
@@ -527,12 +549,46 @@ class Database {
             throw new TransactionException("No active transaction to commit");
         }
         checkCommitConflicts(currentTransaction);
-        persistModifiedTables(currentTransaction.getModifiedTables(), true);
-        
-        // MVCC: mark transaction as committed in status tracker (batch
-        // transactions never register a txid, so there is nothing to mark).
+        // MVCC: record the commit CSN BEFORE the table changes are published and
+        // persisted so concurrent readers only ever observe fully-formed rows
+        // (batch transactions never register a txid — their snapshot-based
+        // publishing at END BATCH covers them instead).
+        long commitCsn = 0;
         if (currentTransaction.getTxid() > 0) {
-            txStatusTracker.markCommitted(currentTransaction.getTxid());
+            commitCsn = txStatusTracker.markCommitted(currentTransaction.getTxid());
+        }
+        // Tombstone deleted rows now: MVCC deletes must not touch the physical
+        // row until COMMIT (undo would be impossible afterwards), but the
+        // version metadata is transient — without this tombstone the delete
+        // would be lost on restart. Readers with a pre-commit snapshot still
+        // see the row because isRowVisibleToReader applies the MVCC rules to
+        // tombstones carrying an MVCC xmax.
+        for (Map.Entry<String, Set<Integer>> entry : currentTransaction.getDeletedRows().entrySet()) {
+            Table table = getTableForCommit(entry.getKey(), currentTransaction);
+            if (table == null) {
+                continue;
+            }
+            for (Integer rowIndex : entry.getValue()) {
+                table.markDeleted(rowIndex);
+                // Resolve the row's pending delete: clear the uncommitted
+                // flags (only modifiedRows were stamped before, leaving
+                // deleted rows permanently "pending" — which froze compaction
+                // and unique-slot recycling) and stamp the commit CSN.
+                table.markRowCommitted(rowIndex, commitCsn);
+            }
+        }
+        persistModifiedTables(currentTransaction.getModifiedTables(), true);
+        // Stamp every changed row with the commit CSN so snapshot readers can
+        // tell committed-before-snapshot from committed-after (read-your-writes
+        // stays intact: the owning transaction sees current values anyway).
+        for (Map.Entry<String, Set<Integer>> entry : currentTransaction.getModifiedRows().entrySet()) {
+            Table table = getTableForCommit(entry.getKey(), currentTransaction);
+            if (table == null) {
+                continue;
+            }
+            for (Integer rowIndex : entry.getValue()) {
+                table.markRowCommitted(rowIndex, commitCsn);
+            }
         }
         // The undo log is only needed until COMMIT or ROLLBACK resolves it.
         try {
@@ -545,6 +601,23 @@ class Database {
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
         return ErrorMessages.TRANSACTION_COMMITTED;
+    }
+
+    /**
+     * Resolves the live table for a commit-time row update: prefers the shared
+     * table registered by the transaction (identical for MVCC paths), falling
+     * back to the current registry for tables registered by name only.
+     *
+     * @param tableName   the table holding the changed rows
+     * @param transaction the committing transaction
+     * @return the table, or null when it no longer exists
+     */
+    private Table getTableForCommit(String tableName, Transaction transaction) {
+        Table registered = transaction.getModifiedTables().get(tableName);
+        if (registered != null) {
+            return registered;
+        }
+        return getTable(tableName);
     }
 
     private void checkCommitConflicts(Transaction currentTransaction) {
@@ -825,21 +898,10 @@ class Database {
             Table batchCopy = currentTransaction.getModifiedTables().get(tableName);
             return parsedQuery.execute(batchCopy);
         }
-        // UPDATE/DELETE stay copy-on-write until they are adapted to MVCC
-        // undo logs (prompt4.md step 2 scope: INSERT only). The copy is
-        // published at COMMIT and discarded at ROLLBACK, so uncommitted
-        // changes never touch the shared table; it also restores the
-        // version-swap write-write conflict detection at commit time.
-        if (!(parsedQuery instanceof InsertQuery)) {
-            Table target = currentTransaction.getModifiedTables().get(tableName);
-            if (target == null || target == table) {
-                currentTransaction.updateTable(tableName, table);
-            }
-            return parsedQuery.execute(currentTransaction.getModifiedTables().get(tableName));
-        }
-        // INSERT: MVCC path — mutate the shared table in place with undo
-        // logging; the row stays invisible to other transactions through
-        // its RowVersionMeta until this transaction commits.
+        // MVCC (prompt4.md #4): INSERT/UPDATE/DELETE all mutate the shared table
+        // in place with undo logging. Pending changes stay invisible to other
+        // transactions through RowVersionMeta / TxStatusTracker; optimistic
+        // write-write conflicts throw at the writer instead of at COMMIT.
         if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
             currentTransaction.registerModifiedTable(tableName, table);
         }

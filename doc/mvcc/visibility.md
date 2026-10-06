@@ -98,11 +98,14 @@ backwards. ROLLBACK applies records in reverse order (memory first, then spilled
 the end) and calls `RowVersionMeta.markAborted()` on aborted inserts, then the SQL
 `ROLLBACK` statement sets auto-commit back on.
 
-### Hybrid isolation policy (INSERT vs UPDATE/DELETE)
+### Hybrid isolation policy (INSERT vs UPDATE/DELETE) — step 2, replaced by step 4
 
-`Database.executeTransactionDml` currently splits by statement type:
+Step 2 used a hybrid: `INSERT` in-place MVCC, `UPDATE`/`DELETE` copy-on-write with
+version swap at COMMIT. **prompt4.md #4 removed the hybrid** — UPDATE/DELETE now run
+in-place MVCC like INSERT (see the step 4 section below). The description below is
+kept for historical reference only.
 
-| Statement | Mechanism | Why |
+| Statement | Mechanism (step 2) | Why (step 2) |
 |-----------|-----------|-----|
 | `INSERT` | in-place MVCC: physical append + `markInsert`; invisible to others until COMMIT | O(1), no table copy |
 | `UPDATE` / `DELETE` | copy-on-write table copy (pre-step-2 behaviour), version swap at COMMIT | preserves commit-time conflict detection (`checkCommitConflicts`) until prompt4 step 4 adapts DML |
@@ -111,12 +114,11 @@ COMMIT: the undo log is discarded (records no longer needed), pending CoW copies
 with conflict checks, and `rowVersions` entries for the transaction's inserts become
 committed.
 
-### Known limitations (documented, accepted for step 2)
+### Known limitations (step 2; items marked ✅ fixed in step 4)
 
-- **INSERT + UPDATE in one transaction:** the UPDATE's CoW path replaces the shared entry
-  with a copy, dropping `rowVersions` transient metas on publish. Rollback stays correct
-  (CoW restore + undo records), but the insert's version meta is lost. No test mixes the
-  two; prompt4 step 4 removes the hybrid.
+- **INSERT + UPDATE in one transaction:** ✅ fixed by prompt4 #4 — UPDATE no longer
+  replaces the shared entry with a CoW copy; `markUpdate` + undo records keep the
+  version meta intact, rollback restores the pre-image.
 - `insertIntoClusteredPosition` (non-monotonic primary keys) does not shift `rowVersions`
   keys for rows after the insertion point, so metas can point at the wrong row for
   out-of-order inserts.
@@ -125,6 +127,63 @@ committed.
 - Commit-time `saveToFile` can persist rows from other uncommitted transactions sharing the
   table (pre-existing write-behind behaviour, unchanged).
 
+## Runtime MVCC (prompt4.md #4 — implemented)
+
+Step 4 adapts SELECT/INSERT/UPDATE/DELETE to the row-version model and replaces the
+step-2 CoW path for UPDATE/DELETE.
+
+### Shadow-model UPDATE
+
+`Table.markUpdate(rowIndex, txid, oldValues)` stamps the meta with
+`uncommittedUpdate`/`ownerTxid` and retains the pre-image in `committedValues`. The
+physical row always holds its owner's latest values; readers see the retained pre-image
+(`RowVersionMeta.getCommittedValues()`) when the physical values are not theirs to see —
+a pending change by another transaction, or a commit that landed after their snapshot
+(`Table.getVisibleRowForReader`). On COMMIT, `markRowCommitted` clears the flags and
+advances `lastCommittedCsn` (pre-image retained for older snapshots); on ROLLBACK,
+`markRowRolledBack` clears them and the undo log restores the pre-image values.
+
+### Optimistic write-write conflicts
+
+Concurrent writers of the same row fail fast at the writer instead of at COMMIT:
+`Table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn)` throws
+`TransactionException` when another transaction holds a pending change on the row
+(`ownerTxid != 0 && ownerTxid != current`), or a committed change landed after the
+writer's snapshot (`lastCommittedCsn > snapshotCsn`). INSERT/UPDATE/DELETE all call it
+before mutating; unique secondary-key conflicts additionally reject duplicate pending
+keys owned by others (row-level check) while committed duplicates are handled by
+keep-index DELETE below.
+
+### READ COMMITTED statement snapshot
+
+`Database.dispatch` calls `refreshReadCommittedSnapshot` per statement: an active
+`READ_COMMITTED` transaction's snapshot CSN advances to the current commit CSN at each
+statement start (batch transactions and other levels keep the BEGIN-time snapshot).
+`TxStatusTracker` provides `isCommittedBefore(txid, snapshotCsn)`; visibility decisions
+delegate to `TupleVisibility.visibleByStatus` (status-based: txid space for creators/
+deleters, commit-CSN space for snapshot membership).
+
+### Keep-index DELETE + unique-slot eviction
+
+DELETE no longer removes rows physically at statement time. It stamps an MVCC tombstone
+(`xmax`/`ownerTxid`) and keeps the row in place so old snapshots still resolve
+pre-images; index entries for the tombstoned row are removed (`Table.deleteRow` →
+`syncIndexDelete`) — the unique slot becomes free at DELETE time, not COMMIT. Re-inserting
+the same unique key after a committed DELETE succeeds; `Table.evictDeadUniqueEntries`
+cleans committed-but-not-yet-vacuumed entries. Vacuum removes tombstoned rows
+unconditionally only past the vacuum horizon (`VacuumManager.isDead`, horizon =
+`computeVacuumHorizonCsn`); readers whose snapshot predates the delete still see the
+row (`isRowVisibleToReader` tombstone branch). See `vacuum.md`.
+
+### Read paths
+
+`SelectQuery` scans filter every row through `Table.isRowVisibleToReader` +
+`getVisibleRowForReader` (mirror fast path — `Table.updateRowInPlace` keeps the `rows`
+mirror in sync with the storage backend; `getLiveRows` iterates shared maps, index
+lookups use O(1) `readPhysicalRow`). Auto-commit readers and readers without MVCC meta
+keep the pre-MVCC fast paths; explicit-transaction readers get the full status-based
+visibility rules above.
+
 ## Forward Pointers
 
 This foundation is step 1 of 5 for MVCC in prompt4.md #1:
@@ -132,9 +191,10 @@ This foundation is step 1 of 5 for MVCC in prompt4.md #1:
 1. ✅ **Row versioning container** (this step) — `xmin`/`xmax`/`commandId` + visibility logic
 2. ✅ **Undo log + TransactionTableSnapshot** (prompt4.md #2) — no cloning; hybrid
    INSERT=MVCC / UPDATE+DELETE=CoW until step 4
-3. 📋 **Vacuum Manager** — background cleanup of dead versions
-4. 📋 **DML adaptation** — adapt `SelectQuery`/`InsertQuery`/`UpdateQuery`/`DeleteQuery`
-5. 📋 **SERIALIZABLE conflict detection** — detect rw-conflicts and abort victims
+3. ✅ **Vacuum Manager** (prompt4.md #3) — background cleanup of dead versions, horizon-aware
+4. ✅ **DML adaptation** (prompt4.md #4) — SELECT/INSERT/UPDATE/DELETE on row versions,
+   optimistic write-write conflicts, keep-index DELETE, RC statement snapshots
+5. 📋 **SERIALIZABLE conflict detection** (prompt4.md #5) — detect rw-conflicts and abort victims
 
 ## Serialization
 
@@ -142,4 +202,4 @@ All fields are included in serialization (restart-stable). The `Row` class imple
 
 ---
 
-*Generated by prompt4.md #1 implementation; runtime contract section added by prompt4.md #2*
+*Generated by prompt4.md #1 implementation; runtime contract section added by prompt4.md #2; step-4 section (shadow-model UPDATE, optimistic conflicts, keep-index DELETE, RC snapshots) added by prompt4.md #4*

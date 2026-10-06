@@ -2,7 +2,9 @@ package diesel;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Represents one client transaction session with its own isolation level.
@@ -32,6 +34,17 @@ class Transaction {
     private boolean active;
     private boolean batchMode;
     private UndoLog undoLog; // MVCC: undo log for rollback support
+    /**
+     * Raw row indexes this transaction changed, per table (prompt4.md #4).
+     * Idempotent sets: a row updated twice still appears once, so COMMIT
+     * resolves each row exactly once.
+     */
+    private final Map<String, Set<Integer>> modifiedRows = new HashMap<>();
+    /**
+     * Raw row indexes this transaction deleted, per table. COMMIT tombstones
+     * them so the delete survives a restart (MVCC metadata is transient).
+     */
+    private final Map<String, Set<Integer>> deletedRows = new HashMap<>();
 
     /**
      * Starts a transaction at the given isolation level, defaulting to
@@ -112,6 +125,8 @@ class Transaction {
             
             // Clear modified tables since all changes are rolled back
             modifiedTables.clear();
+            modifiedRows.clear();
+            deletedRows.clear();
             
             // Mark transaction as inactive
             active = false;
@@ -155,6 +170,42 @@ class Transaction {
      */
     public void registerModifiedTable(String tableName, Table table) {
         modifiedTables.put(tableName, table);
+    }
+
+    /**
+     * Records that this transaction changed a row, so COMMIT can mark the
+     * change committed ({@link Table#markRowCommitted}) with the commit CSN.
+     *
+     * @param tableName the table holding the row
+     * @param rowIndex  the raw row index
+     */
+    public void noteModifiedRow(String tableName, int rowIndex) {
+        modifiedRows.computeIfAbsent(tableName, key -> ConcurrentHashMap.newKeySet())
+                .add(rowIndex);
+    }
+
+    /**
+     * Records that this transaction deleted a row. Also counts as a
+     * modification; COMMIT additionally tombstones the row so the delete
+     * persists across restarts.
+     *
+     * @param tableName the table holding the row
+     * @param rowIndex  the raw row index
+     */
+    public void noteDeletedRow(String tableName, int rowIndex) {
+        noteModifiedRow(tableName, rowIndex);
+        deletedRows.computeIfAbsent(tableName, key -> ConcurrentHashMap.newKeySet())
+                .add(rowIndex);
+    }
+
+    /** Returns per-table sets of raw row indexes changed by this transaction. */
+    public Map<String, Set<Integer>> getModifiedRows() {
+        return modifiedRows;
+    }
+
+    /** Returns per-table sets of raw row indexes deleted by this transaction. */
+    public Map<String, Set<Integer>> getDeletedRows() {
+        return deletedRows;
     }
 
     public Map<String, Table> getOriginalTables() {

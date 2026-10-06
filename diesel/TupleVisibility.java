@@ -105,4 +105,73 @@ public final class TupleVisibility {
         // 6. Otherwise — visible
         return true;
     }
+
+    /**
+     * Status-based canonical contract used by the production read path
+     * ({@link MvccReadContext} → {@link Table#isRowVisibleToReader(int)} → SELECT/DML scans).
+     *
+     * <p>Unlike the overload above, this variant never compares txids against a
+     * snapshot counter directly: creator/deleter txids live in txid space while
+     * snapshots live in commit-CSN space, so membership is decided by the
+     * three-state status of each participant:
+     * <ul>
+     *   <li>{@code xmin == 0} (bootstrap) → visible; {@code xmin == currentTxid} → visible (own write)</li>
+     *   <li>creator ABORTED → invisible; creator ACTIVE → visible only to dirty readers;
+     *       creator COMMITTED → visible iff its commit is at/before the reader's snapshot</li>
+     *   <li>{@code xmax == currentTxid} → invisible (own delete); {@code xmax == 0} → visible</li>
+     *   <li>deleter ABORTED → visible; deleter COMMITTED → hidden iff its commit is at/before
+     *       the reader's snapshot; deleter ACTIVE → hidden from dirty readers (they observe the
+     *       pending delete), visible to everyone else</li>
+     *   <li>unknown participant (pre-MVCC row, cleared tracker) → treated as committed/alive</li>
+     * </ul>
+     *
+     * @param xmin                     creator txid (0 = bootstrap)
+     * @param xmax                     deleter txid (0 = alive)
+     * @param currentTxid              the reader's own txid (-1 for auto-commit readers)
+     * @param dirtyReadsAllowed        true at READ UNCOMMITTED
+     * @param committedBeforeSnapshot  true when the txid committed at/before the reader's snapshot CSN
+     * @param statusOf                 status lookup for a txid, or null for unknown
+     * @return true if the row must be returned to this reader
+     */
+    public static boolean visibleByStatus(long xmin, long xmax, long currentTxid,
+                                          boolean dirtyReadsAllowed,
+                                          LongPredicate committedBeforeSnapshot,
+                                          java.util.function.LongFunction<TxStatusTracker.TxStatus> statusOf) {
+        Objects.requireNonNull(committedBeforeSnapshot);
+        Objects.requireNonNull(statusOf);
+
+        // ── Creator rules ────────────────────────────────────────────────
+        if (xmin != 0 && xmin != currentTxid) {
+            TxStatusTracker.TxStatus creator = statusOf.apply(xmin);
+            if (creator == TxStatusTracker.TxStatus.ABORTED) {
+                return false;
+            }
+            if (creator == TxStatusTracker.TxStatus.ACTIVE && !dirtyReadsAllowed) {
+                return false;
+            }
+            if (creator == TxStatusTracker.TxStatus.COMMITTED && !committedBeforeSnapshot.test(xmin)) {
+                return false;
+            }
+            // UNKNOWN creator (pre-MVCC row): assume committed — fall through.
+        }
+
+        // ── Deleter rules ────────────────────────────────────────────────
+        if (xmax != 0) {
+            if (xmax == currentTxid) {
+                return false; // own delete — the row is gone for its deleter
+            }
+            TxStatusTracker.TxStatus deleter = statusOf.apply(xmax);
+            if (deleter == TxStatusTracker.TxStatus.ABORTED) {
+                return true; // delete rolled back — row alive again
+            }
+            if (deleter == TxStatusTracker.TxStatus.COMMITTED) {
+                return !committedBeforeSnapshot.test(xmax);
+            }
+            if (deleter == TxStatusTracker.TxStatus.ACTIVE) {
+                return !dirtyReadsAllowed; // dirty readers observe the pending delete
+            }
+            // UNKNOWN deleter: assume the delete is not in effect yet.
+        }
+        return true;
+    }
 }

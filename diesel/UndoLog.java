@@ -98,14 +98,10 @@ public class UndoLog {
         
         @Override
         public void apply(Table table) {
-            // Mark the row as not inserted (restore xmin=0) or remove it
-            RowVersionMeta meta = table.getRowVersionMeta(rowIndex);
-            if (meta != null) {
-                meta.markAborted();
-            }
-            // The TxStatusTracker entry for the creating transaction turns the
-            // row invisible to every reader; physical reclamation happens when
-            // the table compacts its tombstones.
+            // Clear the pending flags: the TxStatusTracker entry (marked ABORTED
+            // before rollback runs) hides the row from every reader; physical
+            // reclamation happens when the table compacts its tombstones.
+            table.markRowRolledBack(rowIndex);
         }
         
         @Override
@@ -152,17 +148,9 @@ public class UndoLog {
         
         @Override
         public void apply(Table table) {
-            // Restore old values
-            Map<String, Object> currentValues = table.getRows().get(rowIndex);
-            if (oldValues != null) {
-                currentValues.clear();
-                currentValues.putAll(oldValues);
-            }
-            
-            // Restore old metadata
-            if (oldMeta != null) {
-                table.setRowVersionMeta(rowIndex, oldMeta);
-            }
+            // Restore physical values (with secondary-index diff) and the
+            // pre-change version metadata captured before markUpdate mutated it.
+            table.restoreRowAfterUpdateUndo(rowIndex, oldValues, oldMeta);
         }
         
         @Override
@@ -218,12 +206,9 @@ public class UndoLog {
         
         @Override
         public void apply(Table table) {
-            // Restore old metadata (clear xmax)
-            RowVersionMeta meta = table.getRowVersionMeta(rowIndex);
-            if (meta != null && oldMeta != null) {
-                meta.setXmax(oldMeta.getXmax());
-                meta.setUncommittedDelete(oldMeta.isUncommittedDelete());
-            }
+            // Restore the pre-delete metadata (clears xmax / pending flags);
+            // a null oldMeta means the row had no version metadata yet.
+            table.restoreMetaAfterUndo(rowIndex, oldMeta);
         }
         
         @Override

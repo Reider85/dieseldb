@@ -92,12 +92,27 @@ class UpdateQuery implements Query<Void> {
         try {
             // Phase 1: Identify rows to update (index-accelerated or full scan)
             identifyRows(table, rows, columnTypes, rowsToUpdate);
+            // Phase 1b: Apply reader visibility — index hits can carry
+            // tombstones left by MVCC deletes (index entries survive until
+            // vacuum) and rows the reader may not see at all.
+            filterRowsForReader(table, rowsToUpdate);
 
             // Phase 2: Acquire write locks
             for (int rowIndex : rowsToUpdate) {
                 ReentrantReadWriteLock lock = table.getRowLock(rowIndex);
                 lock.writeLock().lock();
                 acquiredLocks.add(lock);
+            }
+
+            // Phase 3: MVCC pending-change registration. Conflict-check every
+            // target row first so a late failure leaves no stale pending flags,
+            // then capture pre-images for undo before any value is mutated.
+            MvccReadContext.Context context = MvccReadContext.get();
+            Transaction transaction = context == null ? null : context.getTransaction();
+            boolean mvcc = transaction != null && transaction.isActive()
+                    && !context.isBatch() && transaction.getTxid() > 0;
+            if (mvcc) {
+                markRowsUpdated(table, rows, rowsToUpdate, transaction);
             }
 
             int affectedCount = rowsToUpdate.size();
@@ -121,6 +136,54 @@ class UpdateQuery implements Query<Void> {
             for (ReentrantReadWriteLock lock : acquiredLocks) {
                 lock.writeLock().unlock();
             }
+        }
+    }
+
+    /**
+     * Drops rows the current reader must not update: tombstoned rows (MVCC
+     * deletes keep their index entries until vacuum) and rows filtered by the
+     * MVCC visibility rules (pending foreign inserts, rows committed after the
+     * reader's snapshot). No-op when the table carries no version metadata.
+     *
+     * @param table        the table being updated
+     * @param rowsToUpdate candidate raw row indexes, filtered in place
+     */
+    private void filterRowsForReader(Table table, List<Integer> rowsToUpdate) {
+        if (rowsToUpdate.isEmpty()) {
+            return;
+        }
+        rowsToUpdate.removeIf(rowIndex ->
+                rowIndex < 0 || rowIndex >= table.getRawRowCount()
+                || !table.isRowVisibleToReader(rowIndex));
+    }
+
+    /**
+     * Registers every matched row as pending-updated by this transaction:
+     * optimistic write-write conflicts throw before the first mark, then each
+     * row gets a pre-image snapshot for {@link UndoLog.UpdateUndo} and an entry
+     * in the transaction's modified-row set (so COMMIT stamps it with the
+     * commit CSN).
+     *
+     * @param table       the table being updated
+     * @param rows        the reader's row values (shared with the storage mirror)
+     * @param rowsToUpdate the locked target row indexes
+     * @param transaction the explicit transaction performing the update
+     */
+    private void markRowsUpdated(Table table, List<Map<String, Object>> rows,
+                                 List<Integer> rowsToUpdate, Transaction transaction) {
+        long txid = transaction.getTxid();
+        long snapshotCsn = transaction.getSnapshotCsn();
+        for (int rowIndex : rowsToUpdate) {
+            table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn);
+        }
+        for (int rowIndex : rowsToUpdate) {
+            Map<String, Object> oldValues = new HashMap<>(rows.get(rowIndex));
+            RowVersionMeta oldMetaCopy = table.getRowVersionMeta(rowIndex) == null
+                    ? null : table.getRowVersionMeta(rowIndex).copy();
+            table.markUpdate(rowIndex, txid, oldValues);
+            transaction.getUndoLog().addUndoRecord(
+                    new UndoLog.UpdateUndo(table.getName(), rowIndex, oldValues, oldMetaCopy));
+            transaction.noteModifiedRow(table.getName(), rowIndex);
         }
     }
 
@@ -167,6 +230,7 @@ class UpdateQuery implements Query<Void> {
                             index.remove(oldValue, rowIndex);
                         }
                         if (convertedValue != null) {
+                            table.evictDeadUniqueEntries(column, convertedValue);
                             index.insert(convertedValue, rowIndex);
                         }
                     }
@@ -184,6 +248,16 @@ class UpdateQuery implements Query<Void> {
     private void identifyRows(Table table, List<Map<String, Object>> rows,
                               Map<String, Class<?>> columnTypes,
                               List<Integer> rowsToUpdate) {
+        if (isMvccReader()) {
+            // Index keys track physical (possibly newer) values; a snapshot
+            // reader must match against the versions it can actually see.
+            if (conditions.isEmpty()) {
+                fullTableScanAll(rows, table, rowsToUpdate);
+            } else {
+                fullTableScanWithCondition(rows, columnTypes, table, rowsToUpdate);
+            }
+            return;
+        }
         if (conditions.size() == 1 && !conditions.get(0).isGrouped()
                 && conditions.get(0).operator == QueryParser.Operator.EQUALS
                 && !conditions.get(0).not) {
@@ -205,6 +279,14 @@ class UpdateQuery implements Query<Void> {
         } else if (conditions.isEmpty()) {
             fullTableScanAll(rows, table, rowsToUpdate);
         }
+    }
+
+    /** True when an explicit (non-batch) MVCC transaction drives this statement. */
+    private boolean isMvccReader() {
+        MvccReadContext.Context context = MvccReadContext.get();
+        Transaction transaction = context == null ? null : context.getTransaction();
+        return transaction != null && transaction.isActive()
+                && !context.isBatch() && transaction.getTxid() > 0;
     }
 
     private void identifyEqualsRows(Table table, Map<String, Class<?>> columnTypes,
@@ -276,7 +358,10 @@ class UpdateQuery implements Query<Void> {
          IntStream.range(0, rows.size())
                  .filter(i -> !table.isDeleted(i))
                  .forEach(i -> {
-                     if (evaluateConditions(rows.get(i), conditions, columnTypes)) {
+                     // Match against the reader-visible version: a snapshot
+                     // reader must not target rows through another writer's
+                     // newer values (shadow model, prompt4.md #4).
+                     if (evaluateConditions(table.getVisibleRowForReader(i, rows.get(i)), conditions, columnTypes)) {
                          rowsToUpdate.add(i);
                      }
                  });

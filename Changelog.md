@@ -880,3 +880,5 @@ chore: test-profiles-audit changelog entry
 3.2.60 MVCC step 2 (prompt4 #2): UndoLog with spill + TransactionTableSnapshot (BEGIN without table cloning), hybrid INSERT=MVCC / UPDATE+DELETE=CoW; fix O(n2) delimited append and streaming single-table >10k-row SELECT returning 0 rows
 
 3.2.61 MVCC Vacuum Manager: VACUUM SQL, auto-vacuum scheduler, JMX metrics, dead-version reclamation
+
+3.2.62 MVCC step 4 (prompt4 #4): in-place UPDATE/DELETE with shadow-model pre-images, optimistic write-write conflicts, keep-index DELETE + unique-slot eviction, READ COMMITTED statement snapshots; mirror-sync fix for concurrent UPDATE index corruption; SELECT hot-path scan fast paths; perf baseline re-seed for MVCC read-path cost

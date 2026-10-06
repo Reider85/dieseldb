@@ -120,6 +120,10 @@ public final class MvccReadContext {
     /**
      * Core MVCC visibility decision for a row with version metadata.
      *
+     * <p>The decision itself is delegated to the canonical contract
+     * {@link TupleVisibility#visibleByStatus} so that every read path
+     * (scans, index lookups, unique-constraint checks) shares one rule set.
+     *
      * @param database the owning database (for the transaction status tracker)
      * @param meta     the row's version metadata (never null)
      * @param ctx      the reader context; null disables MVCC filtering
@@ -131,56 +135,13 @@ public final class MvccReadContext {
             // hide rows that carry an explicit delete mark, show everything else.
             return meta.isAlive();
         }
-        if (!creatorVisible(database, meta, ctx)) {
-            return false;
-        }
-        return deleterVisible(database, meta, ctx);
-    }
-
-    /** True when the row's creator state allows this reader to see the row. */
-    private static boolean creatorVisible(Database database, RowVersionMeta meta, Context ctx) {
-        long xmin = meta.getXmin();
-        if (xmin == 0) {
-            return true; // bootstrap / auto-commit row
-        }
-        if (xmin == ctx.readTxid) {
-            return true; // self-write visibility
-        }
         TxStatusTracker tracker = tracker(database);
-        TxStatusTracker.TxStatus status = tracker == null ? null : tracker.getStatus(xmin);
-        if (status == null) {
-            // Unknown creator (pre-MVCC row or cleared tracker): assume committed.
-            return true;
-        }
-        return switch (status) {
-            case COMMITTED -> tracker.isCommittedBefore(xmin, ctx.snapshotCsn);
-            case ACTIVE -> ctx.allowsDirtyReads();
-            case ABORTED -> false;
-        };
-    }
-
-    /** True when the row's delete mark does not hide the row from this reader. */
-    private static boolean deleterVisible(Database database, RowVersionMeta meta, Context ctx) {
-        long xmax = meta.getXmax();
-        if (xmax == 0) {
-            return true; // alive
-        }
-        if (xmax == ctx.readTxid) {
-            return false; // deleted by the reader itself
-        }
-        TxStatusTracker tracker = tracker(database);
-        TxStatusTracker.TxStatus status = tracker == null ? null : tracker.getStatus(xmax);
-        if (status == null) {
-            return true; // unknown deleter: assume the delete is not in effect yet
-        }
-        return switch (status) {
-            // Committed delete hides the row only from snapshots that include it.
-            case COMMITTED -> !tracker.isCommittedBefore(xmax, ctx.snapshotCsn);
-            // Another transaction's pending delete: dirty readers observe it.
-            case ACTIVE -> !ctx.allowsDirtyReads();
-            // Deleter rolled back: the row is alive again.
-            case ABORTED -> true;
-        };
+        java.util.function.LongPredicate committedBeforeSnapshot =
+                txid -> tracker == null || tracker.isCommittedBefore(txid, ctx.snapshotCsn);
+        java.util.function.LongFunction<TxStatusTracker.TxStatus> statusOf =
+                tracker == null ? txid -> null : tracker::getStatus;
+        return TupleVisibility.visibleByStatus(meta.getXmin(), meta.getXmax(), ctx.readTxid,
+                ctx.allowsDirtyReads(), committedBeforeSnapshot, statusOf);
     }
 
     private static TxStatusTracker tracker(Database database) {
