@@ -81,6 +81,8 @@ JsonlStorageAdvancedTest	storage
 JsonlPropertyTest	storage
 CsvLargeFileStressTest	storage
 DelimitedByteParserTest	storage
+PageTest	storage
+DefragTest	storage
 ConcurrentSaveTest	concurrency
 ConcurrentConflictTest	concurrency
 CopyOnWriteIsolationTest	concurrency

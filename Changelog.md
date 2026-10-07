@@ -884,3 +884,5 @@ chore: test-profiles-audit changelog entry
 3.2.62 MVCC step 4 (prompt4 #4): in-place UPDATE/DELETE with shadow-model pre-images, optimistic write-write conflicts, keep-index DELETE + unique-slot eviction, READ COMMITTED statement snapshots; mirror-sync fix for concurrent UPDATE index corruption; SELECT hot-path scan fast paths; perf baseline re-seed for MVCC read-path cost
 
 3.2.63 MVCC SERIALIZABLE SSI conflict detection to complete R3-001 (SSI implementation)
+
+3.2.64 R3-002 step 1: Page/PageId/slotted-page format (8/16/64KB, ByteBuffer binary, defrag)

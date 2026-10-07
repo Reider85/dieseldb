@@ -47,6 +47,7 @@ diesel/DieselDatabase.java		smoke,query,query-full,storage,concurrency,network
 diesel/TableStorage.java		storage,query-full
 diesel/ConfigLoader.java		storage
 diesel/storage/*.java			storage
+diesel/storage/page/*.java		storage
 diesel/storage/json/*.java		storage
 diesel/storage/avro/*.java		storage
 
