@@ -894,3 +894,5 @@ chore: test-profiles-audit changelog entry
 3.2.67 Sync pom.xml project version with Changelog/commit: new scripts/sync-pom-version.ps1 (sources: Changelog/Commit/explicit -Version, -CheckOnly mode), auto-invoked from commit-and-changelog.ps1 so make release / release-local always write the same version into pom.xml; make sync-version target (Makefile + make.ps1, DESC=check for dry-run); AGENTS.md documents the workflow; fixed existing drift pom 0.5.1 vs commit/changelog 3.2.66
 
 3.2.68 Implement Tablespace stub for production-readiness (1GB scale)
+
+3.2.69 R3-003 step 1/5: WAL entry format - WALEntry + WALOpcode/WALFormat, CRC32C, 8-byte aligned binary serialization, 35 tests + format doc
