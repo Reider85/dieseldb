@@ -83,6 +83,9 @@ CsvLargeFileStressTest	storage
 DelimitedByteParserTest	storage
 PageTest	storage
 DefragTest	storage
+BufferPoolTest	storage
+BufferPoolStressTest	storage
+BufferPoolHitRateTest	storage
 ConcurrentSaveTest	concurrency
 ConcurrentConflictTest	concurrency
 CopyOnWriteIsolationTest	concurrency

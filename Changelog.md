@@ -886,3 +886,5 @@ chore: test-profiles-audit changelog entry
 3.2.63 MVCC SERIALIZABLE SSI conflict detection to complete R3-001 (SSI implementation)
 
 3.2.64 R3-002 step 1: Page/PageId/slotted-page format (8/16/64KB, ByteBuffer binary, defrag)
+
+3.2.65 R3-002 step 2/5: BufferPool (LRU + pinned pages) with PageFlusher/PageLoader callbacks, JMX MXBean and 23 tests

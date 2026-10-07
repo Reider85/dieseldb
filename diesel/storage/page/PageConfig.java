@@ -140,8 +140,9 @@ final class PageConfig {
 
     /**
      * Loads root properties from config.properties (same pattern as StorageConfig).
+     * Package-private: shared with {@link BufferPool} for bufferpool.size.mb resolution.
      */
-    private static Properties loadRootProps() {
+    static Properties loadRootProps() {
         Properties props = new Properties();
         try {
             java.io.File configFile = new File(ErrorMessages.CONFIG_FILE);
