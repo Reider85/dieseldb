@@ -49,16 +49,18 @@ class PageManagerTest {
         // Write page
         manager.writePage(original);
         
+        // Resident page is dirty (write-back cache); flush persists and cleans it
+        manager.flush();
+        
         // Read page back
         try (PinnedPage pinned = manager.readPage(id)) {
             Page loaded = pinned.getPage();
             byte[] loadedData = loaded.get(slotId);
             assertArrayEquals(testData, loadedData, "written and read data should match");
-            assertFalse(loaded.isDirty(), "loaded page should be clean");
+            assertFalse(loaded.isDirty(), "loaded page should be clean after flush");
         }
         
-        // Verify file size (writePage is memory-only; flush extends file)
-        manager.flush();
+        // Verify file size (flush extends file)
         assertEquals(PAGE_SIZE, manager.getFileSize(), "file should contain one page after flush");
     }
 
@@ -78,14 +80,15 @@ class PageManagerTest {
         // Verify file size
         assertEquals(5L * PAGE_SIZE, manager.getFileSize(), "file should contain 5 pages");
         
+        // Flush so allocated pages are persisted and marked clean
+        manager.flush();
+        
         // Verify pages can be read immediately after allocation
         for (PageId id : ids) {
             try (PinnedPage pinned = manager.readPage(id)) {
                 Page page = pinned.getPage();
                 assertNotNull(page, "allocated page should be readable");
-                // Allocated pages are dirty in pool until flushed; clean after read
-                // This is documented behavior: writePage marks dirty, flush writes to disk
-                assertFalse(page.isDirty(), "allocated page should be clean after read");
+                assertFalse(page.isDirty(), "allocated page should be clean after flush");
             }
         }
     }
@@ -140,9 +143,9 @@ class PageManagerTest {
         PageId id = new PageId(1, 1, 0);
         Page page = new Page(id, PAGE_SIZE);
         page.insert("flush test".getBytes());
-        page.setDirty(true); // simulate dirty page
         
-        // Flush should write to disk
+        // Make page resident and dirty in the pool, then flush to disk
+        manager.writePage(page);
         manager.flush();
         
         // Close and reopen with new manager

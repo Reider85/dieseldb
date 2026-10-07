@@ -34,7 +34,7 @@ class CatalogTest {
     
     @BeforeEach
     void setUp() throws IOException {
-        pageManager = new PageManager(tempDir.resolve("test.db"), 100, 4096);
+        pageManager = new PageManager(tempDir.resolve("test.db"), 100, 8192);
         catalog = new CatalogTable(pageManager);
     }
     
@@ -218,8 +218,9 @@ class CatalogTest {
             List.of()
         );
         
-        // Close and reopen the catalog
+        // Close and reopen the catalog (with a fresh PageManager on the same file)
         pageManager.close();
+        pageManager = PageManager.open(tempDir.resolve("test.db"), 100, 8192);
         
         // Create new catalog with same page manager
         CatalogTable newCatalog = new CatalogTable(pageManager);

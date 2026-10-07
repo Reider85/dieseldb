@@ -274,6 +274,30 @@ public final class Page {
     }
 
     /**
+     * Copies the full content (data array + header fields) from another page
+     * of the same page id and size. Used by {@code PageManager.writePage}
+     * when the buffer pool keeps an existing frame instance for a resident
+     * page id — the argument page's content must replace the frame's stale
+     * content (both raw bytes and the parsed header state).
+     *
+     * @param src the source page (must have the same pageSize)
+     */
+    void copyContentFrom(Page src) {
+        if (src.pageSize != this.pageSize) {
+            throw new IllegalArgumentException("Page size mismatch: " + src.pageSize + " != " + this.pageSize);
+        }
+        this.data = src.data.clone();
+        PageHeader h = new PageHeader(pageId, pageSize, src.header.getPageType());
+        h.setLsn(src.header.getLsn());
+        h.setChecksum(src.header.getChecksum());
+        h.setSlotCount(src.header.getSlotCount());
+        h.setFreeSpaceStart(src.header.getFreeSpaceStart());
+        h.setFreeSpaceEnd(src.header.getFreeSpaceEnd());
+        this.header = h;
+        setDirty(true);
+    }
+
+    /**
      * Validates the page layout consistency.
      * 
      * @throws PageFormatException if inconsistencies are found

@@ -1503,6 +1503,44 @@ class Table implements Serializable {
     }
 
     /**
+     * Re-synchronises the in-memory row mirror and every engine-level index
+     * from the storage backend, treating storage as the source of truth.
+     * Required after a storage-level bulk load such as
+     * {@link RowStorage#loadFromFile(String)}, which fills only the storage's
+     * private row list and bypasses the mirror that {@link #getLiveRows()}
+     * scans. Tombstone marks and MVCC version metadata index into the old
+     * mirror and are reset along with it. Refuses to run while rows carry
+     * uncommitted MVCC changes, since undo records hold raw row indexes.
+     */
+    public void reloadFromStorage() {
+        if (storage == null) {
+            return;
+        }
+        if (hasUncommittedMvccChanges()) {
+            LOGGER.log(Level.FINE,
+                    "Skipping reloadFromStorage for table {0}: rows carry pending MVCC changes", name);
+            return;
+        }
+        List<Map<String, Object>> loaded = new ArrayList<>(storage.scan());
+        tableLock.writeLock().lock();
+        try {
+            rows.clear();
+            rows.addAll(loaded);
+            deletedRows = new BitSet();
+            rowVersions = new ConcurrentHashMap<>();
+            uncommittedMvccRows = ConcurrentHashMap.newKeySet();
+            rowLocks = new ConcurrentHashMap<>();
+            rebuildAllIndexes();
+            rowCount = getLiveRowCount();
+            markStatsDirty();
+        } finally {
+            tableLock.writeLock().unlock();
+        }
+        LOGGER.log(Level.INFO, "Table {0}: reloaded mirror from storage ({1} rows)",
+                new Object[]{name, rows.size()});
+    }
+
+    /**
      * Physically removes all tombstoned rows and rebuilds every index.
      * This is the only point where the ArrayList actually shrinks.
      */
@@ -3240,6 +3278,7 @@ class Table implements Serializable {
                 if (table.getStorage() instanceof AbstractRowStorage ars) {
                     ars.setDataDir(dir);
                     ars.loadFromFile(tableName);
+                    table.reloadFromStorage();
                 }
                 table.setFileInitialized(true);
                 return table;

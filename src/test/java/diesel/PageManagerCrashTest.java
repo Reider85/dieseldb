@@ -152,8 +152,8 @@ class PageManagerCrashTest {
         // Page should be dirty in pool but not on disk
         assertTrue(page.isDirty(), "page should be dirty");
         
-        // Simulate crash by closing without flush
-        manager.close();
+        // Simulate crash: close without flushing dirty pages
+        manager.closeDiscardingDirty();
         
         // Verify file is still empty (unflushed data lost)
         assertEquals(0, Files.size(pageFile), "file should be empty after crash");
@@ -170,21 +170,24 @@ class PageManagerCrashTest {
 
     @Test
     void atomicFileWriterCleanupOnFailure() throws Exception {
-        // Simulate AtomicFileWriter failure during write
-        Path tmpFile = AtomicFileWriter.tmpPath(pageFile);
+        // Simulate AtomicFileWriter failure during write.
+        // Use a fresh target path: pageFile already exists as a regular file
+        // (setUp opens PageManager on it), and createDirectories fails on files.
+        Path target = tempDir.resolve("target-as-dir.pages");
+        Path tmpFile = AtomicFileWriter.tmpPath(target);
         byte[] partialData = "partial".getBytes();
         Files.write(tmpFile, partialData, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         
         // Create target as a non-empty directory to simulate move failure
-        Files.createDirectories(pageFile);
-        Files.write(pageFile, "existing content".getBytes(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        Files.createDirectories(target);
+        Files.write(target.resolve("occupied.txt"), "occupied".getBytes(), StandardOpenOption.CREATE);
         
         // Try to write (should fail because target is a directory)
         try {
-            AtomicFileWriter.writeNewFileAtomically(pageFile, "complete".getBytes());
+            AtomicFileWriter.writeNewFileAtomically(target, "complete".getBytes());
             fail("should fail when target is a directory");
         } catch (IOException e) {
-            // Expected - cannot move to a directory
+            // Expected - cannot move onto a directory
         }
         
         // Verify temp file is cleaned up even on failure

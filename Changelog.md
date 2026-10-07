@@ -896,3 +896,5 @@ chore: test-profiles-audit changelog entry
 3.2.68 Implement Tablespace stub for production-readiness (1GB scale)
 
 3.2.69 R3-003 step 1/5: WAL entry format - WALEntry + WALOpcode/WALFormat, CRC32C, 8-byte aligned binary serialization, 35 tests + format doc
+
+3.2.70 Fix 16 page-storage + Avro persistence test failures: PageManager.writePage copies content into resident frame (Page.copyContentFrom), idempotent close + closeDiscardingDirty/BufferPool.abandon, CatalogTest 8KB page size, Table.reloadFromStorage to resync rows mirror after Avro load

@@ -324,6 +324,27 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
         }
     }
 
+    /**
+     * Simulates a crash: drops every frame <em>without</em> flushing dirty
+     * pages and unregisters the MBean. Idempotent. Used by crash-recovery
+     * tests to verify that unflushed data is lost.
+     */
+    void abandon() {
+        lock.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            frames.clear();
+            lru.clear();
+            pinnedPages = 0;
+        } finally {
+            lock.unlock();
+        }
+        unregisterMBean();
+    }
+
     // ─── Counters / MXBean view ─────────────────────────────────────
 
     @Override

@@ -278,6 +278,8 @@ class AvroStorageTest {
         // loadFromFile reads from the .avro file into the fresh Avro storage
         AvroRowStorage storage = (AvroRowStorage) db2.getTable("USERS").getStorage();
         storage.loadFromFile("USERS");
+        // storage.loadFromFile bypasses the Table mirror; SELECT reads the mirror
+        db2.getTable("USERS").reloadFromStorage();
 
         List<Map<String, Object>> rows = runSelectOn(db2, "SELECT * FROM USERS");
         assertEquals(50, rows.size());

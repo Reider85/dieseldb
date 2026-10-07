@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * PageManager: manages page storage, BufferPool integration, and file I/O.
@@ -29,6 +30,7 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
     private final BufferPool pool;
     private final FileChannelIO io;
     private final AtomicLong nextFilePageNum = new AtomicLong(0);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /**
      * Creates a PageManager that owns its BufferPool.
@@ -137,8 +139,16 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
 
         // Ensure page is resident (insert returns pinned handle)
         try (PinnedPage pinned = pool.insert(page)) {
-            // Mark page dirty - physical write will happen via flusher callback
-            page.setDirty(true);
+            // insert() keeps the existing frame instance when the PageId is
+            // already resident (e.g. after allocatePage) — copy the argument
+            // page's content (data + header) into the resident frame so the
+            // data is not lost.
+            Page resident = pinned.getPage();
+            if (resident != page) {
+                resident.copyContentFrom(page);
+            } else {
+                resident.setDirty(true);
+            }
             // Unpin immediately - the page is now resident in the pool
         }
     }
@@ -186,6 +196,9 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
      */
     @Override
     public void close() throws IOException {
+        if (!closed.compareAndSet(false, true)) {
+            return; // already closed — idempotent
+        }
         try {
             flush();
         } finally {
@@ -193,6 +206,24 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
             cleanupTempFiles();
             io.close();
             pool.close();
+        }
+    }
+
+    /**
+     * Simulates a crash: closes the file and discards all dirty pages without
+     * flushing them to disk. Used by crash-recovery tests to verify that
+     * unflushed data is lost on a crash.
+     *
+     * @throws IOException on close failure
+     */
+    public void closeDiscardingDirty() throws IOException {
+        if (!closed.compareAndSet(false, true)) {
+            return; // already closed — idempotent
+        }
+        try {
+            pool.abandon();
+        } finally {
+            io.close();
         }
     }
 
