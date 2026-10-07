@@ -890,3 +890,5 @@ chore: test-profiles-audit changelog entry
 3.2.65 R3-002 step 2/5: BufferPool (LRU + pinned pages) with PageFlusher/PageLoader callbacks, JMX MXBean and 23 tests
 
 3.2.66 PageManager with FileChannel IO, atomic page files, and throughput testing
+
+3.2.67 Sync pom.xml project version with Changelog/commit: new scripts/sync-pom-version.ps1 (sources: Changelog/Commit/explicit -Version, -CheckOnly mode), auto-invoked from commit-and-changelog.ps1 so make release / release-local always write the same version into pom.xml; make sync-version target (Makefile + make.ps1, DESC=check for dry-run); AGENTS.md documents the workflow; fixed existing drift pom 0.5.1 vs commit/changelog 3.2.66

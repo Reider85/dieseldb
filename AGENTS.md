@@ -94,6 +94,7 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 | Core test suite | `.\scripts\make.ps1 test-core` |
 | Build JAR | `.\scripts\make.ps1 build` |
 | Full release | `.\scripts\make.ps1 release -Desc "description"` |
+| Sync pom.xml version | `.\scripts\make.ps1 sync-version` |
 
 **Or use `scripts\mvn.ps1` for direct Maven calls (auto-sets JAVA_HOME):**
 
@@ -294,7 +295,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
   ```bash
   make release DESC="Fix JOIN OR OOM by implementing hash join spilling"
   ```
-  This auto-appends the versioned entry to `Changelog.md`, commits, and pushes. Version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`).
+  This auto-appends the versioned entry to `Changelog.md`, **syncs `pom.xml` project version** to the same value, commits, and pushes. Version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`).
   **PROMPT_STATUS.md joins this commit:** update it before running `make release`
   (step 7 of the workflow); the release target stages it explicitly, so a DONE
   entry never becomes its own commit. Do not write `Committed as ...` into
@@ -302,6 +303,25 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 - Use `make release-local DESC="..."` if you need to commit without pushing.
 - Use `make changelog DESC="..."` to only create the entry (no commit/push).
+
+### pom.xml version sync
+
+`pom.xml` project version (`<artifactId>dieseldb</artifactId>` + `<version>`) must match the latest Changelog entry and git commit version prefix. It is **synced automatically** inside `make release` / `release-local` via `scripts/sync-pom-version.ps1` (called from `commit-and-changelog.ps1` with the new version), so agents never need to hand-edit `<version>` during a prompt.
+
+| Command | What it does |
+|---|---|
+| `make sync-version` | Sync pom.xml with the last Changelog entry |
+| `make sync-version DESC=check` | Check-only: exit 1 if pom.xml ≠ Changelog version (no write) |
+| `make sync-version DESC=X.Y.Z` | Sync pom.xml to an explicit version |
+| `.\scripts\make.ps1 sync-version` | Same as `make sync-version` (Windows) |
+| `.\scripts\make.ps1 sync-version -Desc check` | Same as `DESC=check` |
+| `powershell -ExecutionPolicy Bypass -File scripts/sync-pom-version.ps1` | Direct script call (default source: Changelog) |
+| `powershell -ExecutionPolicy Bypass -File scripts/sync-pom-version.ps1 -Source Commit` | Source version from last commit message |
+| `powershell -ExecutionPolicy Bypass -File scripts/sync-pom-version.ps1 -CheckOnly` | Direct check-only mode |
+
+- **Exit codes:** `0` = in sync / updated; `1` = error or check mismatch.
+- **What it touches:** only the project `<version>` after `<artifactId>dieseldb</artifactId>`. Dependency and plugin versions are never modified.
+- **Agents:** do **not** manually edit the project `<version>` in `pom.xml` during prompt work — `make release` keeps it aligned. If you must set it outside release (e.g. after a bulk history rewrite), use `make sync-version DESC=X.Y.Z`.
 
 ---
 

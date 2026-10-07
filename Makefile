@@ -69,7 +69,7 @@ define run-tests-incr
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
-.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
 
 # Default target
 all: build
@@ -106,6 +106,13 @@ changelog:
 		exit 1; \
 	fi
 	$(CHANGELOG) "$(DESC)"
+
+## Sync pom.xml project version with Changelog/commit
+## Usage: make sync-version              - sync from last Changelog entry
+##        make sync-version DESC=check   - check only (exit 1 on mismatch)
+##        make sync-version DESC=X.Y.Z   - sync to explicit version
+sync-version:
+	$(PS) ./scripts/sync-pom-version.ps1 $(if $(filter check,$(DESC)),-CheckOnly,$(if $(DESC),-Version $(DESC),))
 
 ## Changelog + commit + push in one step (usage: make release DESC="fix: ...")
 ## PROMPT_STATUS.md must be updated BEFORE this target runs (AGENTS.md workflow
@@ -311,6 +318,7 @@ help:
 	@echo "Targets:"
 	@echo "  make build              - Build project (package, skip tests)"
 	@echo "  make changelog          - Create changelog entry with auto version prefix"
+	@echo "  make sync-version       - Sync pom.xml version with Changelog/commit"
 	@echo "  make test               - Fast profile: smoke + index + query"
 	@echo "  make test-core          - Core profile: query + storage (2-4 min)"
 	@echo "  make test-network       - Network profile: server + sockets (1-2 min)"

@@ -36,6 +36,17 @@ Write-Host "New changelog entry: $entry"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $changelogPath = Join-Path $repoRoot "Changelog.md"
 $entryPath = Join-Path $repoRoot "changelog_entry.txt"
+$syncPom = Join-Path $PSScriptRoot "sync-pom-version.ps1"
+
+# Keep pom.xml project version aligned with the changelog/commit version.
+# Without this, Changelog and git history advance while pom.xml stays stale
+# (e.g. 0.5.1 vs 3.2.66). The caller's `git add -A` stages the pom change
+# into the same release commit.
+Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $syncPom, "-Version", $newVersion)
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "sync-pom-version.ps1 failed (exit $LASTEXITCODE). pom.xml not updated."
+    exit 1
+}
 
 # Append to Changelog.md using .NET for reliable UTF-8 without BOM
 if (Test-Path $changelogPath) {

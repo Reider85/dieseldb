@@ -203,6 +203,18 @@ switch ($Target) {
         Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $commitChangelog, "-Description", $Desc)
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
+    "sync-version" {
+        $syncPom = Join-Path $PSScriptRoot "sync-pom-version.ps1"
+        $syncArgs = @("-ExecutionPolicy", "Bypass", "-File", $syncPom)
+        if ($Desc -eq "check") {
+            $syncArgs += "-CheckOnly"
+        }
+        elseif ($Desc -ne "") {
+            $syncArgs += @("-Version", $Desc)
+        }
+        Invoke-Native -FilePath "powershell" -Arguments $syncArgs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
     "release" {
         if (-not $Desc) {
             Write-Error "Usage: .\scripts\make.ps1 release -Desc ""description"""
@@ -287,7 +299,7 @@ switch ($Target) {
         Write-Host "  build, compile, test, test-incr, test-one, test-core"
         Write-Host "  test-network, test-concurrency, test-perf, large-test"
         Write-Host "  all-tests, timing, compare-timing, tia, tia-run"
-        Write-Host "  changelog, release, release-local"
+        Write-Host "  changelog, release, release-local, sync-version"
         Write-Host "  clean, clean-test-cache, clean-cache"
         Write-Host "  test-storage-csv, test-storage-tsv, test-storage-jsonl, test-storage-avro"
         Write-Host "  setup, help"
@@ -295,6 +307,8 @@ switch ($Target) {
         Write-Host "Parameters:"
         Write-Host "  -T ClassName#method    for test-one (quote in PowerShell, escape as \# in make)"
         Write-Host "  -Desc 'description'    for changelog, release, release-local"
+        Write-Host "  -Desc 'check'          for sync-version (check-only, no write)"
+        Write-Host "  -Desc 'X.Y.Z'          for sync-version (explicit version)"
         Write-Host "  -BASE / -NEW           for compare-timing"
         Write-Host ""
         Write-Host "Every test target asserts that surefire actually produced reports and"
