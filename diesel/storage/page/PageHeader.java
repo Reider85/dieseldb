@@ -77,13 +77,25 @@ public final class PageHeader {
      * @throws IllegalArgumentException if pageSize is invalid
      */
     public PageHeader(PageId pageId, int pageSize) {
+        this(pageId, pageSize, PAGE_TYPE_NORMAL);
+    }
+
+    /**
+     * Creates a new page header with specified page type.
+     * 
+     * @param pageId the page identifier (tablespaceId/fileId/pageNum)
+     * @param pageSize the size of the page in bytes (must be one of ALLOWED_SIZES)
+     * @param pageType the page type (PAGE_TYPE_NORMAL, PAGE_TYPE_CATALOG, etc.)
+     * @throws IllegalArgumentException if pageSize is invalid
+     */
+    public PageHeader(PageId pageId, int pageSize, byte pageType) {
         if (!Page.isAllowedSize(pageSize)) {
             throw new IllegalArgumentException("Invalid page size: " + pageSize);
         }
         
         this.magic = MAGIC;
         this.formatVersion = FORMAT_VERSION;
-        this.pageType = PAGE_TYPE_NORMAL;
+        this.pageType = pageType;
         this.flags = 0;
         this.tablespaceId = pageId.tablespaceId();
         this.fileId = pageId.fileId();
@@ -156,7 +168,7 @@ public final class PageHeader {
         }
         
         PageId pageId = new PageId(tablespaceId, fileId, pageNum);
-        PageHeader header = new PageHeader(pageId, pageSize);
+        PageHeader header = new PageHeader(pageId, pageSize, pageType);
         header.lsn = lsn;
         header.checksum = checksum;
         header.slotCount = slotCount;

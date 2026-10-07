@@ -175,15 +175,16 @@ class PageManagerCrashTest {
         byte[] partialData = "partial".getBytes();
         Files.write(tmpFile, partialData, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         
-        // Delete the target file to simulate move failure
-        Files.deleteIfExists(pageFile);
+        // Create target as a non-empty directory to simulate move failure
+        Files.createDirectories(pageFile);
+        Files.write(pageFile, "existing content".getBytes(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         
-        // Try to write (should fail but clean up temp)
+        // Try to write (should fail because target is a directory)
         try {
             AtomicFileWriter.writeNewFileAtomically(pageFile, "complete".getBytes());
-            fail("should fail when target doesn't exist for move");
+            fail("should fail when target is a directory");
         } catch (IOException e) {
-            // Expected
+            // Expected - cannot move to a directory
         }
         
         // Verify temp file is cleaned up even on failure

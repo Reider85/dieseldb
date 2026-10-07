@@ -144,6 +144,7 @@ public class DatabaseServer {
         LOGGER.log(Level.INFO, "Server configured with transaction isolation level: {0}", isolationLevel);
 
         running = true;
+        database.loadCatalog();
         database.loadTablesFromDisk();
         database.getVacuumManager().startAutoVacuum();
         try {

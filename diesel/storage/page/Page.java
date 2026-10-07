@@ -64,6 +64,29 @@ public final class Page {
     }
 
     /**
+     * Creates a new empty page with the specified page type.
+     * 
+     * @param pageId the page identifier (tablespaceId/fileId/pageNum)
+     * @param pageSize the page size in bytes (must be one of ALLOWED_SIZES)
+     * @param pageType the page type (PAGE_TYPE_NORMAL, PAGE_TYPE_CATALOG, etc.)
+     * @throws IllegalArgumentException if pageSize is invalid
+     */
+    public Page(PageId pageId, int pageSize, byte pageType) {
+        if (!isAllowedSize(pageSize)) {
+            throw new IllegalArgumentException("Invalid page size: " + pageSize + 
+                    " (allowed: " + Arrays.toString(ALLOWED_SIZES) + ")");
+        }
+        
+        this.pageId = pageId;
+        this.pageSize = pageSize;
+        this.data = new byte[pageSize];
+        this.header = new PageHeader(pageId, pageSize, pageType);
+        this.dirty = false;
+        
+        // Initialize with zeros (header will be written by first operation)
+    }
+
+    /**
      * Creates a page by reading from a ByteBuffer.
      * The buffer must be positioned at the page start and have remaining() == pageSize.
      * 
@@ -168,6 +191,14 @@ public final class Page {
     public int getFreeSpace() { return header.getFreeSpace(); }
     public long getLsn() { return header.getLsn(); }
     public int getChecksum() { return header.getChecksum(); }
+    public byte getPageTypeValue() { return header.getPageType(); }
+    
+    /**
+     * Returns the page type as an enum.
+     */
+    public PageType getPageType() {
+        return PageType.fromByte(header.getPageType());
+    }
 
     // Setters
     public void setLsn(long lsn) { 
@@ -177,6 +208,30 @@ public final class Page {
     public void setChecksum(int checksum) { 
         header.setChecksum(checksum); 
         setDirty(true); 
+    }
+    public void setPageType(byte pageType) { 
+        // PageHeader has no setter, so create new header
+        PageHeader newHeader = new PageHeader(pageId, pageSize, pageType);
+        newHeader.setLsn(header.getLsn());
+        newHeader.setChecksum(header.getChecksum());
+        newHeader.setSlotCount(header.getSlotCount());
+        newHeader.setFreeSpaceStart(header.getFreeSpaceStart());
+        newHeader.setFreeSpaceEnd(header.getFreeSpaceEnd());
+        this.header = newHeader;
+        setDirty(true);
+    }
+
+    /**
+     * Rewrites this page as an empty slotted page of the given type (prompt4 #9).
+     * Used by the catalog to replace the whole page payload in place, because
+     * {@code BufferPool} keeps the resident {@code Page} instance for a page id.
+     *
+     * @param pageType the page type to install, see {@code PageHeader.PAGE_TYPE_*}
+     */
+    public void reset(byte pageType) {
+        this.header = new PageHeader(pageId, pageSize, pageType);
+        Arrays.fill(data, (byte) 0);
+        setDirty(true);
     }
 
     /**
@@ -195,6 +250,27 @@ public final class Page {
      */
     public byte[] toBytes() {
         return data.clone();
+    }
+
+    /**
+     * Returns a defensive copy of the full page data.
+     * Alias for toBytes().
+     */
+    public byte[] getData() {
+        return data.clone();
+    }
+
+    /**
+     * Sets the full page data.
+     * 
+     * @param data the new page data (must be exactly pageSize bytes)
+     */
+    public void setData(byte[] data) {
+        if (data.length != this.pageSize) {
+            throw new IllegalArgumentException("Data size must match page size: " + data.length + " != " + this.pageSize);
+        }
+        this.data = data.clone();
+        setDirty(true);
     }
 
     /**

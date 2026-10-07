@@ -74,4 +74,17 @@ final class ConfigLoader {
         String raw = load().getProperty(key);
         return raw == null ? defaultValue : Boolean.parseBoolean(raw.trim());
     }
+    
+    // Tablespace configuration keys
+    static final String TABLESPACE_DEFAULT_PATH = "tablespace.default.path";
+    static final String TABLESPACE_FILE_MAX_SIZE_MB = "tablespace.file.max.size.mb";
+    
+    // Tablespace configuration methods
+    static String getTablespaceDefaultPath(String defaultValue) {
+        return getString(TABLESPACE_DEFAULT_PATH, defaultValue);
+    }
+    
+    static long getTablespaceFileMaxSizeMB(long defaultValue) {
+        return getLong(TABLESPACE_FILE_MAX_SIZE_MB, defaultValue);
+    }
 }

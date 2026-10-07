@@ -51,6 +51,7 @@ import diesel.storage.InMemoryRowStorage;
 import diesel.storage.AbstractRowStorage;
 import diesel.storage.AtomicFileWriter;
 import diesel.storage.StorageFactory;
+import diesel.storage.StorageType;
 
 /**
  * Contract implemented by every index (secondary and clustered) that maps
@@ -2911,6 +2912,12 @@ class Table implements Serializable {
     /** Returns the underlying {@link RowStorage} used by this table. */
     public RowStorage getStorage() {
         return storage;
+    }
+
+    /** Returns the storage type of this table. */
+    public StorageType getStorageType() {
+        return StorageType.fromString(System.getProperty("diesel.storage.type",
+                getConfigProperty("storage.type", "in_memory")));
     }
 
     /**

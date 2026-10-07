@@ -20,6 +20,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Thread-safe: external synchronization required for multi-page operations.
  */
 public final class PageManager implements PageFlusher, PageLoader, AutoCloseable {
+    
+    /** Default page size (8KB) */
+    public static final int PAGE_SIZE = PageConfig.PAGE_SIZE_8K;
 
     private final Path file;
     private final int pageSize;
@@ -91,6 +94,15 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
      */
     public BufferPool getBufferPool() {
         return pool;
+    }
+
+    /**
+     * Returns the page size in bytes.
+     *
+     * @return the page size
+     */
+    public int pageSize() {
+        return pageSize;
     }
 
     /**
@@ -177,6 +189,8 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
         try {
             flush();
         } finally {
+            // Clean up leftover temporary files
+            cleanupTempFiles();
             io.close();
             pool.close();
         }
@@ -265,5 +279,21 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
      */
     public String getIoMode() {
         return FileChannelIO.MODE_DEFAULT; // Could expose via FileChannelIO if needed
+    }
+
+    /**
+     * Cleans up leftover temporary files from interrupted atomic writes.
+     * Called during close() to ensure no temp files remain after shutdown.
+     */
+    private void cleanupTempFiles() throws IOException {
+        Path tempFile = AtomicFileWriter.tmpPath(file);
+        if (Files.exists(tempFile)) {
+            try {
+                Files.delete(tempFile);
+            } catch (IOException e) {
+                // Log but don't fail the close operation
+                System.err.println("Warning: failed to delete temp file: " + tempFile + " - " + e.getMessage());
+            }
+        }
     }
 }

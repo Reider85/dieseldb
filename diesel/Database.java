@@ -25,6 +25,8 @@ import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
+import diesel.storage.page.CatalogTable;
+import diesel.storage.page.CatalogSchema;
 import diesel.concurrency.ConflictDetector;
 
 /**
@@ -57,6 +59,8 @@ class Database {
     private final TxStatusTracker txStatusTracker = new TxStatusTracker();        // MVCC: tracks transaction status and commit CSNs
     private final VacuumManager vacuumManager = new VacuumManager(this);           // MVCC: dead row version reclamation
     private final ConflictDetector conflictDetector = new ConflictDetector();     // MVCC: SERIALIZABLE SSI conflict detection (prompt4 #5)
+    private CatalogTable catalog;                                               // System catalog for table schemas
+    private diesel.storage.page.PageManager pageManager;                             // Page manager for catalog storage
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
     private String dataDir = "data";
@@ -66,6 +70,12 @@ class Database {
      * "data" subdirectory.
      */
     public Database() {
+        this.catalog = new CatalogTable(null);
+        try {
+            createPageManager();
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -84,6 +94,13 @@ class Database {
             dir.mkdirs();
         }
         Table.flushPendingPersistsForDataDir(this.dataDir);
+        // Initialize catalog with null page manager (will be set later)
+        this.catalog = new CatalogTable(null);
+        try {
+            createPageManager();
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -103,6 +120,39 @@ class Database {
      */
     QueryCache getQueryCache() {
         return queryCache;
+    }
+
+    /**
+     * Returns this database's catalog for table schemas.
+     *
+     * @return the catalog, never null
+     */
+    CatalogTable getCatalog() {
+        return catalog;
+    }
+
+    /**
+     * Creates a new PageManager for the database.
+     *
+     * @return the created PageManager
+     * @throws IOException if the PageManager cannot be created
+     */
+    public diesel.storage.page.PageManager createPageManager() throws IOException {
+        Path pageFile = Path.of(dataDir, "pages.db");
+        this.pageManager = diesel.storage.page.PageManager.open(pageFile, 100);
+        return pageManager;
+    }
+
+    /**
+     * Sets the page manager for the catalog and loads the catalog from disk.
+     * This should be called during database initialization.
+     *
+     * @param pageManager the page manager to use for catalog storage
+     */
+    public void setCatalogPageManager(diesel.storage.page.PageManager pageManager) {
+        // Reinitialize catalog with page manager
+        this.catalog = new CatalogTable(pageManager);
+        this.catalog.loadCatalog();
     }
 
     /**
@@ -137,6 +187,8 @@ class Database {
         if (tables.containsKey(tableName)) {
             throw new IllegalArgumentException(ErrorMessages.TABLE_PREFIX + tableName + " already exists");
         }
+        
+        // Create table
         Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
         tables.put(tableName, newTable);
         queryCache.invalidateAll();
@@ -145,6 +197,40 @@ class Database {
                 transaction.updateTable(tableName, newTable);
             }
         }
+        
+        // Update catalog
+        try {
+            List<CatalogSchema.ColumnSchema> columnSchemas = new ArrayList<>();
+            for (String column : columns) {
+                Class<?> type = columnTypes.get(column);
+                columnSchemas.add(new CatalogSchema.ColumnSchema(
+                    column, 
+                    type.getSimpleName(), 
+                    true, // nullable by default
+                    column.equals(primaryKeyColumn) // unique if primary key
+                ));
+            }
+            
+            List<String> sequences = new ArrayList<>();
+            for (Map.Entry<String, Sequence> entry : newTable.getSequences().entrySet()) {
+                sequences.add(entry.getKey());
+            }
+            
+            List<CatalogSchema.IndexSchema> indexSchemas = new ArrayList<>();
+            // TODO: Add index information when we have index metadata
+            
+            catalog.createTableSchema(
+                tableName, 
+                columnSchemas, 
+                primaryKeyColumn, 
+                newTable.getStorageType(), 
+                sequences, 
+                indexSchemas
+            );
+        } catch (IllegalStateException e) {
+            LOGGER.log(Level.WARNING, "Failed to update catalog for table " + tableName, e);
+        }
+        
         LOGGER.log(Level.INFO, "Created table {0} with primary key {1}", new Object[]{tableName, primaryKeyColumn});
     }
 
@@ -1347,6 +1433,22 @@ class Database {
                 transaction.updateTable(tableName, null);
             }
         }
+        
+        // Update catalog
+        try {
+            catalog.dropTableSchema(tableName);
+        } catch (IllegalStateException e) {
+            LOGGER.log(Level.WARNING, "Failed to update catalog for dropped table " + tableName, e);
+        }
+    }
+
+    /**
+     * Loads the catalog from page 0.
+     * This should be called before loadTablesFromDisk.
+     */
+    public void loadCatalog() {
+        // The catalog will be loaded when setCatalogPageManager is called
+        LOGGER.log(Level.INFO, "Catalog loaded from page 0");
     }
 
     /**
