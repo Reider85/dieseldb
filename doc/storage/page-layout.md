@@ -154,12 +154,27 @@ The reserved fields and page type field support future enhancements:
 - **Defrag O(n)**: Linear in number of live tuples
 - **Memory overhead**: ~64 bytes per page (header only)
 
+## I/O Modes
+
+PageManager supports configurable I/O modes for page access:
+
+- **positional** (default): Heap ByteBuffer + FileChannel.read/write at exact offsets
+- **mapped**: FileChannel.map(READ_ONLY, offset, pageSize) for zero-copy read (fallback to positional on failure)
+- **odirect**: Reserved for Linux O_DIRECT (not implemented; falls back to positional with warning)
+
+Mode configuration: `page.io.mode` system property or `config.properties` (default: "positional").
+
 ## Testing Strategy
 
 Acceptance criteria (Prompt 6):
 1. **PageTest**: 8KB page, 100×50-byte rows, lossless round-trip
 2. **DefragTest**: 50 inserts + 25 deletes → defrag restores ≥30% free space
 3. **Page size configurable**: 8K/16K/64K pass tests
+
+Acceptance criteria (Prompt 8):
+4. **PageManagerTest**: Round-trip I/O, page allocation, 10k-page restart simulation, pool integration
+5. **PageManagerCrashTest**: Interrupted atomic writes leave target intact; flushed pages survive crash
+6. **PageManagerThroughputTest**: 50,000 pages/sec write rate with 256MB buffer
 
 Test coverage includes:
 - Round-trip serialization
@@ -169,3 +184,7 @@ Test coverage includes:
 - Configuration parsing (with fallback)
 - Corruption detection
 - Defragmentation accuracy and space reclamation
+- File I/O mode configuration and fallbacks
+- Atomic write/recovery semantics
+- BufferPool integration (hit/miss, dirty flush, eviction)
+- Performance benchmarks for production readiness

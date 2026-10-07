@@ -86,6 +86,9 @@ DefragTest	storage
 BufferPoolTest	storage
 BufferPoolStressTest	storage
 BufferPoolHitRateTest	storage
+PageManagerTest	storage
+PageManagerCrashTest	storage
+PageManagerThroughputTest	perf
 ConcurrentSaveTest	concurrency
 ConcurrentConflictTest	concurrency
 CopyOnWriteIsolationTest	concurrency
