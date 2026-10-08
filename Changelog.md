@@ -904,3 +904,5 @@ chore: test-profiles-audit changelog entry
 3.2.72 Background persist flusher + VacuumTest writer-latency fix: PersistFlusher daemon (diesel.persist.background/flush.interval.ms), snapshot-based non-blocking storage saves, VacuumTest clean-op classification hardened
 
 3.2.73 Implement WALWriter with single-writer thread, bounded queue, and backpressure
+
+3.2.74 Batch WAL segment writes for 67k-98k inserts/sec (50k/s perf gate), fix WALWriter.close() 30s stall, PersistFlusherTest format-agnostic file asserts; gates green: fast/core/perf/timing

@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
+import java.util.List;
 import java.util.zip.CRC32C;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -202,6 +203,55 @@ public final class WALSegment implements AutoCloseable {
         // Update first LSN if this is the first entry
         if (firstLsn == 0) {
             firstLsn = entry.getLsn();
+            rewriteHeader();
+        }
+    }
+
+    /**
+     * Appends a batch of WAL entries with a single channel write.
+     *
+     * <p>The batch is encoded into one buffer and written with as few
+     * {@code channel.write} calls as possible: a per-entry positional write
+     * costs ~12us on Windows, which caps single-entry throughput at ~85k/s;
+     * one write per batch removes that fixed cost (prompt4.md step 13).
+     *
+     * @param entries the entries to append, in LSN order; must not be empty
+     * @throws IOException if the entries cannot be written
+     */
+    public void appendBatch(List<WALEntry> entries) throws IOException {
+        if (entries.isEmpty()) {
+            return;
+        }
+        if (readOnly) {
+            throw new IllegalStateException("Cannot append to read-only segment");
+        }
+
+        ensureHeaderWritten();
+
+        long totalSize = 0;
+        for (WALEntry entry : entries) {
+            totalSize += entry.encodedSize();
+        }
+        if (writePosition + totalSize > Integer.MAX_VALUE) {
+            throw new IOException("Segment too large: position=" + writePosition +
+                    ", batchSize=" + totalSize);
+        }
+
+        ByteBuffer buffer = ByteBuffer.allocate((int) totalSize);
+        for (WALEntry entry : entries) {
+            entry.writeTo(buffer);
+        }
+        buffer.flip();
+
+        long filePos = writePosition;
+        while (buffer.hasRemaining()) {
+            filePos += channel.write(buffer, filePos);
+        }
+        writePosition += totalSize;
+
+        // Update first LSN if these are the first entries
+        if (firstLsn == 0) {
+            firstLsn = entries.get(0).getLsn();
             rewriteHeader();
         }
     }

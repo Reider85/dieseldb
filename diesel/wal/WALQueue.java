@@ -1,5 +1,6 @@
 package diesel.wal;
 
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
@@ -47,6 +48,34 @@ public final class WALQueue {
      */
     public WALWriteRequest take() throws InterruptedException {
         return queue.take();
+    }
+
+    /**
+     * Offers a write request without blocking. Returns {@code false} when the
+     * queue is full (callers then rely on the writer draining by itself).
+     *
+     * @param request the request to offer
+     * @return true if the request was enqueued
+     */
+    public boolean offer(WALWriteRequest request) {
+        if (!queue.offer(request)) {
+            return false;
+        }
+        updateMaxSizeSeen();
+        return true;
+    }
+
+    /**
+     * Drains up to {@code max} additional write requests from the queue into
+     * {@code target} without blocking. One lock acquisition per batch instead
+     * of one per request (prompt4.md step 13 batching).
+     *
+     * @param target the collection to drain requests into
+     * @param max the maximum number of requests to drain
+     * @return the number of requests drained
+     */
+    public int drainTo(List<WALWriteRequest> target, int max) {
+        return queue.drainTo(target, max);
     }
 
     /**

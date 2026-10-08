@@ -19,7 +19,7 @@ The `WALWriter` provides a single-writer thread for processing Write-Ahead Log e
 
 ### Thread Safety Model
 
-- **Writer thread only:** Calls `WALManager.append()`, `WALManager.allocateLsn()`, `WALManager.flush()`
+- **Writer thread only:** Calls `WALManager.appendBatch()`, `WALManager.allocateLsn()`, `WALManager.flush()`
 - **Producers only:** Enqueue `WALWriteRequest` objects, never touch WALManager file APIs
 - **Queue:** Thread-safe `ArrayBlockingQueue` with atomic backpressure counters
 - **Readers:** Should run after `flush()`/`close()` or tolerate concurrent `FileChannel` reads
@@ -92,6 +92,25 @@ WALWriteRequest request = new WALWriteRequest(txid, op, before, after, future, e
 long lsn = manager.allocateLsn();
 WALEntry entry = new WALEntry(lsn, txid, op, before, after);
 ```
+
+### Batched Segment Writes
+
+**Problem:** A per-entry positional `channel.write` costs ~12µs on Windows (~85k/s
+ceiling), leaving too little headroom for the 50k/s hard gate once queue handoff
+and future completion are added (~30k/s measured).
+
+**Solution:** The writer loop drains up to 256 requests per wakeup
+(`WALQueue.drainTo`) and hands the entries to `WALManager.appendBatch()`, which
+groups them into runs that fit the current segment; each run is encoded into one
+buffer and written with a single `channel.write` (`WALSegment.appendBatch`).
+Measured throughput: 67k–98k inserts/sec.
+
+**Invariants preserved:**
+- LSNs are still allocated at dequeue time, in queue order
+- A flush barrier splits the pending batch: prior entries are written first,
+  then `manager.flush()` runs, then the barrier future completes
+- Batch size is capped by count (256) and encoded bytes (4MB) to bound both
+  batch latency and buffer size; segment rotation happens at run boundaries
 
 ### Flush Barrier Semantics
 
@@ -217,6 +236,8 @@ try {
 ### Throughput Targets
 
 - **Minimum:** 50,000 inserts/sec (hard gate in `WALWriterThroughputTest`)
+- **Measured (batched writes):** 67,330 inserts/sec (8 threads, string payloads),
+  98,203 inserts/sec (16 threads, 4-byte payloads), 51,851 inserts/sec (4 threads, 1KB payloads)
 - **Queue limit:** Maximum 1,000 entries during sustained load
 - **Latency:** P99 measured in microseconds, ring buffer for low overhead
 
@@ -257,6 +278,8 @@ Monitor via `jconsole` or `visualvm`:
 - **Added:** `WALWriteRequest` immutable request records
 - **Added:** JMX metrics (queue size, latency p99, counts, errors)
 - **Added:** 3 test suites: WALWriterTest, WALBackpressureTest, WALWriterThroughputTest
+- **Added:** Batched segment writes (`WALManager.appendBatch` / `WALSegment.appendBatch`) for throughput
+- **Fixed:** `close()` enqueues a flush-barrier pill instead of stalling a 30s join
 - **Updated:** `WALConfig` with queue size settings
 - **Updated:** Configuration properties and test mappings
 - **Key feature:** LSN allocation at dequeue time for strict monotonicity

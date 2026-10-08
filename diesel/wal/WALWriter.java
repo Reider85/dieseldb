@@ -2,6 +2,8 @@ package diesel.wal;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -58,6 +60,10 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
     private static final AtomicInteger MBEAN_SEQUENCE = new AtomicInteger();
     /** Ring buffer size for p99 latency calculation (1024 samples ≈ 1MB at 8 bytes each). */
     private static final int LATENCY_RING_SIZE = 1024;
+    /** Max requests coalesced into one segment write (bounded to keep batch latency low). */
+    private static final int MAX_BATCH_ENTRIES = 256;
+    /** Max encoded bytes coalesced into one segment write (bounds the batch buffer). */
+    private static final long MAX_BATCH_BYTES = 4L * 1024 * 1024;
 
     private final WALManager manager;
     private final WALConfig config;
@@ -193,41 +199,64 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
     }
 
     /**
-     * The writer loop: dequeues requests and processes them.
+     * The writer loop: drains queued requests in batches and writes each batch
+     * to the segment with a single channel write.
+     *
+     * <p>A flush barrier splits the batch: everything queued before it is
+     * written first, then {@code WALManager.flush()} runs, then the barrier
+     * future completes — preserving the "flush waits for prior appends"
+     * contract regardless of batching.
      */
     private void writerLoop() {
+        List<WALWriteRequest> drained = new ArrayList<>(MAX_BATCH_ENTRIES);
+        List<WALWriteRequest> pendingRequests = new ArrayList<>(MAX_BATCH_ENTRIES);
+        List<WALEntry> pendingEntries = new ArrayList<>(MAX_BATCH_ENTRIES);
         try {
             while (running || !queue.isEmpty()) {
-                WALWriteRequest request = queue.take();
-                
-                if (request.isFlushBarrier()) {
-                    try {
-                        manager.flush();
-                        request.future().complete(null);
-                    } catch (Throwable t) {
-                        request.future().completeExceptionally(t);
-                        LOGGER.error("Flush barrier failed", t);
-                    }
-                    continue;
-                }
+                drained.clear();
+                drained.add(queue.take());
+                queue.drainTo(drained, MAX_BATCH_ENTRIES - 1);
 
-                try {
-                    long lsn = manager.allocateLsn();
-                    WALEntry entry = new WALEntry(lsn, request.txid(), request.op(), 
-                                                  request.before(), request.after());
-                    manager.append(entry);
-                    
-                    long latencyNanos = System.nanoTime() - request.enqueueNanos();
-                    recordLatency(latencyNanos);
-                    
-                    appendCount.incrementAndGet();
-                    request.future().complete(entry);
-                } catch (Throwable t) {
-                    appendErrors.incrementAndGet();
-                    request.future().completeExceptionally(t);
-                    LOGGER.error("Failed to append WAL entry for txid={}, op={}", 
-                               request.txid(), request.op(), t);
+                long pendingBytes = 0;
+                for (WALWriteRequest request : drained) {
+                    if (request.isFlushBarrier()) {
+                        writePending(pendingRequests, pendingEntries);
+                        pendingRequests.clear();
+                        pendingEntries.clear();
+                        pendingBytes = 0;
+                        try {
+                            manager.flush();
+                            request.future().complete(null);
+                        } catch (Throwable t) {
+                            request.future().completeExceptionally(t);
+                            LOGGER.error("Flush barrier failed", t);
+                        }
+                        continue;
+                    }
+
+                    try {
+                        long lsn = manager.allocateLsn();
+                        WALEntry entry = new WALEntry(lsn, request.txid(), request.op(),
+                                request.before(), request.after());
+                        pendingEntries.add(entry);
+                        pendingRequests.add(request);
+                        pendingBytes += entry.encodedSize();
+                        if (pendingEntries.size() >= MAX_BATCH_ENTRIES || pendingBytes >= MAX_BATCH_BYTES) {
+                            writePending(pendingRequests, pendingEntries);
+                            pendingRequests.clear();
+                            pendingEntries.clear();
+                            pendingBytes = 0;
+                        }
+                    } catch (Throwable t) {
+                        appendErrors.incrementAndGet();
+                        request.future().completeExceptionally(t);
+                        LOGGER.error("Failed to append WAL entry for txid={}, op={}",
+                                request.txid(), request.op(), t);
+                    }
                 }
+                writePending(pendingRequests, pendingEntries);
+                pendingRequests.clear();
+                pendingEntries.clear();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -236,6 +265,35 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
             LOGGER.error("Uncaught error in WAL writer thread", t);
         } finally {
             unregisterMBean();
+        }
+    }
+
+    /**
+     * Writes all pending entries as one batched segment write and completes
+     * their futures. Every future is always completed — either normally after
+     * the write, or exceptionally if the batch write fails.
+     *
+     * @param requests the requests matching {@code entries}, position by position
+     * @param entries the entries to write; no-op when empty
+     */
+    private void writePending(List<WALWriteRequest> requests, List<WALEntry> entries) {
+        if (entries.isEmpty()) {
+            return;
+        }
+        try {
+            manager.appendBatch(entries);
+            long completedAt = System.nanoTime();
+            for (int i = 0; i < entries.size(); i++) {
+                recordLatency(completedAt - requests.get(i).enqueueNanos());
+                appendCount.incrementAndGet();
+                requests.get(i).future().complete(entries.get(i));
+            }
+        } catch (Throwable t) {
+            appendErrors.addAndGet(entries.size());
+            for (WALWriteRequest request : requests) {
+                request.future().completeExceptionally(t);
+            }
+            LOGGER.error("Failed to append batch of {} WAL entries", entries.size(), t);
         }
     }
 
@@ -326,7 +384,13 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
         }
 
         running = false;
-        
+
+        // Wake the writer thread if it is parked in take() on an empty queue:
+        // a flush-barrier pill makes it run one final flush and then exit the
+        // loop (running == false and queue empty). If the queue is full the
+        // writer is draining anyway and will exit on its own.
+        queue.offer(WALWriteRequest.createFlushBarrier(new CompletableFuture<Void>()));
+
         // Wait for the writer thread to finish with a timeout
         try {
             writerThread.join(30_000); // 30 second timeout

@@ -209,6 +209,67 @@ public final class WALManager implements AutoCloseable {
     }
 
     /**
+     * Appends a batch of WAL entries in strictly increasing LSN order with as
+     * few segment writes as possible (prompt4.md step 13).
+     *
+     * <p>The batch is grouped into runs that fit the current segment; each run
+     * is encoded and written with one channel write. Segment rotation and
+     * checkpoint persistence behave exactly like repeated {@link #append(WALEntry)}.
+     *
+     * @param entries the entries to append, in strictly increasing LSN order
+     * @throws IOException if an entry cannot be written
+     * @throws IllegalArgumentException if the LSNs are not strictly increasing
+     */
+    public void appendBatch(List<WALEntry> entries) throws IOException {
+        if (entries.isEmpty()) {
+            return;
+        }
+
+        long previousLsn = lastAppendedLsn.get();
+        for (WALEntry entry : entries) {
+            if (entry.getLsn() <= previousLsn) {
+                throw new IllegalArgumentException("Entry LSN " + entry.getLsn() +
+                        " must be > last appended LSN " + previousLsn);
+            }
+            previousLsn = entry.getLsn();
+        }
+
+        List<WALEntry> run = new ArrayList<>(entries.size());
+        for (WALEntry entry : entries) {
+            if (currentSegment.getPosition() + entry.encodedSize() > config.getMaxSegmentSizeBytes()) {
+                appendRun(run);
+                run.clear();
+                rotateSegment();
+            }
+            run.add(entry);
+        }
+        appendRun(run);
+    }
+
+    /**
+     * Writes one run of consecutive entries as a single segment write and
+     * advances the appended/allocated LSN cursors plus the checkpoint counter.
+     *
+     * @param run the entries to write; no-op when empty
+     * @throws IOException if the run cannot be written
+     */
+    private void appendRun(List<WALEntry> run) throws IOException {
+        if (run.isEmpty()) {
+            return;
+        }
+        currentSegment.appendBatch(run);
+        long lastLsn = run.get(run.size() - 1).getLsn();
+        lastAppendedLsn.set(lastLsn);
+        lastAllocatedLsn.set(lastLsn);
+
+        persistCounter += run.size();
+        if (persistCounter >= 4096 || currentSegment.getPosition() > 1024 * 1024) {
+            persistCheckpointPtr();
+            persistCounter = 0;
+        }
+    }
+
+    /**
      * Rotates to the next segment.
      *
      * @throws IOException if the new segment cannot be created

@@ -13,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -47,8 +48,9 @@ class PersistFlusherTest {
                 db.executeQuery("INSERT INTO PF_BG (VAL) VALUES ('v" + i + "')", null);
             }
             assertEquals(200, table.getRawRowCount(), "in-memory rows must see all inserts");
-            assertTrue(table.hasPendingPersist(),
-                    "auto-commit inserts must mark the table dirty for write-behind");
+            assertTrue(table.hasPendingPersist() || findDataFile(tempDir, "PF_BG") != null,
+                    "auto-commit inserts must mark the table dirty for write-behind "
+                            + "(or already be flushed by it)");
 
             long deadline = System.currentTimeMillis() + 5_000;
             while (table.hasPendingPersist() && System.currentTimeMillis() < deadline) {
@@ -58,8 +60,8 @@ class PersistFlusherTest {
                     "background flusher must clear pending persist within 5s");
 
             Table.flushAllPendingPersists();
-            Path avro = tempDir.resolve("PF_BG.avro");
-            assertTrue(Files.exists(avro), "flushed writer table must exist on disk: " + avro);
+            Path dataFile = findDataFile(tempDir, "PF_BG");
+            assertNotNull(dataFile, "flushed writer table must exist on disk in tempDir");
             db.close();
         } finally {
             restore("diesel.persist.background", prevBackground);
@@ -87,8 +89,8 @@ class PersistFlusherTest {
             assertFalse(table.hasPendingPersist(),
                     "deferred=false must flush synchronously on each auto-commit DML");
             Table.flushAllPendingPersists();
-            assertTrue(Files.exists(tempDir.resolve("PF_SYNC.avro")),
-                    "sync path must have written the Avro file");
+            assertNotNull(findDataFile(tempDir, "PF_SYNC"),
+                    "sync path must have written the data file");
             db.close();
         } finally {
             restore("diesel.persist.background", prevBackground);
@@ -116,8 +118,8 @@ class PersistFlusherTest {
             Table table = db.getTable("PF_THR");
             assertFalse(table.hasPendingPersist(),
                     "background=false + threshold reached must sync-flush on the writer thread");
-            assertTrue(Files.exists(tempDir.resolve("PF_THR.avro")),
-                    "threshold sync flush must write the Avro file");
+            assertNotNull(findDataFile(tempDir, "PF_THR"),
+                    "threshold sync flush must write the data file");
             db.close();
         } finally {
             restore("diesel.persist.background", prevBackground);
@@ -168,7 +170,8 @@ class PersistFlusherTest {
                             + maxMs + " ms");
 
             Table.flushAllPendingPersists();
-            assertTrue(Files.exists(tempDir.resolve("PF_RACE.avro")));
+            assertNotNull(findDataFile(tempDir, "PF_RACE"),
+                    "background flush must write the data file");
             db.close();
         } finally {
             restore("diesel.persist.background", prevBackground);
@@ -182,5 +185,21 @@ class PersistFlusherTest {
         } else {
             System.setProperty(key, previous);
         }
+    }
+
+    /**
+     * Finds the persisted data file for {@code table} in {@code dir}, trying
+     * every storage-format extension. The active format comes from
+     * {@code storage.type} (tsv by default in config.properties), so asserting a
+     * single hardcoded extension only ever matches one profile.
+     */
+    private static Path findDataFile(Path dir, String table) {
+        for (String ext : new String[] {".tsv", ".csv", ".jsonl", ".avro", ".table"}) {
+            Path candidate = dir.resolve(table + ext);
+            if (Files.exists(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 }

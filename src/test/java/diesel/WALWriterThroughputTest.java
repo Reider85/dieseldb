@@ -1,6 +1,7 @@
 package diesel;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -212,6 +213,10 @@ class WALWriterThroughputTest {
                         for (int k = 0; k < payload.length; k++) {
                             payload[k] = (byte) (threadId * 100 + seq + k);
                         }
+                        // Embed provenance in the first 8 bytes: LSNs are assigned
+                        // in dequeue order, so they cannot be inverted to
+                        // (threadId, seq) when producers run concurrently.
+                        ByteBuffer.wrap(payload).putInt(0, threadId).putInt(4, seq);
                         writer.append(threadId, WALOpcode.INSERT, null, payload);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
@@ -246,12 +251,17 @@ class WALWriterThroughputTest {
         for (WALEntry entry : allEntries) {
             byte[] payload = entry.getAfterImage();
             assertEquals(1024, payload.length, "Payload size should be 1KB");
-            
-            // Verify payload pattern
-            int threadId = (int) ((entry.getLsn() - 1) / appendsPerThread);
-            int seq = (int) ((entry.getLsn() - 1) % appendsPerThread);
-            for (int k = 0; k < Math.min(10, payload.length); k++) {
-                assertEquals(threadId * 100 + seq + k, payload[k] & 0xFF, 
+
+            // Verify payload pattern using the embedded provenance header
+            ByteBuffer header = ByteBuffer.wrap(payload);
+            int threadId = header.getInt(0);
+            int seq = header.getInt(4);
+            assertTrue(threadId >= 0 && threadId < 4,
+                       "Embedded thread id out of range: " + threadId);
+            assertTrue(seq >= 0 && seq < appendsPerThread,
+                       "Embedded sequence out of range: " + seq);
+            for (int k = 8; k < 18; k++) {
+                assertEquals((threadId * 100 + seq + k) & 0xFF, payload[k] & 0xFF,
                            "Payload byte should match expected pattern");
             }
         }
