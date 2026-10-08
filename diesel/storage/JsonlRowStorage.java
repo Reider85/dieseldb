@@ -206,7 +206,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public List<Map<String, Object>> scan() {
+    public synchronized List<Map<String, Object>> scan() {
         ensureMaterialized();
         List<Map<String, Object>> result = new ArrayList<>(rows.size());
         for (Object[] row : rows) {
@@ -216,7 +216,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void insert(Map<String, Object> row) {
+    public synchronized void insert(Map<String, Object> row) {
         ensureMaterialized();
         Object[] arr = rowColumns.fromMap(row);
         rows.add(arr);
@@ -229,7 +229,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void insertAt(int rowIndex, Map<String, Object> row) {
+    public synchronized void insertAt(int rowIndex, Map<String, Object> row) {
         ensureMaterialized();
         Object[] arr = rowColumns.fromMap(row);
         rows.add(rowIndex, arr);
@@ -242,7 +242,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void update(int rowIndex, Map<String, Object> row) {
+    public synchronized void update(int rowIndex, Map<String, Object> row) {
         ensureMaterialized();
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = rowColumns.fromMap(row);
@@ -259,7 +259,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void delete(int rowIndex) {
+    public synchronized void delete(int rowIndex) {
         ensureMaterialized();
         if (writeMode == JsonParserConfig.WriteMode.APPEND && deltaManager != null) {
             deltaManager.onDelete(rowIndex, rows);
@@ -316,14 +316,20 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     @Override
     public void saveToFile(String tableName) {
-        ensureMaterialized();
-        if (writeMode == JsonParserConfig.WriteMode.APPEND) {
-            saveAppendMode(tableName);
-        } else {
-            saveRewriteMode(tableName);
-        }
-        if (isTableMirrorEnabled("jsonl.table.mirror")) {
-            saveSerialized(tableName);
+        // Whole-file rewrite under the instance lock: mutators are synchronized
+        // on this storage so the row list cannot be torn mid-write. Writers
+        // block only for this save (background flusher still keeps the cost
+        // off the auto-commit INSERT path).
+        synchronized (this) {
+            ensureMaterialized();
+            if (writeMode == JsonParserConfig.WriteMode.APPEND) {
+                saveAppendMode(tableName);
+            } else {
+                saveRewriteMode(tableName);
+            }
+            if (isTableMirrorEnabled("jsonl.table.mirror")) {
+                saveSerialized(tableName);
+            }
         }
     }
 
@@ -1082,7 +1088,7 @@ public class JsonlRowStorage extends AbstractRowStorage {
 
     /** Replaces the internal row list. Used by compaction (prompt 49). */
     @Override
-    public void setRows(List<Map<String, Object>> newRows) {
+    public synchronized void setRows(List<Map<String, Object>> newRows) {
         dropDeferredState();
         rows.clear();
         rowPresence.clear();

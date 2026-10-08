@@ -2971,17 +2971,19 @@ class Table implements Serializable {
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
-        persistDirty = false;
-        pendingPersistCount = 0;
         tableLock.writeLock().lock();
         try {
             if (storage != null && !(storage instanceof InMemoryRowStorage)) {
                 storage.saveToFile(tableName);
+                persistDirty = false;
+                pendingPersistCount = 0;
                 return;
             }
             if (storage == null || inMemoryPersistEnabled()) {
                 writeLegacyCsv(tableName);
             }
+            persistDirty = false;
+            pendingPersistCount = 0;
         } finally {
             tableLock.writeLock().unlock();
         }
@@ -2994,15 +2996,23 @@ class Table implements Serializable {
     /*  so an insert burst of N rows used to cost N whole-file writes     */
     /*  (O(N^2) bytes). Auto-commit DML now marks the table dirty and     */
     /*  folds the burst into a single write. Reads are served from the    */
-    /*  in-memory rows, so read-your-writes is unaffected; the file is     */
-    /*  flushed before anything can observe it from the outside:         */
-    /*  explicit saveToFile / COMMIT, DDL, loadTablesFromDisk, the        */
-    /*  pending-row threshold and the JVM shutdown hook.                  */
+    /*  in-memory rows, so read-your-writes is unaffected.               */
+    /*                                                                   */
+    /*  With diesel.persist.background=true (default) the whole-file      */
+    /*  rewrite runs on the diesel-persist-flusher daemon so writer       */
+    /*  threads are not stalled by file IO. The file is still flushed     */
+    /*  before anything can observe it from the outside: explicit         */
+    /*  saveToFile / COMMIT, DDL, loadTablesFromDisk, Database.close,    */
+    /*  the pending-row threshold (signals the flusher), and the JVM      */
+    /*  shutdown hook. Set background=false or deferred=false to restore  */
+    /*  synchronous on-writer flushes.                                    */
     /* ------------------------------------------------------------------ */
 
     /**
      * Auto-commit persist that coalesces a burst of mutations into one
-     * whole-file write. Writes immediately when
+     * whole-file write. With background persistence enabled the writer only
+     * marks the table dirty and wakes {@link PersistFlusher}; otherwise the
+     * write runs immediately when
      * {@code diesel.persist.max.pending} mutations are still unwritten, when
      * {@code diesel.persist.deferred} is {@code false}, or when the storage
      * keeps no durable file (in-memory tables without
@@ -3020,10 +3030,18 @@ class Table implements Serializable {
             persistDirty = true;
             flushNow = pendingPersistCount >= persistMaxPending();
         }
-        if (flushNow || !persistDeferredEnabled()) {
+        boolean background = PersistFlusher.backgroundEnabled();
+        if (!persistDeferredEnabled() || !background) {
             flushPendingPersist(tableName);
+            return;
+        }
+        registerPendingPersist(this);
+        PersistFlusher.signal();
+        if (flushNow) {
+            LOGGER.log(Level.FINE,
+                    "Coalesced persist for table {0} signaled flusher ({1} pending mutations)",
+                    new Object[]{name, pendingPersistCount});
         } else {
-            registerPendingPersist(this);
             LOGGER.log(Level.FINE, "Coalesced persist for table {0} ({1} pending mutations)",
                     new Object[]{name, pendingPersistCount});
         }
@@ -3031,13 +3049,21 @@ class Table implements Serializable {
 
     /**
      * Writes the pending whole-file persist, if any. Safe to call when clean.
+     * Re-registers the table when the write fails so a later flush retries.
      */
     public void flushPendingPersist(String tableName) {
         if (!persistDirty) {
             return;
         }
         unregisterPendingPersist(this);
-        saveToFile(tableName);
+        try {
+            saveToFile(tableName);
+        } catch (RuntimeException e) {
+            if (persistDirty) {
+                registerPendingPersist(this);
+            }
+            throw e;
+        }
     }
 
     /**
@@ -3084,6 +3110,7 @@ class Table implements Serializable {
 
     private static void registerPendingPersist(Table table) {
         PENDING_PERSISTS.computeIfAbsent(table.database.getDataDir(), k -> ConcurrentHashMap.newKeySet()).add(table);
+        PersistFlusher.ensureStarted();
     }
 
     private static void unregisterPendingPersist(Table table) {
@@ -3115,7 +3142,7 @@ class Table implements Serializable {
     }
 
     /** Sysprop overrides {@code config.properties}, matching the storage-type lookup. */
-    private static String resolvePersistConfig(String key, String defaultValue) {
+    static String resolvePersistConfig(String key, String defaultValue) {
         String sysprop = System.getProperty(key);
         if (sysprop != null && !sysprop.isBlank()) {
             return sysprop;
@@ -3124,7 +3151,10 @@ class Table implements Serializable {
     }
 
     static {
-        Runtime.getRuntime().addShutdownHook(new Thread(Table::flushAllPendingPersists, "diesel-persist-flush"));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            PersistFlusher.shutdown();
+            Table.flushAllPendingPersists();
+        }, "diesel-persist-flush"));
     }
 
     /**

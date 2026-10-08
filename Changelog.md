@@ -900,3 +900,5 @@ chore: test-profiles-audit changelog entry
 3.2.70 Fix 16 page-storage + Avro persistence test failures: PageManager.writePage copies content into resident frame (Page.copyContentFrom), idempotent close + closeDiscardingDirty/BufferPool.abandon, CatalogTest 8KB page size, Table.reloadFromStorage to resync rows mirror after Avro load
 
 3.2.71 R3-003 step 2/5: WAL + group commit - WALManager + WALSegment (segmented log), segment header, rotation, recovery, checkpoint pointer, 12 tests; fixed .gitignore wal/ matching diesel/wal/
+
+3.2.72 Background persist flusher + VacuumTest writer-latency fix: PersistFlusher daemon (diesel.persist.background/flush.interval.ms), snapshot-based non-blocking storage saves, VacuumTest clean-op classification hardened

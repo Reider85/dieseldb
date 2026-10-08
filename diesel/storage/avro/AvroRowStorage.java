@@ -191,7 +191,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     public void close() { }
 
     @Override
-    public List<Map<String, Object>> scan() {
+    public synchronized List<Map<String, Object>> scan() {
         List<Map<String, Object>> result = new ArrayList<>(rows.size());
         for (Object[] row : rows) {
             result.add(toMap(row));
@@ -200,7 +200,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void insert(Map<String, Object> row) {
+    public synchronized void insert(Map<String, Object> row) {
         Object[] arr = fromMap(row);
         int rowIndex = rows.size();
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
@@ -212,7 +212,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void insertAt(int rowIndex, Map<String, Object> row) {
+    public synchronized void insertAt(int rowIndex, Map<String, Object> row) {
         Object[] arr = fromMap(row);
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.validateInsert(arr, rowIndex);
@@ -228,7 +228,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void update(int rowIndex, Map<String, Object> row) {
+    public synchronized void update(int rowIndex, Map<String, Object> row) {
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = fromMap(row);
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
@@ -244,7 +244,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void delete(int rowIndex) {
+    public synchronized void delete(int rowIndex) {
         Object[] row = rows.get(rowIndex);
         rows.remove(rowIndex);
         syncIndexDelete(rowIndex);
@@ -257,7 +257,7 @@ public class AvroRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void setRows(List<Map<String, Object>> newRows) {
+    public synchronized void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
         for (Map<String, Object> row : newRows) {
             rows.add(fromMap(row));
@@ -272,20 +272,33 @@ public class AvroRowStorage extends AbstractRowStorage {
 
     // ─── Persistence ────────────────────────────────────────────────
 
+    /**
+     * Writes the Avro data file from a row snapshot taken under the instance
+     * lock, then writes schema/index sidecars. Concurrent {@link #insert} /
+     * {@link #delete} only block for the snapshot copy, not for file IO, so a
+     * background persist flusher does not stall the writer thread.
+     */
     @Override
     public void saveToFile(String tableName) {
-        Schema schema = buildNullableSchema(tableName, columns, columnTypes);
+        List<Object[]> snapshot;
+        Schema schema;
+        synchronized (this) {
+            snapshot = new ArrayList<>(rows);
+            schema = buildNullableSchema(tableName, columns, columnTypes);
+        }
         File avroFile = new File(resolveAvroFilePath());
         try {
             File parent = avroFile.getParentFile();
             if (parent != null) parent.mkdirs();
-            writeAvroFileEfficient(avroFile, schema);
+            writeAvroFileEfficient(avroFile, schema, snapshot);
             writeSchemaSidecar(tableName, schema);
-            savePrimaryKeySidecar(avroFile);
-            saveSecondaryIndexes(avroFile);
+            synchronized (this) {
+                savePrimaryKeySidecar(avroFile);
+                saveSecondaryIndexes(avroFile);
+            }
             fileInitialized = true;
             LOGGER.info("AvroRowStorage {} saved Avro to {} with {} rows",
-                    tableName, avroFile.getPath(), rows.size());
+                    tableName, avroFile.getPath(), snapshot.size());
         } catch (IOException e) {
             throw new DieselIOException("Failed to save table to Avro file: " + avroFile.getPath(), e);
         }
@@ -298,33 +311,42 @@ public class AvroRowStorage extends AbstractRowStorage {
             LOGGER.info("Avro file {} not found for storage {}", avroFile.getPath(), tableName);
             return;
         }
-        List<Object[]> previous = new ArrayList<>(rows);
+        List<Object[]> previous;
+        synchronized (this) {
+            previous = new ArrayList<>(rows);
+        }
         try {
             List<Object[]> loaded = readAvroFile(avroFile, tableName);
-            rows.clear();
-            rows.addAll(loaded);
-            fileInitialized = true;
+            synchronized (this) {
+                rows.clear();
+                rows.addAll(loaded);
+                fileInitialized = true;
+                syncIndexBulkFromArrays(rows);
+                loadPrimaryKeySidecar(avroFile);
+                loadSecondaryIndexes(avroFile);
+            }
             LOGGER.info("AvroRowStorage {} loaded Avro from {} with {} rows",
-                    tableName, avroFile.getPath(), rows.size());
-            syncIndexBulkFromArrays(rows);
-            loadPrimaryKeySidecar(avroFile);
-            loadSecondaryIndexes(avroFile);
+                    tableName, avroFile.getPath(), loaded.size());
         } catch (DieselIOException e) {
-            rows.clear();
-            rows.addAll(previous);
+            synchronized (this) {
+                rows.clear();
+                rows.addAll(previous);
+            }
             throw e;
         } catch (IOException e) {
-            rows.clear();
-            rows.addAll(previous);
+            synchronized (this) {
+                rows.clear();
+                rows.addAll(previous);
+            }
             throw new DieselIOException("Failed to load table from Avro file: " + avroFile.getPath(), e);
         }
     }
 
     // ─── Avro file I/O ──────────────────────────────────────────────
 
-    private void writeAvroFileEfficient(File target, Schema schema) throws IOException {
+    private void writeAvroFileEfficient(File target, Schema schema, List<Object[]> snapshot) throws IOException {
         AvroCompressionConfig compression = AvroCompressionConfig.resolve();
-        String effectiveCodec = compression.effectiveCodec(rows);
+        String effectiveCodec = compression.effectiveCodec(snapshot);
         org.apache.avro.file.CodecFactory codecFactory =
                 AvroCodecFactory.factory(effectiveCodec, compression.level());
         AvroFileHeader header = buildFileHeader(effectiveCodec, compression.level());
@@ -346,7 +368,7 @@ public class AvroRowStorage extends AbstractRowStorage {
             }
             try {
                 dataFileWriter.create(schema, nonClosing);
-                for (Object[] row : rows) {
+                for (Object[] row : snapshot) {
                     GenericRecord avroRecord = toRecord(row, schema);
                     dataFileWriter.append(avroRecord);
                 }

@@ -82,7 +82,7 @@ public class TsvRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public List<Map<String, Object>> scan() {
+    public synchronized List<Map<String, Object>> scan() {
         List<Map<String, Object>> result = new ArrayList<>(rows.size());
         for (Object[] row : rows) {
             result.add(rowColumns.toMap(row));
@@ -91,21 +91,21 @@ public class TsvRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void insert(Map<String, Object> row) {
+    public synchronized void insert(Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(arr);
         syncIndexAppend(arr, rows.size() - 1);
     }
 
     @Override
-    public void insertAt(int rowIndex, Map<String, Object> row) {
+    public synchronized void insertAt(int rowIndex, Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(rowIndex, arr);
         syncIndexInsert(arr, rowIndex);
     }
 
     @Override
-    public void update(int rowIndex, Map<String, Object> row) {
+    public synchronized void update(int rowIndex, Map<String, Object> row) {
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = rowColumns.fromMap(row);
         rows.set(rowIndex, newRow);
@@ -113,7 +113,7 @@ public class TsvRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void delete(int rowIndex) {
+    public synchronized void delete(int rowIndex) {
         rows.remove(rowIndex);
         syncIndexDelete(rowIndex);
     }
@@ -122,9 +122,15 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     @Override
     public void saveToFile(String tableName) {
-        saveTsv(tableName);
+        List<Object[]> snapshot;
+        synchronized (this) {
+            snapshot = new ArrayList<>(rows);
+        }
+        saveTsv(tableName, snapshot);
         if (isTableMirrorEnabled("tsv.table.mirror")) {
-            saveSerialized(tableName);
+            synchronized (this) {
+                saveSerialized(tableName);
+            }
         }
     }
 
@@ -156,19 +162,19 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     // ─── TSV persistence ───────────────────────────────────────────
 
-    private void saveTsv(String tableName) {
+    private void saveTsv(String tableName, List<Object[]> snapshot) {
         CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
         File base = new File(resolveFilePath(".tsv"));
         String fileName = CompressionFactory.delimitedWriteTarget(base, codec).getPath();
         try {
             if (codec.isNone()) {
-                saveTsvPlain(fileName);
+                saveTsvPlain(fileName, snapshot);
             } else {
-                saveTsvCompressed(fileName, codec);
+                saveTsvCompressed(fileName, codec, snapshot);
             }
             fileInitialized = true;
             LOGGER.info("TsvRowStorage {} saved TSV to {} with {} rows",
-                    tableName, fileName, rows.size());
+                    tableName, fileName, snapshot.size());
         } catch (IOException e) {
             LOGGER.error("Failed to save TSV for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to TSV file: " + fileName, e);
@@ -176,11 +182,11 @@ public class TsvRowStorage extends AbstractRowStorage {
     }
 
     /** Writes the plain (uncompressed) TSV file - the pre-prompt-39 format. */
-    private void saveTsvPlain(String fileName) throws IOException {
+    private void saveTsvPlain(String fileName, List<Object[]> snapshot) throws IOException {
         try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
              TsvRowWriter tsvWriter = new TsvRowWriter(afw.bufferedWriter(), columns, columnTypes)) {
             tsvWriter.writeHeader();
-            for (Object[] row : rows) {
+            for (Object[] row : snapshot) {
                 tsvWriter.writeRow(row);
             }
             tsvWriter.flush();
@@ -193,14 +199,14 @@ public class TsvRowStorage extends AbstractRowStorage {
      * finishes its frame (and is closed) before {@link AtomicFileWriter#commit()}
      * so the fsync'd file is complete and self-contained.
      */
-    private void saveTsvCompressed(String fileName, CompressionCodec codec) throws IOException {
+    private void saveTsvCompressed(String fileName, CompressionCodec codec, List<Object[]> snapshot) throws IOException {
         try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
             OutputStream compressed = codec.wrapOutputStream(CompressionFactory.nonClosing(afw.outputStream()));
             try (BufferedWriter writer = new BufferedWriter(
                     new OutputStreamWriter(compressed, StorageConfig.getCharset()), StorageConfig.bufferSize());
                  TsvRowWriter tsvWriter = new TsvRowWriter(writer, columns, columnTypes)) {
                 tsvWriter.writeHeader();
-                for (Object[] row : rows) {
+                for (Object[] row : snapshot) {
                     tsvWriter.writeRow(row);
                 }
                 tsvWriter.flush();
@@ -325,7 +331,7 @@ public class TsvRowStorage extends AbstractRowStorage {
 
     /** Replaces the internal row list. */
     @Override
-    public void setRows(List<Map<String, Object>> newRows) {
+    public synchronized void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
         for (Map<String, Object> row : newRows) {
             rows.add(rowColumns.fromMap(row));

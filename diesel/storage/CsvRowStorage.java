@@ -80,7 +80,7 @@ public class CsvRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public List<Map<String, Object>> scan() {
+    public synchronized List<Map<String, Object>> scan() {
         List<Map<String, Object>> result = new ArrayList<>(rows.size());
         for (Object[] row : rows) {
             result.add(rowColumns.toMap(row));
@@ -89,21 +89,21 @@ public class CsvRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void insert(Map<String, Object> row) {
+    public synchronized void insert(Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(arr);
         syncIndexAppend(arr, rows.size() - 1);
     }
 
     @Override
-    public void insertAt(int rowIndex, Map<String, Object> row) {
+    public synchronized void insertAt(int rowIndex, Map<String, Object> row) {
         Object[] arr = rowColumns.fromMap(row);
         rows.add(rowIndex, arr);
         syncIndexInsert(arr, rowIndex);
     }
 
     @Override
-    public void update(int rowIndex, Map<String, Object> row) {
+    public synchronized void update(int rowIndex, Map<String, Object> row) {
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = rowColumns.fromMap(row);
         rows.set(rowIndex, newRow);
@@ -111,7 +111,7 @@ public class CsvRowStorage extends AbstractRowStorage {
     }
 
     @Override
-    public void delete(int rowIndex) {
+    public synchronized void delete(int rowIndex) {
         rows.remove(rowIndex);
         syncIndexDelete(rowIndex);
     }
@@ -120,9 +120,15 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     @Override
     public void saveToFile(String tableName) {
-        saveCsv(tableName);
+        List<Object[]> snapshot;
+        synchronized (this) {
+            snapshot = new ArrayList<>(rows);
+        }
+        saveCsv(tableName, snapshot);
         if (isTableMirrorEnabled("csv.table.mirror")) {
-            saveSerialized(tableName);
+            synchronized (this) {
+                saveSerialized(tableName);
+            }
         }
     }
 
@@ -154,19 +160,19 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     // ─── CSV persistence ────────────────────────────────────────────
 
-    private void saveCsv(String tableName) {
+    private void saveCsv(String tableName, List<Object[]> snapshot) {
         CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
         File base = new File(resolveFilePath(".csv"));
         String fileName = CompressionFactory.delimitedWriteTarget(base, codec).getPath();
         try {
             if (codec.isNone()) {
-                saveCsvPlain(fileName);
+                saveCsvPlain(fileName, snapshot);
             } else {
-                saveCsvCompressed(fileName, codec);
+                saveCsvCompressed(fileName, codec, snapshot);
             }
             fileInitialized = true;
             LOGGER.info("CsvRowStorage {} saved CSV to {} with {} rows",
-                    tableName, fileName, rows.size());
+                    tableName, fileName, snapshot.size());
         } catch (IOException e) {
             LOGGER.error("Failed to save CSV for {}: {}", tableName, fileName);
             throw new DieselIOException("Failed to save table to CSV file: " + fileName, e);
@@ -174,11 +180,11 @@ public class CsvRowStorage extends AbstractRowStorage {
     }
 
     /** Writes the plain (uncompressed) CSV file - the pre-prompt-39 format. */
-    private void saveCsvPlain(String fileName) throws IOException {
+    private void saveCsvPlain(String fileName, List<Object[]> snapshot) throws IOException {
         try (AtomicFileWriter afw = AtomicFileWriter.openText(new File(fileName));
              CsvRowWriter csvWriter = new CsvRowWriter(afw.bufferedWriter(), columns, columnTypes)) {
             csvWriter.writeHeader();
-            for (Object[] row : rows) {
+            for (Object[] row : snapshot) {
                 csvWriter.writeRow(row);
             }
             csvWriter.flush();
@@ -191,14 +197,14 @@ public class CsvRowStorage extends AbstractRowStorage {
      * finishes its frame (and is closed) before {@link AtomicFileWriter#commit()}
      * so the fsync'd file is complete and self-contained.
      */
-    private void saveCsvCompressed(String fileName, CompressionCodec codec) throws IOException {
+    private void saveCsvCompressed(String fileName, CompressionCodec codec, List<Object[]> snapshot) throws IOException {
         try (AtomicFileWriter afw = AtomicFileWriter.openBinary(new File(fileName))) {
             OutputStream compressed = codec.wrapOutputStream(CompressionFactory.nonClosing(afw.outputStream()));
             try (BufferedWriter writer = new BufferedWriter(
                     new OutputStreamWriter(compressed, StorageConfig.getCharset()), StorageConfig.bufferSize());
                  CsvRowWriter csvWriter = new CsvRowWriter(writer, columns, columnTypes)) {
                 csvWriter.writeHeader();
-                for (Object[] row : rows) {
+                for (Object[] row : snapshot) {
                     csvWriter.writeRow(row);
                 }
                 csvWriter.flush();
@@ -342,7 +348,7 @@ public class CsvRowStorage extends AbstractRowStorage {
 
     /** Replaces the internal row list. */
     @Override
-    public void setRows(List<Map<String, Object>> newRows) {
+    public synchronized void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
         for (Map<String, Object> row : newRows) {
             rows.add(rowColumns.fromMap(row));
