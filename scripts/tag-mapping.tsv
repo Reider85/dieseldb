@@ -147,6 +147,9 @@ TransactionTableSnapshotTest	concurrency
 SerializationConflictTest	concurrency
 WALEntryTest	storage
 WALManagerTest	storage,smoke
+SegmentRotationTest	storage,smoke
+ArchiveTest	storage,smoke
+RetentionTest	storage,smoke
 WALWriterTest	storage,smoke
 WALBackpressureTest	storage,smoke
 WALWriterThroughputTest	perf

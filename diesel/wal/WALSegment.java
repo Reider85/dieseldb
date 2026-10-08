@@ -6,6 +6,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileAttribute;
 import java.util.List;
 import java.util.zip.CRC32C;
@@ -27,6 +28,7 @@ public final class WALSegment implements AutoCloseable {
     private final int segmentNumber;
     private final Path filePath;
     private final boolean readOnly;
+    private final long createdAtEpochMs;
     private FileChannel channel;
     private long writePosition;
     private boolean headerWritten;
@@ -43,7 +45,7 @@ public final class WALSegment implements AutoCloseable {
     public static WALSegment create(Path dir, int segmentNumber) throws IOException {
         Path filePath = dir.resolve("wal-" + String.format("%04d", segmentNumber) + ".log");
         Files.createFile(filePath);
-        return openInternal(filePath, segmentNumber, false);
+        return openInternal(filePath, segmentNumber, false, System.currentTimeMillis());
     }
 
     /**
@@ -57,11 +59,27 @@ public final class WALSegment implements AutoCloseable {
      */
     public static WALSegment open(Path dir, int segmentNumber, boolean readOnly) throws IOException {
         Path filePath = dir.resolve("wal-" + String.format("%04d", segmentNumber) + ".log");
-        return openInternal(filePath, segmentNumber, readOnly);
+        long createdAtEpochMs = System.currentTimeMillis(); // Fallback
+        try {
+            BasicFileAttributes attrs = Files.readAttributes(filePath, BasicFileAttributes.class);
+            createdAtEpochMs = attrs.creationTime().toMillis();
+        } catch (IOException e) {
+            // Fallback to last modified time if creation time is not available
+            try {
+                createdAtEpochMs = Files.getLastModifiedTime(filePath).toMillis();
+            } catch (IOException ignored) {
+                // Keep fallback to current time
+            }
+        }
+        return openInternal(filePath, segmentNumber, readOnly, createdAtEpochMs);
     }
 
     private static WALSegment openInternal(Path filePath, int segmentNumber, boolean readOnly) throws IOException {
-        WALSegment segment = new WALSegment(segmentNumber, filePath, readOnly);
+        return openInternal(filePath, segmentNumber, readOnly, System.currentTimeMillis());
+    }
+
+    private static WALSegment openInternal(Path filePath, int segmentNumber, boolean readOnly, long createdAtEpochMs) throws IOException {
+        WALSegment segment = new WALSegment(segmentNumber, filePath, readOnly, createdAtEpochMs);
         segment.channel = readOnly
                 ? FileChannel.open(filePath, StandardOpenOption.READ)
                 : FileChannel.open(filePath, StandardOpenOption.READ, StandardOpenOption.WRITE,
@@ -71,10 +89,11 @@ public final class WALSegment implements AutoCloseable {
         return segment;
     }
 
-    private WALSegment(int segmentNumber, Path filePath, boolean readOnly) {
+    private WALSegment(int segmentNumber, Path filePath, boolean readOnly, long createdAtEpochMs) {
         this.segmentNumber = segmentNumber;
         this.filePath = filePath;
         this.readOnly = readOnly;
+        this.createdAtEpochMs = createdAtEpochMs;
     }
 
     /**
@@ -403,6 +422,17 @@ public final class WALSegment implements AutoCloseable {
      */
     public boolean isReadOnly() {
         return readOnly;
+    }
+
+    /**
+     * Returns the creation time of this segment in milliseconds since epoch.
+     * For opened segments, this is the file creation time (or last modified time as fallback).
+     * For newly created segments, this is the current time.
+     *
+     * @return creation time in milliseconds since epoch
+     */
+    public long getCreatedAtEpochMs() {
+        return createdAtEpochMs;
     }
 
     /**

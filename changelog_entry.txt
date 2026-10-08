@@ -1,1 +1,1 @@
-3.2.74 Batch WAL segment writes for 67k-98k inserts/sec (50k/s perf gate), fix WALWriter.close() 30s stall, PersistFlusherTest format-agnostic file asserts; gates green: fast/core/perf/timing
+3.2.75 Prompt 4 #14: WAL segment rotation (size+age) + gzip archiving with retention; 20 new tests (SegmentRotation/Archive/Retention), fast+core gates green

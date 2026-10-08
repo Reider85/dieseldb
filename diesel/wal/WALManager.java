@@ -8,12 +8,14 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,10 +32,14 @@ import org.slf4j.LoggerFactory;
 public final class WALManager implements AutoCloseable {
 
     private final WALConfig config;
+    private final Clock clock;
+    private final WALSegmentRotator rotator;
+    private final WALArchiver archiver;
     private final AtomicLong lastAppendedLsn = new AtomicLong(0);
     private final AtomicLong lastAllocatedLsn = new AtomicLong(0);
     private final NavigableMap<Integer, WALSegment> segments = new TreeMap<>();
     private WALSegment currentSegment;
+    private final AtomicInteger currentSegmentNumber = new AtomicInteger(0);
     private int nextSegmentNumber = 1;
     private int persistCounter = 0;
 
@@ -44,7 +50,21 @@ public final class WALManager implements AutoCloseable {
      * @throws IOException if the WAL directory cannot be created or opened
      */
     public WALManager(WALConfig config) throws IOException {
+        this(config, Clock.systemUTC());
+    }
+
+    /**
+     * Creates a WALManager with the given configuration and clock (for testing).
+     *
+     * @param config the WAL configuration
+     * @param clock the clock for age-based rotation and retention
+     * @throws IOException if the WAL directory cannot be created or opened
+     */
+    public WALManager(WALConfig config, Clock clock) throws IOException {
         this.config = config;
+        this.clock = clock;
+        this.rotator = WALSegmentRotator.create(config, clock);
+        this.archiver = WALArchiver.create(config, this, clock);
         
         // Ensure WAL directory exists
         Path walDir = config.getWalDir();
@@ -67,8 +87,14 @@ public final class WALManager implements AutoCloseable {
             nextSegmentNumber++;
         }
         
+        // Update current segment number for archiver
+        currentSegmentNumber.set(currentSegment.getNumber());
+        
         // Recover LSN from checkpoint.ptr and segments
         recoverLsn();
+        
+        // Start archiver daemon
+        archiver.start();
     }
 
     /**
@@ -189,9 +215,9 @@ public final class WALManager implements AutoCloseable {
                     " must be > last appended LSN " + lastLsn);
         }
 
-        // Check if we need to rotate the segment
+        // Check if we need to rotate the segment (size or age)
         int entrySize = entry.encodedSize();
-        if (currentSegment.getPosition() + entrySize > config.getMaxSegmentSizeBytes()) {
+        if (rotator.shouldRotate(currentSegment, entrySize)) {
             rotateSegment();
         }
 
@@ -283,6 +309,9 @@ public final class WALManager implements AutoCloseable {
         currentSegment = WALSegment.create(config.getWalDir(), nextSegmentNumber);
         segments.put(nextSegmentNumber, currentSegment);
         nextSegmentNumber++;
+        
+        // Update current segment number for archiver
+        currentSegmentNumber.set(currentSegment.getNumber());
         
         LOGGER.debug("Rotated to segment {}", currentSegment.getNumber());
     }
@@ -493,18 +522,51 @@ public final class WALManager implements AutoCloseable {
 
     /**
      * Closes this WAL manager.
-     * Flushes all segments and closes all file channels.
+     * Stops the archiver daemon, flushes all segments, and closes all file channels.
      *
      * @throws IOException if the close fails
      */
     @Override
     public void close() throws IOException {
+        // Stop archiver daemon first (no final cycle to preserve files for restart)
+        archiver.close();
+        
         flush();
         for (WALSegment segment : segments.values()) {
             segment.close();
         }
         segments.clear();
         LOGGER.debug("WALManager closed");
+    }
+
+    /**
+     * Returns the current segment number (for archiver use).
+     *
+     * @return the current segment number
+     */
+    public int getCurrentSegmentNumber() {
+        return currentSegmentNumber.get();
+    }
+
+    /**
+     * Returns the WAL archiver (for testing and manual archiving).
+     *
+     * @return the archiver
+     */
+    public WALArchiver getArchiver() {
+        return archiver;
+    }
+
+    /**
+     * Forces rotation of the current segment if it has content.
+     * Useful for manual rotation or testing.
+     *
+     * @throws IOException if rotation fails
+     */
+    public void forceRotate() throws IOException {
+        if (rotator.forceRotate(currentSegment)) {
+            rotateSegment();
+        }
     }
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WALManager.class);
