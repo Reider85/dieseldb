@@ -30,19 +30,27 @@ public final class WALConfig {
     public static final String DIR_KEY = "wal.dir";
     /** Config key for WAL segment max size in megabytes. */
     public static final String SEGMENT_MAX_SIZE_MB_KEY = "wal.segment.max.size.mb";
+    /** Config key for WAL queue max size. */
+    public static final String QUEUE_MAX_SIZE_KEY = "wal.queue.max.size";
     /** Default WAL directory (relative to working directory). */
     public static final String DEFAULT_DIR = "./wal";
     /** Default segment max size in megabytes. */
     public static final int DEFAULT_SEGMENT_MAX_SIZE_MB = 64;
+    /** Default queue max size. */
+    public static final long DEFAULT_QUEUE_MAX_SIZE = 100_000;
     /** Minimum segment size in bytes (1MB). */
     public static final long MIN_SEGMENT_SIZE_BYTES = 1024 * 1024;
+    /** Minimum queue max size. */
+    public static final long MIN_QUEUE_MAX_SIZE = 1;
 
     private final Path walDir;
     private final long maxSegmentSizeBytes;
+    private final long queueMaxSize;
 
-    private WALConfig(Path walDir, long maxSegmentSizeBytes) {
+    private WALConfig(Path walDir, long maxSegmentSizeBytes, long queueMaxSize) {
         this.walDir = walDir;
         this.maxSegmentSizeBytes = maxSegmentSizeBytes;
+        this.queueMaxSize = queueMaxSize;
     }
 
     /**
@@ -61,6 +69,15 @@ public final class WALConfig {
      */
     public long getMaxSegmentSizeBytes() {
         return maxSegmentSizeBytes;
+    }
+
+    /**
+     * Returns the maximum queue size.
+     *
+     * @return max queue size
+     */
+    public long getQueueMaxSize() {
+        return queueMaxSize;
     }
 
     /**
@@ -97,7 +114,26 @@ public final class WALConfig {
             sizeBytes = DEFAULT_SEGMENT_MAX_SIZE_MB * 1024L * 1024L;
         }
 
-        return new WALConfig(walDir, sizeBytes);
+        // Resolve queueMaxSize
+        String rawQueueSize = System.getProperty(QUEUE_MAX_SIZE_KEY);
+        if (rawQueueSize == null) {
+            rawQueueSize = loadRootProps().getProperty(QUEUE_MAX_SIZE_KEY, String.valueOf(DEFAULT_QUEUE_MAX_SIZE));
+        }
+        long queueSize;
+        try {
+            queueSize = Long.parseLong(rawQueueSize.trim());
+            if (queueSize < MIN_QUEUE_MAX_SIZE) {
+                LOGGER.warn("Invalid wal.queue.max.size '{}': must be >= {}, using default {}", 
+                        rawQueueSize, MIN_QUEUE_MAX_SIZE, DEFAULT_QUEUE_MAX_SIZE);
+                queueSize = DEFAULT_QUEUE_MAX_SIZE;
+            }
+        } catch (NumberFormatException e) {
+            LOGGER.warn("Invalid wal.queue.max.size format '{}': {}, using default {}", 
+                    rawQueueSize, e.getMessage(), DEFAULT_QUEUE_MAX_SIZE);
+            queueSize = DEFAULT_QUEUE_MAX_SIZE;
+        }
+
+        return new WALConfig(walDir, sizeBytes, queueSize);
     }
 
     /**
@@ -111,7 +147,25 @@ public final class WALConfig {
         if (maxSegmentSizeBytes < MIN_SEGMENT_SIZE_BYTES) {
             throw new IllegalArgumentException("maxSegmentSizeBytes must be >= " + MIN_SEGMENT_SIZE_BYTES);
         }
-        return new WALConfig(walDir, maxSegmentSizeBytes);
+        return new WALConfig(walDir, maxSegmentSizeBytes, DEFAULT_QUEUE_MAX_SIZE);
+    }
+
+    /**
+     * Creates a WALConfig with explicit values (for tests).
+     *
+     * @param walDir WAL directory
+     * @param maxSegmentSizeBytes max segment size in bytes
+     * @param queueMaxSize max queue size
+     * @return the configuration
+     */
+    public static WALConfig of(Path walDir, long maxSegmentSizeBytes, long queueMaxSize) {
+        if (maxSegmentSizeBytes < MIN_SEGMENT_SIZE_BYTES) {
+            throw new IllegalArgumentException("maxSegmentSizeBytes must be >= " + MIN_SEGMENT_SIZE_BYTES);
+        }
+        if (queueMaxSize < MIN_QUEUE_MAX_SIZE) {
+            throw new IllegalArgumentException("queueMaxSize must be >= " + MIN_QUEUE_MAX_SIZE);
+        }
+        return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize);
     }
 
     /**

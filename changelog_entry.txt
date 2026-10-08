@@ -1,1 +1,1 @@
-3.2.72 Background persist flusher + VacuumTest writer-latency fix: PersistFlusher daemon (diesel.persist.background/flush.interval.ms), snapshot-based non-blocking storage saves, VacuumTest clean-op classification hardened
+3.2.73 Implement WALWriter with single-writer thread, bounded queue, and backpressure

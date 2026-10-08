@@ -2,6 +2,9 @@
 
 This document specifies the binary layout and invariants for WAL entries introduced in Prompt 11 of prompt4.md.
 
+See also:
+- [WAL Writer](writer.md) - Single-writer thread with queue, backpressure, and JMX metrics (Prompt 13)
+
 ## Overview
 
 The write-ahead log records every modifying operation before it reaches the data files. Each entry is a self-describing, length-prefixed binary record with a trailing CRC32C checksum, serialized explicitly (`WALEntry.writeTo` / `WALEntry.readFrom`) — no Java object serialization. Segment-level framing (magic, version, file naming `wal-0001.log`) is added by the WALManager prompt (step 12); this document covers the entry itself.
