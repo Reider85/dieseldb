@@ -146,3 +146,4 @@ UndoLogSpillTest	concurrency
 TransactionTableSnapshotTest	concurrency
 SerializationConflictTest	concurrency
 WALEntryTest	storage
+WALManagerTest	storage,smoke

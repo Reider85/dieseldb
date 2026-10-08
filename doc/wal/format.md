@@ -99,8 +99,29 @@ WALEntry decoded = WALEntry.readFrom(buf); // advances position; verifies CRC
 
 `WALEntry` is immutable; image arrays are copied defensively on construction and access. The format constants live in `WALFormat`, opcodes in `WALOpcode`.
 
+## Segment Framing (prompt4.md step 12)
+
+WAL entries are stored in segment files named `wal-NNNN.log` (4-digit zero-padded, 1-based numbering). Each segment begins with a 24-byte header:
+
+### Segment Header Layout (big-endian)
+
+| Offset | Size | Field       | Type   | Description |
+|--------|------|-------------|--------|-------------|
+| 0      | 4    | magic       | String | "DWAL" (identifies DieselDB WAL segment) |
+| 4      | 2    | formatVersion | short  | Segment format version (currently 1) |
+| 6      | 2    | reserved    | short  | Must be 0 (future extension point) |
+| 8      | 4    | segmentNumber | int   | Segment sequence number (1-based) |
+| 12     | 8    | firstLSN    | long   | LSN of first entry in segment (0 if empty) |
+| 20     | 4    | crc32c      | int    | CRC32C over bytes [0,20) |
+
+- **Segment file naming**: `wal-0001.log`, `wal-0002.log`, etc. (created sequentially)
+- **Segment rotation**: Occurs when an entry would exceed the segment size limit (configurable, default 64MB). The current segment is closed and a new segment is created.
+- **Header writing**: Headers are written lazily on the first append to an empty segment (0-byte files are valid empty segments). The `firstLSN` is updated when the first entry is appended.
+- **Torn tail handling**: Readers stop at the first incomplete entry (structural error or CRC mismatch), treating partial writes as a valid end-of-segment condition for crash recovery.
+- **Checkpoint persistence**: The last appended LSN is persisted to `checkpoint.ptr` in the WAL directory (atomic temp+rename) on flush/close and periodically during appends.
+
 ## Compatibility
 
-- Format version is implicit in the entry (no version field yet); segment headers introduced by prompt 12 will carry magic + format version.
+- Format version is implicit in the entry (no version field yet); segment headers introduced by prompt 12 carry magic + format version.
 - The `flags` byte and `reserved` short are the designated extension points: readers must reject non-zero values today, so future versions can flip them only together with a segment-level version bump.
 - The `lsn` field pairs with `PageHeader.lsn` (page-based storage, prompt 6) for ARIES redo (prompts 16–19).
