@@ -140,7 +140,7 @@ public final class WALManager implements AutoCloseable {
     /**
      * Recovers the last LSN from checkpoint.ptr and segments.
      */
-    private void recoverLsn() throws IOException {
+    public void recoverLsn() throws IOException {
         long checkpointLsn = readCheckpointPtr();
         long maxSegmentLsn = findMaxLsnInSegments();
         

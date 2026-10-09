@@ -4,12 +4,13 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import javax.annotation.Nonnull;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -17,17 +18,27 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import diesel.storage.page.CatalogTable;
 import diesel.storage.page.CatalogSchema;
 import diesel.concurrency.ConflictDetector;
+import diesel.wal.WALEntry;
+import diesel.wal.WALConfig;
+import diesel.wal.WALWriter;
+import diesel.wal.WALOpcode;
+import diesel.wal.AsyncWALWriter;
+import diesel.wal.GroupCommitCoordinator;
+import diesel.wal.FsyncPolicy;
 
 /**
  * Central database engine. Owns the shared table map, the active client
@@ -64,6 +75,17 @@ class Database {
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
     private String dataDir = "data";
+    
+    // WAL subsystem (prompt4.md #15 - group commit coordinator)
+    private volatile WALConfig walConfig;
+    private volatile WALWriter walWriter;
+    private volatile AsyncWALWriter asyncWALWriter;
+    private volatile GroupCommitCoordinator groupCoordinator;
+    private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "diesel-wal-scheduler");
+        t.setDaemon(true);
+        return t;
+    });
 
     /**
      * Creates an empty in-memory database whose data files live in the
@@ -98,6 +120,7 @@ class Database {
         this.catalog = new CatalogTable(null);
         try {
             createPageManager();
+            initializeWAL();
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
         }
@@ -129,6 +152,62 @@ class Database {
      */
     CatalogTable getCatalog() {
         return catalog;
+    }
+
+    /**
+     * Initializes the WAL subsystem if enabled.
+     *
+     * @throws IOException if initialization fails
+     */
+    private void initializeWAL() throws IOException {
+        // Resolve WAL config from system properties and config.properties
+        this.walConfig = WALConfig.fromConfig();
+        
+        if (!walConfig.isEnabled()) {
+            LOGGER.info("WAL subsystem disabled (wal.enabled=false)");
+            return;
+        }
+        
+        try {
+            // Initialize WAL writer with async wrapper and group coordinator
+            this.walWriter = WALWriter.open(walConfig);
+            this.asyncWALWriter = new AsyncWALWriter(walWriter, walConfig.getFsyncPolicy(),
+                walConfig.getGroupWindowMs(), walConfig.getGroupMaxSize(), walScheduler);
+            this.groupCoordinator = asyncWALWriter.getCoordinator();
+            
+            LOGGER.info("WAL subsystem enabled with policy=" + walConfig.getFsyncPolicy() + 
+                ", groupWindow=" + walConfig.getGroupWindowMs() + "ms, groupSize=" + walConfig.getGroupMaxSize());
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Failed to initialize WAL subsystem: " + e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * Returns whether WAL is enabled for this database.
+     *
+     * @return true if WAL is enabled, false otherwise
+     */
+    public boolean isWALEnabled() {
+        return walConfig != null && walConfig.isEnabled();
+    }
+
+    /**
+     * Returns the async WAL writer, or null if WAL is disabled.
+     *
+     * @return the async WAL writer, or null
+     */
+    public AsyncWALWriter getAsyncWALWriter() {
+        return asyncWALWriter;
+    }
+
+    /**
+     * Returns the group commit coordinator, or null if WAL is disabled.
+     *
+     * @return the group commit coordinator, or null
+     */
+    public GroupCommitCoordinator getGroupCoordinator() {
+        return groupCoordinator;
     }
 
     /**
@@ -250,7 +329,7 @@ class Database {
      * @return the query result (row list, null, or a status String)
      * @throws RuntimeException when the query cannot be parsed or executed
      */
-    public Object executeQuery(@Nonnull String query, UUID transactionId) {
+    public Object executeQuery(String query, UUID transactionId) {
         // Prompt 22 (java:S2259): a null query would NPE below on
         // cleanQuery.trim() before the try-block that formats execution
         // errors; reject it up front with a clear IllegalArgumentException.
@@ -642,14 +721,49 @@ class Database {
             throw new TransactionException("No active transaction to commit");
         }
         checkCommitConflicts(currentTransaction);
+        
         // MVCC: record the commit CSN BEFORE the table changes are published and
         // persisted so concurrent readers only ever observe fully-formed rows
-        // (batch transactions never register a txid — their snapshot-based
-        // publishing at END BATCH covers them instead).
         long commitCsn = 0;
         if (currentTransaction.getTxid() > 0) {
             commitCsn = txStatusTracker.markCommitted(currentTransaction.getTxid());
         }
+        
+        // Write COMMIT record to WAL if enabled
+        if (isWALEnabled() && groupCoordinator != null) {
+            try {
+                // Serialize commit payload: txid, commitCsn, modified tables summary
+                byte[] payload = serializeCommitPayload(currentTransaction, commitCsn);
+                // Submit to group coordinator for durability according to policy
+                CompletableFuture<WALEntry> commitFuture = groupCoordinator.submitCommit(
+                    currentTransaction.getTxid(), WALOpcode.COMMIT, null, payload);
+                
+                // Wait for durability (this implements the fsync policy)
+                commitFuture.get(); // Blocks until durable per policy
+                
+                final long txid = currentTransaction.getTxid();
+                final long finalCsn = commitCsn;
+                LOGGER.fine(() -> String.format("WAL commit recorded for txid=%d, csn=%d", 
+                    txid, finalCsn));
+            } catch (Exception e) {
+                // WAL write failed: abort the commit (no durability = no commit)
+                final long txid = currentTransaction.getTxid();
+                final Exception finalE = e;
+                LOGGER.log(Level.SEVERE, () -> String.format("WAL commit failed for txid=%d, aborting transaction: %s", 
+                    txid, finalE.getMessage()));
+                // Rollback transaction state
+                try {
+                    currentTransaction.getUndoLog().clear();
+                } catch (IOException ioException) {
+                    LOGGER.log(Level.WARNING, "Failed to cleanup undo log during abort", ioException);
+                }
+                currentTransaction.setInactive();
+                activeTransactions.remove(transactionId);
+                setAutoCommit(false);
+                throw new TransactionException("Transaction commit failed due to WAL error: " + e.getMessage());
+            }
+        }
+        
         // Tombstone deleted rows now: MVCC deletes must not touch the physical
         // row until COMMIT (undo would be impossible afterwards), but the
         // version metadata is transient — without this tombstone the delete
@@ -712,6 +826,51 @@ class Database {
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
         return ErrorMessages.TRANSACTION_COMMITTED;
+    }
+
+    /**
+     * Serializes commit payload for WAL entry.
+     *
+     * @param transaction the committing transaction
+     * @param commitCsn the commit sequence number
+     * @return serialized payload bytes
+     */
+    private byte[] serializeCommitPayload(Transaction transaction, long commitCsn) {
+        try {
+            // Simple payload format: txid (8) + commitCsn (8) + table count (4) + table entries
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+            
+            dos.writeLong(transaction.getTxid());
+            dos.writeLong(commitCsn);
+            
+            // Write modified tables summary
+            Map<String, Set<Integer>> modified = transaction.getModifiedRows();
+            dos.writeInt(modified.size());
+            for (Map.Entry<String, Set<Integer>> entry : modified.entrySet()) {
+                dos.writeUTF(entry.getKey());
+                dos.writeInt(entry.getValue().size());
+                for (Integer rowIndex : entry.getValue()) {
+                    dos.writeInt(rowIndex);
+                }
+            }
+            
+            // Write deleted tables summary
+            Map<String, Set<Integer>> deleted = transaction.getDeletedRows();
+            dos.writeInt(deleted.size());
+            for (Map.Entry<String, Set<Integer>> entry : deleted.entrySet()) {
+                dos.writeUTF(entry.getKey());
+                dos.writeInt(entry.getValue().size());
+                for (Integer rowIndex : entry.getValue()) {
+                    dos.writeInt(rowIndex);
+                }
+            }
+            
+            dos.flush();
+            return baos.toByteArray();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to serialize commit payload", e);
+        }
     }
 
     /**
@@ -1406,7 +1565,7 @@ class Database {
      * @return the registered table
      * @throws IllegalArgumentException if no such table exists
      */
-    public Table getTable(@Nonnull String tableName) {
+    public Table getTable(String tableName) {
         Table table = tables.get(tableName);
         if (table == null) {
             throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
@@ -1584,6 +1743,26 @@ class Database {
      * daemon and unregisters its JMX MBean.
      */
     public void close() {
+        // Close WAL subsystem first to ensure all commits are flushed
+        if (asyncWALWriter != null) {
+            try {
+                asyncWALWriter.close();
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to close WAL writer: " + e.getMessage(), e);
+            }
+        }
+        if (walScheduler != null) {
+            walScheduler.shutdown();
+            try {
+                if (!walScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                    walScheduler.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                walScheduler.shutdownNow();
+            }
+        }
+        
         vacuumManager.stop();
         saveTablesToDisk();
     }

@@ -908,3 +908,5 @@ chore: test-profiles-audit changelog entry
 3.2.74 Batch WAL segment writes for 67k-98k inserts/sec (50k/s perf gate), fix WALWriter.close() 30s stall, PersistFlusherTest format-agnostic file asserts; gates green: fast/core/perf/timing
 
 3.2.75 Prompt 4 #14: WAL segment rotation (size+age) + gzip archiving with retention; 20 new tests (SegmentRotation/Archive/Retention), fast+core gates green
+
+3.2.76 Prompt 4 #15: WAL group commit - GroupCommitCoordinator + AsyncWALWriter, 4 fsync policies (always/group/everysec/none), Database COMMIT path via coordinator; acceptance: GROUP 11110 commits/sec >5000, p99 8.96ms <20ms, NONE p99 0.073ms, 10k-commit crash recovery lossless; fast 347/0/0, perf 7/0/0, timing PASSED

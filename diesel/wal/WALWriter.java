@@ -108,6 +108,15 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
     }
 
     /**
+     * Returns the WAL manager used by this writer.
+     *
+     * @return the WAL manager
+     */
+    public WALManager getManager() {
+        return manager;
+    }
+
+    /**
      * Appends a WAL entry asynchronously.
      *
      * @param txid the transaction id
