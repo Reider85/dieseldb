@@ -10,7 +10,9 @@ package diesel.wal;
  * <p>Codes 1..7 are the ops mandated by prompt 11
  * (INSERT/UPDATE/DELETE/COMMIT/ABORT/TRUNCATE/CHECKPOINT). {@code BEGIN} is
  * reserved as code 0 so the ARIES recovery prompts (16-19) can emit BEGIN
- * records without a format change.
+ * records without a format change. Code 8 ({@code PAGE_IMAGE}) was appended
+ * for the ARIES redo phase (prompt 18) and is never present in logs written
+ * by earlier versions, so old segments stay readable.
  */
 public enum WALOpcode {
 
@@ -22,7 +24,13 @@ public enum WALOpcode {
     COMMIT(4),
     ABORT(5),
     TRUNCATE(6),
-    CHECKPOINT(7);
+    CHECKPOINT(7),
+    /**
+     * Physical page after-image for ARIES redo (prompt 4 #18): the after-image
+     * is a full serialized page ({@code Page.toBytes()}); the before-image is
+     * unused by the redo phase.
+     */
+    PAGE_IMAGE(8);
 
     private static final WALOpcode[] BY_CODE = values();
 

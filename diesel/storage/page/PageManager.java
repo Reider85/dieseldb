@@ -1,5 +1,8 @@
 package diesel.storage.page;
 
+import diesel.wal.WALEntry;
+import diesel.wal.WALOpcode;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -176,6 +179,69 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
             newPage.setDirty(true);
             return pageId;
         }
+    }
+
+    /**
+     * Applies a physical page-image WAL entry idempotently (ARIES redo,
+     * prompt 4 #18).
+     *
+     * <p>The entry's after-image is a full serialized page; it replaces the
+     * current page content and stamps the page LSN with the record's LSN.
+     * If the on-disk page already carries an LSN greater than or equal to the
+     * record's LSN the record was applied by an earlier recovery pass and the
+     * call is a no-op ({@code false}) — redo can therefore be re-run safely.
+     *
+     * <p>A page beyond the current end of file is created by the redo pass
+     * (allocation redo); the allocator watermark is advanced so a later
+     * {@link #allocatePage(long)} cannot overwrite it. Physical durability of
+     * the applied image is the caller's responsibility ({@link #flush()} is
+     * invoked by {@code RedoPhase} after the pass).
+     *
+     * @param entry the WAL entry; must be a {@link WALOpcode#PAGE_IMAGE} record
+     * @return {@code true} if the after-image was applied, {@code false} if the
+     *         page already satisfied the LSN check (already redone)
+     * @throws IOException if reading the current page or installing the image fails
+     * @throws IllegalArgumentException if the entry is not a page-image record,
+     *         has no after-image, or the image page size differs from this manager
+     */
+    public boolean applyRedo(WALEntry entry) throws IOException {
+        if (entry == null) {
+            throw new IllegalArgumentException("entry must not be null");
+        }
+        if (entry.getOp() != WALOpcode.PAGE_IMAGE) {
+            throw new IllegalArgumentException("Not a page-image record: " + entry.getOp());
+        }
+        if (!entry.hasAfterImage()) {
+            throw new IllegalArgumentException("Page-image record lsn=" + entry.getLsn() + " has no after-image");
+        }
+
+        Page image = Page.readFrom(ByteBuffer.wrap(entry.getAfterImage()));
+        if (image.getPageSize() != pageSize) {
+            throw new IllegalArgumentException("Page size mismatch in record lsn=" + entry.getLsn()
+                    + ": expected " + pageSize + ", got " + image.getPageSize());
+        }
+        PageId pageId = image.getPageId();
+
+        // LSN check: compare against the persisted page state. A page not yet
+        // covered by the file has never been written, so it cannot satisfy the
+        // check and must be created from the after-image.
+        long currentLsn = -1L;
+        long offset = pageId.fileOffset(pageSize);
+        if (offset >= 0 && offset + pageSize <= io.size()) {
+            try (PinnedPage pinned = readPage(pageId)) {
+                currentLsn = pinned.getPage().getLsn();
+            }
+        }
+        if (currentLsn >= entry.getLsn()) {
+            return false; // already redone — idempotent skip
+        }
+
+        image.setLsn(entry.getLsn()); // marks the image dirty
+        writePage(image);
+        // Redo may create a page past the allocator's watermark; advance it so
+        // allocatePage cannot hand out an address that already holds data.
+        nextFilePageNum.accumulateAndGet(pageId.pageNum() + 1, Math::max);
+        return true;
     }
 
     /**

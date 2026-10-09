@@ -14,6 +14,11 @@ param(
     [double]$MinBaseline = 0.011
 )
 
+# Invariant culture: python writes "296.164" with a dot; under ru-RU and other
+# comma-decimal locales, culture-sensitive TryParse fails on every line and the
+# comparison silently counts zero tests (a vacuous pass).
+$invCulture = [System.Globalization.CultureInfo]::InvariantCulture
+
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
@@ -38,7 +43,7 @@ foreach ($line in $baseLines) {
     if ($parts.Count -ge 2 -and $parts[0] -ne "Test") {
         $testName = $parts[0]
         $time = 0.0
-        if ([double]::TryParse($parts[1], [ref]$time)) {
+        if ([double]::TryParse($parts[1], [System.Globalization.NumberStyles]::Float, $invCulture, [ref]$time)) {
             $baseTimes[$testName] = $time
         }
     }
@@ -56,7 +61,7 @@ foreach ($line in $newLines) {
 
     $testName = $parts[0]
     $newTime = 0.0
-    if (-not [double]::TryParse($parts[1], [ref]$newTime)) { continue }
+    if (-not [double]::TryParse($parts[1], [System.Globalization.NumberStyles]::Float, $invCulture, [ref]$newTime)) { continue }
 
     if ($baseTimes.ContainsKey($testName)) {
         $baseTime = $baseTimes[$testName]

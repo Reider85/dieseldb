@@ -267,7 +267,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 - `make timing`:
   1. Runs the large profile (including two 600x600 ORDER BY joins).
-  2. `scripts/collect-timing.py` builds `timing/timingN.md` from surefire reports.
+  2. Collector builds `timing/timingN.md` from surefire reports: `scripts/collect-timing.py` (Makefile) or `scripts/collect-timing.ps1` (make.ps1 — `python` on Windows may be a dead WindowsApps stub, exit 9009).
   3. Executes `compare-timing.sh timing/timing.md timing/timingN.md` – this script:
   - Compares each query’s time.
   - **Ignores** any query whose baseline is <11 ms (machine noise).

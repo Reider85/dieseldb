@@ -40,6 +40,7 @@ import diesel.wal.WALConfig;
 import diesel.wal.WALWriter;
 import diesel.wal.WALOpcode;
 import diesel.wal.AsyncWALWriter;
+import diesel.wal.CommitPayload;
 import diesel.wal.GroupCommitCoordinator;
 import diesel.wal.FsyncPolicy;
 
@@ -852,43 +853,17 @@ class Database {
     /**
      * Serializes commit payload for WAL entry.
      *
+     * <p>The encoding lives in {@link diesel.wal.CommitPayload} so the ARIES
+     * redo phase (prompt 4 #18) replays commits with the exact writer format.
+     *
      * @param transaction the committing transaction
      * @param commitCsn the commit sequence number
      * @return serialized payload bytes
      */
     private byte[] serializeCommitPayload(Transaction transaction, long commitCsn) {
         try {
-            // Simple payload format: txid (8) + commitCsn (8) + table count (4) + table entries
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            DataOutputStream dos = new DataOutputStream(baos);
-            
-            dos.writeLong(transaction.getTxid());
-            dos.writeLong(commitCsn);
-            
-            // Write modified tables summary
-            Map<String, Set<Integer>> modified = transaction.getModifiedRows();
-            dos.writeInt(modified.size());
-            for (Map.Entry<String, Set<Integer>> entry : modified.entrySet()) {
-                dos.writeUTF(entry.getKey());
-                dos.writeInt(entry.getValue().size());
-                for (Integer rowIndex : entry.getValue()) {
-                    dos.writeInt(rowIndex);
-                }
-            }
-            
-            // Write deleted tables summary
-            Map<String, Set<Integer>> deleted = transaction.getDeletedRows();
-            dos.writeInt(deleted.size());
-            for (Map.Entry<String, Set<Integer>> entry : deleted.entrySet()) {
-                dos.writeUTF(entry.getKey());
-                dos.writeInt(entry.getValue().size());
-                for (Integer rowIndex : entry.getValue()) {
-                    dos.writeInt(rowIndex);
-                }
-            }
-            
-            dos.flush();
-            return baos.toByteArray();
+            return CommitPayload.serialize(transaction.getTxid(), commitCsn,
+                    transaction.getModifiedRows(), transaction.getDeletedRows());
         } catch (IOException e) {
             throw new RuntimeException("Failed to serialize commit payload", e);
         }

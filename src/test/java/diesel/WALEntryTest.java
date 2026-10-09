@@ -408,6 +408,7 @@ class WALEntryTest {
         assertEquals(5, WALOpcode.ABORT.code());
         assertEquals(6, WALOpcode.TRUNCATE.code());
         assertEquals(7, WALOpcode.CHECKPOINT.code());
+        assertEquals(8, WALOpcode.PAGE_IMAGE.code());
     }
 
     @Test
@@ -419,7 +420,7 @@ class WALEntryTest {
 
     @Test
     void opcodeFromByteRejectsUnknownValues() {
-        assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) 8));
+        assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) 9));
         assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) -1));
         assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) 99));
     }

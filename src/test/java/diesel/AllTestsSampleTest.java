@@ -273,9 +273,6 @@ public class AllTestsSampleTest {
     private String nextTimingFileName() {
         String dir = "timing";
         new File(dir).mkdirs();
-        if (!new File(dir + "/timing.md").exists()) {
-            return dir + "/timing.md";
-        }
         int counter = 1;
         while (new File(dir + "/timing" + counter + ".md").exists()) {
             counter++;

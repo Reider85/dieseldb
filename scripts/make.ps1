@@ -27,6 +27,7 @@ Set-Location -LiteralPath $repoRoot
 $mvnPs = Join-Path $PSScriptRoot "mvn.ps1"
 $gitHelpers = Join-Path $PSScriptRoot "git-helpers.ps1"
 $compareTiming = Join-Path $PSScriptRoot "compare-timing.ps1"
+$collectTiming = Join-Path $PSScriptRoot "collect-timing.ps1"
 $commitChangelog = Join-Path $PSScriptRoot "commit-and-changelog.ps1"
 $tiaScript = Join-Path $PSScriptRoot "tia.ps1"
 $gitCmd = Get-NativeTool -Name "git"
@@ -232,7 +233,8 @@ switch ($Target) {
     "timing" {
         Invoke-ProfileTests -Profile "large"
         Write-Host "Collecting timing data..."
-        Invoke-Native -FilePath "python" -Arguments @("scripts/collect-timing.py")
+        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $collectTiming)
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         if (Test-Path "timing\timing.md") {
             Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $compareTiming, "-Base", "timing/timing.md", "-New", "timing/timingN.md")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

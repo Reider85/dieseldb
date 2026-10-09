@@ -158,3 +158,6 @@ CheckpointPointerFileTest	storage,smoke
 CheckpointIntegrationTest	storage,smoke
 AnalysisTest	storage,smoke
 AnalysisPerformanceTest	perf
+RedoTest	storage,smoke
+IdempotencyTest	storage,smoke
+RedoPerformanceTest	perf
