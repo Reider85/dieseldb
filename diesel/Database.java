@@ -85,6 +85,7 @@ class Database {
     private volatile WALWriter walWriter;
     private volatile AsyncWALWriter asyncWALWriter;
     private volatile GroupCommitCoordinator groupCoordinator;
+    private volatile RecoveryManager recoveryManager;                             // ARIES startup recovery (prompt4 #19)
     private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "diesel-wal-scheduler");
         t.setDaemon(true);
@@ -112,6 +113,20 @@ class Database {
      *                null/empty to keep the current working directory
      */
     public Database(String dataDir) {
+        this(dataDir, (WALConfig) null);
+    }
+
+    /**
+     * Creates a database with an explicit WAL configuration (recovery tests,
+     * prompt4 #19). Passing a config with {@code enabled=true} turns the WAL
+     * subsystem on without touching global system properties, so the test
+     * stays safe under parallel class execution.
+     *
+     * @param dataDir          directory for the table files
+     * @param walConfigOverride explicit WAL configuration, or null to resolve
+     *                          wal.* from system properties/config.properties
+     */
+    Database(String dataDir, WALConfig walConfigOverride) {
         if (dataDir != null && !dataDir.isBlank()) {
             this.dataDir = dataDir;
         }
@@ -124,7 +139,7 @@ class Database {
         this.catalog = new CatalogTable(null);
         try {
             createPageManager();
-            initializeWAL();
+            initializeWAL(walConfigOverride);
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
         }
@@ -161,11 +176,13 @@ class Database {
     /**
      * Initializes the WAL subsystem if enabled.
      *
+     * @param override explicit configuration (recovery tests), or null to
+     *                 resolve wal.* from system properties/config.properties
      * @throws IOException if initialization fails
      */
-    private void initializeWAL() throws IOException {
-        // Resolve WAL config from system properties and config.properties
-        this.walConfig = WALConfig.fromConfig();
+    private void initializeWAL(WALConfig override) throws IOException {
+        // Resolve WAL config: explicit override (tests) > system properties > config.properties
+        this.walConfig = override != null ? override : WALConfig.fromConfig();
         
         if (!walConfig.isEnabled()) {
             LOGGER.info("WAL subsystem disabled (wal.enabled=false)");
@@ -186,9 +203,6 @@ class Database {
                     LOGGER.info(String.format("Loaded checkpoint from LSN %d with %d active txids at %s",
                         checkpointRecord.getLastLSN(), checkpointRecord.getActiveTxidCount(), 
                         new Date(checkpointRecord.getTimestampEpochMs())));
-                    
-                    // TODO: Apply checkpoint record to restore transaction state
-                    // This will be implemented in later prompts when we have full recovery logic
                 } else {
                     LOGGER.info("No checkpoint found, starting with clean state");
                 }
@@ -196,6 +210,10 @@ class Database {
                 LOGGER.warning("Failed to load checkpoint: " + e.getMessage());
                 // Continue without checkpoint - will recover from WAL entries
             }
+            
+            // ARIES recovery orchestrator (prompt4 #19): applied by
+            // DatabaseServer.start() via runRecovery() before clients connect.
+            this.recoveryManager = new RecoveryManager(this);
             
             LOGGER.info("WAL subsystem enabled with policy=" + walConfig.getFsyncPolicy() + 
                 ", groupWindow=" + walConfig.getGroupWindowMs() + "ms, groupSize=" + walConfig.getGroupMaxSize());
@@ -230,6 +248,81 @@ class Database {
      */
     public GroupCommitCoordinator getGroupCoordinator() {
         return groupCoordinator;
+    }
+
+    /**
+     * Returns the WAL manager behind the writer, or null if WAL is disabled.
+     * Used by recovery and by crash-simulation test hooks to flush segments.
+     *
+     * @return the WAL manager, or null
+     */
+    public diesel.wal.WALManager getWalManager() {
+        WALWriter writer = walWriter;
+        return writer != null ? writer.getManager() : null;
+    }
+
+    /**
+     * Returns the page manager of this database, or null when it could not
+     * be created.
+     *
+     * @return the page manager, or null
+     */
+    public diesel.storage.page.PageManager getPageManager() {
+        return pageManager;
+    }
+
+    /**
+     * Returns the ARIES recovery manager (prompt4 #19), or null when the WAL
+     * is disabled (recovery is skipped entirely).
+     *
+     * @return the recovery manager, or null
+     */
+    public RecoveryManager getRecoveryManager() {
+        return recoveryManager;
+    }
+
+    /**
+     * Runs ARIES startup recovery (analysis → redo → undo) when the WAL is
+     * enabled; a no-op otherwise. Invoked by {@code DatabaseServer.start()}
+     * after tables are loaded and strictly before client connections are
+     * accepted.
+     */
+    public void runRecovery() {
+        if (!isWALEnabled() || recoveryManager == null) {
+            LOGGER.fine("WAL disabled - skipping ARIES startup recovery");
+            return;
+        }
+        try {
+            recoveryManager.recover();
+        } catch (IOException e) {
+            throw new IllegalStateException("ARIES startup recovery failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Appends a logical DML record (INSERT/UPDATE/DELETE) to the WAL when
+     * enabled (prompt4 #19). Non-blocking enqueue into the writer's FIFO
+     * queue: successive puts from one thread are ordered, so a
+     * transaction's records keep their program order in the log (the undo
+     * phase replays them in reverse LSN order). The statement does not wait
+     * for the write; COMMIT still blocks for durability and thereby waits
+     * behind every queued DML record of its transaction.
+     *
+     * @param txid   the writing transaction id
+     * @param op     INSERT, UPDATE or DELETE
+     * @param before the before-image payload, or null
+     * @param after  the after-image payload, or null
+     */
+    void appendWalDml(long txid, WALOpcode op, byte[] before, byte[] after) {
+        WALWriter writer = walWriter;
+        if (writer == null || walConfig == null || !walConfig.isEnabled() || txid <= 0) {
+            return;
+        }
+        try {
+            writer.appendAsync(txid, op, before, after);
+        } catch (RuntimeException e) {
+            LOGGER.log(Level.WARNING, "WAL DML append failed (statement continues): " + e.getMessage());
+        }
     }
 
     /**
@@ -734,6 +827,18 @@ class Database {
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             transaction.snapshotTable(entry.getKey(), entry.getValue());
         }
+        // WAL: BEGIN makes the txid visible to the analysis phase (prompt4 #19).
+        // Failure here aborts the BEGIN: a transaction without a begin record
+        // would be indistinguishable from legacy DML-without-BEGIN on recovery.
+        if (isWALEnabled() && asyncWALWriter != null && txid > 0) {
+            try {
+                asyncWALWriter.appendAsync(txid, WALOpcode.BEGIN, null, null).get();
+            } catch (Exception e) {
+                activeTransactions.remove(newTransactionId);
+                txStatusTracker.markAborted(txid);
+                throw new TransactionException("Transaction begin failed due to WAL error: " + e.getMessage());
+            }
+        }
         setAutoCommit(false);
         return ErrorMessages.TRANSACTION_STARTED + newTransactionId;
     }
@@ -918,6 +1023,15 @@ class Database {
         // pre-BEGIN state (inserts removed, updates restored).
         if (currentTransaction.getTxid() > 0) {
             txStatusTracker.markAborted(currentTransaction.getTxid());
+            // WAL: ABORT removes the txid from the recovery active set so a
+            // later crash does not undo an already-rolled-back transaction.
+            if (isWALEnabled() && asyncWALWriter != null) {
+                try {
+                    asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.ABORT, null, null).get();
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "WAL ABORT record failed (rollback continues): " + e.getMessage());
+                }
+            }
         }
         currentTransaction.rollback();
         
@@ -1740,6 +1854,9 @@ class Database {
      */
     public void close() {
         // Close WAL subsystem first to ensure all commits are flushed
+        if (recoveryManager != null) {
+            recoveryManager.close();
+        }
         if (asyncWALWriter != null) {
             try {
                 asyncWALWriter.close();
@@ -1761,6 +1878,48 @@ class Database {
         
         vacuumManager.stop();
         saveTablesToDisk();
+    }
+
+    /**
+     * Crash-simulation close for recovery tests (prompt4 #19): drains and
+     * closes the WAL writer (every queued append becomes durable, mirroring a
+     * kill after the log writes completed) and discards unflushed page frames,
+     * but does <b>not</b> persist tables, stop vacuum, or run any clean
+     * shutdown bookkeeping. The successor {@code Database} instance sees
+     * exactly what reached the disk before the simulated crash. Mirrors
+     * {@code PageManager.closeDiscardingDirty}.
+     */
+    void closeForCrashSimulation() {
+        if (recoveryManager != null) {
+            recoveryManager.close();
+        }
+        // Drain queued DML appends first: shutdown() lets submitted tasks
+        // reach the WAL writer, then the writer itself is flushed and closed.
+        if (walScheduler != null) {
+            walScheduler.shutdown();
+            try {
+                if (!walScheduler.awaitTermination(10, TimeUnit.SECONDS)) {
+                    walScheduler.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                walScheduler.shutdownNow();
+            }
+        }
+        if (asyncWALWriter != null) {
+            try {
+                asyncWALWriter.close();
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to close WAL writer during crash simulation: " + e.getMessage(), e);
+            }
+        }
+        if (pageManager != null) {
+            try {
+                pageManager.closeDiscardingDirty();
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to close page manager during crash simulation: " + e.getMessage(), e);
+            }
+        }
     }
     
     /**

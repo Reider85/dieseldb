@@ -146,6 +146,10 @@ public class DatabaseServer {
         running = true;
         database.loadCatalog();
         database.loadTablesFromDisk();
+        // ARIES startup recovery (prompt4 #19): analysis → redo → undo before
+        // the vacuum daemon starts and strictly before client connections are
+        // accepted. No-op when the WAL is disabled.
+        database.runRecovery();
         database.getVacuumManager().startAutoVacuum();
         try {
             serverSocket = new ServerSocket(port, backlog);

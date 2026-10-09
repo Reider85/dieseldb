@@ -112,7 +112,7 @@ class UpdateQuery implements Query<Void> {
             boolean mvcc = transaction != null && transaction.isActive()
                     && !context.isBatch() && transaction.getTxid() > 0;
             if (mvcc) {
-                markRowsUpdated(table, rows, rowsToUpdate, transaction);
+                markRowsUpdated(table, rows, rowsToUpdate, transaction, columnTypes);
             }
 
             int affectedCount = rowsToUpdate.size();
@@ -160,17 +160,20 @@ class UpdateQuery implements Query<Void> {
     /**
      * Registers every matched row as pending-updated by this transaction:
      * optimistic write-write conflicts throw before the first mark, then each
-     * row gets a pre-image snapshot for {@link UndoLog.UpdateUndo} and an entry
+     * row gets a pre-image snapshot for {@link UndoLog.UpdateUndo}, an entry
      * in the transaction's modified-row set (so COMMIT stamps it with the
-     * commit CSN).
+     * commit CSN), and a logical UPDATE record in the WAL when enabled
+     * (prompt4 #19).
      *
-     * @param table       the table being updated
-     * @param rows        the reader's row values (shared with the storage mirror)
+     * @param table        the table being updated
+     * @param rows         the reader's row values (shared with the storage mirror)
      * @param rowsToUpdate the locked target row indexes
-     * @param transaction the explicit transaction performing the update
+     * @param transaction  the explicit transaction performing the update
+     * @param columnTypes  column name → declared type (for value conversion)
      */
     private void markRowsUpdated(Table table, List<Map<String, Object>> rows,
-                                 List<Integer> rowsToUpdate, Transaction transaction) {
+                                 List<Integer> rowsToUpdate, Transaction transaction,
+                                 Map<String, Class<?>> columnTypes) {
         long txid = transaction.getTxid();
         long snapshotCsn = transaction.getSnapshotCsn();
         for (int rowIndex : rowsToUpdate) {
@@ -182,6 +185,8 @@ class UpdateQuery implements Query<Void> {
                 table.checkWriteWriteConflict(rowIndex, txid, snapshotCsn);
             }
         }
+        Database walDatabase = table.getDatabase();
+        boolean walEnabled = walDatabase != null && walDatabase.isWALEnabled();
         for (int rowIndex : rowsToUpdate) {
             Map<String, Object> oldValues = new HashMap<>(rows.get(rowIndex));
             RowVersionMeta oldMetaCopy = table.getRowVersionMeta(rowIndex) == null
@@ -190,11 +195,46 @@ class UpdateQuery implements Query<Void> {
             transaction.getUndoLog().addUndoRecord(
                     new UndoLog.UpdateUndo(table.getName(), rowIndex, oldValues, oldMetaCopy));
             transaction.noteModifiedRow(table.getName(), rowIndex);
+            if (walEnabled) {
+                appendUpdateWal(walDatabase, table, txid, rowIndex, oldValues,
+                        prospectiveAfterValues(oldValues, columnTypes));
+            }
             
             // Track write for SSI
             if (transaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
                 transaction.getDatabase().getConflictDetector().noteWrite(txid, table.getName(), rowIndex);
             }
+        }
+    }
+
+    /**
+     * Computes the values the row will hold once the SET assignments are
+     * applied, mirroring the conversion done by the apply phase. Used as the
+     * after-image of the logical WAL UPDATE record (prompt4 #19).
+     */
+    private Map<String, Object> prospectiveAfterValues(Map<String, Object> oldValues,
+                                                       Map<String, Class<?>> columnTypes) {
+        Map<String, Object> after = new HashMap<>(oldValues);
+        for (Map.Entry<String, Object> update : updates.entrySet()) {
+            String column = update.getKey();
+            Object converted = EVAL.convertConditionValue(update.getValue(), column, columnTypes.get(column));
+            after.put(column, converted);
+        }
+        return after;
+    }
+
+    /**
+     * Appends the logical UPDATE record (before + after images) to the WAL
+     * when enabled (prompt4 #19).
+     */
+    private void appendUpdateWal(Database database, Table table, long txid, int rowIndex,
+                                 Map<String, Object> before, Map<String, Object> after) {
+        try {
+            byte[] beforeImage = diesel.wal.DmlPayload.serialize(table.getName(), rowIndex, before);
+            byte[] afterImage = diesel.wal.DmlPayload.serialize(table.getName(), rowIndex, after);
+            database.appendWalDml(txid, diesel.wal.WALOpcode.UPDATE, beforeImage, afterImage);
+        } catch (java.io.IOException e) {
+            LOGGER.log(Level.WARNING, "WAL UPDATE payload failed (statement continues): " + e.getMessage());
         }
     }
 

@@ -235,6 +235,7 @@ class InsertQuery implements Query<Void> {
                 int rowIndex = table.addRowWithMVCC(row, transaction.getTxid());
                 transaction.getUndoLog().addUndoRecord(new UndoLog.InsertUndo(table.getName(), rowIndex));
                 transaction.noteModifiedRow(table.getName(), rowIndex);
+                appendInsertWal(table, transaction.getTxid(), rowIndex, row);
             } else {
                 table.addRow(row);
             }
@@ -244,6 +245,24 @@ class InsertQuery implements Query<Void> {
         } catch (IllegalStateException e) {
             LOGGER.log(Level.SEVERE, "Insert failed due to unique constraint violation: {0}", e.getMessage());
             throw new IllegalStateException("Insert failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Appends the logical INSERT record to the WAL when enabled (prompt4
+     * #19): the after-image carries the table, row index and inserted values
+     * so the undo phase can hide the row again after a crash.
+     */
+    private void appendInsertWal(Table table, long txid, int rowIndex, Map<String, Object> row) {
+        Database database = table.getDatabase();
+        if (database == null || !database.isWALEnabled()) {
+            return;
+        }
+        try {
+            byte[] after = diesel.wal.DmlPayload.serialize(table.getName(), rowIndex, row);
+            database.appendWalDml(txid, diesel.wal.WALOpcode.INSERT, null, after);
+        } catch (java.io.IOException e) {
+            LOGGER.log(Level.WARNING, "WAL INSERT payload failed (statement continues): " + e.getMessage());
         }
     }
 }

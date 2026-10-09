@@ -136,11 +136,30 @@ class DeleteQuery implements Query<Void> {
             transaction.getUndoLog().addUndoRecord(
                     new UndoLog.DeleteUndo(table.getName(), rowIndex, oldMetaCopy));
             transaction.noteDeletedRow(table.getName(), rowIndex);
+            appendDeleteWal(table, txid, rowIndex, preImage);
             
             // Track write for SSI
             if (transaction.getIsolationLevel() == IsolationLevel.SERIALIZABLE) {
                 transaction.getDatabase().getConflictDetector().noteWrite(txid, table.getName(), rowIndex);
             }
+        }
+    }
+
+    /**
+     * Appends the logical DELETE record (before-image) to the WAL when
+     * enabled (prompt4 #19): the undo phase verifies the row survived without
+     * a tombstone, which is what an uncommitted delete leaves behind.
+     */
+    private void appendDeleteWal(Table table, long txid, int rowIndex, Map<String, Object> preImage) {
+        Database database = table.getDatabase();
+        if (database == null || !database.isWALEnabled()) {
+            return;
+        }
+        try {
+            byte[] before = diesel.wal.DmlPayload.serialize(table.getName(), rowIndex, preImage);
+            database.appendWalDml(txid, diesel.wal.WALOpcode.DELETE, before, null);
+        } catch (java.io.IOException e) {
+            LOGGER.log(Level.WARNING, "WAL DELETE payload failed (statement continues): " + e.getMessage());
         }
     }
 

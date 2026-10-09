@@ -146,6 +146,55 @@ public final class TxStatusTracker {
     }
 
     /**
+     * Registers a transaction recovered from the WAL as COMMITTED with its
+     * original commit CSN (prompt 4 #19). Unlike {@link #markCommitted} this
+     * does not allocate a fresh CSN — the WAL COMMIT payload carries the one
+     * the transaction had before the crash. Also floors the txid and CSN
+     * counters so post-restart allocations never collide with recovered ids.
+     *
+     * @param txid      the recovered transaction id
+     * @param commitCsn the commit CSN from the WAL COMMIT payload
+     */
+    public void registerRecoveredCommitted(long txid, long commitCsn) {
+        txInfoMap.put(txid, new TxInfo(TxStatus.COMMITTED, commitCsn));
+        advanceNextTxidBeyond(txid);
+        advanceCommitCsnAtLeast(commitCsn);
+    }
+
+    /**
+     * Registers a transaction recovered from the WAL as ABORTED (prompt 4
+     * #19): it was still active when the crash hit and the undo phase rolled
+     * its changes back. Floors the txid counter past the recovered id.
+     *
+     * @param txid the recovered transaction id
+     */
+    public void registerRecoveredAbort(long txid) {
+        txInfoMap.put(txid, new TxInfo(TxStatus.ABORTED, 0));
+        advanceNextTxidBeyond(txid);
+    }
+
+    /**
+     * Moves the txid allocator past {@code txid} so a future
+     * {@link #registerTransaction} can never reuse a recovered id.
+     *
+     * @param txid the highest recovered transaction id
+     */
+    public void advanceNextTxidBeyond(long txid) {
+        nextTxid.accumulateAndGet(txid + 1, Math::max);
+    }
+
+    /**
+     * Moves the commit-CSN allocator past {@code csn} so a future
+     * {@link #markCommitted} can never assign a CSN at or below a recovered
+     * one.
+     *
+     * @param csn the highest recovered commit CSN
+     */
+    public void advanceCommitCsnAtLeast(long csn) {
+        commitCsnCounter.accumulateAndGet(csn + 1, Math::max);
+    }
+
+    /**
      * Gets the current commit CSN counter value.
      */
     public long getCurrentCommitCsn() {

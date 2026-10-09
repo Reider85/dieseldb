@@ -161,3 +161,9 @@ AnalysisPerformanceTest	perf
 RedoTest	storage,smoke
 IdempotencyTest	storage,smoke
 RedoPerformanceTest	perf
+DmlPayloadTest	smoke,storage
+UndoPhaseTest	smoke,storage
+RecoveryIntegrationTest	smoke,storage
+RecoveryManagerTest	smoke,storage
+RecoveryPerformanceTest	perf
+RecoveryWithLongTransactionTest	large
