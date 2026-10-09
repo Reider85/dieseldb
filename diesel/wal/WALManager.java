@@ -44,6 +44,13 @@ public final class WALManager implements AutoCloseable {
     private WALSegment currentSegment;
     private final AtomicInteger currentSegmentNumber = new AtomicInteger(0);
     private final CheckpointPointerFile checkpointPointerFile;
+    /**
+     * LSN of the last CHECKPOINT entry written (0 = none). Persisted to
+     * checkpoint.ptr on close so a clean restart can reload the checkpoint
+     * (ARIES semantics: the pointer references a CHECKPOINT entry, not the
+     * end-of-log LSN — segment scan covers LSN recovery in recoverLsn()).
+     */
+    private long lastCheckpointLsn;
     private int nextSegmentNumber = 1;
     private int persistCounter = 0;
 
@@ -70,6 +77,8 @@ this.config = config;
         this.rotator = WALSegmentRotator.create(config, clock);
         this.archiver = WALArchiver.create(config, this, clock);
         this.checkpointPointerFile = new CheckpointPointerFile(config.getWalDir());
+        // Preserve an existing checkpoint pointer across close() cycles.
+        this.lastCheckpointLsn = this.checkpointPointerFile.read();
         
         // Ensure WAL directory exists
         Path walDir = config.getWalDir();
@@ -269,6 +278,7 @@ this.config = config;
 
         // Atomically update checkpoint.ptr to point to the checkpoint record
         checkpointPointerFile.write(checkpointLsn);
+        lastCheckpointLsn = checkpointLsn;
 
         LOGGER.info("Checkpoint written at LSN {}, {} active txids", checkpointLsn, activeTxids.size());
     }
@@ -541,19 +551,21 @@ this.config = config;
         for (WALSegment segment : segments.values()) {
             segment.force();
         }
-        // Note: Removed persistCheckpointPtr() for ARIES.
-        // Checkpoint pointers are updated only during writeCheckpoint().
+        // Note: Removed periodic persistCheckpointPtr() for ARIES.
+        // The checkpoint pointer is updated by writeCheckpoint() and close().
     }
 
     /**
-     * Persists the last appended LSN to checkpoint.ptr.
-     * This is a legacy method for periodic LSN persistence.
+     * Persists the last checkpoint entry LSN to checkpoint.ptr.
+     * Called from close() so a clean restart can reload the checkpoint record;
+     * writes 0 when no checkpoint was ever written (LSN recovery uses the
+     * segment scan in recoverLsn(), which takes max(ptr, segment LSNs)).
      *
      * @throws IOException if the write fails
      */
     private void persistCheckpointPtr() throws IOException {
-        checkpointPointerFile.write(lastAppendedLsn.get());
-        LOGGER.debug("Persisted checkpoint.ptr: {}", lastAppendedLsn.get());
+        checkpointPointerFile.write(lastCheckpointLsn);
+        LOGGER.debug("Persisted checkpoint.ptr: {}", lastCheckpointLsn);
     }
 
     /**

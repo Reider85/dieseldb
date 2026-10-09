@@ -912,3 +912,5 @@ chore: test-profiles-audit changelog entry
 3.2.76 Prompt 4 #15: WAL group commit - GroupCommitCoordinator + AsyncWALWriter, 4 fsync policies (always/group/everysec/none), Database COMMIT path via coordinator; acceptance: GROUP 11110 commits/sec >5000, p99 8.96ms <20ms, NONE p99 0.073ms, 10k-commit crash recovery lossless; fast 347/0/0, perf 7/0/0, timing PASSED
 
 3.2.77 Prompt 4 #16: ARIES CheckpointRecord + atomic checkpoint.ptr - WALManager.writeCheckpoint/loadCheckpointRecord, TxStatusTracker.getActiveTxids, Database.initializeWAL checkpoint loading; 28 new tests (CheckpointRecord/PointerFile/Integration); gates: fast 373/0/0, timing PASSED
+
+3.2.78 Prompt 4 #17: ARIES AnalysisPhase - WAL scan from checkpoint builds {committed, active, lastLSN} (segment-bounded, fuzzy checkpoint re-seed); WALManager.close() now persists last CHECKPOINT LSN to checkpoint.ptr (ARIES semantics, fixes null checkpoint after clean restart); 8 new tests (AnalysisTest 7 + 1GiB perf); gates: fast 380/0/0, perf 1GiB analysis <5s PASSED, timing PASSED

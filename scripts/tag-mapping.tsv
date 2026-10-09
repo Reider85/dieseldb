@@ -156,3 +156,5 @@ WALWriterThroughputTest	perf
 CheckpointRecordTest	storage,smoke
 CheckpointPointerFileTest	storage,smoke
 CheckpointIntegrationTest	storage,smoke
+AnalysisTest	storage,smoke
+AnalysisPerformanceTest	perf
