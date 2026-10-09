@@ -9,6 +9,7 @@ import java.io.DataOutputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -18,6 +19,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+
+import diesel.recovery.CheckpointRecord;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -174,6 +177,24 @@ class Database {
             this.asyncWALWriter = new AsyncWALWriter(walWriter, walConfig.getFsyncPolicy(),
                 walConfig.getGroupWindowMs(), walConfig.getGroupMaxSize(), walScheduler);
             this.groupCoordinator = asyncWALWriter.getCoordinator();
+            
+            // Load checkpoint record for ARIES recovery
+            try {
+                CheckpointRecord checkpointRecord = walWriter.getManager().loadCheckpointRecord();
+                if (checkpointRecord != null) {
+                    LOGGER.info(String.format("Loaded checkpoint from LSN %d with %d active txids at %s",
+                        checkpointRecord.getLastLSN(), checkpointRecord.getActiveTxidCount(), 
+                        new Date(checkpointRecord.getTimestampEpochMs())));
+                    
+                    // TODO: Apply checkpoint record to restore transaction state
+                    // This will be implemented in later prompts when we have full recovery logic
+                } else {
+                    LOGGER.info("No checkpoint found, starting with clean state");
+                }
+            } catch (Exception e) {
+                LOGGER.warning("Failed to load checkpoint: " + e.getMessage());
+                // Continue without checkpoint - will recover from WAL entries
+            }
             
             LOGGER.info("WAL subsystem enabled with policy=" + walConfig.getFsyncPolicy() + 
                 ", groupWindow=" + walConfig.getGroupWindowMs() + "ms, groupSize=" + walConfig.getGroupMaxSize());

@@ -19,6 +19,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import diesel.recovery.CheckpointRecord;
+import diesel.recovery.CheckpointPointerFile;
+import diesel.recovery.CheckpointFormatException;
 
 /**
  * WAL Manager (prompt4.md step 12, R3-003 step 2/5).
@@ -40,6 +43,7 @@ public final class WALManager implements AutoCloseable {
     private final NavigableMap<Integer, WALSegment> segments = new TreeMap<>();
     private WALSegment currentSegment;
     private final AtomicInteger currentSegmentNumber = new AtomicInteger(0);
+    private final CheckpointPointerFile checkpointPointerFile;
     private int nextSegmentNumber = 1;
     private int persistCounter = 0;
 
@@ -61,10 +65,11 @@ public final class WALManager implements AutoCloseable {
      * @throws IOException if the WAL directory cannot be created or opened
      */
     public WALManager(WALConfig config, Clock clock) throws IOException {
-        this.config = config;
+this.config = config;
         this.clock = clock;
         this.rotator = WALSegmentRotator.create(config, clock);
         this.archiver = WALArchiver.create(config, this, clock);
+        this.checkpointPointerFile = new CheckpointPointerFile(config.getWalDir());
         
         // Ensure WAL directory exists
         Path walDir = config.getWalDir();
@@ -225,12 +230,84 @@ public final class WALManager implements AutoCloseable {
         currentSegment.append(entry);
         lastAppendedLsn.set(entryLsn);
         lastAllocatedLsn.set(entryLsn);
+        
+        // Note: Periodic checkpoint persistence removed for ARIES.
+        // Checkpoints are written explicitly via writeCheckpoint().
+    }
 
-        // Persist checkpoint periodically
-        persistCounter++;
-        if (persistCounter >= 4096 || currentSegment.getPosition() > 1024 * 1024) {
-            persistCheckpointPtr();
-            persistCounter = 0;
+    /**
+     * Writes a checkpoint record to WAL and updates checkpoint.ptr.
+     * This is the ARIES checkpoint mechanism: writes the record as a CHECKPOINT
+     * WAL entry and atomically updates the checkpoint pointer to point to it.
+     *
+     * @param activeTxids the list of active transaction IDs at checkpoint time
+     * @throws IOException if the write fails
+     */
+    public void writeCheckpoint(List<Long> activeTxids) throws IOException {
+        if (activeTxids == null) {
+            throw new IllegalArgumentException("activeTxids cannot be null");
+        }
+
+        // Create checkpoint record with current last LSN and active txids
+        long currentLsn = lastAppendedLsn.get();
+        long timestamp = clock.millis();
+        CheckpointRecord checkpointRecord = new CheckpointRecord(currentLsn, 
+                activeTxids.stream().mapToLong(Long::longValue).toArray(), timestamp);
+
+        // Serialize the record and create a CHECKPOINT WAL entry (txid=0 for system)
+        byte[] recordBytes = checkpointRecord.toBytes();
+        WALEntry checkpointEntry = new WALEntry(currentLsn + 1, 0L, WALOpcode.CHECKPOINT, null, recordBytes);
+
+        // Append the checkpoint entry to WAL (this allocates a new LSN)
+        currentSegment.append(checkpointEntry);
+        long checkpointLsn = checkpointEntry.getLsn();
+        lastAppendedLsn.set(checkpointLsn);
+        lastAllocatedLsn.set(checkpointLsn);
+
+        // Force the segment to ensure the checkpoint record is durable
+        currentSegment.force();
+
+        // Atomically update checkpoint.ptr to point to the checkpoint record
+        checkpointPointerFile.write(checkpointLsn);
+
+        LOGGER.info("Checkpoint written at LSN {}, {} active txids", checkpointLsn, activeTxids.size());
+    }
+
+    /**
+     * Loads the last checkpoint record from WAL using checkpoint.ptr.
+     * Returns null if no checkpoint exists or the checkpoint record is corrupt.
+     *
+     * @return the checkpoint record, or null if none/invalid
+     * @throws IOException if the read fails
+     */
+    public CheckpointRecord loadCheckpointRecord() throws IOException {
+        long checkpointLsn = checkpointPointerFile.read();
+        if (checkpointLsn == 0) {
+            LOGGER.debug("No checkpoint found (checkpoint.ptr is 0)");
+            return null;
+        }
+
+        try {
+            WALEntry entry = readByLsn(checkpointLsn);
+            if (entry == null) {
+                LOGGER.warn("Checkpoint ptr points to non-existent LSN: {}", checkpointLsn);
+                return null;
+            }
+
+            if (entry.getOp() != WALOpcode.CHECKPOINT) {
+                LOGGER.warn("Checkpoint ptr points to non-checkpoint entry: {} at LSN {}", 
+                        entry.getOp(), checkpointLsn);
+                return null;
+            }
+
+            // Deserialize the checkpoint record from the after-image
+            return CheckpointRecord.fromBytes(entry.getAfterImage());
+        } catch (CheckpointFormatException e) {
+            LOGGER.warn("Invalid checkpoint record at LSN {}: {}", checkpointLsn, e.getMessage());
+            return null;
+        } catch (Exception e) {
+            LOGGER.warn("Failed to load checkpoint at LSN {}: {}", checkpointLsn, e.getMessage());
+            return null;
         }
     }
 
@@ -287,12 +364,9 @@ public final class WALManager implements AutoCloseable {
         long lastLsn = run.get(run.size() - 1).getLsn();
         lastAppendedLsn.set(lastLsn);
         lastAllocatedLsn.set(lastLsn);
-
-        persistCounter += run.size();
-        if (persistCounter >= 4096 || currentSegment.getPosition() > 1024 * 1024) {
-            persistCheckpointPtr();
-            persistCounter = 0;
-        }
+        
+        // Note: Periodic checkpoint persistence removed for ARIES.
+        // Checkpoints are written explicitly via writeCheckpoint().
     }
 
     /**
@@ -467,57 +541,30 @@ public final class WALManager implements AutoCloseable {
         for (WALSegment segment : segments.values()) {
             segment.force();
         }
-        persistCheckpointPtr();
+        // Note: Removed persistCheckpointPtr() for ARIES.
+        // Checkpoint pointers are updated only during writeCheckpoint().
     }
 
     /**
      * Persists the last appended LSN to checkpoint.ptr.
+     * This is a legacy method for periodic LSN persistence.
      *
      * @throws IOException if the write fails
      */
     private void persistCheckpointPtr() throws IOException {
-        Path checkpointFile = config.getWalDir().resolve("checkpoint.ptr");
-        Path tempFile = config.getWalDir().resolve("checkpoint.ptr.tmp");
-        
-        try {
-            // Write to temp file
-            ByteBuffer buffer = ByteBuffer.allocate(8);
-            buffer.putLong(lastAppendedLsn.get());
-            buffer.flip();
-            byte[] bytes = new byte[buffer.remaining()];
-            buffer.get(bytes);
-            Files.write(tempFile, bytes);
-            
-            // Atomic move
-            Files.move(tempFile, checkpointFile, StandardCopyOption.REPLACE_EXISTING, 
-                    StandardCopyOption.ATOMIC_MOVE);
-            
-            LOGGER.debug("Persisted checkpoint.ptr: {}", lastAppendedLsn.get());
-        } finally {
-            Files.deleteIfExists(tempFile);
-        }
+        checkpointPointerFile.write(lastAppendedLsn.get());
+        LOGGER.debug("Persisted checkpoint.ptr: {}", lastAppendedLsn.get());
     }
 
     /**
      * Reads the checkpoint.ptr file.
+     * This is a legacy method for LSN recovery.
      *
      * @return the persisted LSN, or 0 if the file doesn't exist
      * @throws IOException if the read fails
      */
     private long readCheckpointPtr() throws IOException {
-        Path checkpointFile = config.getWalDir().resolve("checkpoint.ptr");
-        if (!Files.exists(checkpointFile)) {
-            return 0;
-        }
-        
-        byte[] bytes = Files.readAllBytes(checkpointFile);
-        if (bytes.length != 8) {
-            LOGGER.warn("checkpoint.ptr has invalid size: {} bytes", bytes.length);
-            return 0;
-        }
-        
-        ByteBuffer buffer = ByteBuffer.wrap(bytes);
-        return buffer.getLong();
+        return checkpointPointerFile.read();
     }
 
     /**
@@ -532,6 +579,8 @@ public final class WALManager implements AutoCloseable {
         archiver.close();
         
         flush();
+        // Persist checkpoint ptr for recovery (ARIES requires this for restart)
+        persistCheckpointPtr();
         for (WALSegment segment : segments.values()) {
             segment.close();
         }

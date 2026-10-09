@@ -153,3 +153,6 @@ RetentionTest	storage,smoke
 WALWriterTest	storage,smoke
 WALBackpressureTest	storage,smoke
 WALWriterThroughputTest	perf
+CheckpointRecordTest	storage,smoke
+CheckpointPointerFileTest	storage,smoke
+CheckpointIntegrationTest	storage,smoke

@@ -121,7 +121,7 @@ WAL entries are stored in segment files named `wal-NNNN.log` (4-digit zero-padde
 - **Segment rotation**: Occurs when an entry would exceed the segment size limit (configurable, default 64MB). The current segment is closed and a new segment is created.
 - **Header writing**: Headers are written lazily on the first append to an empty segment (0-byte files are valid empty segments). The `firstLSN` is updated when the first entry is appended.
 - **Torn tail handling**: Readers stop at the first incomplete entry (structural error or CRC mismatch), treating partial writes as a valid end-of-segment condition for crash recovery.
-- **Checkpoint persistence**: The last appended LSN is persisted to `checkpoint.ptr` in the WAL directory (atomic temp+rename) on flush/close and periodically during appends.
+- **Checkpoint persistence (ARIES, prompt 4 #16)**: `checkpoint.ptr` stores the 8-byte LSN of the last CHECKPOINT WAL entry (atomic write via `AtomicFileWriter`). It is updated by `WALManager.writeCheckpoint()` (explicit ARIES checkpoint) and by `close()` for restart recovery. The periodic persist-on-append behavior was removed. See `doc/wal/checkpoint.md`.
 
 ## Compatibility
 

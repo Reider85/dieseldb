@@ -1,5 +1,8 @@
 package diesel;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -147,5 +150,21 @@ public final class TxStatusTracker {
      */
     public long getCurrentCommitCsn() {
         return commitCsnCounter.get() - 1; // Return last assigned
+    }
+
+    /**
+     * Returns a list of all currently active transaction IDs.
+     * Used by ARIES checkpoint mechanism to record active txids at checkpoint time.
+     *
+     * @return list of active transaction IDs (may be empty)
+     */
+    public List<Long> getActiveTxids() {
+        List<Long> activeTxids = new ArrayList<>();
+        for (java.util.Map.Entry<Long, TxInfo> entry : txInfoMap.entrySet()) {
+            if (entry.getValue().status == TxStatus.ACTIVE) {
+                activeTxids.add(entry.getKey());
+            }
+        }
+        return Collections.unmodifiableList(activeTxids);
     }
 }

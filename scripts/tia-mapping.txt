@@ -143,3 +143,4 @@ diesel/ConfigKeys.java		smoke,query
 diesel/SerializationFailureException.java	query,query-full
 diesel/concurrency/ConflictDetector.java	concurrency
 diesel/wal/*.java	smoke,storage
+diesel/recovery/*.java	smoke,storage
