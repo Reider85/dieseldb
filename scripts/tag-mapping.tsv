@@ -167,3 +167,7 @@ RecoveryIntegrationTest	smoke,storage
 RecoveryManagerTest	smoke,storage
 RecoveryPerformanceTest	perf
 RecoveryWithLongTransactionTest	large
+AdaptiveFlushTest	storage
+BufferPoolFlusherTest	storage
+FlusherTest	storage
+FlusherThroughputTest	perf

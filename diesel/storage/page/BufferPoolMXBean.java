@@ -37,4 +37,7 @@ public interface BufferPoolMXBean {
 
     /** Hit ratio {@code hits / (hits + misses)}, {@code 0.0} when no requests yet. */
     double getHitRate();
+
+    /** Number of dirty pages currently in the pool. */
+    int getDirtyPageCount();
 }

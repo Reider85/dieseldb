@@ -150,6 +150,8 @@ public class DatabaseServer {
         // the vacuum daemon starts and strictly before client connections are
         // accepted. No-op when the WAL is disabled.
         database.runRecovery();
+        // Start background page flusher (prompt4 #20)
+        database.startPageFlusher();
         database.getVacuumManager().startAutoVacuum();
         try {
             serverSocket = new ServerSocket(port, backlog);
@@ -178,6 +180,12 @@ try {
     public void stop() {
         running = false;
         database.getVacuumManager().stop();
+        // Stop background page flusher
+        try {
+            database.stopPageFlusher();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error stopping page flusher: {0}", e.getMessage());
+        }
         try {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();

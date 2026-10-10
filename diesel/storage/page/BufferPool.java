@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Predicate;
 import javax.management.ObjectName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -410,6 +411,70 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
      */
     public ObjectName getObjectName() {
         return registeredName;
+    }
+
+    /**
+     * Returns the current number of dirty pages in the pool.
+     * This count is volatile and may change between calls.
+     *
+     * @return number of dirty pages
+     */
+    public int getDirtyPageCount() {
+        lock.lock();
+        try {
+            int count = 0;
+            for (BufferFrame frame : frames.values()) {
+                if (frame.page.isDirty()) {
+                    count++;
+                }
+            }
+            return count;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Flushes dirty pages matching the given predicate.
+     * Snapshots matching dirty unpinned pages under the lock, then flushes
+     * them outside the lock. Returns the count of pages that were flushed.
+     * Skips pinned pages to avoid torn writes.
+     *
+     * @param eligible predicate to determine if a dirty page should be flushed
+     * @return number of pages flushed
+     * @throws IOException if the first flush fails (later failures are suppressed)
+     */
+    public int flushDirtyMatching(Predicate<Page> eligible) throws IOException {
+        List<Page> dirty = new ArrayList<>();
+        lock.lock();
+        try {
+            for (BufferFrame frame : frames.values()) {
+                if (frame.page.isDirty() && frame.pinCount == 0 && eligible.test(frame.page)) {
+                    dirty.add(frame.page);
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+
+        IOException failure = null;
+        int flushedCount = 0;
+        for (Page page : dirty) {
+            try {
+                persistDirty(page);
+                flushedCount++;
+            } catch (IOException e) {
+                if (failure == null) {
+                    failure = e;
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+        return flushedCount;
     }
 
     // ─── Internals ──────────────────────────────────────────────────

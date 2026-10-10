@@ -51,6 +51,7 @@ public final class WALManager implements AutoCloseable {
      * end-of-log LSN — segment scan covers LSN recovery in recoverLsn()).
      */
     private long lastCheckpointLsn;
+    private final AtomicLong lastFlushedLsn = new AtomicLong(0);
     private int nextSegmentNumber = 1;
     private int persistCounter = 0;
 
@@ -275,6 +276,9 @@ this.config = config;
 
         // Force the segment to ensure the checkpoint record is durable
         currentSegment.force();
+
+        // Update last flushed LSN to include the checkpoint record
+        lastFlushedLsn.set(checkpointLsn);
 
         // Atomically update checkpoint.ptr to point to the checkpoint record
         checkpointPointerFile.write(checkpointLsn);
@@ -534,6 +538,16 @@ this.config = config;
     }
 
     /**
+     * Returns the LSN of the last WAL segment that was forced to disk.
+     * Used by BufferPoolFlusher to implement the WAL-before-page rule.
+     *
+     * @return the last flushed LSN, or 0 if never flushed
+     */
+    public long getLastFlushedLsn() {
+        return lastFlushedLsn.get();
+    }
+
+    /**
      * Returns the WAL directory path.
      *
      * @return the WAL directory
@@ -551,6 +565,8 @@ this.config = config;
         for (WALSegment segment : segments.values()) {
             segment.force();
         }
+        // Update last flushed LSN to the last appended LSN after force
+        lastFlushedLsn.set(lastAppendedLsn.get());
         // Note: Removed periodic persistCheckpointPtr() for ARIES.
         // The checkpoint pointer is updated by writeCheckpoint() and close().
     }

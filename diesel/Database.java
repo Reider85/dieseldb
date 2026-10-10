@@ -17,8 +17,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 
 import diesel.recovery.CheckpointRecord;
 import java.util.concurrent.CompletableFuture;
@@ -86,6 +88,7 @@ class Database {
     private volatile AsyncWALWriter asyncWALWriter;
     private volatile GroupCommitCoordinator groupCoordinator;
     private volatile RecoveryManager recoveryManager;                             // ARIES startup recovery (prompt4 #19)
+    private volatile diesel.storage.page.BufferPoolFlusher bufferPoolFlusher;   // Background page flusher (prompt4 #20)
     private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "diesel-wal-scheduler");
         t.setDaemon(true);
@@ -296,6 +299,77 @@ class Database {
             recoveryManager.recover();
         } catch (IOException e) {
             throw new IllegalStateException("ARIES startup recovery failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Starts the background page flusher if enabled and not already running.
+     * The flusher uses the WAL manager's last flushed LSN to implement the
+     * WAL-before-page rule. If WAL is disabled, uses Long.MAX_VALUE as
+     * watermark (flush all pages).
+     */
+    public void startPageFlusher() {
+        if (bufferPoolFlusher != null && bufferPoolFlusher.isRunning()) {
+            LOGGER.fine("BufferPoolFlusher already running");
+            return;
+        }
+
+        if (pageManager == null) {
+            LOGGER.warning("Cannot start page flusher: PageManager not initialized");
+            return;
+        }
+
+        // Determine WAL watermark
+        LongSupplier walLsnSupplier = () -> {
+            if (isWALEnabled() && walWriter != null) {
+                return walWriter.getManager().getLastFlushedLsn();
+            }
+            return Long.MAX_VALUE; // No WAL: flush all pages
+        };
+
+        // Create and start flusher
+        try {
+            Properties props = ConfigLoader.load();
+            int flushInterval = Integer.parseInt(
+                props.getProperty("bufferpool.flush.interval.ms", "200"));
+            boolean enabled = Boolean.parseBoolean(
+                props.getProperty("bufferpool.flusher.enabled", "true"));
+
+            if (enabled) {
+                bufferPoolFlusher = new diesel.storage.page.BufferPoolFlusher(
+                    pageManager.getBufferPool(), walLsnSupplier, flushInterval);
+                bufferPoolFlusher.start();
+                LOGGER.info("BufferPoolFlusher started with interval " + flushInterval + "ms");
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Failed to start BufferPoolFlusher: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Stops the background page flusher after a final flush.
+     * Idempotent: does nothing if not running.
+     */
+    public void stopPageFlusher() {
+        if (bufferPoolFlusher != null) {
+            try {
+                bufferPoolFlusher.stop();
+                LOGGER.info("BufferPoolFlusher stopped with final flush");
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "BufferPoolFlusher final flush failed: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
+     * Stops the background page flusher without doing a final flush.
+     * Useful for crash simulation: dirty pages are left dirty as expected.
+     * Idempotent: does nothing if not running.
+     */
+    public void stopPageFlusherWithoutFinalFlush() {
+        if (bufferPoolFlusher != null) {
+            bufferPoolFlusher.stopWithoutFlush();
+            LOGGER.info("BufferPoolFlusher stopped without final flush");
         }
     }
 
@@ -1853,7 +1927,10 @@ class Database {
      * daemon and unregisters its JMX MBean.
      */
     public void close() {
-        // Close WAL subsystem first to ensure all commits are flushed
+        // Stop page flusher first (final flush)
+        stopPageFlusher();
+        
+        // Close WAL subsystem to ensure all commits are flushed
         if (recoveryManager != null) {
             recoveryManager.close();
         }
@@ -1890,6 +1967,9 @@ class Database {
      * {@code PageManager.closeDiscardingDirty}.
      */
     void closeForCrashSimulation() {
+        // Stop page flusher without final flush (crash simulation expects dirty pages)
+        stopPageFlusherWithoutFinalFlush();
+        
         if (recoveryManager != null) {
             recoveryManager.close();
         }
