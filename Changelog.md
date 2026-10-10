@@ -922,3 +922,5 @@ chore: test-profiles-audit changelog entry
 3.2.81 Prompt 4 #20: Background page flusher - BufferPoolFlusher + AdaptiveFlushStrategy (dirty ratio >25% -> interval x0.5, <5% -> x2, clamp [10ms,60s]), WAL-before-page rule (skip pageLSN > lastFlushedLsn), pinned-page skip, JMX BufferPoolFlusherMXBean metrics (bufferpool.dirty.pages, flusher.duration.ms), DatabaseServer lifecycle wiring + 4 bufferpool.* config keys; 31 new tests (AdaptiveFlushTest 10, BufferPoolFlusherTest 9, FlusherTest 50k no-commit kill-restart acceptance, FlusherThroughputTest <=10% drop); gates: compile OK, isolated 19/0/0, fast 429/0/0, large 20/0/0 BUILD SUCCESS; timing compare FAILED with machine-drift noise - flusher inert in timing runs (0 start logs), run-to-run flagged sets differ, A/B git-stash proved clean HEAD slower (1.91x vs 1.26x on the same join); committed with red gate per user decision, baseline not re-seeded
 
 3.2.82 Fixed flaky BufferPoolFlusherTest race conditions with volatile dirty flag and polling
+
+3.2.83 Analytics
