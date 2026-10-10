@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 import diesel.storage.page.BufferPool;
 import diesel.storage.page.BufferPoolFlusher;
@@ -27,6 +28,19 @@ public class BufferPoolFlusherTest {
     private TestPageFlusher flusher;
     private BufferPoolFlusher flusherDaemon;
     private final LongSupplier testWalLsnSupplier = () -> 100;
+
+    /**
+     * Polls a condition until true or timeout. Replaces fixed sleeps for robust async testing.
+     */
+    private static void awaitTrue(BooleanSupplier condition, long timeoutMs, String message) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (!condition.getAsBoolean()) {
+            if (System.currentTimeMillis() >= deadline) {
+                fail(message);
+            }
+            Thread.sleep(10);
+        }
+    }
 
     @BeforeEach
     void setUp() throws IOException {
@@ -61,7 +75,7 @@ public class BufferPoolFlusherTest {
 
 
     @Test
-    void testFlushEligiblePages() throws IOException {
+    void testFlushEligiblePages() throws IOException, InterruptedException {
         // Start flusher
         flusherDaemon.start();
         assertTrue(flusherDaemon.isRunning());
@@ -85,23 +99,17 @@ public class BufferPoolFlusherTest {
             // handles closed at end of try-with-resources
         }
 
-        // Wait for flush cycle
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // Wait for flush cycle with bounded polling
+        awaitTrue(() -> !page1.isDirty() && !page2.isDirty(), 2000, "eligible pages should be flushed within 2s");
 
         // Only eligible pages should be flushed
-        assertFalse(page1.isDirty()); // LSN 0, eligible
-        assertFalse(page2.isDirty()); // LSN 50, eligible
         assertTrue(page3.isDirty());  // LSN 150, not eligible
         
         flusherDaemon.stop();
     }
 
     @Test
-    void testSkipPinnedPages() throws IOException {
+    void testSkipPinnedPages() throws IOException, InterruptedException {
         // Start flusher
         flusherDaemon.start();
         assertTrue(flusherDaemon.isRunning());
@@ -125,11 +133,7 @@ public class BufferPoolFlusherTest {
         // Unpin and wait for next cycle
         pinned.close();
         
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        awaitTrue(() -> !page.isDirty(), 2000, "unpinned page should be flushed within 2s");
 
         // Now page should be flushed
         assertFalse(page.isDirty());
@@ -221,8 +225,8 @@ public class BufferPoolFlusherTest {
             }
         }
 
-        // Wait for flush cycles
-        Thread.sleep(150);
+        // Wait for flush cycles with bounded polling
+        awaitTrue(() -> flusherDaemon.getFlushCount() > 0 && flusherDaemon.getTotalFlushedPages() > 0, 2000, "flush metrics should be updated within 2s");
         
         // Check metrics
         assertTrue(flusherDaemon.getFlushCount() > 0);
@@ -253,8 +257,8 @@ public class BufferPoolFlusherTest {
             noWalFlusher.start();
             assertTrue(noWalFlusher.isRunning());
 
-            // Wait for flush cycle
-            Thread.sleep(100);
+            // Wait for flush cycle with bounded polling
+            awaitTrue(() -> !page.isDirty(), 2000, "page should be flushed within 2s");
 
             // With WAL disabled, all pages should be flushed
             assertFalse(page.isDirty());

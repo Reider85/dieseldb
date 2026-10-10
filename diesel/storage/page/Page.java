@@ -30,7 +30,7 @@ public final class Page {
     private final int pageSize;
     private byte[] data;
     private PageHeader header;
-    private boolean dirty;
+    private volatile boolean dirty;
 
     /**
      * Creates a new empty page with the given identifier and size.

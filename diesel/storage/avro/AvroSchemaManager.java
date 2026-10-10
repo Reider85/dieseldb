@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import diesel.ConfigKeys;
+import diesel.storage.AtomicFileWriter;
 
 /**
  * Manages Avro schemas for DieselDB tables: builds Avro RECORD schemas from
@@ -140,7 +141,11 @@ public final class AvroSchemaManager {
             Files.createDirectories(parent);
         }
         String json = schema.toString(true); // pretty-printed
-        Files.writeString(avscPath, json, StandardCharsets.UTF_8);
+        // Atomic write: temp + fsync + rename, so a crash never leaves a truncated .avsc
+        try (AtomicFileWriter afw = AtomicFileWriter.openText(avscPath)) {
+            afw.bufferedWriter().write(json);
+            afw.commit();
+        }
         LOGGER.debug("Wrote Avro schema to {}", avscPath);
     }
 

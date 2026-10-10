@@ -81,7 +81,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
         }
 
         for (Map.Entry<String, int[]> entry : payload.getDeletedRows().entrySet()) {
-            Table table = database.getTable(entry.getKey());
+            Table table = database.findTable(entry.getKey());
             if (table == null) {
                 LOGGER.log(Level.WARNING, "Recovery: unknown table in COMMIT payload: " + entry.getKey());
                 rowsSkipped.addAndGet(entry.getValue().length);
@@ -102,7 +102,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
         }
 
         for (Map.Entry<String, int[]> entry : payload.getModifiedRows().entrySet()) {
-            Table table = database.getTable(entry.getKey());
+            Table table = database.findTable(entry.getKey());
             if (table == null) {
                 LOGGER.log(Level.WARNING, "Recovery: unknown table in COMMIT payload: " + entry.getKey());
                 rowsSkipped.addAndGet(entry.getValue().length);
@@ -220,7 +220,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
     // ─── helpers ────────────────────────────────────────────────────────
 
     private Table resolve(String tableName) {
-        Table table = database.getTable(tableName);
+        Table table = database.findTable(tableName);
         if (table == null) {
             LOGGER.log(Level.WARNING, "Recovery: unknown table in DML record: " + tableName);
         }

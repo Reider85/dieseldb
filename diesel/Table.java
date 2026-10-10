@@ -205,6 +205,13 @@ class Table implements Serializable {
 
     /** Number of auto-commit mutations folded into the pending write. */
     private transient volatile int pendingPersistCount;
+    
+    /**
+     * True if this table has ever had uncommitted MVCC changes since the last
+     * clean persist (or since load). Used to disable Avro pushdown when the
+     * on-disk file may not match the current MVCC state.
+     */
+    private transient volatile boolean mvccDirtySincePersist;
 
     /** True when clustered index was restored from serialized data. */
     private transient boolean restoredClustered;
@@ -1649,6 +1656,8 @@ class Table implements Serializable {
         RowVersionMeta meta = new RowVersionMeta(txid, committedValues);
         setRowVersionMeta(rowIndex, meta);
         uncommittedMvccRows.add(rowIndex);
+        // Mark MVCC-dirty so pushdown will bypass until clean persist
+        mvccDirtySincePersist = true;
     }
 
     /**
@@ -1686,6 +1695,8 @@ class Table implements Serializable {
         meta.setUncommittedDelete(true);
         meta.setOwnerTxid(txid);
         uncommittedMvccRows.add(rowIndex);
+        // Mark MVCC-dirty so pushdown will bypass until clean persist
+        mvccDirtySincePersist = true;
     }
 
     /**
@@ -1709,6 +1720,8 @@ class Table implements Serializable {
         meta.setUncommittedUpdate(true);
         meta.setOwnerTxid(txid);
         uncommittedMvccRows.add(rowIndex);
+        // Mark MVCC-dirty so pushdown will bypass until clean persist
+        mvccDirtySincePersist = true;
     }
 
     /**
@@ -1802,6 +1815,8 @@ class Table implements Serializable {
             meta.markAborted();
         }
         uncommittedMvccRows.remove(rowIndex);
+        // Mark MVCC-dirty so pushdown will bypass until clean persist
+        mvccDirtySincePersist = true;
     }
 
     /**
@@ -2967,23 +2982,47 @@ class Table implements Serializable {
      * they can never interleave writes to the same file (paired with the
      * atomic {@link diesel.storage.AtomicFileWriter} temp+rename pattern).
      *
+     * <p>Prompt 4 #20: Clear dirty flags BEFORE storage.save to avoid lost-dirty race:
+     * concurrent inserts during the IO window re-mark persistDirty, so the flusher
+     * will re-save on next cycle. If the save fails, restore the dirty flags.
+     *
      * @param tableName the table name, used as the file base name
      * @throws RuntimeException if the file cannot be written
      */
     public void saveToFile(String tableName) {
         tableLock.writeLock().lock();
         try {
+            // Clear dirty BEFORE the save so concurrent mutations during IO re-mark it
+            boolean wasDirty = persistDirty;
+            int wasPending = pendingPersistCount;
+            boolean wasMvccDirty = mvccDirtySincePersist;
+            persistDirty = false;
+            pendingPersistCount = 0;
+            // Successfully persisting clears the MVCC-dirty flag
+            mvccDirtySincePersist = false;
+            
             if (storage != null && !(storage instanceof InMemoryRowStorage)) {
-                storage.saveToFile(tableName);
-                persistDirty = false;
-                pendingPersistCount = 0;
+                try {
+                    storage.saveToFile(tableName);
+                } catch (RuntimeException e) {
+                    // Restore dirty flags on failure so retry can succeed
+                    persistDirty = wasDirty;
+                    pendingPersistCount = wasPending;
+                    mvccDirtySincePersist = wasMvccDirty;
+                    throw e;
+                }
                 return;
             }
             if (storage == null || inMemoryPersistEnabled()) {
-                writeLegacyCsv(tableName);
+                try {
+                    writeLegacyCsv(tableName);
+                } catch (RuntimeException e) {
+                    persistDirty = wasDirty;
+                    pendingPersistCount = wasPending;
+                    mvccDirtySincePersist = wasMvccDirty;
+                    throw e;
+                }
             }
-            persistDirty = false;
-            pendingPersistCount = 0;
         } finally {
             tableLock.writeLock().unlock();
         }
@@ -3028,6 +3067,7 @@ class Table implements Serializable {
         synchronized (this) {
             pendingPersistCount++;
             persistDirty = true;
+            mvccDirtySincePersist = true; // Any auto-commit marks MVCC-dirty
             flushNow = pendingPersistCount >= persistMaxPending();
         }
         boolean background = PersistFlusher.backgroundEnabled();
@@ -3066,11 +3106,20 @@ class Table implements Serializable {
         }
     }
 
-    /**
-     * Whether an auto-commit mutation has not reached the data file yet.
+/**
+     * Returns whether an auto-commit mutation has not reached the data file yet.
      */
     public boolean hasPendingPersist() {
         return persistDirty;
+    }
+
+    /**
+     * Returns whether this table has had uncommitted MVCC changes since the last
+     * clean persist. When true, Avro pushdown is disabled to avoid reading
+     * stale files that don't reflect the current MVCC state.
+     */
+    public boolean isMvccDirtySincePersist() {
+        return mvccDirtySincePersist;
     }
 
     /** Tables whose last auto-commit mutation is not on disk yet. */

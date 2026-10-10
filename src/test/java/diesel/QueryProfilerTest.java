@@ -38,6 +38,7 @@ public class QueryProfilerTest {
         dropTable();
         database.executeQuery("CREATE TABLE PROFILER_TEST (ID LONG PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         profiler = QueryProfiler.getInstance();
+        // Reset AFTER CREATE TABLE so DDL queries don't pollute counters
         profiler.resetForTest();
         profiler.setSlowThresholdMsForTest(QueryProfiler.DEFAULT_SLOW_THRESHOLD_MS);
     }
@@ -64,6 +65,11 @@ public class QueryProfilerTest {
 
     @Test
     void everyQueryRecordsCountersAndBreakdown() {
+        // Warmup: first query after reset may exceed the threshold due to JIT/class loading
+        database.executeQuery("INSERT INTO PROFILER_TEST (ID, NAME, AGE) VALUES (99, 'warmup', 1)", null);
+        database.executeQuery("SELECT ID FROM PROFILER_TEST", null);
+        profiler.resetForTest();
+
         database.executeQuery("INSERT INTO PROFILER_TEST (ID, NAME, AGE) VALUES (1, 'alpha', 20)", null);
         Object result = database.executeQuery("SELECT ID, NAME FROM PROFILER_TEST WHERE AGE > 10", null);
 

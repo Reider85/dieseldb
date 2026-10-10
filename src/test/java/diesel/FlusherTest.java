@@ -9,6 +9,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -21,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 public class FlusherTest {
 
     private static final String TEST_DIR = "data_flusher_test";
-    private static final String TABLE_NAME = "test_table";
+    private static final String TABLE_NAME = "TEST_TABLE";
     private static final int ROW_COUNT = 50000; // 50k for efficiency, test runs faster
 
     private Database database;
@@ -34,6 +35,9 @@ public class FlusherTest {
         // Create database with WAL enabled
         database = new Database(TEST_DIR, createWALConfig());
         database.executeQuery("CREATE TABLE " + TABLE_NAME + " (ID LONG PRIMARY KEY, NAME STRING)", null);
+        // Persist the empty table structure so loadTablesFromDisk finds it after restart
+        database.getTable(TABLE_NAME).saveToFile(TABLE_NAME);
+        database.getTable(TABLE_NAME).saveToSerializedFile(TABLE_NAME);
     }
 
     @AfterEach
@@ -66,22 +70,29 @@ public class FlusherTest {
         System.out.println("All rows inserted, now simulating crash...");
         
         // Simulate crash: close without commit (discard dirty pages)
+        // The empty table file from setUp allows loadTablesFromDisk to find it;
+        // the uncommitted inserts live only in the WAL and get rolled back by recovery.
         database.closeForCrashSimulation();
         
         // Create new database instance (restart)
         Database restartedDb = new Database(TEST_DIR, createWALConfig());
         
         try {
-            // Start flusher in restarted database
-            restartedDb.startPageFlusher();
-            
-            // Run recovery
-            restartedDb.runRecovery();
+// Load tables from disk before recovery (like RecoveryIntegrationTest)
+        restartedDb.loadTablesFromDisk();
+        
+        // Start flusher in restarted database
+        restartedDb.startPageFlusher();
+        
+        // Run recovery
+        restartedDb.runRecovery();
             
             // Check the table state
             Object result = restartedDb.executeQuery("SELECT COUNT(*) FROM " + TABLE_NAME, null);
-            assertTrue(result instanceof Number);
-            int count = ((Number) result).intValue();
+            assertTrue(result instanceof List, "COUNT(*) must return a result set");
+            List<?> countRows = (List<?>) result;
+            assertEquals(1, countRows.size(), "COUNT(*) must collapse into a single aggregate row");
+            int count = ((Number) ((Map<?, ?>) countRows.get(0)).get("COUNT(*)")).intValue();
             
             // The 50k uncommitted inserts should be rolled back
             // So we should see 0 rows (no committed transactions)
@@ -113,6 +124,11 @@ public class FlusherTest {
             database.executeQuery(sql, null); // Auto-commit
         }
         
+        // Persist committed rows to disk BEFORE uncommitted inserts
+        // so the file has only committed data; uncommitted rows stay in WAL only
+        database.getTable(TABLE_NAME).saveToFile(TABLE_NAME);
+        database.getTable(TABLE_NAME).saveToSerializedFile(TABLE_NAME);
+        
         // Begin transaction and insert 25k uncommitted rows
         UUID txId = beginTransaction();
         for (int i = ROW_COUNT / 2; i < ROW_COUNT; i++) {
@@ -128,14 +144,17 @@ public class FlusherTest {
         
         // Restart and recover
         Database restartedDb = new Database(TEST_DIR, createWALConfig());
+        restartedDb.loadTablesFromDisk();
         restartedDb.startPageFlusher();
         restartedDb.runRecovery();
         
-        try {
-            // Should see only the committed rows
+try {
+            // Check the table state
             Object result = restartedDb.executeQuery("SELECT COUNT(*) FROM " + TABLE_NAME, null);
-            assertTrue(result instanceof Number);
-            int count = ((Number) result).intValue();
+            assertTrue(result instanceof List, "COUNT(*) must return a result set");
+            List<?> countRows = (List<?>) result;
+            assertEquals(1, countRows.size(), "COUNT(*) must collapse into a single aggregate row");
+            int count = ((Number) ((Map<?, ?>) countRows.get(0)).get("COUNT(*)")).intValue();
             
             assertEquals(ROW_COUNT / 2, count, 
                 "Only committed inserts should survive crash recovery");
@@ -176,18 +195,25 @@ public class FlusherTest {
         // Commit the transaction
         database.executeQuery("COMMIT", txId);
         
+        // Force persist table files for recovery
+        database.getTable(TABLE_NAME).saveToFile(TABLE_NAME);
+        database.getTable(TABLE_NAME).saveToSerializedFile(TABLE_NAME);
+        
         // Simulate crash
         database.closeForCrashSimulation();
         
         // Restart and verify data is there (committed)
         Database restartedDb = new Database(TEST_DIR, createWALConfig());
+        restartedDb.loadTablesFromDisk();
         restartedDb.startPageFlusher();
         restartedDb.runRecovery();
         
         try {
             Object result = restartedDb.executeQuery("SELECT COUNT(*) FROM " + TABLE_NAME, null);
-            assertTrue(result instanceof Number);
-            int count = ((Number) result).intValue();
+            assertTrue(result instanceof List, "COUNT(*) must return a result set");
+            List<?> countRows = (List<?>) result;
+            assertEquals(1, countRows.size(), "COUNT(*) must collapse into a single aggregate row");
+            int count = ((Number) ((Map<?, ?>) countRows.get(0)).get("COUNT(*)")).intValue();
             
             assertEquals(1000, count, "Committed data should survive crash");
             

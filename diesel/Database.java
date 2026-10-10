@@ -1758,6 +1758,17 @@ class Database {
     }
 
     /**
+     * Package-private: returns the table if present, or null.
+     * Used by recovery sinks to skip unknown tables with warnings instead of throwing.
+     *
+     * @param tableName the table name
+     * @return the registered table, or null if not found
+     */
+    Table findTable(String tableName) {
+        return tables.get(tableName);
+    }
+
+    /**
      * Removes the table and its CSV and serialized files from disk. Active
      * transactions are notified so their snapshots no longer reference the
      * dropped table.

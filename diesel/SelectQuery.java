@@ -2863,7 +2863,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             // snapshot — the in-memory scan applies isRowVisibleToReader to all
             // of that. Auto-commit readers keep the binary pushdown.
             if (table.getDeletedCount() > 0 || table.hasPendingPersist()
-                    || table.hasUncommittedMvccChanges() || inExplicitTransaction()) {
+                    || table.hasUncommittedMvccChanges() || inExplicitTransaction()
+                    || table.isMvccDirtySincePersist()) {
                 return table.getLiveRows();
             }
 
