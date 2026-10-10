@@ -1,1 +1,1 @@
-3.2.82 Fixed flaky BufferPoolFlusherTest race conditions with volatile dirty flag and polling
+3.2.84 MVCC-1: replace O(T*W*R) Cartesian conflict detection in ConflictDetector.noteCommit with global rowReaders index (ConcurrentMap<RowRef,Set<Long>>), O(W) commit check, O(R) cleanup; fix activeTxns leak on successful commit; fix+tag SerializationConflictTest (was untagged/never ran, failing victim-policy expectation); new RowReadersCleanupTest + ConflictDetectorCartesianBenchmarkTest (flat 0ms at T=1000)

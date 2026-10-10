@@ -1,13 +1,15 @@
 package diesel;
 
 import diesel.concurrency.ConflictDetector;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Test for MVCC SERIALIZABLE SSI conflict detection (prompt4.md #5).
- * Tests SerializationFailureException and ConflictDetector functionality.
- */
+  * Test for MVCC SERIALIZABLE SSI conflict detection (prompt4.md #5).
+  * Tests SerializationFailureException and ConflictDetector functionality.
+  */
+@Tag("concurrency")
 public class SerializationConflictTest {
 
     @Test
@@ -110,21 +112,22 @@ public class SerializationConflictTest {
         // Transaction 1 reads a row
         detector.noteRead(txid1, "test_table", 1);
         
-        // Transaction 2 writes to that row and commits
+        // Transaction 2 writes to that row and commits - should fail (writer detection loser)
         java.util.Map<String, java.util.Set<Integer>> writeSet = new java.util.HashMap<>();
         writeSet.put("test_table", java.util.Set.of(1));
         
-        // This should succeed - no conflict yet
-        detector.noteCommit(txid2, commitCsn, writeSet);
-        
-        // Now transaction 1 tries to commit - should detect rw-conflict
-        java.util.Map<String, java.util.Set<Integer>> writeSet1 = new java.util.HashMap<>();
         assertThrows(SerializationFailureException.class, () -> {
+            detector.noteCommit(txid2, commitCsn, writeSet);
+        });
+        
+        // Transaction 1 can now commit successfully (no conflict with empty writeSet)
+        java.util.Map<String, java.util.Set<Integer>> writeSet1 = new java.util.HashMap<>();
+        assertDoesNotThrow(() -> {
             detector.noteCommit(txid1, commitCsn + 1, writeSet1);
         });
         
-        // Cleanup
-        detector.noteRollback(txid1);
+        // Verify cleanup: rowReaders should be empty after successful commit
+        assertEquals(0, detector.trackedReaderRowCount());
     }
 
     @Test

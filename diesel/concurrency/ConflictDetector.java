@@ -41,6 +41,10 @@ public final class ConflictDetector {
             readSet.add(new RowRef(table, rowIndex));
         }
 
+        void addRead(RowRef ref) {
+            readSet.add(ref);
+        }
+
         void addWrite(String table, int rowIndex) {
             writeSet.add(new RowRef(table, rowIndex));
         }
@@ -48,6 +52,9 @@ public final class ConflictDetector {
 
     // Active SERIALIZABLE transactions: txid -> tracking state
     private final ConcurrentMap<Long, TxnTracking> activeTxns = new ConcurrentHashMap<>();
+
+    // Global index of which transactions are reading each row: RowRef -> set of txids
+    private final ConcurrentMap<RowRef, Set<Long>> rowReaders = new ConcurrentHashMap<>();
 
     /**
      * Begin tracking a SERIALIZABLE transaction.
@@ -59,16 +66,18 @@ public final class ConflictDetector {
         }
     }
 
-    /**
-     * Record that a SERIALIZABLE transaction read a row.
-     * Called during SELECT scans or when rows are identified for UPDATE/DELETE.
-     */
+/**
+      * Record that a SERIALIZABLE transaction read a row.
+      * Called during SELECT scans or when rows are identified for UPDATE/DELETE.
+      */
     public void noteRead(long txid, String table, int rowIndex) {
         TxnTracking tracking = activeTxns.get(txid);
         if (tracking == null) {
             throw new IllegalStateException("Transaction " + txid + " not being tracked");
         }
-        tracking.addRead(table, rowIndex);
+        RowRef ref = new RowRef(table, rowIndex);
+        tracking.addRead(ref);
+        rowReaders.computeIfAbsent(ref, k -> ConcurrentHashMap.newKeySet()).add(txid);
     }
 
     /**
@@ -114,80 +123,115 @@ public final class ConflictDetector {
         }
     }
 
+/**
+      * Cleanup all reader registrations for a transaction's read set.
+      * Removes the transaction from rowReaders index for all rows it read.
+      */
+    private void cleanupReaderEntries(TxnTracking txn) {
+        for (RowRef ref : txn.readSet) {
+            rowReaders.computeIfPresent(ref, (k, readers) -> {
+                readers.remove(txn.txid);
+                return readers.isEmpty() ? null : readers;  // Remove empty sets to prevent unbounded growth
+            });
+        }
+    }
+
     /**
-     * Record that a SERIALIZABLE transaction is committing.
-     * Checks for read-write conflicts with any active SERIALIZABLE transactions.
-     * A rw-conflict occurs if:
-     * - This transaction wrote to a row that was read by an active SERIALIZABLE transaction
-     *   whose snapshot predates this transaction's commit
-     * - Or this transaction read a row that was written by a now-committed transaction
-     *   after this transaction's snapshot (handled by write-time check above)
-     *
-     * @param txid        current transaction ID
-     * @param commitCsn   commit sequence number of this transaction
-     * @param writeSet    map of table name -> set of row indices written by this transaction
-     * @throws SerializationFailureException if a rw-conflict is detected; victim is the committing transaction (writer detection loser)
-     */
+      * Record that a SERIALIZABLE transaction is committing.
+      * Checks for read-write conflicts using global rowReaders index.
+      * A rw-conflict occurs if:
+      * - This transaction wrote to a row that was read by an active SERIALIZABLE transaction
+      *   whose snapshot predates this transaction's commit
+      * - Or this transaction read a row that was written by a now-committed transaction
+      *   after this transaction's snapshot (handled by write-time check above)
+      *
+      * @param txid        current transaction ID
+      * @param commitCsn   commit sequence number of this transaction
+      * @param writeSet    map of table name -> set of row indices written by this transaction
+      * @throws SerializationFailureException if a rw-conflict is detected; victim is the committing transaction (writer detection loser)
+      */
     public void noteCommit(long txid, long commitCsn, java.util.Map<String, java.util.Set<Integer>> writeSet) {
         TxnTracking thisTxn = activeTxns.get(txid);
         if (thisTxn == null) {
             throw new IllegalStateException("Transaction " + txid + " not being tracked during commit");
         }
 
-        // Check if our writeSet intersects with any active SERIALIZABLE transaction's readSet
-        // where the active transaction's snapshot predates our commit (rw-antidependency)
-        for (TxnTracking otherTxn : activeTxns.values()) {
-            if (otherTxn.txid == txid) continue; // Skip self
+        // Union of writeSet parameter and thisTxn.writeSet (covers both Database-provided writeSet and noteWrite-tracked writes)
+        Set<RowRef> writes = new HashSet<>(thisTxn.writeSet);
+        if (writeSet != null) {
+            writeSet.forEach((table, indices) -> {
+                for (int rowIndex : indices) {
+                    writes.add(new RowRef(table, rowIndex));
+                }
+            });
+        }
 
-            // Check if otherTxn read any row that we are now writing
-            for (RowRef ourWrite : thisTxn.writeSet) {
-                for (RowRef otherRead : otherTxn.readSet) {
-                    if (ourWrite.table().equals(otherRead.table()) && ourWrite.rowIndex() == otherRead.rowIndex()) {
-                        // rw-conflict: otherTxn read row R; we are writing R after otherTxn's snapshot
+        // Check if any of our writes intersect with active transactions' reads using rowReaders index
+        for (RowRef writeRef : writes) {
+            Set<Long> readers = rowReaders.get(writeRef);
+            if (readers != null) {
+                for (long readerTxid : readers) {
+                    if (readerTxid != txid) {
+                        // rw-conflict: readerTxid read row that we are writing
                         // Victim policy: writer detection loser — this transaction (committer) loses
                         throw new SerializationFailureException(
-                                "Serialization failure: rw-conflict detected at commit. Transaction " + otherTxn.txid + " read table " + otherRead.table() + " row " + otherRead.rowIndex() + " before this transaction's commit. Committing transaction is the victim.");
+                                "Serialization failure: rw-conflict detected at commit. Transaction " + readerTxid + " read table " + writeRef.table() + " row " + writeRef.rowIndex() + " before this transaction's commit. Committing transaction is the victim.");
                     }
                 }
             }
         }
+
+        // Success: cleanup this transaction's reader registrations and remove from active transactions
+        cleanupReaderEntries(thisTxn);
+        activeTxns.remove(txid);
     }
 
-    /**
-     * Record that a SERIALIZABLE transaction is rolling back.
-     * Cleanup tracking state for the transaction.
-     */
+/**
+      * Record that a SERIALIZABLE transaction is rolling back.
+      * Cleanup tracking state for the transaction.
+      */
     public void noteRollback(long txid) {
         TxnTracking removed = activeTxns.remove(txid);
         if (removed == null) {
             throw new IllegalStateException("Transaction " + txid + " not being tracked during rollback");
         }
+        cleanupReaderEntries(removed);
     }
 
-    /**
-     * Record that a SERIALIZABLE transaction has ended (committed successfully).
-     * Cleanup tracking state.
-     */
+/**
+      * Record that a SERIALIZABLE transaction has ended (committed successfully).
+      * Cleanup tracking state.
+      */
     public void noteEnd(long txid) {
         TxnTracking removed = activeTxns.remove(txid);
         if (removed == null) {
             throw new IllegalStateException("Transaction " + txid + " not being tracked during end");
         }
+        cleanupReaderEntries(removed);
     }
 
-    /**
-     * Cleanup all tracking state.
-     * Useful for testing and database close.
-     */
+/**
+      * Cleanup all tracking state.
+      * Useful for testing and database close.
+      */
     public void clear() {
         activeTxns.clear();
+        rowReaders.clear();
+    }
+
+/**
+      * Get the number of currently active SERIALIZABLE transactions being tracked.
+      * Useful for testing heap stability (e.g., ChainOf1000TxTest).
+      */
+    public int activeSerializableCount() {
+        return activeTxns.size();
     }
 
     /**
-     * Get the number of currently active SERIALIZABLE transactions being tracked.
-     * Useful for testing heap stability (e.g., ChainOf1000TxTest).
-     */
-    public int activeSerializableCount() {
-        return activeTxns.size();
+      * Get the number of row readers currently tracked in the global index.
+      * Useful for testing that rowReaders is properly cleaned up after commits/aborts.
+      */
+    public int trackedReaderRowCount() {
+        return rowReaders.size();
     }
 }
