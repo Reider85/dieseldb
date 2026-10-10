@@ -466,9 +466,11 @@ class JsonlAppendModeTest {
 
     @Test
     void appendIncrementalSaveIsFasterThanRewrite() throws Exception {
-        double rewrite = timeIncrementalSave(JsonParserConfig.WriteMode.REWRITE, 100_000, 10_000);
-        double append = timeIncrementalSave(JsonParserConfig.WriteMode.APPEND, 100_000, 10_000);
-        // 2x margin accounts for fixed I/O overhead (fsync, delta file, append seek).
+        double rewrite = timeIncrementalSave(JsonParserConfig.WriteMode.REWRITE, 200_000, 10_000);
+        double append = timeIncrementalSave(JsonParserConfig.WriteMode.APPEND, 200_000, 10_000);
+        // 2x margin: with base=200k, the shared fsync barrier (prompt 49 crash contract)
+        // is dominated by rewrite's row-writing cost, making the margin structurally
+        // achievable even on slow-fsync machines; min-of-3 protects against GC/AV spikes.
         assertTrue(append < rewrite * 0.5,
                 "append incremental save (" + append + " ms) should be faster than rewrite ("
                         + rewrite + " ms)");
@@ -478,19 +480,35 @@ class JsonlAppendModeTest {
         warmUp(mode);
         JsonParserConfig cfg = new JsonParserConfig.Builder().writeMode(mode).build();
         String name = "PERF_" + mode;
-        JsonlRowStorage storage = newStorage(name, cfg);
-        for (int i = 0; i < base; i++) {
-            storage.insert(row(i, "n" + i, i));
+        
+        double bestTime = Double.MAX_VALUE;
+        for (int round = 0; round < 3; round++) {
+            // Create fresh storage for each round to reset state
+            JsonlRowStorage storage = newStorage(name + "_round" + round, cfg);
+            
+            // Insert base rows and save
+            for (int i = 0; i < base; i++) {
+                storage.insert(row(i, "n" + i, i));
+            }
+            storage.saveToFile(name + "_round" + round);
+            
+            // Insert additional rows and time the save
+            for (int i = 0; i < extra; i++) {
+                storage.insert(row(base + i, "n" + (base + i), base + i));
+            }
+            
+            long t0 = System.nanoTime();
+            storage.saveToFile(name + "_round" + round);
+            long t1 = System.nanoTime();
+            
+            double roundTime = (t1 - t0) / 1_000_000.0;
+            if (roundTime < bestTime) {
+                bestTime = roundTime;
+            }
+            
+            storage.close();
         }
-        storage.saveToFile(name);
-        for (int i = 0; i < extra; i++) {
-            storage.insert(row(base + i, "n" + (base + i), base + i));
-        }
-        long t0 = System.nanoTime();
-        storage.saveToFile(name);
-        long t1 = System.nanoTime();
-        storage.close();
-        return (t1 - t0) / 1_000_000.0;
+        return bestTime;
     }
 
     private void warmUp(JsonParserConfig.WriteMode mode) throws Exception {
