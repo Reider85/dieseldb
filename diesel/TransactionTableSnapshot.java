@@ -52,7 +52,13 @@ public class TransactionTableSnapshot {
     
     /**
      * Returns all visible rows in this snapshot.
-     * 
+     *
+     * <p>O(N) in the raw row count (N = {@link Table#getRawRowCount()}): each
+     * physical row is fetched once via the O(1)
+     * {@link Table#readPhysicalRow(int)} mirror accessor. The defensive-copy
+     * API {@link Table#getRows()} must never be called inside the per-row
+     * loop — it would re-materialize the whole row list per row (O(N^2)).
+     *
      * @return list of visible row maps
      */
     public List<Map<String, Object>> getRows() {
@@ -64,8 +70,9 @@ public class TransactionTableSnapshot {
             for (int i = 0; i < rowCount; i++) {
                 if (!table.isDeleted(i)) {
                     RowVersionMeta meta = table.getRowVersionMeta(i);
-                    if (isRowVisible(i, meta)) {
-                        result.add(getVisibleRowValues(i, meta));
+                    Map<String, Object> row = table.readPhysicalRow(i);
+                    if (isRowVisible(meta, row)) {
+                        result.add(getVisibleRowValues(meta, row));
                     }
                 }
             }
@@ -116,8 +123,16 @@ public class TransactionTableSnapshot {
     
     /**
      * Checks if the row with the given metadata is visible in this snapshot.
+     *
+     * <p>Receives the physical row values from the caller (O(1)
+     * {@link Table#readPhysicalRow(int)} fetch done once per row in
+     * {@link #getRows()}) so the visibility walk stays O(N) — re-fetching
+     * via {@link Table#getRows()} here would be O(N) per row (O(N^2) total).
+     *
+     * @param meta      the MVCC metadata for the row, or null
+     * @param rowValues the physical row values at the row's raw index
      */
-    private boolean isRowVisible(int rowIndex, RowVersionMeta meta) {
+    private boolean isRowVisible(RowVersionMeta meta, Map<String, Object> rowValues) {
         // Bootstrap row (xmin=0) - check visibility based on xmax
         if (meta == null || meta.getXmin() == 0) {
             if (meta == null || meta.getXmax() == 0) {
@@ -133,7 +148,6 @@ public class TransactionTableSnapshot {
         
         // Use TupleVisibility to determine visibility
         // Create a Row object for visibility checking
-        Map<String, Object> rowValues = table.getRows().get(rowIndex);
         Row row = new Row(rowValues, meta.getXmin(), meta.getXmax(), meta.getCommandId());
         
         // Create txCommitted predicate for this transaction
@@ -157,16 +171,20 @@ public class TransactionTableSnapshot {
     /**
      * Returns the visible values for a row with MVCC metadata.
      * Uses committedValues if available, otherwise current row values.
+     *
+     * @param meta      the MVCC metadata for the row, or null
+     * @param rowValues the physical row values, fetched
+     *                  once per row by the caller via the O(1)
+     *                  {@link Table#readPhysicalRow(int)} accessor
      */
-    private Map<String, Object> getVisibleRowValues(int rowIndex, RowVersionMeta meta) {
-        Map<String, Object> sourceValues = table.getRows().get(rowIndex);
-        
+    private Map<String, Object> getVisibleRowValues(RowVersionMeta meta,
+                                                    Map<String, Object> rowValues) {
         if (meta != null && meta.getCommittedValues() != null) {
             // Return a copy of committed values
             return new HashMap<>(meta.getCommittedValues());
         } else {
             // Return a copy of current values
-            return new HashMap<>(sourceValues);
+            return new HashMap<>(rowValues);
         }
     }
     
