@@ -299,13 +299,16 @@ class Table implements Serializable {
                 System.getProperty("diesel.storage.type",
                         getConfigProperty("storage.type", "in_memory")),
                 name, columns, columnTypes);
-        if (this.storage instanceof AbstractRowStorage ars) {
-            String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
-            ars.setDataDir(dir);
-            if (primaryKeyColumn != null) {
-                ars.setPrimaryKeyColumn(primaryKeyColumn);
+        // Use enhanced RowStorage interface to reduce instanceof duplication
+        RowStorage.callWith(storage,s -> {
+            if (s instanceof AbstractRowStorage ars) {
+                String dir = database != null && database.getDataDir() != null ? database.getDataDir() : ".";
+                ars.setDataDir(dir);
+                if (primaryKeyColumn != null) {
+                    ars.setPrimaryKeyColumn(primaryKeyColumn);
+                }
             }
-        }
+        });
         this.rowLocks = new ConcurrentHashMap<>();
         this.indexes = new ConcurrentHashMap<>();
         this.sequences = sequences != null ? new ConcurrentHashMap<>(sequences) : new ConcurrentHashMap<>();
@@ -1013,9 +1016,8 @@ class Table implements Serializable {
     public void updateRowInPlace(int rowIndex, Map<String, Object> row) {
         tableLock.writeLock().lock();
         try {
-            if (storage != null) {
-                storage.update(rowIndex, row);
-            }
+            // Use enhanced RowStorage interface to reduce null check duplication
+            RowStorage.callWith(storage,s -> s.update(rowIndex, row));
             // The internal mirror must stay in sync so that reads keep using
             // the shared-map fast path (getLiveRows iterates {@code rows})
             // instead of re-materializing every row from the storage backend.
@@ -1460,9 +1462,8 @@ class Table implements Serializable {
         if (rowIndex < 0 || rowIndex >= rows.size()) {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
-        if (storage != null) {
-            storage.delete(rowIndex);
-        }
+        // Use enhanced RowStorage interface to reduce null check duplication
+        RowStorage.callWith(storage,s -> s.delete(rowIndex));
         rows.remove(rowIndex);
         // Row indexes shift down by one, so the locks of this and all following rows are stale.
         for (int i = rowIndex; i <= rows.size(); i++) {
@@ -2430,9 +2431,8 @@ class Table implements Serializable {
         lock.writeLock().lock();
         try {
             rows.add(insertIndex, row);
-            if (storage != null) {
-                storage.insertAt(insertIndex, row);
-            }
+            // Use enhanced RowStorage interface to reduce null check duplication
+            RowStorage.callWith(storage,s -> s.insertAt(insertIndex, row));
             clusteredIndex.insert(clusteredKey, insertIndex);
             insertRowIntoIndexes(row, insertIndex);
             updateIndicesAfterInsert(insertIndex);
@@ -2447,9 +2447,8 @@ class Table implements Serializable {
         ReentrantReadWriteLock lock = getRowLock(rowIndex);
         lock.writeLock().lock();
         try {
-            if (storage != null) {
-                storage.insert(row);
-            }
+            // Use enhanced RowStorage interface to reduce null check duplication
+            RowStorage.callWith(storage,s -> s.insert(row));
             rows.add(row);
             insertRowIntoIndexes(row, rowIndex);
         } finally {
@@ -3001,9 +3000,10 @@ class Table implements Serializable {
             // Successfully persisting clears the MVCC-dirty flag
             mvccDirtySincePersist = false;
             
-            if (storage != null && !(storage instanceof InMemoryRowStorage)) {
+            // Use enhanced RowStorage interface to reduce null check and instanceof duplication
+            if (storage != null && storage.supportsPersistence()) {
                 try {
-                    storage.saveToFile(tableName);
+                    RowStorage.callWith(storage,s -> s.saveToFile(tableName));
                 } catch (RuntimeException e) {
                     // Restore dirty flags on failure so retry can succeed
                     persistDirty = wasDirty;

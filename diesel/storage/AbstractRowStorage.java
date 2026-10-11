@@ -439,4 +439,52 @@ public abstract class AbstractRowStorage implements RowStorage {
             this.rows = rows;
         }
     }
+
+    // ─── Capability metadata (prompt 21) ────────────────────────────────
+
+    /**
+     * Enhanced metadata implementation: reports persistence capability from
+     * the data-dir configuration plus common properties (data dir, primary
+     * key, indexing, load mode). Subclasses with format-specific options
+     * should override and extend the property map.
+     *
+     * @return storage capability metadata
+     */
+    @Override
+    public StorageMetadata getMetadata() {
+        Map<String, Object> properties = Map.of(
+            "dataDir", dataDir,
+            "primaryKeyColumn", primaryKeyColumn,
+            "indexed", isIndexed()
+        );
+
+        return new StorageMetadata(
+            this.getClass().getSimpleName(),
+            supportsPersistence(),
+            supportsMVCC(),
+            properties
+        );
+    }
+
+    /**
+     * Persistence capability: file-based storages (data dir configured)
+     * report {@code true}. In-memory backends override with {@code false}.
+     *
+     * @return true when this storage can persist to disk
+     */
+    @Override
+    public boolean supportsPersistence() {
+        return dataDir != null;
+    }
+
+    /**
+     * MVCC capability: off for the base delimited/file backends; subclasses
+     * that keep per-transaction row state override this.
+     *
+     * @return true when this storage understands MVCC row state
+     */
+    @Override
+    public boolean supportsMVCC() {
+        return false;
+    }
 }

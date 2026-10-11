@@ -493,4 +493,32 @@ public class CsvRowStorage extends AbstractRowStorage {
         fileInitialized = true;
         syncIndexBulkFromArrays(rows);
     }
+
+    @Override
+    public StorageMetadata getMetadata() {
+        Map<String, Object> properties = Map.of(
+            "rowCount", rows.size(),
+            "fileInitialized", fileInitialized,
+            "compressionCodec", StorageConfig.getString(COMPRESSION_CODEC_KEY, "none"),
+            "loadMode", resolveLoadMode("csv.load.mode"),
+            "indexed", isIndexed()
+        );
+        
+        return new StorageMetadata(
+            this.getClass().getSimpleName(),
+            true, // Supports persistence
+            false, // CSV doesn't support MVCC in base implementation
+            properties
+        );
+    }
+
+    @Override
+    public boolean supportsPersistence() {
+        return true; // CSV supports persistence
+    }
+
+    @Override
+    public boolean supportsMVCC() {
+        return false; // CSV doesn't support MVCC in base implementation
+    }
 }

@@ -91,4 +91,63 @@ public class InMemoryRowStorage extends AbstractRowStorage {
         rows.clear();
         rows.addAll(newRows);
     }
+
+    @Override
+    public StorageMetadata getMetadata() {
+        Map<String, Object> properties = Map.of(
+            "rowCount", rows.size(),
+            "maxMemoryUsage", estimateMemoryUsage()
+        );
+        
+        return new StorageMetadata(
+            this.getClass().getSimpleName(),
+            false, // No persistence for in-memory storage
+            false, // No MVCC support in base implementation
+            properties
+        );
+    }
+
+    @Override
+    public boolean supportsPersistence() {
+        return false; // In-memory storage doesn't persist
+    }
+
+    @Override
+    public boolean supportsMVCC() {
+        return false; // Base implementation doesn't support MVCC
+    }
+
+    /**
+     * Estimates the current memory usage of this storage.
+     *
+     * @return estimated memory usage in bytes
+     */
+    private long estimateMemoryUsage() {
+        long total = 0;
+        for (Map<String, Object> row : rows) {
+            total += 16; // ArrayList overhead per row
+            total += row.size() * 32; // HashMap overhead
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                total += entry.getKey().length() * 2; // String chars (2 bytes each)
+                total += estimateObjectSize(entry.getValue());
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Estimates the size of an object in memory.
+     *
+     * @param obj the object to estimate
+     * @return estimated size in bytes
+     */
+    private long estimateObjectSize(Object obj) {
+        if (obj == null) return 0;
+        if (obj instanceof String) return ((String) obj).length() * 2;
+        if (obj instanceof Integer) return 4;
+        if (obj instanceof Long) return 8;
+        if (obj instanceof Double) return 8;
+        if (obj instanceof Boolean) return 1;
+        return 16; // Default estimate for complex objects
+    }
 }
