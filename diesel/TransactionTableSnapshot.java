@@ -14,7 +14,15 @@ import java.util.stream.Collectors;
  * - Committed writes are visible if they occurred before the transaction snapshot
  * 
  * <p>This is a lazy view - rows are materialized on demand based on the current
- * table state and transaction metadata.
+ * table state and transaction metadata. Once materialized (first call to getRows(),
+ * getRowCount(), or getRow()), this snapshot instance provides a frozen view of the
+ * table state at the time of materialization. Callers wanting newer state must
+ * construct a new snapshot (as Transaction.getSnapshot() does per call).
+ * 
+ * <p>Performance optimizations:
+ * - getRowCount() and toString() use a memoized O(N) count walk (no HashMap allocations)
+ * - getRow(index) uses an early-exit O(N) walk when the rows list is not memoized
+ * - getRows() returns an unmodifiable list to prevent caller mutation
  */
 public class TransactionTableSnapshot {
     
@@ -25,6 +33,20 @@ public class TransactionTableSnapshot {
     private final long snapshotCsn;
     private final IsolationLevel isolationLevel;
     private final TxStatusTracker txStatusTracker;
+    
+    /**
+     * Lazily memoized materialized rows; null until first call to getRows().
+     * Once materialized, this snapshot instance provides a frozen view of the
+     * table state at the time of materialization. Callers wanting newer state
+     * must construct a new snapshot (as Transaction.getSnapshot() does per call).
+     */
+    private volatile List<Map<String, Object>> cachedRows;
+    
+    /**
+     * Lazily memoized visible row count; -1 until computed.
+     * Benign duplicate computation under races (documented).
+     */
+    private volatile int cachedVisibleRowCount = -1;
     
     /**
      * Creates a new transaction table snapshot.
@@ -53,17 +75,32 @@ public class TransactionTableSnapshot {
     /**
      * Returns all visible rows in this snapshot.
      *
-     * <p>O(N) in the raw row count (N = {@link Table#getRawRowCount()}): each
-     * physical row is fetched once via the O(1)
-     * {@link Table#readPhysicalRow(int)} mirror accessor. The defensive-copy
-     * API {@link Table#getRows()} must never be called inside the per-row
-     * loop — it would re-materialize the whole row list per row (O(N^2)).
+     * <p>O(N) in the raw row count (N = {@link Table#getRawRowCount()}) on first call.
+     * Subsequent calls return the memoized frozen view. Each physical row is
+     * fetched once via the O(1) {@link Table#readPhysicalRow(int)} mirror accessor.
+     * The defensive-copy API {@link Table#getRows()} must never be called inside the
+     * per-row loop — it would re-materialize the whole row list per row (O(N^2)).
      *
-     * @return list of visible row maps
+     * <p>Once materialized, this snapshot instance provides a frozen view of the
+     * table state at the time of materialization. Callers wanting newer state
+     * must construct a new snapshot (as Transaction.getSnapshot() does per call).
+     *
+     * @return unmodifiable list of visible row maps
      */
     public List<Map<String, Object>> getRows() {
+        List<Map<String, Object>> cached = cachedRows;
+        if (cached != null) {
+            return cached;
+        }
+        
         table.getTableLock().readLock().lock();
         try {
+            // Re-check after acquiring lock (double-checked locking pattern)
+            cached = cachedRows;
+            if (cached != null) {
+                return cached;
+            }
+            
             List<Map<String, Object>> result = new ArrayList<>();
             int rowCount = table.getRawRowCount();
             
@@ -76,7 +113,12 @@ public class TransactionTableSnapshot {
                     }
                 }
             }
-            return result;
+            
+            // Memoize the result as an unmodifiable list to prevent caller mutation
+            List<Map<String, Object>> frozen = Collections.unmodifiableList(result);
+            cachedVisibleRowCount = result.size();
+            cachedRows = frozen;
+            return frozen;
         } finally {
             table.getTableLock().readLock().unlock();
         }
@@ -88,8 +130,94 @@ public class TransactionTableSnapshot {
      * @return count of visible rows
      */
     public int getRowCount() {
-        // For performance, we could cache this if needed
-        return getRows().size();
+        List<Map<String, Object>> cached = cachedRows;
+        if (cached != null) {
+            return cached.size();
+        }
+        
+        int c = cachedVisibleRowCount;
+        if (c >= 0) {
+            return c;
+        }
+        
+        c = countVisibleRows();
+        cachedVisibleRowCount = c;
+        return c;
+    }
+    
+    /**
+     * Clears the memoized cache to force recomputation on next access.
+     * Called when the underlying table state changes.
+     */
+    public void clearCache() {
+        cachedRows = null;
+        cachedVisibleRowCount = -1;
+    }
+    
+    /**
+     * O(N) count of visible rows without materializing the full row list.
+     * Each row is checked for visibility via the same logic as getRows(),
+     * but only the count is tracked (no HashMap allocations).
+     * Memoizes the result into cachedVisibleRowCount.
+     * 
+     * @return count of visible rows
+     */
+    private int countVisibleRows() {
+        table.getTableLock().readLock().lock();
+        try {
+            int count = 0;
+            int rowCount = table.getRawRowCount();
+            
+            for (int i = 0; i < rowCount; i++) {
+                if (!table.isDeleted(i)) {
+                    RowVersionMeta meta = table.getRowVersionMeta(i);
+                    Map<String, Object> row = table.readPhysicalRow(i);
+                    if (isRowVisible(meta, row)) {
+                        count++;
+                    }
+                }
+            }
+            
+            cachedVisibleRowCount = count;
+            return count;
+        } finally {
+            table.getTableLock().readLock().unlock();
+        }
+    }
+    
+    /**
+     * Returns the visible row at the given index (0-based) without
+     * materializing the full row list. O(N) worst case, but with early exit
+     * once the index-th visible row is found.
+     * 
+     * @param index the row index
+     * @return the visible row map
+     * @throws IndexOutOfBoundsException if index is out of bounds
+     */
+    private Map<String, Object> getVisibleRow(int index) {
+        table.getTableLock().readLock().lock();
+        try {
+            int visible = 0;
+            int rowCount = table.getRawRowCount();
+            
+            for (int i = 0; i < rowCount; i++) {
+                if (!table.isDeleted(i)) {
+                    RowVersionMeta meta = table.getRowVersionMeta(i);
+                    Map<String, Object> row = table.readPhysicalRow(i);
+                    if (isRowVisible(meta, row)) {
+                        if (visible == index) {
+                            return getVisibleRowValues(meta, row);
+                        }
+                        visible++;
+                    }
+                }
+            }
+            
+            // If we reach here, the index is out of bounds
+            throw new IndexOutOfBoundsException("Row index " + index + " out of bounds for snapshot with " + visible + " rows");
+        } finally {
+            table.getTableLock().readLock().unlock();
+        }
     }
     
     /**
@@ -100,11 +228,15 @@ public class TransactionTableSnapshot {
      * @throws IndexOutOfBoundsException if index is out of bounds
      */
     public Map<String, Object> getRow(int index) {
-        List<Map<String, Object>> rows = getRows();
-        if (index < 0 || index >= rows.size()) {
-            throw new IndexOutOfBoundsException("Row index " + index + " out of bounds for snapshot with " + rows.size() + " rows");
+        List<Map<String, Object>> cached = cachedRows;
+        if (cached != null) {
+            if (index < 0 || index >= cached.size()) {
+                throw new IndexOutOfBoundsException("Row index " + index + " out of bounds for snapshot with " + cached.size() + " rows");
+            }
+            return cached.get(index);
         }
-        return rows.get(index);
+        
+        return getVisibleRow(index);
     }
     
     /**
@@ -190,6 +322,9 @@ public class TransactionTableSnapshot {
     
     /**
      * Returns a string representation of this snapshot for debugging.
+     * 
+     * <p>The rowCount is computed on demand and memoized for subsequent calls.
+     * First call: O(N) count walk; subsequent calls: O(1).
      */
     @Override
     public String toString() {

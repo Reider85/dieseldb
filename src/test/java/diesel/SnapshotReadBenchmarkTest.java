@@ -25,6 +25,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * Table.getRows() copies only row references. The O(N) property is instead
  * proven by an absolute bound plus a linearity ratio t(2N)/t(N) < 3
  * (linear ~= 2x, quadratic ~= 4x).
+ *
+ * <p>Since MVCC-3, snapshots memoize the rows list on first call. To keep
+ * this benchmark honest (measuring the actual O(N) walk), each measurement
+ * constructs a fresh snapshot (matching production usage where Transaction.getSnapshot()
+ * creates a new snapshot per call).
  */
 @Tag("concurrency")
 public class SnapshotReadBenchmarkTest {
@@ -53,25 +58,27 @@ public class SnapshotReadBenchmarkTest {
                 "bench_half", half, txid, txid, snapshotCsn,
                 IsolationLevel.READ_COMMITTED, tracker);
 
-        // Warmup (JIT + first-touch).
-        assertEquals(N_FULL, fullSnapshot.getRows().size());
-        assertEquals(N_HALF, halfSnapshot.getRows().size());
+        // Warmup (JIT + first-touch) with fresh snapshots.
+        assertEquals(N_FULL, newSnapshot(full).getRows().size());
+        assertEquals(N_HALF, newSnapshot(half).getRows().size());
 
         // Baseline: the defensive-copy API on the full table (one O(N) copy).
         long baseNanos = bestOf3(() -> full.getRows());
 
         // Single snapshot read: old O(N^2) code took ~30-100 s at N=100k.
-        long singleNanos = bestOf3(fullSnapshot::getRows);
+        // Use fresh snapshot per measurement to avoid memoization (MVCC-3).
+        long singleNanos = bestOf3(() -> newSnapshot(full).getRows());
         assertTrue(singleNanos < SINGLE_SNAPSHOT_BOUND_NS,
                 String.format("single snapshot read of %d rows took %.2f s, bound %.0f s"
                                 + " (O(N^2) regression)",
                         N_FULL, singleNanos / 1e9, SINGLE_SNAPSHOT_BOUND_NS / 1e9));
 
         // K consecutive snapshot reads stay linear in K.
+        // Use fresh snapshots per read (MVCC-3 memoization).
         long kStart = System.nanoTime();
         long totalRows = 0;
         for (int k = 0; k < K_SNAPSHOTS; k++) {
-            totalRows += fullSnapshot.getRows().size();
+            totalRows += newSnapshot(full).getRows().size();
         }
         long kNanos = System.nanoTime() - kStart;
         assertEquals((long) N_FULL * K_SNAPSHOTS, totalRows);
@@ -81,8 +88,9 @@ public class SnapshotReadBenchmarkTest {
 
         // Linearity: doubling N must roughly double the read time (linear ~2x),
         // not quadruple it (quadratic ~4x). Best-of-3 on both sizes.
-        long halfNanos = bestOf3(halfSnapshot::getRows);
-        long fullNanos = bestOf3(fullSnapshot::getRows);
+        // Use fresh snapshots per measurement (MVCC-3 memoization).
+        long halfNanos = bestOf3(() -> newSnapshot(half).getRows());
+        long fullNanos = bestOf3(() -> newSnapshot(full).getRows());
         double ratio = (double) fullNanos / Math.max(1L, halfNanos);
         assertTrue(ratio < LINEARITY_RATIO_BOUND,
                 String.format("snapshot read scaling t(%d)/t(%d) = %.2f exceeds %.1f"
@@ -109,6 +117,23 @@ public class SnapshotReadBenchmarkTest {
             table.addRow(row);
         }
         return table;
+    }
+    
+    /**
+     * Creates a fresh TransactionTableSnapshot (matching production usage where
+     * Transaction.getSnapshot() creates a new snapshot per call).
+     * 
+     * <p>Since MVCC-3, snapshots memoize the rows list on first call. Using fresh
+     * snapshots per measurement keeps this benchmark honest (measuring the actual
+     * O(N) walk, not O(1) cache hits).
+     */
+    private static TransactionTableSnapshot newSnapshot(Table table) {
+        TxStatusTracker tracker = table.getDatabase().getTxStatusTracker();
+        long txid = tracker.registerTransaction();
+        long snapshotCsn = tracker.getCurrentCommitCsn();
+        return new TransactionTableSnapshot(
+                table.getName(), table, txid, txid, snapshotCsn,
+                IsolationLevel.READ_COMMITTED, tracker);
     }
 
     private static long bestOf3(Runnable action) {
