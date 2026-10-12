@@ -354,6 +354,108 @@ public final class WALSegment implements AutoCloseable {
     }
 
     /**
+     * Reads a WAL entry by LSN with early exit.
+     * Streams the segment file with a ByteBuffer, decoding entries one at a time
+     * and returning on first match. This is O(position-of-LSN-within-segment)
+     * and avoids the full readAll().
+     *
+     * @param lsn the LSN to read
+     * @return the entry, or null if not found
+     * @throws IOException if reading fails
+     */
+    public WALEntry readByLsn(long lsn) throws IOException {
+        if (channel == null) {
+            throw new IllegalStateException("Segment " + segmentNumber + " is closed");
+        }
+        if (writePosition < WALFormat.SEGMENT_HEADER_SIZE) {
+            return null; // Empty segment
+        }
+        if (firstLsn > 0 && lsn < firstLsn) {
+            return null; // LSN before first entry in segment
+        }
+
+        final int CHUNK_SIZE = 64 * 1024;
+        ByteBuffer buffer = ByteBuffer.allocate(CHUNK_SIZE);
+        long filePos = WALFormat.SEGMENT_HEADER_SIZE;
+        int n = channel.read(buffer, filePos);
+        if (n > 0) {
+            filePos += n;
+        }
+        buffer.flip();
+
+        while (true) {
+            // Decode as many complete entries as possible from current buffer
+            while (buffer.remaining() >= WALFormat.MIN_ENTRY_SIZE) {
+                int mark = buffer.position();
+                
+                // Peek fixed header to get entry size
+                long entryLsn;
+                int beforeLen;
+                int afterLen;
+                try {
+                    entryLsn = buffer.getLong(mark);
+                    // Skip txid, op, flags, reserved
+                    buffer.position(mark + 20);
+                    beforeLen = buffer.getInt();
+                    afterLen = buffer.getInt();
+                    buffer.position(mark); // Restore position
+                } catch (Exception e) {
+                    // Should not happen due to MIN_ENTRY_SIZE check, but defensive
+                    break;
+                }
+
+                // Validate image lengths
+                if (beforeLen < 0 || afterLen < 0) {
+                    return null; // Corrupt header - mirror readAll stop semantics
+                }
+
+                int fullSize;
+                try {
+                    fullSize = WALFormat.entrySize(beforeLen, afterLen);
+                } catch (IllegalArgumentException e) {
+                    return null; // Absurd lengths - mirror readAll stop semantics
+                }
+
+                if (entryLsn > lsn) {
+                    // LSN not found - passed the target
+                    return null;
+                }
+
+                if (buffer.remaining() < fullSize) {
+                    // Incomplete entry - need more data
+                    break;
+                }
+
+                if (entryLsn == lsn) {
+                    // Found the target entry - decode it
+                    try {
+                        return WALEntry.readFrom(buffer);
+                    } catch (WALFormatException e) {
+                        // Corrupt entry - mirror readAll stop semantics
+                        return null;
+                    }
+                }
+
+                // Skip this entry
+                buffer.position(mark + fullSize);
+            }
+
+            // Check for EOF or need for more data
+            if (n <= 0) {
+                return null; // EOF - entry not found or torn tail
+            }
+
+            // Prepare next chunk
+            buffer.compact();
+            n = channel.read(buffer, filePos);
+            if (n > 0) {
+                filePos += n;
+            }
+            buffer.flip();
+        }
+    }
+
+    /**
      * Forces any buffered writes to disk.
      *
      * @throws IOException if the force fails

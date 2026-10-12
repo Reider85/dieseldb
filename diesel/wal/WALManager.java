@@ -445,19 +445,8 @@ this.config = config;
             return null;
         }
 
-        // Scan the segment for the entry
-        List<WALEntry> entries = segment.readAll();
-        for (WALEntry entry : entries) {
-            if (entry.getLsn() == lsn) {
-                return entry;
-            }
-            if (entry.getLsn() > lsn) {
-                // LSN not found in this segment
-                break;
-            }
-        }
-
-        return null;
+        // Use the new streaming readByLsn method for early exit
+        return segment.readByLsn(lsn);
     }
 
     /**
