@@ -1908,14 +1908,23 @@ class Table implements Serializable {
     /**
      * Rebuilds row version metadata after compact() due to row index shifts.
      * This must be called after compact() to maintain correct row index mapping.
+     * Complexity: O(N + R) where N is raw row count, R is MVCC-versioned rows.
      */
     public void rebuildRowVersionsAfterCompact() {
-        // The uncommitted-row set holds raw indexes too: remap it alongside
-        // the metadata so commit/rollback clears the right entries.
+        // Early exit if no MVCC metadata to remap
+        if ((uncommittedMvccRows == null || uncommittedMvccRows.isEmpty())
+                && (rowVersions == null || rowVersions.isEmpty())) {
+            return;
+        }
+        
+        // Build prefix-count array for O(1) index remapping
+        int[] prefixAlive = buildPrefixAliveAfterCompact();
+        
+        // Remap uncommitted MVCC rows
         if (uncommittedMvccRows != null && !uncommittedMvccRows.isEmpty()) {
             java.util.Set<Integer> remapped = ConcurrentHashMap.newKeySet();
             for (Integer oldIndex : uncommittedMvccRows) {
-                int newIndex = findNewIndexAfterCompact(oldIndex);
+                int newIndex = findNewIndexAfterCompact(oldIndex, prefixAlive);
                 if (newIndex != -1) {
                     remapped.add(newIndex);
                 }
@@ -1929,8 +1938,7 @@ class Table implements Serializable {
         // Create a new map with updated indices
         ConcurrentHashMap<Integer, RowVersionMeta> newRowVersions = new ConcurrentHashMap<>();
         rowVersions.forEach((oldIndex, meta) -> {
-            // Find the new index of this row by checking if it's not deleted
-            int newIndex = findNewIndexAfterCompact(oldIndex);
+            int newIndex = findNewIndexAfterCompact(oldIndex, prefixAlive);
             if (newIndex != -1) {
                 newRowVersions.put(newIndex, meta);
             }
@@ -1939,17 +1947,44 @@ class Table implements Serializable {
     }
 
     /**
-     * Helper method to find the new index of a row after compact().
-     * Returns -1 if the row was removed during compact.
+     * Builds prefix-count array for O(1) index remapping after compact().
+     * prefixAlive[i+1] = number of alive rows in [0, i].
+     * Returns array of size n+1 where n = max(deletedRows.length(), maxOldIndex+1).
      */
-    private int findNewIndexAfterCompact(int oldIndex) {
-        int newIndex = 0;
-        for (int i = 0; i < oldIndex; i++) {
-            if (!isDeleted(i)) {
-                newIndex++;
+    private int[] buildPrefixAliveAfterCompact() {
+        // Find the maximum old index that needs remapping
+        int maxOld = -1;
+        if (uncommittedMvccRows != null) {
+            for (Integer i : uncommittedMvccRows) {
+                if (i > maxOld) maxOld = i;
             }
         }
-        return isDeleted(oldIndex) ? -1 : newIndex;
+        if (rowVersions != null) {
+            for (Integer i : rowVersions.keySet()) {
+                if (i > maxOld) maxOld = i;
+            }
+        }
+        
+        // Determine array size: cover all needed old indices
+        // Use maxOld + 1 instead of deletedRows.length() to avoid huge arrays from sparse bitsets
+        int n = maxOld + 1;
+        int[] prefixAlive = new int[n + 1];
+        
+        // Build prefix array: prefixAlive[i+1] = prefixAlive[i] + (isDeleted(i) ? 0 : 1)
+        for (int i = 0; i < n; i++) {
+            prefixAlive[i + 1] = prefixAlive[i] + (isDeleted(i) ? 0 : 1);
+        }
+        
+        return prefixAlive;
+    }
+
+    /**
+     * Helper method to find the new index of a row after compact().
+     * Returns -1 if the row was removed during compact.
+     * Complexity: O(1) using precomputed prefix array.
+     */
+    private int findNewIndexAfterCompact(int oldIndex, int[] prefixAlive) {
+        return isDeleted(oldIndex) ? -1 : prefixAlive[oldIndex];
     }
 
     /**
