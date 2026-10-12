@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -41,6 +42,7 @@ public final class WALManager implements AutoCloseable {
     private final AtomicLong lastAppendedLsn = new AtomicLong(0);
     private final AtomicLong lastAllocatedLsn = new AtomicLong(0);
     private final NavigableMap<Integer, WALSegment> segments = new TreeMap<>();
+    private final NavigableMap<Long, WALSegment> lsnToSegment = new TreeMap<>();
     private WALSegment currentSegment;
     private final AtomicInteger currentSegmentNumber = new AtomicInteger(0);
     private final CheckpointPointerFile checkpointPointerFile;
@@ -123,6 +125,18 @@ this.config = config;
     }
 
     /**
+     * Indexes a segment in the LSN-to-segment map if it has a first LSN.
+     *
+     * @param segment the segment to index
+     */
+    private void indexSegment(WALSegment segment) {
+        long firstLsn = segment.getFirstLsn();
+        if (firstLsn > 0) {
+            lsnToSegment.put(firstLsn, segment);
+        }
+    }
+
+    /**
      * Discovers existing WAL segment files in the WAL directory.
      *
      * @throws IOException if segments cannot be opened
@@ -146,6 +160,8 @@ this.config = config;
                 boolean readOnly = segmentNumber != lastSegmentNumber;
                 WALSegment segment = WALSegment.open(config.getWalDir(), segmentNumber, readOnly);
                 segments.put(segmentNumber, segment);
+                // Index the segment if it has entries
+                indexSegment(segment);
             } catch (IOException e) {
                 LOGGER.warn("Failed to open segment {}: {}", filePath, e.getMessage());
             }
@@ -241,6 +257,9 @@ this.config = config;
         lastAppendedLsn.set(entryLsn);
         lastAllocatedLsn.set(entryLsn);
         
+        // Index the segment if it's the first entry
+        indexSegment(currentSegment);
+        
         // Note: Periodic checkpoint persistence removed for ARIES.
         // Checkpoints are written explicitly via writeCheckpoint().
     }
@@ -273,6 +292,9 @@ this.config = config;
         long checkpointLsn = checkpointEntry.getLsn();
         lastAppendedLsn.set(checkpointLsn);
         lastAllocatedLsn.set(checkpointLsn);
+        
+        // Index the segment if it's the first entries
+        indexSegment(currentSegment);
 
         // Force the segment to ensure the checkpoint record is durable
         currentSegment.force();
@@ -379,6 +401,9 @@ this.config = config;
         lastAppendedLsn.set(lastLsn);
         lastAllocatedLsn.set(lastLsn);
         
+        // Index the segment if it's the first entries
+        indexSegment(currentSegment);
+        
         // Note: Periodic checkpoint persistence removed for ARIES.
         // Checkpoints are written explicitly via writeCheckpoint().
     }
@@ -397,6 +422,8 @@ this.config = config;
         currentSegment = WALSegment.create(config.getWalDir(), nextSegmentNumber);
         segments.put(nextSegmentNumber, currentSegment);
         nextSegmentNumber++;
+        
+        // New segments are initially empty (firstLsn=0), so no indexing yet
         
         // Update current segment number for archiver
         currentSegmentNumber.set(currentSegment.getNumber());
@@ -440,27 +467,19 @@ this.config = config;
      * @return the segment, or null if not found
      */
     private WALSegment findSegmentForLsn(long lsn) {
-        // For now, scan all segments (simple, works for small WALs)
-        // Future optimization: maintain per-segment LSN ranges
-        for (WALSegment segment : segments.descendingMap().values()) {
-            List<WALEntry> entries;
-            try {
-                entries = segment.readAll();
-            } catch (IOException e) {
-                LOGGER.warn("Failed to read segment {}: {}", segment.getNumber(), e.getMessage());
-                continue;
-            }
-            
-            if (!entries.isEmpty()) {
-                long firstLsn = entries.get(0).getLsn();
-                long lastLsn = entries.get(entries.size() - 1).getLsn();
-                if (lsn >= firstLsn && lsn <= lastLsn) {
-                    return segment;
-                }
-            }
+        // Use the LSN-to-segment map for O(log n) lookup
+        Map.Entry<Long, WALSegment> entry = lsnToSegment.floorEntry(lsn);
+        if (entry == null) {
+            return null;
         }
         
-        return null;
+        WALSegment segment = entry.getValue();
+        // LSNs below the first indexed entry belong to no segment
+        if (lsn < segment.getFirstLsn()) {
+            return null;
+        }
+        
+        return segment;
     }
 
     /**
@@ -613,6 +632,7 @@ this.config = config;
             segment.close();
         }
         segments.clear();
+        lsnToSegment.clear();
         LOGGER.debug("WALManager closed");
     }
 

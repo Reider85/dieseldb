@@ -33,6 +33,7 @@ public final class WALSegment implements AutoCloseable {
     private long writePosition;
     private boolean headerWritten;
     private long firstLsn;
+    private long lastLsn;
 
     /**
      * Creates a new WAL segment file.
@@ -224,6 +225,9 @@ public final class WALSegment implements AutoCloseable {
             firstLsn = entry.getLsn();
             rewriteHeader();
         }
+        
+        // Update last LSN to this entry
+        lastLsn = entry.getLsn();
     }
 
     /**
@@ -273,6 +277,9 @@ public final class WALSegment implements AutoCloseable {
             firstLsn = entries.get(0).getLsn();
             rewriteHeader();
         }
+        
+        // Update last LSN to the last entry in the batch
+        lastLsn = entries.get(entries.size() - 1).getLsn();
     }
 
     /**
@@ -413,6 +420,28 @@ public final class WALSegment implements AutoCloseable {
      */
     public long getFirstLsn() {
         return firstLsn;
+    }
+
+    /**
+     * Returns the last LSN in this segment (0 if empty).
+     * Computed lazily for segments opened from disk.
+     *
+     * @return last LSN
+     */
+    public synchronized long getLastLsn() {
+        if (lastLsn == 0 && writePosition > WALFormat.SEGMENT_HEADER_SIZE) {
+            // Lazy computation: read all entries and take the last one
+            try {
+                List<WALEntry> entries = readAll();
+                if (!entries.isEmpty()) {
+                    lastLsn = entries.get(entries.size() - 1).getLsn();
+                }
+            } catch (IOException e) {
+                // If read fails, lastLsn remains 0 (empty segment)
+                LOGGER.debug("Failed to compute lastLsn for segment {}: {}", segmentNumber, e.getMessage());
+            }
+        }
+        return lastLsn;
     }
 
     /**

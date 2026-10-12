@@ -1,1 +1,1 @@
-3.2.89 MVCC-4: replace findNewIndexAfterCompact linear scan with O(N) prefix-count array
+3.2.90 In-memory LSN→segment index for O(log n) findSegmentForLsn

@@ -936,3 +936,5 @@ chore: test-profiles-audit changelog entry
 3.2.88 O2 MVCC-3: memoized getRowCount/getRow/toString in TransactionTableSnapshot (O(N)/O(1) instead of O(N^2))
 
 3.2.89 MVCC-4: replace findNewIndexAfterCompact linear scan with O(N) prefix-count array
+
+3.2.90 In-memory LSN→segment index for O(log n) findSegmentForLsn
