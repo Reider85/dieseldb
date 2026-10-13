@@ -26,7 +26,7 @@ class WALReadByLsnTest {
     void readByLsnSingleSegment() throws Exception {
         Path walDir = tempDir.resolve("wal");
         java.nio.file.Files.createDirectories(walDir);
-        WALConfig config = WALConfig.of(walDir, 64 * 1024); // 64KB segment
+        WALConfig config = WALConfig.of(walDir, WALConfig.MIN_SEGMENT_SIZE_BYTES);
         WALManager walManager = new WALManager(config);
         
         // Write some records
@@ -51,7 +51,7 @@ class WALReadByLsnTest {
     void readByLsnMultipleSegments() throws Exception {
         Path walDir = tempDir.resolve("wal");
         java.nio.file.Files.createDirectories(walDir);
-        WALConfig config = WALConfig.of(walDir, 1024); // Small segment to force rotation
+        WALConfig config = WALConfig.of(walDir, WALConfig.MIN_SEGMENT_SIZE_BYTES); // Minimum segment
         WALManager walManager = new WALManager(config);
         
         // Write enough records to trigger multiple segments
@@ -76,23 +76,23 @@ class WALReadByLsnTest {
     void readByLsnMissingLsn() throws Exception {
         Path walDir = tempDir.resolve("wal");
         java.nio.file.Files.createDirectories(walDir);
-        WALConfig config = WALConfig.of(walDir, 64 * 1024);
+        WALConfig config = WALConfig.of(walDir, WALConfig.MIN_SEGMENT_SIZE_BYTES);
         WALManager walManager = new WALManager(config);
         
         // Write some records
         WALEntry entry1 = walManager.append(1, WALOpcode.INSERT, null, "test1".getBytes());
-        WALEntry entry3 = walManager.append(3, WALOpcode.INSERT, null, "test3".getBytes()); // Skip LSN 2
-        
+        WALEntry entry2 = walManager.append(2, WALOpcode.INSERT, null, "test2".getBytes());
+
         // Test reading existing records
         WALEntry result1 = walManager.readByLsn(1);
         assertEquals(entry1, result1);
-        
-        WALEntry result3 = walManager.readByLsn(3);
-        assertEquals(entry3, result3);
-        
-        // Test reading missing record
+
         WALEntry result2 = walManager.readByLsn(2);
-        assertNull(result2);
+        assertEquals(entry2, result2);
+
+        // Test reading missing record
+        WALEntry resultMissing = walManager.readByLsn(3);
+        assertNull(resultMissing);
         
         walManager.close();
     }

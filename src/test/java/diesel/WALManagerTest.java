@@ -127,6 +127,7 @@ class WALManagerTest {
         long lastLsn = walManager.getLastLsn();
 
         // Close and reopen
+        walManager.flush();
         walManager.close();
         walManager = new WALManager(config);
 

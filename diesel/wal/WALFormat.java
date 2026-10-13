@@ -26,7 +26,7 @@ package diesel.wal;
  *
  * <p>Segment-level framing (step 12):
  * <pre>
- * Segment header (24 bytes, big-endian):
+ * Segment header (version 1, 24 bytes, big-endian):
  * Offset  Size  Field
  * 0       4     magic = "DWAL"
  * 4       2     formatVersion = 1
@@ -35,9 +35,24 @@ package diesel.wal;
  * 12      8     firstLSN (LSN of first entry in segment; 0 if empty)
  * 20      4     crc32c over bytes [0,20)
  * </pre>
+ * <pre>
+ * Segment header (version 2, 32 bytes, big-endian):
+ * Offset  Size  Field
+ * 0       4     magic = "DWAL"
+ * 4       2     formatVersion = 2
+ * 6       2     reserved = 0
+ * 8       4     segmentNumber
+ * 12      8     firstLSN (LSN of first entry in segment; 0 if empty)
+ * 20      8     lastLSN (LSN of last entry in segment; 0 if empty or legacy version 1)
+ * 28      4     crc32c over bytes [0,28)
+ * </pre>
  * Segment files are named {@code wal-NNNN.log} (4-digit zero-padded, 1-based).
  * Rotation occurs when an entry would exceed the segment size limit.
  * Checkpoint persistence: 8-byte lastAppendedLSN in {@code checkpoint.ptr}.
+ * 
+ * <p>Backward compatibility: Version 1 segments (24-byte headers) remain readable
+ * and use lazy lastLsn computation. Version 2 segments (32-byte headers) store
+ * lastLsn persistently. The header format is auto-detected on open.
  *
  * <p>Utility class — not instantiable.
  */
@@ -79,13 +94,17 @@ public final class WALFormat {
     /** Smallest possible entry: empty images, header + CRC = 32 bytes (already 8-aligned). */
     public static final int MIN_ENTRY_SIZE = ENTRY_FIXED_HEADER_SIZE + CRC_SIZE;
 
-    // Segment header constants (prompt4.md step 12, R3-003 step 2/5)
+    // Segment header constants (prompt4.md step 12, R3-003 step 2/5, WAL-3)
     /** Magic bytes for WAL segment files ("DWAL"). */
     public static final String SEGMENT_MAGIC = "DWAL";
-    /** Format version for segment headers. */
-    public static final int SEGMENT_FORMAT_VERSION = 1;
-    /** Size of the segment header (24 bytes: magic 4B + version 2B + reserved 2B + segmentNumber 4B + firstLSN 8B + crc32c 4B). */
-    public static final int SEGMENT_HEADER_SIZE = 24;
+    /** Legacy format version for segment headers (version 1). */
+    public static final int SEGMENT_FORMAT_VERSION_V1 = 1;
+    /** Current format version for segment headers (version 2 with lastLsn). */
+    public static final int SEGMENT_FORMAT_VERSION = 2;
+    /** Size of the legacy segment header (version 1, 24 bytes). */
+    public static final int SEGMENT_HEADER_V1_SIZE = 24;
+    /** Size of the current segment header (version 2, 32 bytes). */
+    public static final int SEGMENT_HEADER_SIZE = 32;
     /** Offset of the segment magic field. */
     public static final int SEGMENT_OFFSET_MAGIC = 0;
     /** Offset of the segment format version field. */
@@ -96,10 +115,14 @@ public final class WALFormat {
     public static final int SEGMENT_OFFSET_SEGMENT_NUMBER = 8;
     /** Offset of the first LSN field in the segment header. */
     public static final int SEGMENT_OFFSET_FIRST_LSN = 12;
-    /** Offset of the segment header CRC32C field. */
-    public static final int SEGMENT_OFFSET_CRC = 20;
+    /** Offset of the last LSN field in the segment header (version 2 only). */
+    public static final int SEGMENT_OFFSET_LAST_LSN = 20;
+    /** Offset of the segment header CRC32C field (version 1: [0,20), version 2: [0,28)). */
+    public static final int SEGMENT_OFFSET_CRC = 28;
     /** Segment header CRC32C size. */
     public static final int SEGMENT_CRC_SIZE = 4;
+    /** Offset of the segment header CRC32C field (version 1). */
+    public static final int SEGMENT_OFFSET_CRC_V1 = 20;
 
     private WALFormat() {
         // utility class

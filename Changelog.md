@@ -940,3 +940,5 @@ chore: test-profiles-audit changelog entry
 3.2.90 In-memory LSN→segment index for O(log n) findSegmentForLsn
 
 3.2.91 Make WALManager.readByLsn reuse segment read from findSegmentForLsn via streaming WALSegment.readByLsn with early exit
+
+3.2.92 O2 WAL-3: persist lastLsn in WAL segment header (v2 32B), O(log n) findMaxLsnInSegments, lazy tail-scan for v1

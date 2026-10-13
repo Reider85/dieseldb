@@ -16,8 +16,8 @@ import org.slf4j.LoggerFactory;
 /**
  * A single WAL segment file (prompt4.md step 12, R3-003 step 2/5).
  *
- * <p>Each segment file contains a 24-byte header followed by zero or more
- * WAL entries. Files are named {@code wal-NNNN.log} (4-digit zero-padded,
+ * <p>Each segment file contains a 24-byte header (version 1) or 32-byte header (version 2) 
+ * followed by zero or more WAL entries. Files are named {@code wal-NNNN.log} (4-digit zero-padded,
  * 1-based numbering). Segment headers are written lazily on the first append
  * to an empty segment (0-byte files are valid empty segments).
  *
@@ -34,6 +34,9 @@ public final class WALSegment implements AutoCloseable {
     private boolean headerWritten;
     private long firstLsn;
     private long lastLsn;
+    private long persistedLastLsn;
+    private int headerSize;
+    private short headerVersion;
 
     /**
      * Creates a new WAL segment file.
@@ -103,33 +106,50 @@ public final class WALSegment implements AutoCloseable {
      * @throws IOException if the header is corrupt
      */
     private void readHeader() throws IOException {
-        if (writePosition < WALFormat.SEGMENT_HEADER_SIZE) {
+        if (writePosition < WALFormat.SEGMENT_HEADER_V1_SIZE) {
             // Empty or incomplete file: header not written yet
             headerWritten = false;
+            headerSize = 0;
             firstLsn = 0;
+            lastLsn = 0;
             return;
         }
 
-        ByteBuffer headerBuffer = ByteBuffer.allocate(WALFormat.SEGMENT_HEADER_SIZE);
-        channel.read(headerBuffer, 0);
-        headerBuffer.flip();
+        // Read magic and version first to determine header size
+        ByteBuffer probeBuffer = ByteBuffer.allocate(6);
+        channel.read(probeBuffer, 0);
+        probeBuffer.flip();
 
-        // Read and validate magic
         byte[] magicBytes = new byte[4];
-        headerBuffer.get(magicBytes);
+        probeBuffer.get(magicBytes);
         String magic = new String(magicBytes);
         if (!magic.equals(WALFormat.SEGMENT_MAGIC)) {
             throw new WALFormatException("Invalid segment magic: expected " + WALFormat.SEGMENT_MAGIC + 
                     ", got " + magic);
         }
 
-        // Read and validate version
-        short version = headerBuffer.getShort();
-        if (version != WALFormat.SEGMENT_FORMAT_VERSION) {
+        short version = probeBuffer.getShort();
+        if (version == WALFormat.SEGMENT_FORMAT_VERSION_V1) {
+            // Legacy version 1: 24-byte header
+            headerSize = WALFormat.SEGMENT_HEADER_V1_SIZE;
+            headerVersion = WALFormat.SEGMENT_FORMAT_VERSION_V1;
+        } else if (version == WALFormat.SEGMENT_FORMAT_VERSION) {
+            // Current version 2: 32-byte header
+            if (writePosition < WALFormat.SEGMENT_HEADER_SIZE) {
+                throw new WALFormatException("Segment file too small for version 2 header: " + writePosition + " bytes");
+            }
+            headerSize = WALFormat.SEGMENT_HEADER_SIZE;
+            headerVersion = WALFormat.SEGMENT_FORMAT_VERSION;
+        } else {
             throw new WALFormatException("Unsupported segment version: " + version);
         }
 
-        // Skip reserved
+        ByteBuffer headerBuffer = ByteBuffer.allocate(headerSize);
+        channel.read(headerBuffer, 0);
+        headerBuffer.flip();
+
+        // Skip magic (4) + version (2) + reserved (2)
+        headerBuffer.position(WALFormat.SEGMENT_OFFSET_RESERVED);
         headerBuffer.getShort();
 
         // Read segment number
@@ -142,10 +162,20 @@ public final class WALSegment implements AutoCloseable {
         // Read first LSN
         firstLsn = headerBuffer.getLong();
 
+        // Read last LSN (version 2 only)
+        if (headerVersion == WALFormat.SEGMENT_FORMAT_VERSION) {
+            lastLsn = headerBuffer.getLong();
+            persistedLastLsn = lastLsn;
+        } else {
+            lastLsn = 0; // Legacy version 1: lastLsn computed lazily
+            persistedLastLsn = 0;
+        }
+
         // Validate CRC
         int storedCrc = headerBuffer.getInt();
         headerBuffer.rewind();
-        headerBuffer.limit(WALFormat.SEGMENT_OFFSET_CRC);
+        headerBuffer.limit(headerVersion == WALFormat.SEGMENT_FORMAT_VERSION ? 
+                          WALFormat.SEGMENT_OFFSET_CRC : WALFormat.SEGMENT_OFFSET_CRC_V1);
         int computedCrc = computeCrc(headerBuffer);
         if (computedCrc != storedCrc) {
             throw new WALFormatException("Segment header CRC32C mismatch: expected " + 
@@ -162,7 +192,11 @@ public final class WALSegment implements AutoCloseable {
      */
     private void ensureHeaderWritten() throws IOException {
         if (!headerWritten) {
-            ByteBuffer header = ByteBuffer.allocate(WALFormat.SEGMENT_HEADER_SIZE);
+            // Initialize header for version 2 (new segments always use version 2)
+            headerSize = WALFormat.SEGMENT_HEADER_SIZE;
+            headerVersion = WALFormat.SEGMENT_FORMAT_VERSION;
+            
+            ByteBuffer header = ByteBuffer.allocate(headerSize);
             
             // Magic
             header.put(WALFormat.SEGMENT_MAGIC.getBytes());
@@ -178,19 +212,22 @@ public final class WALSegment implements AutoCloseable {
             
             // First LSN (will be updated when first entry is written)
             firstLsn = 0;
+            lastLsn = 0; // Will be set on first append
+            persistedLastLsn = 0;
             header.putLong(firstLsn);
+            header.putLong(lastLsn); // lastLsn field in version 2
             
-            // CRC (computed over first 20 bytes)
+            // CRC (computed over first 28 bytes for version 2)
             header.flip();
             header.limit(WALFormat.SEGMENT_OFFSET_CRC);
             int crc = computeCrc(header);
-            header.limit(WALFormat.SEGMENT_HEADER_SIZE);
+            header.limit(headerSize);
             header.putInt(crc);
             
             // Write header
             header.rewind();
             channel.write(header, 0);
-            writePosition = WALFormat.SEGMENT_HEADER_SIZE;
+            writePosition = headerSize;
             headerWritten = true;
         }
     }
@@ -223,6 +260,8 @@ public final class WALSegment implements AutoCloseable {
         // Update first LSN if this is the first entry
         if (firstLsn == 0) {
             firstLsn = entry.getLsn();
+            lastLsn = entry.getLsn(); // First entry = last entry
+            persistedLastLsn = lastLsn;
             rewriteHeader();
         }
         
@@ -275,6 +314,8 @@ public final class WALSegment implements AutoCloseable {
         // Update first LSN if these are the first entries
         if (firstLsn == 0) {
             firstLsn = entries.get(0).getLsn();
+            lastLsn = entries.get(entries.size() - 1).getLsn(); // First batch: first=last
+            persistedLastLsn = lastLsn;
             rewriteHeader();
         }
         
@@ -288,7 +329,12 @@ public final class WALSegment implements AutoCloseable {
      * @throws IOException if the header cannot be rewritten
      */
     private void rewriteHeader() throws IOException {
-        ByteBuffer header = ByteBuffer.allocate(WALFormat.SEGMENT_HEADER_SIZE);
+        if (headerSize != WALFormat.SEGMENT_HEADER_SIZE) {
+            // Only rewrite version 2 headers (legacy v1 cannot be upgraded in-place)
+            return;
+        }
+        
+        ByteBuffer header = ByteBuffer.allocate(headerSize);
         
         // Magic
         header.put(WALFormat.SEGMENT_MAGIC.getBytes());
@@ -302,14 +348,15 @@ public final class WALSegment implements AutoCloseable {
         // Segment number
         header.putInt(segmentNumber);
         
-        // First LSN
+        // First LSN and last LSN (version 2)
         header.putLong(firstLsn);
+        header.putLong(lastLsn);
         
-        // CRC
+        // CRC (computed over first 28 bytes for version 2)
         header.flip();
         header.limit(WALFormat.SEGMENT_OFFSET_CRC);
         int crc = computeCrc(header);
-        header.limit(WALFormat.SEGMENT_HEADER_SIZE);
+        header.limit(headerSize);
         header.putInt(crc);
         
         // Rewrite header
@@ -329,12 +376,12 @@ public final class WALSegment implements AutoCloseable {
         if (channel == null) {
             throw new IllegalStateException("Segment " + segmentNumber + " is closed");
         }
-        if (writePosition < WALFormat.SEGMENT_HEADER_SIZE) {
+        if (writePosition < headerSize) {
             return entries; // Empty segment
         }
 
-        ByteBuffer buffer = ByteBuffer.allocate((int) (writePosition - WALFormat.SEGMENT_HEADER_SIZE));
-        channel.read(buffer, WALFormat.SEGMENT_HEADER_SIZE);
+        ByteBuffer buffer = ByteBuffer.allocate((int) (writePosition - headerSize));
+        channel.read(buffer, headerSize);
         buffer.flip();
 
         while (buffer.remaining() >= WALFormat.MIN_ENTRY_SIZE) {
@@ -367,7 +414,7 @@ public final class WALSegment implements AutoCloseable {
         if (channel == null) {
             throw new IllegalStateException("Segment " + segmentNumber + " is closed");
         }
-        if (writePosition < WALFormat.SEGMENT_HEADER_SIZE) {
+        if (writePosition < headerSize) {
             return null; // Empty segment
         }
         if (firstLsn > 0 && lsn < firstLsn) {
@@ -376,7 +423,7 @@ public final class WALSegment implements AutoCloseable {
 
         final int CHUNK_SIZE = 64 * 1024;
         ByteBuffer buffer = ByteBuffer.allocate(CHUNK_SIZE);
-        long filePos = WALFormat.SEGMENT_HEADER_SIZE;
+        long filePos = headerSize;
         int n = channel.read(buffer, filePos);
         if (n > 0) {
             filePos += n;
@@ -460,10 +507,18 @@ public final class WALSegment implements AutoCloseable {
      *
      * @throws IOException if the force fails
      */
-    public void force() throws IOException {
-        if (channel != null) {
-            channel.force(true);
+    public synchronized void force() throws IOException {
+        if (channel == null) {
+            return;
         }
+        
+        // Rewrite header if version 2 and lastLsn changed since last persist
+        if (!readOnly && headerSize == WALFormat.SEGMENT_HEADER_SIZE && lastLsn != persistedLastLsn) {
+            rewriteHeader();
+            persistedLastLsn = lastLsn;
+        }
+        
+        channel.force(true);
     }
 
     /**
@@ -531,12 +586,18 @@ public final class WALSegment implements AutoCloseable {
      * @return last LSN
      */
     public synchronized long getLastLsn() {
-        if (lastLsn == 0 && writePosition > WALFormat.SEGMENT_HEADER_SIZE) {
-            // Lazy computation: read all entries and take the last one
+        if (lastLsn == 0 && writePosition > headerSize) {
+            // Lazy computation: try tail scan first, fallback to readAll
             try {
-                List<WALEntry> entries = readAll();
-                if (!entries.isEmpty()) {
-                    lastLsn = entries.get(entries.size() - 1).getLsn();
+                WALEntry lastEntry = readLastEntryFromTail();
+                if (lastEntry != null) {
+                    lastLsn = lastEntry.getLsn();
+                } else {
+                    // Fallback: full readAll (for very large entries or torn tail)
+                    List<WALEntry> entries = readAll();
+                    if (!entries.isEmpty()) {
+                        lastLsn = entries.get(entries.size() - 1).getLsn();
+                    }
                 }
             } catch (IOException e) {
                 // If read fails, lastLsn remains 0 (empty segment)
@@ -587,4 +648,95 @@ public final class WALSegment implements AutoCloseable {
     }
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WALSegment.class);
+
+    /**
+     * Reads the last entry from the segment tail with backward scanning.
+     * Reads the last 64KB chunk and scans backwards for the last complete entry.
+     * Returns null if no valid entry is found (torn tail or empty).
+     *
+     * @return the last entry, or null if not found
+     * @throws IOException if reading fails
+     */
+    private WALEntry readLastEntryFromTail() throws IOException {
+        long end = writePosition;
+        if (end <= headerSize) {
+            return null; // Empty or no header
+        }
+
+        final int CHUNK_SIZE = 64 * 1024;
+        long start = Math.max(headerSize, end - CHUNK_SIZE);
+        int len = (int) (end - start);
+        ByteBuffer buffer = ByteBuffer.allocate(len);
+        channel.read(buffer, start);
+        buffer.flip();
+
+        // Scan backwards from the end of the buffer
+        // Entry starts are 8-aligned: positions p where p >= headerSize, p % 8 == 0
+        long lastValidPos = -1;
+        int lastRawSize = 0;
+        int lastFullSize = 0;
+
+        for (long p = alignDown(end - WALFormat.MIN_ENTRY_SIZE); p >= start && p >= headerSize; p -= 8) {
+            int bufferPos = (int) (p - start);
+            if (bufferPos + 24 > buffer.remaining()) {
+                continue; // Not enough data for fixed header
+            }
+
+            // Peek entry size info
+            buffer.position(bufferPos);
+            long entryLsn = buffer.getLong();
+            // Skip txid, op, flags, reserved
+            buffer.position(bufferPos + 20);
+            int beforeLen = buffer.getInt();
+            int afterLen = buffer.getInt();
+            buffer.position(bufferPos); // Reset
+
+            // Validate image lengths
+            if (beforeLen < 0 || afterLen < 0) {
+                continue; // Invalid header
+            }
+
+            try {
+                int rawSize = WALFormat.rawEntrySize(beforeLen, afterLen);
+                int fullSize = WALFormat.alignedSize(rawSize);
+                
+                // Check if this entry fits and ends exactly at or before end
+                if (p + fullSize > end) {
+                    continue; // Entry would extend beyond file end
+                }
+
+                // Check if this entry is valid (CRC optional here for performance)
+                // For now, accept the first candidate that fits (should be the last entry)
+                // If multiple candidates exist, the first found (largest p) is the true last
+                lastValidPos = p;
+                lastRawSize = rawSize;
+                lastFullSize = fullSize;
+
+                // Found a valid candidate - try to decode it
+                buffer.position(bufferPos);
+                try {
+                    return WALEntry.readFrom(buffer);
+                } catch (WALFormatException e) {
+                    // Entry corrupt - continue scanning backwards
+                    LOGGER.debug("Failed to decode entry at position {}: {}", p, e.getMessage());
+                    continue;
+                }
+            } catch (IllegalArgumentException e) {
+                // Invalid entry size - continue scanning
+                continue;
+            }
+        }
+
+        return null; // No valid entry found in the tail
+    }
+
+    /**
+     * Aligns the given size down to the nearest multiple of 8.
+     *
+     * @param size the size to align
+     * @return the aligned size
+     */
+    private static long alignDown(long size) {
+        return size / WALFormat.ALIGNMENT * WALFormat.ALIGNMENT;
+    }
 }

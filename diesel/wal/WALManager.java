@@ -186,20 +186,15 @@ this.config = config;
      * @return the maximum LSN found, or 0 if no segments
      */
     private long findMaxLsnInSegments() throws IOException {
-        long maxLsn = 0;
-        
-        for (WALSegment segment : segments.values()) {
-            List<WALEntry> entries = segment.readAll();
-            if (!entries.isEmpty()) {
-                long segmentMax = entries.stream()
-                    .mapToLong(WALEntry::getLsn)
-                    .max()
-                    .orElse(0);
-                maxLsn = Math.max(maxLsn, segmentMax);
+        // Walk segments in descending order to find the first one with a non-zero last LSN
+        // This handles trailing empty segments correctly (lastEntry() would return 0 incorrectly)
+        for (WALSegment segment : segments.descendingMap().values()) {
+            long lastLsn = segment.getLastLsn();
+            if (lastLsn > 0) {
+                return lastLsn;
             }
         }
-        
-        return maxLsn;
+        return 0; // All segments are empty
     }
 
     /**
