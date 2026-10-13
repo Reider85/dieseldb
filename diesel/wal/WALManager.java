@@ -56,6 +56,12 @@ public final class WALManager implements AutoCloseable {
     private final AtomicLong lastFlushedLsn = new AtomicLong(0);
     private int nextSegmentNumber = 1;
     private int persistCounter = 0;
+    /**
+     * Number of segments whose data was scanned by readRange since the last
+     * reset. Package-private test hook (WAL-4) proving the lsnToSegment
+     * subMap skips non-overlapping segments.
+     */
+    private final AtomicInteger readRangeSegmentsScanned = new AtomicInteger();
 
     /**
      * Creates a new WALManager with the given configuration.
@@ -496,10 +502,31 @@ this.config = config;
      */
     public List<WALEntry> readRange(long fromLsnInclusive, long toLsnInclusive) throws IOException {
         List<WALEntry> rangeEntries = new ArrayList<>();
-        
-        for (WALSegment segment : segments.values()) {
+        if (fromLsnInclusive > toLsnInclusive || lsnToSegment.isEmpty()) {
+            return Collections.unmodifiableList(rangeEntries);
+        }
+
+        // The segment with the greatest firstLsn <= fromLsn is the only one that
+        // may begin before the requested window yet still contain fromLsn.
+        Map.Entry<Long, WALSegment> floor = lsnToSegment.floorEntry(fromLsnInclusive);
+        long startKey = (floor != null) ? floor.getKey() : lsnToSegment.firstKey();
+        if (startKey > toLsnInclusive) {
+            // Range lies entirely before every indexed segment; subMap would throw.
+            return Collections.unmodifiableList(rangeEntries);
+        }
+
+        for (WALSegment segment : lsnToSegment.subMap(startKey, true, toLsnInclusive, true).values()) {
+            // Defensive short-circuits mirroring AnalysisPhase/RedoPhase: skip
+            // segments whose LSN range falls entirely outside the window.
+            if (segment.getFirstLsn() > toLsnInclusive && segment.getFirstLsn() != 0) {
+                break;
+            }
+            if (segment.getLastLsn() != 0 && segment.getLastLsn() < fromLsnInclusive) {
+                continue;
+            }
+            readRangeSegmentsScanned.incrementAndGet();
+
             List<WALEntry> entries = segment.readAll();
-            
             for (WALEntry entry : entries) {
                 long lsn = entry.getLsn();
                 if (lsn >= fromLsnInclusive && lsn <= toLsnInclusive) {
@@ -509,8 +536,25 @@ this.config = config;
                 }
             }
         }
-        
+
         return Collections.unmodifiableList(rangeEntries);
+    }
+
+    /**
+     * Returns the number of segments scanned by readRange since the last reset.
+     * Package-private test hook for WAL-4 (skip non-overlapping segments).
+     *
+     * @return segments scanned count
+     */
+    int readRangeSegmentsScanned() {
+        return readRangeSegmentsScanned.get();
+    }
+
+    /**
+     * Resets the readRange segment-scan counter. Package-private test hook for WAL-4.
+     */
+    void resetReadRangeSegmentsScanned() {
+        readRangeSegmentsScanned.set(0);
     }
 
     /**

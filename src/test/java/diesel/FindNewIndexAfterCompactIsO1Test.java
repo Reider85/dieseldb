@@ -60,7 +60,7 @@ class FindNewIndexAfterCompactIsO1Test {
         // Measurement: 100k calls to a deleted row (should return -1)
         int measurementCount = 100_000;
         long totalNanos = 0;
-        int testIndex = 3_999_999; // Deleted index (even)
+        int testIndex = 3_999_998; // Deleted index (even)
         
         for (int i = 0; i < measurementCount; i++) {
             long start = System.nanoTime();
@@ -75,7 +75,7 @@ class FindNewIndexAfterCompactIsO1Test {
                 "Average call time " + avgMicros + "µs, expected < 10µs (O(1) proof)");
 
         // Also test a non-deleted row for correctness
-        int aliveIndex = 3_999_998; // Should be alive (odd)
+        int aliveIndex = 3_999_999; // Should be alive (odd)
         Object result = findNewIndexMethod.invoke(table, aliveIndex, prefixAlive);
         int expectedNewIndex = prefixAlive[aliveIndex];
         assertEquals(expectedNewIndex, result, "Alive row should return prefix value");

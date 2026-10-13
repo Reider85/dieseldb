@@ -942,3 +942,5 @@ chore: test-profiles-audit changelog entry
 3.2.91 Make WALManager.readByLsn reuse segment read from findSegmentForLsn via streaming WALSegment.readByLsn with early exit
 
 3.2.92 O2 WAL-3: persist lastLsn in WAL segment header (v2 32B), O(log n) findMaxLsnInSegments, lazy tail-scan for v1
+
+3.2.93 WAL-4: skip non-overlapping segments in readRange via lsnToSegment subMap; new WALReadRange tests prove <=2 segment scans; fix FindNewIndexAfterCompactIsO1Test parity bug; fix PersistFlusherTest hang (missing data dir)
