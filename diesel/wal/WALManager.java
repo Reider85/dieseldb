@@ -475,7 +475,13 @@ this.config = config;
     /**
      * Reads all WAL entries.
      *
-     * @return list of all entries (in LSN order)
+     * <p>Post-condition: the returned list is strictly LSN-ascending. This relies
+     * on two invariants (WAL-5 removed the previous defensive O(N log N) sort):
+     * segments are held in a TreeMap keyed by monotonically assigned segment
+     * numbers, and {@link #append(WALEntry)} enforces strictly increasing LSNs,
+     * so concatenating per-segment reads in segment order yields global LSN order.
+     *
+     * @return unmodifiable list of all entries in ascending LSN order
      * @throws IOException if reading fails
      */
     public List<WALEntry> readAll() throws IOException {
@@ -486,10 +492,20 @@ this.config = config;
             allEntries.addAll(entries);
         }
         
-        // Sort by LSN
-        allEntries.sort((e1, e2) -> Long.compare(e1.getLsn(), e2.getLsn()));
+        assert isLsnAscending(allEntries) : "WAL entries out of order";
         
         return Collections.unmodifiableList(allEntries);
+    }
+
+    /** O(N) check that entry LSNs are strictly increasing. Used by the assert in readAll. */
+    private static boolean isLsnAscending(List<WALEntry> entries) {
+        long prev = Long.MIN_VALUE;
+        for (WALEntry e : entries) {
+            long lsn = e.getLsn();
+            if (lsn <= prev) return false;
+            prev = lsn;
+        }
+        return true;
     }
 
     /**
