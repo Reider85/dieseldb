@@ -1,19 +1,17 @@
 package diesel.recovery;
 
 import diesel.wal.WALManager;
-import diesel.wal.WALEntry;
 import diesel.wal.WALOpcode;
 import diesel.wal.WALConfig;
-import diesel.wal.WAL;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -34,12 +32,10 @@ public class AnalysisCheckpointIsLinearTest {
     Path walDir;
 
     private WALManager wal;
-    private WAL walImpl;
 
     @BeforeEach
     void setUp() throws IOException {
-        walImpl = new WAL(walDir, WALConfig.of(walDir, 1_000_000));
-        wal = new WALManager(walImpl);
+        wal = new WALManager(WALConfig.of(walDir, 2_000_000));
     }
 
     @Test
@@ -53,7 +49,7 @@ public class AnalysisCheckpointIsLinearTest {
             for (int j = 0; j < txidsPerCheckpoint; j++) {
                 activeTxids[j] = (long) i * txidsPerCheckpoint + j + 1;
             }
-            CheckpointRecord record = new CheckpointRecord(0L, 0, activeTxids);
+            CheckpointRecord record = new CheckpointRecord(0L, activeTxids, 0L);
             wal.append(0L, WALOpcode.CHECKPOINT, null, record.toBytes());
         }
 
@@ -68,7 +64,7 @@ public class AnalysisCheckpointIsLinearTest {
         
         assertEquals(expectedLastCheckpoint, result.getActive());
         assertTrue(result.getCommitted().isEmpty());
-        assertEquals((long) checkpointCount * txidsPerCheckpoint, result.getLastLSN());
+        assertEquals((long) checkpointCount, result.getLastLSN());
     }
 
     @Test
@@ -82,13 +78,13 @@ public class AnalysisCheckpointIsLinearTest {
             for (int j = 0; j < txidsPerCheckpoint; j++) {
                 activeTxids[j] = (long) i * txidsPerCheckpoint + j + 1;
             }
-            CheckpointRecord record = new CheckpointRecord(0L, 0, activeTxids);
+            CheckpointRecord record = new CheckpointRecord(0L, activeTxids, 0L);
             wal.append(0L, WALOpcode.CHECKPOINT, null, record.toBytes());
         }
         
         // Final checkpoint with only 5 txids
         long[] finalActiveTxids = {10001L, 10002L, 10003L, 10004L, 10005L};
-        CheckpointRecord finalRecord = new CheckpointRecord(0L, 0, finalActiveTxids);
+        CheckpointRecord finalRecord = new CheckpointRecord(0L, finalActiveTxids, 0L);
         wal.append(0L, WALOpcode.CHECKPOINT, null, finalRecord.toBytes());
         
         // Analyze the full WAL
@@ -104,7 +100,7 @@ public class AnalysisCheckpointIsLinearTest {
     void corruptCheckpointDoesNotSwapActiveSet() throws IOException {
         // Valid checkpoint with txids {1,2}
         long[] validTxids = {1L, 2L};
-        CheckpointRecord validRecord = new CheckpointRecord(0L, 0, validTxids);
+        CheckpointRecord validRecord = new CheckpointRecord(0L, validTxids, 0L);
         wal.append(0L, WALOpcode.CHECKPOINT, null, validRecord.toBytes());
         
         // Corrupt checkpoint with garbage bytes
@@ -120,5 +116,10 @@ public class AnalysisCheckpointIsLinearTest {
         Set<Long> expected = new HashSet<>(Arrays.asList(1L, 2L, 3L));
         assertEquals(expected, result.getActive());
         assertTrue(result.getCommitted().isEmpty());
+    }
+
+    @AfterEach
+    void tearDown() throws IOException {
+        wal.close();
     }
 }
