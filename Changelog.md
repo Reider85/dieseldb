@@ -950,3 +950,5 @@ chore: test-profiles-audit changelog entry
 3.2.95 O2 WAL-6: cache decoded WAL segment bodies across recovery phases (LRU readAllCached)
 
 3.2.96 Implement MVCC-4 prefix-count array optimization
+
+3.2.97 Replace active.clear() with swap-reference in AnalysisPhase.apply CHECKPOINT branch for O(C) performance

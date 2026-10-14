@@ -86,7 +86,9 @@ public final class AnalysisPhase {
         long endLsn = wal.getLastLsn();
         long startLsn = checkpoint != null ? checkpoint.getLastLSN() + 1 : 1L;
 
-        Set<Long> active = new LinkedHashSet<>();
+        Set<Long> active = checkpoint != null 
+                ? new LinkedHashSet<>(checkpoint.getActiveTxidCount())
+                : new LinkedHashSet<>();
         Set<Long> committed = new LinkedHashSet<>();
         if (checkpoint != null) {
             for (long txid : checkpoint.getActiveTxids()) {
@@ -108,7 +110,7 @@ public final class AnalysisPhase {
                 if (lsn < startLsn) {
                     continue;
                 }
-                apply(entry, committed, active);
+                active = apply(entry, committed, active);
             }
         }
 
@@ -121,8 +123,9 @@ public final class AnalysisPhase {
      * @param entry     the WAL entry (within the scan window)
      * @param committed the evolving committed set
      * @param active    the evolving active set
+     * @return the (possibly new) active set reference for CHECKPOINT, same reference otherwise
      */
-    private static void apply(WALEntry entry, Set<Long> committed, Set<Long> active) {
+    private static Set<Long> apply(WALEntry entry, Set<Long> committed, Set<Long> active) {
         WALOpcode op = entry.getOp();
         long txid = entry.getTxid();
 
@@ -131,19 +134,20 @@ public final class AnalysisPhase {
             // replaces the active set; the committed set keeps accumulating.
             try {
                 CheckpointRecord record = CheckpointRecord.fromBytes(entry.getAfterImage());
-                active.clear();
+                Set<Long> reseeded = new LinkedHashSet<>(record.getActiveTxidCount());
                 for (long checkpointTxid : record.getActiveTxids()) {
-                    active.add(checkpointTxid);
+                    reseeded.add(checkpointTxid);
                 }
+                return reseeded;
             } catch (CheckpointFormatException e) {
                 LOGGER.log(Level.WARNING, "Skipping corrupt CHECKPOINT record at LSN "
                         + entry.getLsn() + ": " + e.getMessage());
+                return active; // unchanged reference on corrupt record
             }
-            return;
         }
 
         if (txid <= 0) {
-            return; // system record with no transaction context
+            return active; // system record with no transaction context
         }
 
         switch (op) {
@@ -160,5 +164,6 @@ public final class AnalysisPhase {
                 }
             }
         }
+        return active;
     }
 }

@@ -1,1 +1,1 @@
-3.2.96 Implement MVCC-4 prefix-count array optimization
+3.2.97 Replace active.clear() with swap-reference in AnalysisPhase.apply CHECKPOINT branch for O(C) performance
