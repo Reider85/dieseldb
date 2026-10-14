@@ -594,10 +594,10 @@ this.config = config;
     /**
      * Returns all segments.
      *
-     * @return unmodifiable map of segment number to segment
+     * @return unmodifiable navigable map of segment number to segment
      */
-    public java.util.Map<Integer, WALSegment> getSegments() {
-        return Collections.unmodifiableMap(segments);
+    public java.util.NavigableMap<Integer, WALSegment> getSegments() {
+        return Collections.unmodifiableNavigableMap(segments);
     }
 
     /**

@@ -7,11 +7,7 @@ import diesel.wal.WALOpcode;
 import diesel.wal.WALSegment;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.logging.Level;
@@ -97,15 +93,11 @@ public final class UndoPhase {
         long ignored = 0;
 
         // Reverse segment order: newest segment number first.
-        List<Integer> segmentNumbers = new ArrayList<>(wal.getSegments().keySet());
-        Collections.sort(segmentNumbers, Comparator.reverseOrder());
-
-        for (Integer segmentNumber : segmentNumbers) {
-            WALSegment segment = wal.getSegments().get(segmentNumber);
+        for (WALSegment segment : wal.getSegments().descendingMap().values()) {
             if (segment.getFirstLsn() > endLsn && segment.getFirstLsn() != 0) {
                 continue; // segment created after our end-of-log snapshot
             }
-            List<WALEntry> entries = wal.readAllCached(segmentNumber);
+            List<WALEntry> entries = wal.readAllCached(segment.getNumber());
             // Entries within a segment are LSN-ascending: walk them backwards.
             for (int i = entries.size() - 1; i >= 0; i--) {
                 WALEntry entry = entries.get(i);

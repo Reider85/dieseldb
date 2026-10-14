@@ -948,3 +948,5 @@ chore: test-profiles-audit changelog entry
 3.2.94 Remove redundant sort in WALManager.readAll and add defensive assert
 
 3.2.95 O2 WAL-6: cache decoded WAL segment bodies across recovery phases (LRU readAllCached)
+
+3.2.96 Implement MVCC-4 prefix-count array optimization
