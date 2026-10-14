@@ -78,13 +78,18 @@ public final class ARIESAlgorithm {
         LOGGER.fine(() -> "ARIES recovery starting (wal=" + wal.getSegments().size()
                 + " segment(s), checkpoint=" + (checkpoint != null ? checkpoint.getLastLSN() : "none") + ")");
 
-        AnalysisResult analysis = AnalysisPhase.analyze(wal, checkpoint);
-        RedoResult redo = RedoPhase.redo(wal, pages, checkpoint, redoSink);
-        UndoResult undo = undoSink != null
-                ? UndoPhase.undo(wal, analysis.getActive(), undoSink)
-                : new UndoResult(0, 0, 0, 0, analysis.getLastLSN());
+        try {
+            AnalysisResult analysis = AnalysisPhase.analyze(wal, checkpoint);
+            RedoResult redo = RedoPhase.redo(wal, pages, checkpoint, redoSink);
+            UndoResult undo = undoSink != null
+                    ? UndoPhase.undo(wal, analysis.getActive(), undoSink)
+                    : new UndoResult(0, 0, 0, 0, analysis.getLastLSN());
 
-        LOGGER.fine(() -> "ARIES recovery done: " + new RecoveryResult(analysis, redo, undo));
-        return new RecoveryResult(analysis, redo, undo);
+            LOGGER.fine(() -> "ARIES recovery done: " + new RecoveryResult(analysis, redo, undo));
+            return new RecoveryResult(analysis, redo, undo);
+        } finally {
+            // Clear recovery cache to free memory before serving traffic
+            wal.clearRecoveryCache();
+        }
     }
 }

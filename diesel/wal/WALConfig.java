@@ -76,6 +76,10 @@ public final class WALConfig {
     public static final int DEFAULT_GROUP_MAX_SIZE = 64;
     /** Default WAL enablement. */
     public static final boolean DEFAULT_ENABLED = false;
+    /** Config key for recovery cache size in bytes. */
+    public static final String RECOVERY_CACHE_SIZE_BYTES_KEY = "wal.recovery.cache.size.bytes";
+    /** Default recovery cache size in bytes (64 MB). */
+    public static final long DEFAULT_RECOVERY_CACHE_SIZE_BYTES = 64L * 1024 * 1024;
 
     private final Path walDir;
     private final long maxSegmentSizeBytes;
@@ -88,10 +92,12 @@ public final class WALConfig {
     private final FsyncPolicy fsyncPolicy;
     private final long groupWindowMs;
     private final int groupMaxSize;
+    private final long recoveryCacheSizeBytes;
 
     private WALConfig(Path walDir, long maxSegmentSizeBytes, long queueMaxSize, 
                      long maxSegmentAgeMs, Path archiveDir, int archiveRetentionDays, long archiveIntervalMs,
-                     boolean enabled, FsyncPolicy fsyncPolicy, long groupWindowMs, int groupMaxSize) {
+                     boolean enabled, FsyncPolicy fsyncPolicy, long groupWindowMs, int groupMaxSize,
+                     long recoveryCacheSizeBytes) {
         this.walDir = walDir;
         this.maxSegmentSizeBytes = maxSegmentSizeBytes;
         this.queueMaxSize = queueMaxSize;
@@ -103,6 +109,7 @@ public final class WALConfig {
         this.fsyncPolicy = fsyncPolicy;
         this.groupWindowMs = groupWindowMs;
         this.groupMaxSize = groupMaxSize;
+        this.recoveryCacheSizeBytes = recoveryCacheSizeBytes;
     }
 
     /**
@@ -175,6 +182,15 @@ public final class WALConfig {
      */
     public boolean isEnabled() {
         return enabled;
+    }
+
+    /**
+     * Returns the recovery cache size in bytes.
+     *
+     * @return cache size in bytes
+     */
+    public long getRecoveryCacheSizeBytes() {
+        return recoveryCacheSizeBytes;
     }
 
     /**
@@ -387,8 +403,28 @@ public final class WALConfig {
             enabled = DEFAULT_ENABLED;
         }
 
+        // Resolve recovery cache size
+        String rawCacheSize = System.getProperty(RECOVERY_CACHE_SIZE_BYTES_KEY);
+        if (rawCacheSize == null) {
+            rawCacheSize = loadRootProps().getProperty(RECOVERY_CACHE_SIZE_BYTES_KEY, 
+                    String.valueOf(DEFAULT_RECOVERY_CACHE_SIZE_BYTES));
+        }
+        long cacheSizeBytes;
+        try {
+            cacheSizeBytes = Long.parseLong(rawCacheSize.trim());
+            if (cacheSizeBytes < 0) {
+                LOGGER.warn("Invalid wal.recovery.cache.size.bytes '{}': must be >= 0, using default {}", 
+                        rawCacheSize, DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
+                cacheSizeBytes = DEFAULT_RECOVERY_CACHE_SIZE_BYTES;
+            }
+        } catch (NumberFormatException e) {
+            LOGGER.warn("Invalid wal.recovery.cache.size.bytes format '{}': {}, using default {}", 
+                    rawCacheSize, e.getMessage(), DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
+            cacheSizeBytes = DEFAULT_RECOVERY_CACHE_SIZE_BYTES;
+        }
+
         return new WALConfig(walDir, sizeBytes, queueSize, ageMs, resolvedArchiveDir, retentionDays, intervalMs,
-                           enabled, policy, windowMs, groupSize);
+                           enabled, policy, windowMs, groupSize, cacheSizeBytes);
     }
 
     /**
@@ -403,9 +439,10 @@ public final class WALConfig {
             throw new IllegalArgumentException("maxSegmentSizeBytes must be >= " + MIN_SEGMENT_SIZE_BYTES);
         }
         return new WALConfig(walDir, maxSegmentSizeBytes, DEFAULT_QUEUE_MAX_SIZE,
-                           DEFAULT_SEGMENT_MAX_AGE_MS, walDir.resolve(DEFAULT_ARCHIVE_DIR), 
-                           DEFAULT_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_INTERVAL_MS,
-                           DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE);
+                            DEFAULT_SEGMENT_MAX_AGE_MS, walDir.resolve(DEFAULT_ARCHIVE_DIR), 
+                            DEFAULT_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_INTERVAL_MS,
+                            DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE,
+                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
     }
 
     /**
@@ -424,9 +461,10 @@ public final class WALConfig {
             throw new IllegalArgumentException("queueMaxSize must be >= " + MIN_QUEUE_MAX_SIZE);
         }
         return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
-                           DEFAULT_SEGMENT_MAX_AGE_MS, walDir.resolve(DEFAULT_ARCHIVE_DIR), 
-                           DEFAULT_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_INTERVAL_MS,
-                           DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE);
+                            DEFAULT_SEGMENT_MAX_AGE_MS, walDir.resolve(DEFAULT_ARCHIVE_DIR), 
+                            DEFAULT_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_INTERVAL_MS,
+                            DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE,
+                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
     }
 
     /**
@@ -451,7 +489,8 @@ public final class WALConfig {
         }
         return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
                             maxSegmentAgeMs, archiveDir, archiveRetentionDays, archiveIntervalMs,
-                            DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE);
+                            DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE,
+                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
     }
 
     /**
@@ -480,8 +519,44 @@ public final class WALConfig {
             throw new IllegalArgumentException("queueMaxSize must be >= " + MIN_QUEUE_MAX_SIZE);
         }
         return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
-                           maxSegmentAgeMs, archiveDir, archiveRetentionDays, archiveIntervalMs,
-                           enabled, fsyncPolicy, groupWindowMs, groupMaxSize);
+                            maxSegmentAgeMs, archiveDir, archiveRetentionDays, archiveIntervalMs,
+                            enabled, fsyncPolicy, groupWindowMs, groupMaxSize,
+                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
+    }
+
+    /**
+     * Creates a WALConfig with explicit values (for tests).
+     *
+     * @param walDir WAL directory
+     * @param maxSegmentSizeBytes max segment size in bytes
+     * @param queueMaxSize max queue size
+     * @param maxSegmentAgeMs max segment age in milliseconds (DISABLED to disable)
+     * @param archiveDir archive directory
+     * @param archiveRetentionDays archive retention in days (DISABLED to disable)
+     * @param archiveIntervalMs archive interval in milliseconds (DISABLED to disable daemon)
+     * @param enabled whether WAL is enabled
+     * @param fsyncPolicy the fsync policy
+     * @param groupWindowMs group commit window in milliseconds
+     * @param groupMaxSize maximum group size
+     * @param recoveryCacheSizeBytes recovery cache size in bytes (0 to disable)
+     * @return the configuration
+     */
+    public static WALConfig of(Path walDir, long maxSegmentSizeBytes, long queueMaxSize,
+                               long maxSegmentAgeMs, Path archiveDir, int archiveRetentionDays, long archiveIntervalMs,
+                               boolean enabled, FsyncPolicy fsyncPolicy, long groupWindowMs, int groupMaxSize,
+                               long recoveryCacheSizeBytes) {
+        if (maxSegmentSizeBytes < MIN_SEGMENT_SIZE_BYTES) {
+            throw new IllegalArgumentException("maxSegmentSizeBytes must be >= " + MIN_SEGMENT_SIZE_BYTES);
+        }
+        if (queueMaxSize < MIN_QUEUE_MAX_SIZE) {
+            throw new IllegalArgumentException("queueMaxSize must be >= " + MIN_QUEUE_MAX_SIZE);
+        }
+        if (recoveryCacheSizeBytes < 0) {
+            throw new IllegalArgumentException("recoveryCacheSizeBytes must be >= 0");
+        }
+        return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
+                            maxSegmentAgeMs, archiveDir, archiveRetentionDays, archiveIntervalMs,
+                            enabled, fsyncPolicy, groupWindowMs, groupMaxSize, recoveryCacheSizeBytes);
     }
 
     /**

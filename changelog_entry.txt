@@ -1,1 +1,1 @@
-3.2.94 Remove redundant sort in WALManager.readAll and add defensive assert
+3.2.95 O2 WAL-6: cache decoded WAL segment bodies across recovery phases (LRU readAllCached)

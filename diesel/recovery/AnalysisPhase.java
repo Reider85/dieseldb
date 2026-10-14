@@ -99,7 +99,7 @@ public final class AnalysisPhase {
             if (segment.getFirstLsn() > endLsn && segment.getFirstLsn() != 0) {
                 break; // segment created after our end-of-log snapshot
             }
-            List<WALEntry> entries = segment.readAll();
+            List<WALEntry> entries = wal.readAllCached(segment.getNumber());
             for (WALEntry entry : entries) {
                 long lsn = entry.getLsn();
                 if (lsn > endLsn) {

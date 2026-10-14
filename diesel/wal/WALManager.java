@@ -11,6 +11,7 @@ import java.nio.file.attribute.FileAttribute;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -46,6 +47,10 @@ public final class WALManager implements AutoCloseable {
     private WALSegment currentSegment;
     private final AtomicInteger currentSegmentNumber = new AtomicInteger(0);
     private final CheckpointPointerFile checkpointPointerFile;
+    private final RecoverySegmentCache recoveryCache;
+    private final long recoveryCacheSizeBytes;
+    private long recoveryCacheDiskReads = 0;
+    private long recoveryCacheHits = 0;
     /**
      * LSN of the last CHECKPOINT entry written (0 = none). Persisted to
      * checkpoint.ptr on close so a clean restart can reload the checkpoint
@@ -112,6 +117,10 @@ this.config = config;
         
         // Update current segment number for archiver
         currentSegmentNumber.set(currentSegment.getNumber());
+        
+        // Initialize recovery cache
+        this.recoveryCacheSizeBytes = config.getRecoveryCacheSizeBytes();
+        this.recoveryCache = recoveryCacheSizeBytes > 0 ? new RecoverySegmentCache() : null;
         
         // Recover LSN from checkpoint.ptr and segments
         recoverLsn();
@@ -672,6 +681,7 @@ this.config = config;
         flush();
         // Persist checkpoint ptr for recovery (ARIES requires this for restart)
         persistCheckpointPtr();
+        clearRecoveryCache(); // Free memory
         for (WALSegment segment : segments.values()) {
             segment.close();
         }
@@ -711,4 +721,153 @@ this.config = config;
     }
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WALManager.class);
+
+    /**
+     * LRU cache for decoded WAL segment bodies during recovery.
+     * Evicts least recently accessed segments when size exceeds configured limit.
+     */
+    private final class RecoverySegmentCache extends LinkedHashMap<Integer, List<WALEntry>> {
+        private long totalBytes = 0;
+
+        private RecoverySegmentCache() {
+            super(16, 0.75f, true); // access-order LRU
+        }
+
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Integer, List<WALEntry>> eldest) {
+            if (totalBytes > recoveryCacheSizeBytes) {
+                // LinkedHashMap evicts via an internal removeNode call that does
+                // NOT dispatch to our remove() override — decrement here.
+                totalBytes -= calculateSize(eldest.getValue());
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public List<WALEntry> put(Integer key, List<WALEntry> value) {
+            // Remove existing entry if present to update LRU and subtract size
+            List<WALEntry> existing = super.get(key);
+            if (existing != null) {
+                totalBytes -= calculateSize(existing);
+            }
+
+            // Update size BEFORE super.put so removeEldestEntry sees the new size
+            totalBytes += calculateSize(value);
+            return super.put(key, value);
+        }
+
+        @Override
+        public List<WALEntry> remove(Object key) {
+            List<WALEntry> removed = super.remove(key);
+            if (removed != null) {
+                totalBytes -= calculateSize(removed);
+            }
+            return removed;
+        }
+
+        @Override
+        public void clear() {
+            super.clear();
+            totalBytes = 0;
+        }
+
+        private long calculateSize(List<WALEntry> entries) {
+            long size = 0;
+            for (WALEntry entry : entries) {
+                size += entry.encodedSize();
+            }
+            return size;
+        }
+    }
+
+    /**
+     * Reads all entries from a segment using the recovery cache.
+     * Package-private for testing.
+     *
+     * @param segmentNumber the segment number to read
+     * @return unmodifiable list of entries from the segment
+     * @throws IOException if reading fails
+     */
+    public List<WALEntry> readAllCached(int segmentNumber) throws IOException {
+        if (recoveryCache == null) {
+            // Cache disabled - read directly from segment
+            WALSegment segment = segments.get(segmentNumber);
+            if (segment == null) {
+                return List.of();
+            }
+            recoveryCacheDiskReads++;
+            return Collections.unmodifiableList(segment.readAll());
+        }
+
+        // Check cache first
+        List<WALEntry> cached = recoveryCache.get(segmentNumber);
+        if (cached != null) {
+            recoveryCacheHits++;
+            return cached;
+        }
+
+        // Cache miss - read from disk
+        WALSegment segment = segments.get(segmentNumber);
+        if (segment == null) {
+            return List.of();
+        }
+        List<WALEntry> entries = Collections.unmodifiableList(segment.readAll());
+        recoveryCacheDiskReads++;
+
+        // Put in cache (eviction handled by RecoverySegmentCache)
+        recoveryCache.put(segmentNumber, entries);
+
+        return entries;
+    }
+
+    /**
+     * Clears the recovery cache to free memory.
+     * Called at the end of recovery phases. Statistics are preserved;
+     * use {@link #resetRecoveryCacheStats()} to reset them explicitly.
+     */
+    public void clearRecoveryCache() {
+        if (recoveryCache != null) {
+            recoveryCache.clear();
+        }
+    }
+
+    /**
+     * Returns the number of disk reads made by the recovery cache.
+     * Test hook for verifying single-pass I/O.
+     *
+     * @return disk read count
+     */
+    public long recoveryCacheDiskReadCount() {
+        return recoveryCacheDiskReads;
+    }
+
+    /**
+     * Returns the number of cache hits made by the recovery cache.
+     * Test hook for verifying cache effectiveness.
+     *
+     * @return cache hit count
+     */
+    public long recoveryCacheHitCount() {
+        return recoveryCacheHits;
+    }
+
+    /**
+     * Returns the current number of entries in the recovery cache.
+     * Test hook for verifying cache lifecycle (cleared after recovery).
+     *
+     * @return entry count (0 when cache is disabled or empty)
+     */
+    public int recoveryCacheEntryCount() {
+        return recoveryCache == null ? 0 : recoveryCache.size();
+    }
+
+    /**
+     * Resets the recovery cache statistics.
+     * Test hook for test isolation.
+     */
+    public void resetRecoveryCacheStats() {
+        recoveryCacheDiskReads = 0;
+        recoveryCacheHits = 0;
+    }
 }

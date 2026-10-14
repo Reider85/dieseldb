@@ -105,7 +105,7 @@ public final class UndoPhase {
             if (segment.getFirstLsn() > endLsn && segment.getFirstLsn() != 0) {
                 continue; // segment created after our end-of-log snapshot
             }
-            List<WALEntry> entries = segment.readAll();
+            List<WALEntry> entries = wal.readAllCached(segmentNumber);
             // Entries within a segment are LSN-ascending: walk them backwards.
             for (int i = entries.size() - 1; i >= 0; i--) {
                 WALEntry entry = entries.get(i);

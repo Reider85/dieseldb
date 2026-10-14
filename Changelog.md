@@ -946,3 +946,5 @@ chore: test-profiles-audit changelog entry
 3.2.93 WAL-4: skip non-overlapping segments in readRange via lsnToSegment subMap; new WALReadRange tests prove <=2 segment scans; fix FindNewIndexAfterCompactIsO1Test parity bug; fix PersistFlusherTest hang (missing data dir)
 
 3.2.94 Remove redundant sort in WALManager.readAll and add defensive assert
+
+3.2.95 O2 WAL-6: cache decoded WAL segment bodies across recovery phases (LRU readAllCached)
