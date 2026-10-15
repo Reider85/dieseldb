@@ -1614,6 +1614,17 @@ class Table implements Serializable {
             rowCount = rows.size();
             markStatsDirty();
 
+            // Compaction rewrote the in-memory rows and storage mirror but the
+            // on-disk data file still holds the removed tombstones. Mark the
+            // table persist-dirty so columnar pushdown (which reads the file
+            // directly) is bypassed in favour of the in-memory scan until the
+            // flusher rewrites the file; otherwise deleted rows leak back into
+            // query results after a VACUUM.
+            if (isPersistFileBacked()) {
+                persistDirty = true;
+                registerPendingPersist(this);
+            }
+
             LOGGER.log(Level.INFO, "Compacted table {0}: removed {1} tombstones, {2} live rows remain",
                     new Object[]{name, deleted, rows.size()});
         } finally {
