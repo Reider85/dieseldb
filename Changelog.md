@@ -958,3 +958,4 @@ chore: test-profiles-audit changelog entry
 3.2.99 Fix flaky microbenchmark in WALReadAllIsAlreadySortedTest.readAllIsAtLeastAsFastAsTheOldSortPath
 
 3.2.100 Background checkpoint daemon with interval/WAL-size triggers, integration with WAL and BufferPoolFlusher, sharp checkpoint with write gate, WAL archiving after checkpoint
+3.2.101 Workflow speed-up: archive PROMPT_STATUS.md full texts to docs/status-archive.md (live tracker now one-line entries, -85% context tokens); AGENTS.md: mandatory pre-flight check (git log + status grep before each prompt), mandatory bash timeouts on every test/gate command (10-30min caps), Timing Policy (skip make timing for WAL/MVCC/recovery/storage work; red-gate = re-run once then commit-with-noise-note; no A/B git-stash without user request), Known Flakes table (FlusherTest, TempDir races, Jsonl 1M benchmark, microbenchmarks, ru-RU locale) - stop re-debugging pre-existing failures

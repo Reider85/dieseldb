@@ -9,8 +9,15 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 
 **Workflow for each prompt:**
 
+0. **Pre-flight check (MANDATORY, ~10s, saves 10+ min):**
+   ```powershell
+   git log --oneline -8
+   Select-String -Path PROMPT_STATUS.md -Pattern "<prompt-id>"
+   ```
+   If the prompt is already DONE (in `PROMPT_STATUS.md` or the last 8 commits) — **do not re-implement and do not ask the user**; pick the next TODO instead. Never burn a session re-verifying completed work.
+
 1. Read `PROMPT_STATUS.md` → select next TODO with highest priority.
-2. Read `prompt3.md` → find detailed prompt description.
+2. Read the prompt source (`prompt3.md` / `prompt4.md` / `o2-prompts.md` — whichever owns the task) → find detailed description.
 3. Implement changes.
 4. **Choose test depth based on change type:**
 
@@ -19,8 +26,9 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
    | Sonar fix, rename, constant extract, comment-only | `make compile` → `make test-incr` | Skip → go to step 7 |
    | New feature, query logic, bugfix | `make test` | `make timing` |
    | JOIN, hash join, performance, schema change | `make test` | `make timing` + `make check-profile` |
+   | WAL / MVCC / recovery / checkpoint / storage-format | `make test` (+ targeted profile) | **SKIP `make timing`** — not on query path (see Timing Policy) |
 
-5. Run full acceptance gate with `make timing` (if needed per step 4 table).
+5. Run full acceptance gate with `make timing` **only if step 4 requires it** (see Timing Policy below — WAL/MVCC/recovery work skips it by default).
 6. **Profile check (Strict Condition):** Look at the current task description in `prompt2.md`. If the description does **NOT** contain the words "JOIN", "hash join", or "performance" — **SKIP this step entirely**. Otherwise, run:
    ```bash
    make check-profile
@@ -115,11 +123,6 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 | Fix stale git lock files | `.\scripts\git-helpers.ps1 fix-lock` |
 | Commit + push (safe) | `.\scripts\git-helpers.ps1 commit -m "description"` |
 | Short status | `.\scripts\git-helpers.ps1 status` |
-
-**Timing comparison (PowerShell):**
-```powershell
-.\scripts\compare-timing.ps1 -Base timing\timing.md -New timing\timingN.md
-```
 
 ## Git Rules
 
@@ -265,6 +268,8 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 ## Timing regression check (fully automated)
 
+Read the **Timing Policy** section above first — most storage-engine prompts skip this gate.
+
 - `make timing`:
   1. Runs the large profile (including two 600x600 ORDER BY joins).
   2. Collector builds `timing/timingN.md` from surefire reports: `scripts/collect-timing.py` (Makefile) or `scripts/collect-timing.ps1` (make.ps1 — `python` on Windows may be a dead WindowsApps stub, exit 9009).
@@ -273,7 +278,8 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
   - **Ignores** any query whose baseline is <11 ms (machine noise).
   - Flags a regression only if a query with baseline ≥11 ms degrades by >20%.
   - Exits with code `1` if any such regression exists, otherwise `0`.
-- You never need to interpret the output manually – just check the exit code. If the script fails, rerun `make timing` once (to rule out random noise) and if it still fails, investigate.
+- You never need to interpret the output manually – just check the exit code. Follow the red-gate steps in **Timing Policy** (re-run once, then commit-with-noise-note if unrelated — never A/B git-stash without user request).
+- Manual compare (PowerShell): `.\scripts\compare-timing.ps1 -Base timing\timing.md -New timing\timingN.md`
 - `timing/timing.md` is the tracked baseline – never delete it.
 
 ---
@@ -327,17 +333,52 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 ## Anti-Hang Guards
 
+- **MANDATORY bash timeouts on every test/gate command** — never leave `timeout` unset for Maven/make invocations. The opencode bash tool timeout parameter is the *only* hard stop; a hung `test-one` once burned 7 hours:
+
+  | Command class | `timeout` (ms) | Notes |
+  |---|---|---|
+  | `make compile` / single tiny test | 120_000 (2 min) | normally 5–10s |
+  | `make test-one T=...` / `test-incr` / `test` | 600_000 (10 min) | kill on timeout; check for @TempDir/flusher hangs |
+  | `make test-core` / `test-concurrency` / `test-network` | 600_000 (10 min) | |
+  | `make test-perf` / `large-test` | 900_000 (15 min) | |
+  | `make timing` | 1_800_000 (30 min) | absolute cap |
+  | `make all-tests` | 2_400_000 (40 min) | absolute cap |
+  | ProfileMain / `check-profile` | 900_000 (15 min) | |
+
+  If a command exceeds its timeout: kill it, run `make clean-test-cache`, retry **once**; if it hangs again, isolate the test class and check the Known-Flakes list below before debugging.
+
 - **Max fix attempts: 3** — if quick tests or isolated tests fail 3 times in a row, stop and report to the user
-- **Timeouts on long commands** — always use `bash` timeout parameter:
-  - Quick tests (`make test`): 5 min max
-  - `make timing` (large, 4GB): 30 min max
-  - `make all-tests`: 40 min max
-  - ProfileMain: 15 min max
 - **Never run from agent context** — these commands block forever:
   - `start-server.bat` / `start-server.sh` (long-running TCP server)
   - `start-client.bat` / `start-client.sh` (interactive REPL)
 - **Isolation rule cap** — max 3 attempts on the isolated test; if still failing, stop and report
 - **Missing make targets** — `make changelog`, `make check-profile` may not exist in the Makefile. If `make` fails, fall back to raw Maven commands as shown in the Tests section above. `make quick-test` has been removed — use `make test`.
+
+## Timing Policy (skip by default for storage-engine work)
+
+`make timing` is 10–30 min and **flaky on this Windows machine** (background services, CPU drift). It measures the *query* path only. Skip it unless the change can actually move query latency:
+
+- **SKIP `make timing` when the prompt touches:** WAL, MVCC, recovery/ARIES, checkpoint, buffer-pool flusher, page storage internals, row-storage plumbing, config/JMX — anything not on the SELECT/JOIN execution path. Precedent: WAL-4/6/8/9, MVCC-3, Prompt 4 #21 all skipped timing with zero regressions.
+- **RUN `make timing` when:** JOIN / hash join / GROUP BY / ORDER BY / index / planner / SELECT hot-path code, or the prompt text says "performance".
+- **On a red timing gate (compare exit 1):**
+  1. Re-run `make timing` **once** only (noise filter).
+  2. If still red: identify the failing query; if your change is not on that path (or isolated query times are unchanged), **commit with a red gate** and note "timing noise, user-approved precedent 3.2.81/3.2.86" — do **not** block the prompt on machine drift.
+  3. **Do NOT** run A/B `git stash` proofs against clean HEAD unless the user explicitly asks — they double the cost of an already-failing gate.
+  4. Re-seed the baseline (`timing/timing.md` ← latest good `timingN.md`) only after two consecutive clean runs, or when the user approves it.
+
+## Known Flakes (do not re-debug from scratch)
+
+Failures below are **pre-existing / environmental** on this machine. When one appears: re-run the isolated test once (`make test-one`); if it fails again and your change is unrelated, note it in the changelog and move on. Do **not** spend a session A/B-proving pre-existence.
+
+| Symptom | Class / area | Notes |
+|---|---|---|
+| Timing compare flags a heavy query, isolated times unchanged | `make timing` overall | CPU/background-service drift; see Timing Policy |
+| `FlusherTest#testMixedCommittedUncommitted` O(N²)/slow or flaky | storage/page flusher | pre-existing insert path; thread-dump proven unrelated to MVCC work |
+| `CopyOnWriteIsolationTest#beginDoesNotCopyTablesEagerly` teardown delete fails | concurrency | @TempDir delete races diesel-persist-flusher daemon |
+| `JsonlStorageAdvancedTest` 1M-row benchmark exceeds bound | jsonl storage | A/B-proven pre-existing (~70s on clean HEAD) |
+| Microbenchmarks (e.g. `WALReadAllIsAlreadySortedTest`, Snappy*Benchmark) timing-sensitive | perf | min-of-3 / threshold noise; fix criterion, not code, if red |
+| `@TempDir` delete errors under parallel Windows runs | any | retry isolated; unrelated to logic |
+| ru-RU locale breaks "0.30" string asserts | any toString/format | use `Locale.ROOT` (past bug in AdaptiveFlushStrategy) |
 
 ## Subagent Discipline
 
