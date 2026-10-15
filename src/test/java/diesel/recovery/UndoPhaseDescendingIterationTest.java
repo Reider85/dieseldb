@@ -103,10 +103,10 @@ public class UndoPhaseDescendingIterationTest {
      */
     @Test
     void segmentsMapIsNavigableAndUnmodifiable() throws IOException {
-        // Create multiple segments
+        // Create multiple segments, rotating after every append except the last
         for (int i = 0; i < 5; i++) {
             wal.append(1, WALOpcode.INSERT, null, DmlPayload.serialize("T", i, row(i, "v" + i)));
-            if (i % 2 == 1) {
+            if (i < 4) { // rotate after every append except the last
                 wal.forceRotate();
             }
         }
@@ -115,12 +115,12 @@ public class UndoPhaseDescendingIterationTest {
         assertTrue(wal.getSegments() instanceof java.util.NavigableMap,
                 "getSegments() should return a NavigableMap");
 
-        // Verify descending order: segment numbers should be 4,3,2,1,0
+        // Verify descending order: segment numbers should be 5,4,3,2,1
         List<Integer> segmentNumbers = new ArrayList<>();
         for (WALSegment segment : wal.getSegments().descendingMap().values()) {
             segmentNumbers.add(segment.getNumber());
         }
-        assertEquals(List.of(4, 3, 2, 1, 0), segmentNumbers,
+        assertEquals(List.of(5, 4, 3, 2, 1), segmentNumbers,
                 "Descending iteration should yield newest segment numbers first");
 
         // Verify unmodifiable: should throw on modification

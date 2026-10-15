@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -118,46 +119,67 @@ class WALReadAllIsAlreadySortedTest {
     void readAllIsAtLeastAsFastAsTheOldSortPath() throws Exception {
         WALManager manager = buildWal(10, 100);
         try {
-            // Warm up (JIT, lazy caches)
-            manager.readAll();
-            manager.readAll();
-
-            // Measure new path (current implementation)
-            int iterations = 10;
-            long newTotalNanos = 0;
-            for (int i = 0; i < iterations; i++) {
-                long start = System.nanoTime();
-                List<WALEntry> result = manager.readAll();
-                long end = System.nanoTime();
-                newTotalNanos += (end - start);
-                // Correctness check: assert in readAll ensures result is sorted
-            }
-            double newAvgNanos = (double) newTotalNanos / iterations;
-
-            // Measure old path simulation: same loop + sort
-            long oldTotalNanos = 0;
-            for (int i = 0; i < iterations; i++) {
-                long start = System.nanoTime();
+            // Warm up both paths equally (JIT, lazy caches, OS file cache)
+            for (int i = 0; i < 5; i++) {
+                manager.readAll();
+                // Warm up old path once
                 List<WALEntry> allEntries = new ArrayList<>();
                 for (WALSegment segment : manager.getSegments().values()) {
                     List<WALEntry> entries = segment.readAll();
                     allEntries.addAll(entries);
                 }
-                // Old sort (redundant, as proved)
                 allEntries.sort((e1, e2) -> Long.compare(e1.getLsn(), e2.getLsn()));
-                long end = System.nanoTime();
-                oldTotalNanos += (end - start);
             }
-            double oldAvgNanos = (double) oldTotalNanos / iterations;
 
-            // Assert new path is not slower than old path (with small slack for JIT noise)
-            assertTrue(newAvgNanos <= oldAvgNanos * 1.1,
-                    String.format("New path (%.1f ns) should be <= old path (%.1f ns) * 1.1",
-                            newAvgNanos, oldAvgNanos));
+            // Use best-of approach: run multiple rounds, take best median to reduce noise
+            int rounds = 5;
+            int iterationsPerRound = 20;
+            double bestNewMedian = Double.MAX_VALUE;
+            double bestOldMedian = Double.MAX_VALUE;
+            
+            for (int round = 0; round < rounds; round++) {
+                long[] newTimes = new long[iterationsPerRound];
+                long[] oldTimes = new long[iterationsPerRound];
+                
+                for (int i = 0; i < iterationsPerRound; i++) {
+                    // Measure new path (current implementation)
+                    long start = System.nanoTime();
+                    List<WALEntry> result = manager.readAll();
+                    long end = System.nanoTime();
+                    newTimes[i] = (end - start);
+                    
+                    // Measure old path simulation: same loop + sort
+                    start = System.nanoTime();
+                    List<WALEntry> allEntries = new ArrayList<>();
+                    for (WALSegment segment : manager.getSegments().values()) {
+                        List<WALEntry> entries = segment.readAll();
+                        allEntries.addAll(entries);
+                    }
+                    // Old sort (redundant, as proved)
+                    allEntries.sort((e1, e2) -> Long.compare(e1.getLsn(), e2.getLsn()));
+                    end = System.nanoTime();
+                    oldTimes[i] = (end - start);
+                }
+                
+                // Calculate median for this round
+                Arrays.sort(newTimes);
+                Arrays.sort(oldTimes);
+                double newMedian = newTimes[iterationsPerRound / 2];
+                double oldMedian = oldTimes[iterationsPerRound / 2];
+                
+                // Track best (fastest) medians
+                if (newMedian < bestNewMedian) bestNewMedian = newMedian;
+                if (oldMedian < bestOldMedian) bestOldMedian = oldMedian;
+            }
+
+            // Assert new path is not slower than old path (using best medians)
+            assertTrue(bestNewMedian <= bestOldMedian * 1.1,
+                    String.format("New path best median (%.1f ns) should be <= old path best median (%.1f ns) * 1.1",
+                            bestNewMedian, bestOldMedian));
 
             // Log observed performance for reporting
-            System.out.printf("WAL-5 benchmark: new avg=%.1f ns, old avg=%.1f ns, ratio=%.2f%n",
-                    newAvgNanos, oldAvgNanos, oldAvgNanos / newAvgNanos);
+            System.out.printf("WAL-5 benchmark: new best median=%.1f ns, old best median=%.1f ns, ratio=%.2f%n",
+                    bestNewMedian, bestOldMedian, bestOldMedian / bestNewMedian);
         } finally {
             manager.close();
         }

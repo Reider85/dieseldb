@@ -954,3 +954,5 @@ chore: test-profiles-audit changelog entry
 3.2.97 Replace active.clear() with swap-reference in AnalysisPhase.apply CHECKPOINT branch for O(C) performance
 
 3.2.98 Fix AnalysisCheckpointIsLinearTest compile errors (nonexistent WAL class, wrong CheckpointRecord ctor order)
+
+3.2.99 Fix flaky microbenchmark in WALReadAllIsAlreadySortedTest.readAllIsAtLeastAsFastAsTheOldSortPath
