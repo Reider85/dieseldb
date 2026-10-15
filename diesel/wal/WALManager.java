@@ -57,8 +57,13 @@ public final class WALManager implements AutoCloseable {
      * (ARIES semantics: the pointer references a CHECKPOINT entry, not the
      * end-of-log LSN — segment scan covers LSN recovery in recoverLsn()).
      */
-    private long lastCheckpointLsn;
+    private volatile long lastCheckpointLsn;
     private final AtomicLong lastFlushedLsn = new AtomicLong(0);
+    /**
+     * Total encoded bytes appended since this manager was opened. Used by
+     * CheckpointManager (prompt4 #21) to trigger a WAL-size-based checkpoint.
+     */
+    private final AtomicLong totalAppendedBytes = new AtomicLong(0);
     private int nextSegmentNumber = 1;
     private int persistCounter = 0;
     /**
@@ -266,6 +271,7 @@ this.config = config;
         currentSegment.append(entry);
         lastAppendedLsn.set(entryLsn);
         lastAllocatedLsn.set(entryLsn);
+        totalAppendedBytes.addAndGet(entry.encodedSize());
         
         // Index the segment if it's the first entry
         indexSegment(currentSegment);
@@ -302,6 +308,7 @@ this.config = config;
         long checkpointLsn = checkpointEntry.getLsn();
         lastAppendedLsn.set(checkpointLsn);
         lastAllocatedLsn.set(checkpointLsn);
+        totalAppendedBytes.addAndGet(checkpointEntry.encodedSize());
         
         // Index the segment if it's the first entries
         indexSegment(currentSegment);
@@ -706,6 +713,26 @@ this.config = config;
      */
     public WALArchiver getArchiver() {
         return archiver;
+    }
+
+    /**
+     * Returns the total number of bytes appended since this manager was opened.
+     * Used by CheckpointManager (prompt4 #21) for WAL-size-based checkpoint triggering.
+     *
+     * @return total appended bytes
+     */
+    public long getTotalAppendedBytes() {
+        return totalAppendedBytes.get();
+    }
+
+    /**
+     * Returns the LSN of the last CHECKPOINT entry written (0 = none).
+     * Used by CheckpointManager (prompt4 #21) for WAL-size-based checkpoint triggering.
+     *
+     * @return last checkpoint LSN
+     */
+    public long getLastCheckpointLsn() {
+        return lastCheckpointLsn;
     }
 
     /**

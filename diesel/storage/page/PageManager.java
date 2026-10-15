@@ -34,6 +34,11 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
     private final FileChannelIO io;
     private final AtomicLong nextFilePageNum = new AtomicLong(0);
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    /**
+     * Write gate for checkpoint synchronization. Set by CheckpointManager
+     * to block page writes during checkpoint. Nullable.
+     */
+    private volatile java.util.concurrent.locks.ReadWriteLock writeGate;
 
     /**
      * Creates a PageManager that owns its BufferPool.
@@ -111,6 +116,18 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
     }
 
     /**
+     * Sets the write gate for checkpoint synchronization.
+     * Called by CheckpointManager to inject the write gate.
+     * PageManager.writePage and allocatePage will acquire the read lock
+     * when this gate is not null.
+     *
+     * @param writeGate the write gate, or null to disable
+     */
+    public void setWriteGate(java.util.concurrent.locks.ReadWriteLock writeGate) {
+        this.writeGate = writeGate;
+    }
+
+    /**
      * Reads a page by pinning it from the pool.
      * If not resident, loads from disk via PageLoader.
      *
@@ -140,19 +157,30 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
             throw new IllegalArgumentException("page size mismatch: expected " + pageSize + ", got " + page.getPageSize());
         }
 
-        // Ensure page is resident (insert returns pinned handle)
-        try (PinnedPage pinned = pool.insert(page)) {
-            // insert() keeps the existing frame instance when the PageId is
-            // already resident (e.g. after allocatePage) — copy the argument
-            // page's content (data + header) into the resident frame so the
-            // data is not lost.
-            Page resident = pinned.getPage();
-            if (resident != page) {
-                resident.copyContentFrom(page);
-            } else {
-                resident.setDirty(true);
+        // Acquire write gate read lock if present
+        if (writeGate != null) {
+            writeGate.readLock().lock();
+        }
+
+        try {
+            // Ensure page is resident (insert returns pinned handle)
+            try (PinnedPage pinned = pool.insert(page)) {
+                // insert() keeps the existing frame instance when the PageId is
+                // already resident (e.g. after allocatePage) — copy the argument
+                // page's content (data + header) into the resident frame so the
+                // data is not lost.
+                Page resident = pinned.getPage();
+                if (resident != page) {
+                    resident.copyContentFrom(page);
+                } else {
+                    resident.setDirty(true);
+                }
+                // Unpin immediately - the page is now resident in the pool
             }
-            // Unpin immediately - the page is now resident in the pool
+        } finally {
+            if (writeGate != null) {
+                writeGate.readLock().unlock();
+            }
         }
     }
 
@@ -165,19 +193,30 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
      * @throws IOException if file cannot be extended or page inserted
      */
     public PageId allocatePage(long tablespaceId) throws IOException {
-        long pageNum = nextFilePageNum.getAndIncrement();
-        PageId pageId = new PageId(tablespaceId, 1, pageNum); // fileId=1 for now (prompt 10 stub)
+        // Acquire write gate read lock if present
+        if (writeGate != null) {
+            writeGate.readLock().lock();
+        }
 
-        // Extend file to accommodate the new page
-        long requiredSize = (pageNum + 1L) * pageSize;
-        io.extendTo(requiredSize);
+        try {
+            long pageNum = nextFilePageNum.getAndIncrement();
+            PageId pageId = new PageId(tablespaceId, 1, pageNum); // fileId=1 for now (prompt 10 stub)
 
-        // Create empty page and insert into pool (will be pinned)
-        Page newPage = new Page(pageId, pageSize);
-        try (PinnedPage pinned = pool.insert(newPage)) {
-            // Mark dirty so it gets written on flush
-            newPage.setDirty(true);
-            return pageId;
+            // Extend file to accommodate the new page
+            long requiredSize = (pageNum + 1L) * pageSize;
+            io.extendTo(requiredSize);
+
+            // Create empty page and insert into pool (will be pinned)
+            Page newPage = new Page(pageId, pageSize);
+            try (PinnedPage pinned = pool.insert(newPage)) {
+                // Mark dirty so it gets written on flush
+                newPage.setDirty(true);
+                return pageId;
+            }
+        } finally {
+            if (writeGate != null) {
+                writeGate.readLock().unlock();
+            }
         }
     }
 

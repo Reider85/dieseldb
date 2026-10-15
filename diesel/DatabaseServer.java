@@ -152,6 +152,8 @@ public class DatabaseServer {
         database.runRecovery();
         // Start background page flusher (prompt4 #20)
         database.startPageFlusher();
+        // Start background checkpoint manager (prompt4 #21)
+        database.startCheckpointManager();
         database.getVacuumManager().startAutoVacuum();
         try {
             serverSocket = new ServerSocket(port, backlog);
@@ -180,6 +182,12 @@ try {
     public void stop() {
         running = false;
         database.getVacuumManager().stop();
+        // Stop background checkpoint manager (prompt4 #21)
+        try {
+            database.stopCheckpointManager();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error stopping checkpoint manager: {0}", e.getMessage());
+        }
         // Stop background page flusher
         try {
             database.stopPageFlusher();

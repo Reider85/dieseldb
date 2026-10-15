@@ -89,6 +89,7 @@ class Database {
     private volatile GroupCommitCoordinator groupCoordinator;
     private volatile RecoveryManager recoveryManager;                             // ARIES startup recovery (prompt4 #19)
     private volatile diesel.storage.page.BufferPoolFlusher bufferPoolFlusher;   // Background page flusher (prompt4 #20)
+    private volatile diesel.storage.page.CheckpointManager checkpointManager;  // Background checkpoint manager (prompt4 #21)
     private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "diesel-wal-scheduler");
         t.setDaemon(true);
@@ -371,6 +372,98 @@ class Database {
             bufferPoolFlusher.stopWithoutFlush();
             LOGGER.info("BufferPoolFlusher stopped without final flush");
         }
+    }
+
+    /**
+     * Starts the background checkpoint manager if enabled and WAL is enabled.
+     * Reads configuration and creates the checkpoint manager with the given
+     * dependencies. Idempotent: does nothing if already running.
+     */
+    public void startCheckpointManager() {
+        if (checkpointManager != null && checkpointManager.isRunning()) {
+            LOGGER.fine("CheckpointManager already running");
+            return;
+        }
+
+        if (pageManager == null) {
+            LOGGER.warning("Cannot start checkpoint manager: PageManager not initialized");
+            return;
+        }
+
+        if (!isWALEnabled()) {
+            LOGGER.info("CheckpointManager not started: WAL is disabled");
+            return;
+        }
+
+        try {
+            Properties props = ConfigLoader.load();
+            boolean enabled = Boolean.parseBoolean(
+                props.getProperty("checkpoint.enabled", "true"));
+            long intervalMs = Long.parseLong(
+                props.getProperty("checkpoint.interval.ms", "300000"));
+            long maxWalBytes = Long.parseLong(
+                props.getProperty("checkpoint.max.wal.bytes", "268435456"));
+
+            if (enabled) {
+                // Create checkpoint manager
+                checkpointManager = new diesel.storage.page.CheckpointManager(
+                    walWriter.getManager(),
+                    bufferPoolFlusher,
+                    pageManager.getBufferPool(),
+                    txStatusTracker,
+                    intervalMs,
+                    maxWalBytes,
+                    enabled);
+
+                // Set write gate in page manager
+                pageManager.setWriteGate(checkpointManager.getWriteGate());
+
+                // Start the checkpoint manager
+                checkpointManager.start();
+                LOGGER.info("CheckpointManager started with interval " + intervalMs + "ms, maxWalBytes " + maxWalBytes);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Failed to start CheckpointManager: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Stops the background checkpoint manager after a final checkpoint.
+     * Idempotent: does nothing if not running.
+     *
+     * @throws IOException if the final checkpoint fails
+     */
+    public void stopCheckpointManager() throws IOException {
+        if (checkpointManager != null) {
+            try {
+                checkpointManager.stop();
+                LOGGER.info("CheckpointManager stopped with final checkpoint");
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "CheckpointManager final checkpoint failed: " + e.getMessage(), e);
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Stops the background checkpoint manager without doing a final checkpoint.
+     * Useful for crash simulation: checkpoint state is left incomplete.
+     * Idempotent: does nothing if not running.
+     */
+    public void stopCheckpointManagerWithoutFinalCheckpoint() {
+        if (checkpointManager != null) {
+            checkpointManager.stopWithoutCheckpoint();
+            LOGGER.info("CheckpointManager stopped without final checkpoint");
+        }
+    }
+
+    /**
+     * Returns the checkpoint manager for testing or advanced operations.
+     *
+     * @return the checkpoint manager, or null if not created
+     */
+    public diesel.storage.page.CheckpointManager getCheckpointManager() {
+        return checkpointManager;
     }
 
     /**

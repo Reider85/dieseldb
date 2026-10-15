@@ -956,3 +956,5 @@ chore: test-profiles-audit changelog entry
 3.2.98 Fix AnalysisCheckpointIsLinearTest compile errors (nonexistent WAL class, wrong CheckpointRecord ctor order)
 
 3.2.99 Fix flaky microbenchmark in WALReadAllIsAlreadySortedTest.readAllIsAtLeastAsFastAsTheOldSortPath
+
+3.2.100 Background checkpoint daemon with interval/WAL-size triggers, integration with WAL and BufferPoolFlusher, sharp checkpoint with write gate, WAL archiving after checkpoint

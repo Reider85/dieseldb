@@ -1,1 +1,1 @@
-3.2.99 Fix flaky microbenchmark in WALReadAllIsAlreadySortedTest.readAllIsAtLeastAsFastAsTheOldSortPath
+3.2.100 Background checkpoint daemon with interval/WAL-size triggers, integration with WAL and BufferPoolFlusher, sharp checkpoint with write gate, WAL archiving after checkpoint

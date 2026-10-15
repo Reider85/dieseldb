@@ -331,6 +331,44 @@ public final class BufferPoolFlusher implements AutoCloseable, BufferPoolFlusher
     }
 
     /**
+     * Synchronously flushes all eligible dirty pages. Used by CheckpointManager
+     * (prompt4 #21) for checkpoint-triggered flushes.
+     *
+     * @return number of pages flushed
+     * @throws IOException if flush fails
+     */
+    public int flushNow() throws IOException {
+        long cycleStart = System.currentTimeMillis();
+        
+        // Flush dirty pages using the same logic as the loop
+        long watermark = lastWalFlushLsnSupplier.getAsLong();
+        Predicate<Page> eligible = page -> {
+            long pageLsn = page.getLsn();
+            return pageLsn == 0 || pageLsn <= watermark;
+        };
+
+        int flushed;
+        try {
+            flushed = pool.flushDirtyMatching(eligible);
+            if (flushed > 0) {
+                flushCount.incrementAndGet();
+                totalFlushedPages.addAndGet(flushed);
+                LOGGER.debug("Flushed {} dirty pages (WAL watermark: {})", flushed, watermark);
+            }
+        } catch (IOException e) {
+            LOGGER.error("Failed to flush dirty pages", e);
+            throw e;
+        }
+
+        // Update metrics
+        long cycleDuration = System.currentTimeMillis() - cycleStart;
+        lastFlushDurationMs.set(cycleDuration);
+        totalFlushDurationMs.addAndGet(cycleDuration);
+
+        return flushed;
+    }
+
+    /**
      * Registers JMX MBean for monitoring.
      */
     private void registerMBean() {
