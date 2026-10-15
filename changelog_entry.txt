@@ -1,1 +1,1 @@
-3.2.103 Fix stale-row leak after VACUUM/compact: Table.compact() marks table persist-dirty so Avro pushdown is bypassed until flusher rewrites file
+3.2.104 Implement LockManager with S/X/IS/IX/SIX compatibility matrix (R3-006 step 1/4)

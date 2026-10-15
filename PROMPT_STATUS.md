@@ -5,6 +5,7 @@
 
 ## Recent DONE
 
+- **Prompt 4 #23 DONE (2026-10-16)** — R3-006 step 1/4: LockManager with S/X/IS/IX/SIX compatibility matrix; LockMode/Lock/LockCompatibility classes; LockManagerTest (S+S grant, S+X wait, X+X conflict), LockCompatibilityTest (25 combos), LockReleaseTest (txid release + wait notification). Implementation complete with basic upgrade support. Gates: compile OK, fast 467/0/0, concurrency 15/0/0, timing skipped (not on query path).
 - **Prompt 4 #21 DONE (2026-10-15)** — R3-005 step 2/3: CheckpointManager daemon (interval + WAL-size triggers, write gate, WAL archiving); WALManager totalAppendedBytes/lastCheckpointLsn; BufferPoolFlusher.flushNow(); PageManager writeGate; Database/DatabaseServer wiring. Tests: CheckpointManagerTest(10), CheckpointRecoveryStartsAtLastCheckpointTest(3), CheckpointArchivesSegmentsTest(3), CheckpointDurationTest(3). Gates: compile OK, fast 467/0/0, timing skipped (not on query path).
 - **O2 WAL-9 DONE (2026-10-14)** — AnalysisPhase.apply CHECKPOINT branch: swap-reference fresh set instead of active.clear() (O(C)). New AnalysisCheckpointIsLinearTest(3). Gates: fast 467/0/0, timing skipped (recovery, precedent WAL-6/8).
 - **O2 WAL-8 DONE (2026-10-14)** — WALManager.getSegments → NavigableMap; UndoPhase.undo via descendingMap() O(n). New UndoPhaseDescendingIterationTest(2). Gates: fast 467/0/0, concurrency RollbackTest 8/0/0.

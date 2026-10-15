@@ -142,5 +142,9 @@ diesel/PersistFlusher.java		smoke,storage,query
 diesel/ConfigKeys.java		smoke,query
 diesel/SerializationFailureException.java	query,query-full
 diesel/concurrency/ConflictDetector.java	concurrency
+diesel/concurrency/LockManager.java		concurrency
+diesel/concurrency/Lock.java			concurrency
+diesel/concurrency/LockMode.java		concurrency
+diesel/concurrency/LockCompatibility.java	concurrency
 diesel/wal/*.java	smoke,storage
 diesel/recovery/*.java	smoke,storage

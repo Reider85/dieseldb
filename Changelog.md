@@ -963,3 +963,5 @@ chore: test-profiles-audit changelog entry
 3.2.102 Test-suite speed-up: pom reuseForks=true (skip JVM restart per class), all-tests runs clean only on first profile then incremental; shrink heavy test data (VacuumTest 1M->100k rows, DelimitedIoPerfTest 200k->50k, FindNewIndexAfterCompactIsO1Test 4M->200k, fewer warmups); retag Checkpoint* tests to @Tag(storage) only; Assert-TestsRan polls up to 30s for surefire XML (reuseForks fork-flush race); fast suite 484/0/0
 
 3.2.103 Fix stale-row leak after VACUUM/compact: Table.compact() marks table persist-dirty so Avro pushdown is bypassed until flusher rewrites file
+
+3.2.104 Implement LockManager with S/X/IS/IX/SIX compatibility matrix (R3-006 step 1/4)

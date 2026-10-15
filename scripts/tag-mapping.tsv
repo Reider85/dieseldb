@@ -171,3 +171,6 @@ AdaptiveFlushTest	storage
 BufferPoolFlusherTest	storage
 FlusherTest	storage
 FlusherThroughputTest	perf
+LockManagerTest	concurrency
+LockCompatibilityTest	concurrency
+LockReleaseTest	concurrency

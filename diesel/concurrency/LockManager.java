@@ -1,0 +1,275 @@
+package diesel.concurrency;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.LinkedBlockingDeque;
+
+/**
+ * Lock manager for DieselDB's granular locking system.
+ * <p>
+ * Manages locks on resources (e.g., "table:USERS", "row:USERS#42") with support for
+ * multiple lock modes: IS, IX, S, X, SIX. Provides blocking and non-blocking acquisition,
+ * transaction-based release, and compatibility checking.
+ * <p>
+ * <b>Note:</b> This is a standalone subsystem. Deadlock detection, lock timeouts,
+ * and integration with the DML engine are implemented in subsequent steps (R3-006 steps 2-4).
+ */
+public final class LockManager {
+
+    // State for each resource: holders + waiters
+    private final ConcurrentMap<String, ResourceState> resourceStates = new ConcurrentHashMap<>();
+
+    // Global index: txid -> set of resources it holds locks on
+    private final ConcurrentMap<Long, Set<String>> txResources = new ConcurrentHashMap<>();
+
+    /**
+     * Attempts to acquire a lock on a resource. Blocks until the lock can be granted
+     * or the thread is interrupted.
+     *
+     * @param resource the resource to lock (e.g., "table:USERS", "row:USERS#42")
+     * @param mode the lock mode to acquire
+     * @param txid the transaction ID requesting the lock
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    public void acquire(String resource, LockMode mode, long txid) throws InterruptedException {
+        Objects.requireNonNull(resource, "Resource cannot be null");
+        Objects.requireNonNull(mode, "Lock mode cannot be null");
+
+        ResourceState state = resourceStates.computeIfAbsent(resource, k -> new ResourceState());
+
+        synchronized (state) {
+            while (true) {
+                // Check if we already hold a compatible lock (or can upgrade)
+                Lock existingLock = state.getLockForTx(txid);
+                if (existingLock != null) {
+                    Lock merged = existingLock.merge(new Lock(resource, mode, txid));
+                    if (merged.getMode() == mode) {
+                        // Already hold the requested mode (idempotent)
+                        return;
+                    }
+                    // Check if upgrade is possible
+                    if (canUpgrade(existingLock.getMode(), mode, state.holders, txid)) {
+                        state.replaceLock(txid, merged);
+                        return;
+                    }
+                    // Need to wait for upgrade
+                } else if (LockCompatibility.isCompatibleWithAll(mode, state.getHeldModes())) {
+                    // Grant the lock immediately
+                    state.addLock(new Lock(resource, mode, txid));
+                    txResources.computeIfAbsent(txid, k -> ConcurrentHashMap.newKeySet()).add(resource);
+                    return;
+                }
+
+                // Need to wait: add to waiters and wait for notification
+                Waiter waiter = new Waiter(txid, mode, Thread.currentThread());
+                state.addWaiter(waiter);
+                try {
+                    state.wait();
+                } catch (InterruptedException e) {
+                    state.removeWaiter(waiter);
+                    throw e;
+                }
+            }
+        }
+    }
+
+    /**
+     * Attempts to acquire a lock without blocking.
+     *
+     * @param resource the resource to lock
+     * @param mode the lock mode to acquire
+     * @param txid the transaction ID requesting the lock
+     * @return true if the lock was granted, false if there would be a conflict
+     */
+    public boolean tryAcquire(String resource, LockMode mode, long txid) {
+        Objects.requireNonNull(resource, "Resource cannot be null");
+        Objects.requireNonNull(mode, "Lock mode cannot be null");
+
+        ResourceState state = resourceStates.get(resource);
+        if (state == null) {
+            // No existing locks - grant immediately
+            state = resourceStates.computeIfAbsent(resource, k -> new ResourceState());
+        }
+
+        synchronized (state) {
+            // Check if we already hold a compatible lock
+            Lock existingLock = state.getLockForTx(txid);
+            if (existingLock != null) {
+                Lock merged = existingLock.merge(new Lock(resource, mode, txid));
+                
+                // Check if upgrade is possible
+                if (canUpgrade(existingLock.getMode(), mode, state.holders, txid)) {
+                    state.replaceLock(txid, merged);
+                    return true;
+                }
+                return false;
+            }
+
+            // Check compatibility with other holders
+            if (LockCompatibility.isCompatibleWithAll(mode, state.getHeldModes())) {
+                state.addLock(new Lock(resource, mode, txid));
+                txResources.computeIfAbsent(txid, k -> ConcurrentHashMap.newKeySet()).add(resource);
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    /**
+     * Releases all locks held by a transaction across all resources.
+     *
+     * @param txid the transaction ID whose locks should be released
+     */
+    public void release(long txid) {
+        Set<String> resources = txResources.get(txid);
+        if (resources != null) {
+            for (String resource : resources) {
+                ResourceState state = resourceStates.get(resource);
+                if (state != null) {
+                    synchronized (state) {
+                        state.removeLocksForTx(txid);
+                        if (state.isEmpty()) {
+                            resourceStates.remove(resource);
+                        }
+                        state.notifyAll(); // Wake up all waiters
+                    }
+                }
+            }
+            txResources.remove(txid);
+        }
+    }
+
+    /**
+     * Checks if a lock upgrade is possible.
+     * An upgrade is allowed only if the transaction can acquire the stronger mode
+     * without conflicting with other holders.
+     */
+    private boolean canUpgrade(LockMode current, LockMode requested, Iterable<Lock> otherHolders, long txid) {
+        // For upgrade, we need to check compatibility with OTHER holders only
+        // (the transaction can always upgrade its own lock)
+        for (Lock other : otherHolders) {
+            if (other.getTxid() != txid) {
+                if (!LockCompatibility.isCompatible(other.getMode(), requested)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Package-private test hooks
+    /**
+     * Returns the lock modes currently held on a resource.
+     */
+    public Set<LockMode> heldModes(String resource) {
+        ResourceState state = resourceStates.get(resource);
+        if (state == null) {
+            return Collections.emptySet();
+        }
+        synchronized (state) {
+            Set<LockMode> modes = new HashSet<>();
+            for (Lock lock : state.holders) {
+                modes.add(lock.getMode());
+            }
+            return modes;
+        }
+    }
+
+    /**
+     * Returns the number of waiters for a resource.
+     */
+    public int waiterCount(String resource) {
+        ResourceState state = resourceStates.get(resource);
+        if (state == null) {
+            return 0;
+        }
+        synchronized (state) {
+            return state.waiters.size();
+        }
+    }
+
+    /**
+     * Returns the number of resources currently being tracked.
+     */
+    public int resourceCount() {
+        return resourceStates.size();
+    }
+
+    /**
+     * State for a single resource: lock holders and waiters.
+     */
+    private static class ResourceState {
+        final List<Lock> holders = new ArrayList<>();
+        final Deque<Waiter> waiters = new LinkedBlockingDeque<>();
+
+        synchronized void addLock(Lock lock) {
+            holders.add(lock);
+        }
+
+        synchronized void replaceLock(long txid, Lock newLock) {
+            for (int i = 0; i < holders.size(); i++) {
+                if (holders.get(i).getTxid() == txid) {
+                    holders.set(i, newLock);
+                    return;
+                }
+            }
+            throw new IllegalStateException("Lock not found for txid: " + txid);
+        }
+
+        synchronized void removeLocksForTx(long txid) {
+            holders.removeIf(lock -> lock.getTxid() == txid);
+        }
+
+        synchronized Lock getLockForTx(long txid) {
+            for (Lock lock : holders) {
+                if (lock.getTxid() == txid) {
+                    return lock;
+                }
+            }
+            return null;
+        }
+
+        synchronized Iterable<LockMode> getHeldModes() {
+            List<LockMode> modes = new ArrayList<>();
+            for (Lock lock : holders) {
+                modes.add(lock.getMode());
+            }
+            return modes;
+        }
+
+        synchronized void addWaiter(Waiter waiter) {
+            waiters.addLast(waiter);
+        }
+
+        synchronized void removeWaiter(Waiter waiter) {
+            waiters.remove(waiter);
+        }
+
+        synchronized boolean isEmpty() {
+            return holders.isEmpty() && waiters.isEmpty();
+        }
+    }
+
+    /**
+     * A transaction waiting for a lock.
+     */
+    private static class Waiter {
+        final long txid;
+        final LockMode mode;
+        final Thread thread;
+
+        Waiter(long txid, LockMode mode, Thread thread) {
+            this.txid = txid;
+            this.mode = mode;
+            this.thread = thread;
+        }
+    }
+}
