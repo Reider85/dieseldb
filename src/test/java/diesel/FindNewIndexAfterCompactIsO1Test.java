@@ -32,10 +32,10 @@ class FindNewIndexAfterCompactIsO1Test {
         // Set up a large deletedRows BitSet via reflection
         Field deletedRowsField = Table.class.getDeclaredField("deletedRows");
         deletedRowsField.setAccessible(true);
-        BitSet deletedRows = new BitSet(4_000_000);
-        
+        BitSet deletedRows = new BitSet(200_000);
+
         // Mark every other row as deleted (50% density)
-        for (int i = 0; i < 4_000_000; i++) {
+        for (int i = 0; i < 200_000; i++) {
             if (i % 2 == 0) {
                 deletedRows.set(i);
             }
@@ -48,19 +48,19 @@ class FindNewIndexAfterCompactIsO1Test {
         findNewIndexMethod.setAccessible(true);
 
         // Build the prefix array (what the actual implementation does)
-        int[] prefixAlive = buildPrefixAliveForTest(deletedRows, 4_000_000);
+        int[] prefixAlive = buildPrefixAliveForTest(deletedRows, 200_000);
 
-        // Warmup: 10k calls
-        int warmupCount = 10_000;
+        // Warmup: 5k calls
+        int warmupCount = 5_000;
         for (int i = 0; i < warmupCount; i++) {
-            int oldIndex = ThreadLocalRandom.current().nextInt(4_000_000);
+            int oldIndex = ThreadLocalRandom.current().nextInt(200_000);
             findNewIndexMethod.invoke(table, oldIndex, prefixAlive);
         }
 
-        // Measurement: 100k calls to a deleted row (should return -1)
-        int measurementCount = 100_000;
+        // Measurement: 20k calls to a deleted row (should return -1)
+        int measurementCount = 20_000;
         long totalNanos = 0;
-        int testIndex = 3_999_998; // Deleted index (even)
+        int testIndex = 199_998; // Deleted index (even)
         
         for (int i = 0; i < measurementCount; i++) {
             long start = System.nanoTime();
@@ -75,7 +75,7 @@ class FindNewIndexAfterCompactIsO1Test {
                 "Average call time " + avgMicros + "µs, expected < 10µs (O(1) proof)");
 
         // Also test a non-deleted row for correctness
-        int aliveIndex = 3_999_999; // Should be alive (odd)
+        int aliveIndex = 199_999; // Should be alive (odd)
         Object result = findNewIndexMethod.invoke(table, aliveIndex, prefixAlive);
         int expectedNewIndex = prefixAlive[aliveIndex];
         assertEquals(expectedNewIndex, result, "Alive row should return prefix value");

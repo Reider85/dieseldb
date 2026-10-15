@@ -183,10 +183,16 @@ test-storage-avro:
 ## Run ALL profiles sequentially (release gate)
 all-tests:
 	@echo "Running ALL profiles sequentially (release gate)..."
-	@for p in fast core concurrency network perf large; do \
+	@first=1; \
+	for p in fast core concurrency network perf large; do \
 		echo ""; \
 		echo "--- $$p ---"; \
-		$(call run-tests,$$p) || exit 1; \
+		if [ $$first -eq 1 ]; then \
+			$(call run-tests,$$p) || exit 1; \
+			first=0; \
+		else \
+			$(call run-tests-incr,$$p) || exit 1; \
+		fi; \
 	done
 	@echo ""
 	@echo "All profiles passed."

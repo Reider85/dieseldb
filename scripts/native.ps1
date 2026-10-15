@@ -77,10 +77,18 @@ function Assert-TestsRan {
 
     $reportsDir = Join-Path $script:NativeRepoRoot "target\surefire-reports"
     $fresh = @()
-    if (Test-Path -LiteralPath $reportsDir) {
-        $fresh = @(Get-ChildItem -Path (Join-Path $reportsDir "TEST-*.xml") -ErrorAction SilentlyContinue |
-                   Where-Object { $_.LastWriteTime -gt $StartedAt })
-    }
+    # reuseForks=true lets the last surefire fork flush its XML reports a moment
+    # after the Maven process exits; poll briefly before declaring a false "no tests".
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        $fresh = @()
+        if (Test-Path -LiteralPath $reportsDir) {
+            $fresh = @(Get-ChildItem -Path (Join-Path $reportsDir "TEST-*.xml") -ErrorAction SilentlyContinue |
+                       Where-Object { $_.LastWriteTime -gt $StartedAt })
+        }
+        if ($fresh.Count -gt 0) { break }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
 
     if ($fresh.Count -eq 0) {
         Write-Host ""

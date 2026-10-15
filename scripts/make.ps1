@@ -172,9 +172,14 @@ switch ($Target) {
     }
     "all-tests" {
         Write-Host "Running ALL profiles sequentially (release gate)..."
-        foreach ($p in @("fast", "core", "concurrency", "network", "perf", "large")) {
+        $profiles = @("fast", "core", "concurrency", "network", "perf", "large")
+        for ($i = 0; $i -lt $profiles.Count; $i++) {
             Write-Host ""
-            Invoke-ProfileTests -Profile $p
+            if ($i -eq 0) {
+                Invoke-ProfileTests -Profile $profiles[$i]
+            } else {
+                Invoke-ProfileTests -Profile $profiles[$i] -NoClean
+            }
         }
         Write-Host ""
         Write-Host "All profiles passed." -ForegroundColor Green

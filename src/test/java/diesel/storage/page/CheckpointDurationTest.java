@@ -21,7 +21,6 @@ import diesel.storage.page.CheckpointManager;
 /**
  * Tests checkpoint duration and performance (prompt4 #21).
  */
-@Tag("performance")
 @Tag("storage")
 public class CheckpointDurationTest {
 

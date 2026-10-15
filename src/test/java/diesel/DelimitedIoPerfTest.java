@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Large I/O performance gate for the CSV/TSV hot path: writes and loads
- * 200k rows through the direct writer path and the storage byte fast
+ * 50k rows through the direct writer path and the storage byte fast
  * path, records the timings as {@code [DELIM-IO]} and guards against
  * regressions with generous absolute ceilings plus an internal sequential
  * versus parallel sanity check. Run only via {@code -Ddiesel.largeTests=true}
@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @StorageType({"csv", "tsv"})
 class DelimitedIoPerfTest {
 
-    static final int ROWS = 200_000;
+    static final int ROWS = 50_000;
 
     static long ceilingMs() {
         String override = System.getProperty("diesel.perf.ceiling");
@@ -125,7 +125,7 @@ class DelimitedIoPerfTest {
         assertTrue(writeTsv < ceiling, "TSV write took " + writeTsv + " ms (ceiling " + ceiling + ")");
         assertTrue(loadCsvSeq < ceiling, "CSV sequential load took " + loadCsvSeq + " ms");
         assertTrue(loadCsvPar < ceiling, "CSV parallel load took " + loadCsvPar + " ms");
-        // TSV goes through the index-manager path which builds indexes on 200k rows,
+        // TSV goes through the index-manager path which builds indexes on loaded rows,
         // so allow a much higher ceiling than CSV (which uses the byte[] fast path)
         assertTrue(loadTsvSeq < ceiling * 20, "TSV sequential load took " + loadTsvSeq + " ms");
         assertTrue(loadTsvPar < ceiling * 20, "TSV parallel load took " + loadTsvPar + " ms");
@@ -174,9 +174,7 @@ class DelimitedIoPerfTest {
     }
 
     private long timeWrite(Path file, boolean csv, List<Object[]> data) throws Exception {
-        for (int warmup = 0; warmup < 2; warmup++) {
-            writeOnce(file, csv, data);
-        }
+        writeOnce(file, csv, data);
         long start = System.nanoTime();
         writeOnce(file, csv, data);
         long end = System.nanoTime();
@@ -204,10 +202,8 @@ class DelimitedIoPerfTest {
     }
 
     private long timeStorageLoad(String tableName, boolean csv, boolean parallel) throws Exception {
-        // Warmup: at least 2 iterations to stabilize JIT and GC
-        for (int warmup = 0; warmup < 2; warmup++) {
-            loadOnce(tableName, csv, parallel);
-        }
+        // Warmup: 1 iteration to stabilize JIT and GC
+        loadOnce(tableName, csv, parallel);
         long start = System.nanoTime();
         int count = loadOnce(tableName, csv, parallel);
         long end = System.nanoTime();

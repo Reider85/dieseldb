@@ -24,7 +24,6 @@ import diesel.TxStatusTracker;
  * Tests checkpoint functionality related to recovery (prompt4 #21).
  * Focuses on checkpoint record creation without full recovery.
  */
-@Tag("recovery")
 @Tag("storage")
 public class CheckpointRecoveryStartsAtLastCheckpointTest {
 

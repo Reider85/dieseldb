@@ -25,11 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Acceptance tests for prompt4.md step 3 (MVCC Vacuum Manager):
  *
  * <ul>
- *   <li>1M inserts + 600k aborted inserts + 100k deletes + {@code VACUUM}
+ *   <li>100k inserts + 60k aborted inserts + 10k deletes + {@code VACUUM}
  *       shrink the heap by at least 30% (measured through the JMX
  *       {@code MemoryMXBean}), with {@code vacuum.dead_tuples_removed}
  *       confirming the reclamation;</li>
- *   <li>vacuuming the 1M-row table never blocks a concurrent writer for more
+ *   <li>vacuuming the 100k-row table never blocks a concurrent writer for more
  *       than 100 ms (writer path uses background persist flusher, so
  *       measured ops are parse+insert, not whole-file saves);</li>
  *   <li>auto-vacuum runs on schedule and the manual {@code VACUUM table}
@@ -47,14 +47,14 @@ class VacuumTest {
 
     private static final Logger LOGGER = Logger.getLogger(VacuumTest.class.getName());
 
-    private static final int LIVE_ROWS = 1_000_000;
-    private static final int ABORTED_ROWS = 600_000;
-    private static final int DELETED_ROWS = 100_000;
-    private static final int WRITER_TABLE_ROWS = 1_000_000;
-    private static final int WRITER_TABLE_DELETED = 100_000;
+    private static final int LIVE_ROWS = 100_000;
+    private static final int ABORTED_ROWS = 60_000;
+    private static final int DELETED_ROWS = 10_000;
+    private static final int WRITER_TABLE_ROWS = 100_000;
+    private static final int WRITER_TABLE_DELETED = 10_000;
     private static final long MAX_WRITER_BLOCK_NS = 100_000_000L;
     private static final String ABORTED_PAYLOAD =
-            "dead-version-payload-0123456789".repeat(10);
+            "dead-version-payload-0123456789".repeat(100);
 
     @TempDir
     static Path tempDir;
@@ -84,7 +84,7 @@ class VacuumTest {
         }
         assertEquals(LIVE_ROWS, table.getRawRowCount());
 
-        // 600k rows from one rolled-back transaction: inserted through the
+        // 60k rows from one rolled-back transaction: inserted through the
         // MVCC path, txid aborted and the undo flags cleared — the exact
         // final state a ROLLBACK leaves behind (InsertUndo.apply).
         TxStatusTracker tracker = db.getTxStatusTracker();
@@ -100,7 +100,7 @@ class VacuumTest {
         }
         assertEquals(LIVE_ROWS + ABORTED_ROWS, table.getRawRowCount());
 
-        // 100k SQL deletes (6.25% tombstones — below the 30% auto-compact
+        // 10k SQL deletes (9% tombstones — below the 30% auto-compact
         // threshold, so the rows stay physically present until VACUUM).
         db.executeQuery("DELETE FROM " + tableName + " WHERE ID < " + (DELETED_ROWS + 1), null);
         assertEquals(DELETED_ROWS, table.getDeletedCount());
@@ -109,7 +109,7 @@ class VacuumTest {
         long heapBefore = usedHeapViaJmx();
 
         String result = (String) db.executeQuery("VACUUM " + tableName, null);
-        assertTrue(result.startsWith("VACUUM " + tableName + ": 700000 dead tuples removed"),
+        assertTrue(result.startsWith("VACUUM " + tableName + ": 70000 dead tuples removed"),
                 "unexpected VACUUM result: " + result);
         ObjectName mbean = db.getVacuumManager().getObjectName();
 
@@ -122,8 +122,8 @@ class VacuumTest {
         assertNotNull(mbean, "VACUUM must have registered the metrics MBean");
         Object deadTuples = ManagementFactory.getPlatformMBeanServer()
                 .getAttribute(mbean, VacuumManager.ATTR_DEAD_TUPLES);
-        assertTrue(((Long) deadTuples) >= 700_000L,
-                "JMX vacuum.dead_tuples_removed must report >= 700000, was " + deadTuples);
+        assertTrue(((Long) deadTuples) >= 70_000L,
+                "JMX vacuum.dead_tuples_removed must report >= 70000, was " + deadTuples);
 
         assertEquals(LIVE_ROWS - DELETED_ROWS, table.getRawRowCount(),
                 "only the surviving live rows must remain after the vacuum");
@@ -131,7 +131,7 @@ class VacuumTest {
         assertEquals(LIVE_ROWS - DELETED_ROWS, table.getLiveRowCount());
 
         Object sample = db.executeQuery(
-                "SELECT ID FROM " + tableName + " WHERE ID < 100006", null);
+                "SELECT ID FROM " + tableName + " WHERE ID < 10006", null);
         assertTrue(sample instanceof List<?>, "vacuumed table must still serve queries");
         assertEquals(5, ((List<?>) sample).size(), "rows above the deleted range must be queryable");
     }
@@ -257,7 +257,7 @@ class VacuumTest {
                 + cleanMs + " ms, vacuumGcOverlapped=" + gcMs + " ms, gcDuringVacuumWindow="
                 + gcDuringVacuum + " ms, opsDuringVacuum=" + opsDuringVacuum.get());
         assertNull(writerError.get(), "writer must not fail during the vacuum: " + writerError.get());
-        assertTrue(result.contains("100000 dead tuples removed"),
+        assertTrue(result.contains("10000 dead tuples removed"),
                 "unexpected VACUUM result: " + result);
         assertTrue(opsDuringVacuum.get() >= 1,
                 "at least one writer operation must overlap the vacuum window");

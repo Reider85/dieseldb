@@ -1,6 +1,7 @@
 package diesel;
 
 import diesel.storage.avro.SnappyOptimizedCodec;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
@@ -8,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Simple test to verify Prompt 64 Snappy optimization is working
  */
+@Tag("storage")
 public class Prompt64VerificationTest {
 
     @Test

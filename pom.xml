@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-    <version>3.2.100</version>
+    <version>3.2.102</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -202,7 +202,7 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -337,7 +337,7 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -390,7 +390,7 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -425,7 +425,7 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -453,7 +453,7 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -481,7 +481,7 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
@@ -509,7 +509,7 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>2</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>

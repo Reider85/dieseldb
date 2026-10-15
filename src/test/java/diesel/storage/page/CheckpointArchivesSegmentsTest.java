@@ -22,7 +22,6 @@ import diesel.storage.page.CheckpointManager;
 /**
  * Tests that checkpoints trigger WAL archiving of segments (prompt4 #21).
  */
-@Tag("wal")
 @Tag("storage")
 public class CheckpointArchivesSegmentsTest {
 
