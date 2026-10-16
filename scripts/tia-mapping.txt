@@ -151,5 +151,12 @@ diesel/concurrency/DeadlockDetector.java		concurrency
 diesel/concurrency/DeadlockVictimException.java	concurrency
 diesel/concurrency/LockTimeoutManager.java	concurrency
 diesel/concurrency/LockTimeoutException.java	concurrency
+diesel/concurrency/Savepoint.java		concurrency
+diesel/concurrency/NestedSavepointStack.java	concurrency
+diesel/concurrency/SavepointManager.java	concurrency
+diesel/SavepointQuery.java		concurrency
+diesel/RollbackToSavepointQuery.java		concurrency
+diesel/ReleaseSavepointQuery.java		concurrency
 diesel/wal/*.java	smoke,storage
+diesel/wal/SavepointPayload.java	concurrency
 diesel/recovery/*.java	smoke,storage

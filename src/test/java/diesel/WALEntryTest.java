@@ -420,9 +420,9 @@ class WALEntryTest {
 
     @Test
     void opcodeFromByteRejectsUnknownValues() {
-        assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) 9));
         assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) -1));
         assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) 99));
+        assertThrows(IllegalArgumentException.class, () -> WALOpcode.fromByte((byte) 11));
     }
 
     @Test

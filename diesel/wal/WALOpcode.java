@@ -30,7 +30,17 @@ public enum WALOpcode {
      * is a full serialized page ({@code Page.toBytes()}); the before-image is
      * unused by the redo phase.
      */
-    PAGE_IMAGE(8);
+    PAGE_IMAGE(8),
+    /**
+     * Savepoint marker for partial transaction rollback (prompt4.md #26).
+     * Payload: {@link SavepointPayload} (name + sequence).
+     */
+    SAVEPOINT(9),
+    /**
+     * Savepoint release (for RELEASE statement or ROLLBACK TO cleanup).
+     * Payload: savepoint name.
+     */
+    RELEASE_SAVEPOINT(10);
 
     private static final WALOpcode[] BY_CODE = values();
 

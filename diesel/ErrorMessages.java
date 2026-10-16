@@ -79,4 +79,9 @@ public final class ErrorMessages {
     // S1192 – transaction status messages (Database, DatabaseClient)
     public static final String TRANSACTION_COMMITTED = "Transaction committed";
     public static final String TRANSACTION_ROLLED_BACK = "Transaction rolled back";
+    
+    // S1192 – savepoint messages (prompt4.md #26)
+    public static final String SAVEPOINT_CREATED = "Savepoint created: ";
+    public static final String SAVEPOINT_ROLLED_BACK = "Savepoint rolled back: ";
+    public static final String SAVEPOINT_RELEASED = "Savepoint released: ";
 }

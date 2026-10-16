@@ -969,3 +969,5 @@ chore: test-profiles-audit changelog entry
 3.2.105 Prompt 4 #24: WaitForGraph + DeadlockDetector + DeadlockVictimException (R3-006 step 2/4); fix LockCompatibility IS+S matrix bug vs standard MGL; harden DeadlockOverheadTest criteria vs Windows scheduler noise
 
 3.2.106 Fix LockTimeoutManager race condition: prevent timeout count increment when lock granted immediately
+
+3.2.107 Prompt 4 #26: SavepointManager + NestedSavepointStack (R3-006 step 4/4) - Added SAVEPOINT/ROLLBACK TO/RELEASE functionality with WAL integration, bookkeeping snapshots, and parser strategies

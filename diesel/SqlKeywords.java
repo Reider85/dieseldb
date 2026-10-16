@@ -98,6 +98,14 @@ public final class SqlKeywords {
     public static final String START_TRANSACTION = "START TRANSACTION";
     public static final String BEGIN_TRANSACTION_ISOLATION_LEVEL = "BEGIN TRANSACTION ISOLATION LEVEL";
     public static final String START_TRANSACTION_ISOLATION_LEVEL = "START TRANSACTION ISOLATION LEVEL";
+    
+    // Savepoint commands (prompt4.md #26)
+    public static final String SAVEPOINT = "SAVEPOINT";
+    public static final String RELEASE = "RELEASE";
+    public static final String TO = "TO";
+    public static final String ROLLBACK_TO_SAVEPOINT = "ROLLBACK TO SAVEPOINT";
+    public static final String ROLLBACK_TO = "ROLLBACK TO";
+    public static final String RELEASE_SAVEPOINT = "RELEASE SAVEPOINT";
 
     // Isolation levels
     public static final String ISOLATION_LEVEL_READ_UNCOMMITTED = "ISOLATION LEVEL READ UNCOMMITTED";

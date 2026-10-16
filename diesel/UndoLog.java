@@ -7,6 +7,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -71,6 +72,10 @@ public class UndoLog {
                         int rowIndex = ois.readInt();
                         RowVersionMeta oldMeta = (RowVersionMeta) ois.readObject();
                         return new DeleteUndo(tableName, rowIndex, oldMeta);
+                    }
+                    case 4: {
+                        String name = (String) ois.readObject();
+                        return new SavepointMarkerUndo(name);
                     }
                     default:
                         throw new IOException("Unknown undo record type code: " + type);
@@ -237,6 +242,44 @@ public class UndoLog {
         }
     }
     
+    /**
+     * Undo record for SAVEPOINT markers (prompt4.md #26).
+     * Rollback: no-op marker that identifies savepoint boundaries in the undo log.
+     * Applied during ROLLBACK TO to stop partial undo at the savepoint.
+     */
+    public static class SavepointMarkerUndo implements UndoRecord {
+        private final String name;
+        
+        public SavepointMarkerUndo(String name) {
+            this.name = name;
+        }
+        
+        @Override
+        public void apply(Table table) {
+            // No-op: savepoint markers are not applied during rollback.
+            // They serve as boundary markers for partial undo.
+        }
+        
+        @Override
+        public String getTableName() {
+            return null; // No table context for savepoint markers
+        }
+        
+        @Override
+        public byte[] serialize() throws IOException {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            try (ObjectOutputStream oos = new ObjectOutputStream(baos)) {
+                oos.writeInt(4); // Type code for SavepointMarkerUndo
+                oos.writeObject(name);
+            }
+            return baos.toByteArray();
+        }
+        
+        public String getName() {
+            return name;
+        }
+    }
+    
     // ─── UndoLog implementation ───────────────────────────────────────────────
     
     private Deque<UndoRecord> inMemoryRecords = new ArrayDeque<>();
@@ -306,6 +349,17 @@ public class UndoLog {
     }
     
     /**
+     * Appends a savepoint marker to the log.
+     * The marker is a no-op record that identifies a savepoint boundary.
+     *
+     * @param name the savepoint name
+     */
+    public void appendSavepointMarker(String name) {
+        SavepointMarkerUndo marker = new SavepointMarkerUndo(name);
+        addUndoRecord(marker);
+    }
+    
+    /**
      * Checks if spill is needed and performs it if necessary.
      */
     private void checkAndSpill() throws IOException {
@@ -363,6 +417,119 @@ public class UndoLog {
         if (spillFile != null) {
             applySpilledRecordsReverse(database);
         }
+    }
+    
+    /**
+     * Rolls back to the specified savepoint marker: applies undo records
+     * newer than the marker and stops at the marker (which remains in the log).
+     *
+     * <p>The marker is not consumed - it remains valid for subsequent
+     * rollbacks to the same savepoint (standard SQL behavior).
+     *
+     * @param database the database used to resolve each record's table
+     * @param name the savepoint name to rollback to
+     * @return the number of records applied
+     * @throws IOException if the spill file cannot be read/truncated
+     * @throws IllegalArgumentException if no marker with the given name is found
+     */
+    public int rollbackToMarker(Database database, String name) throws IOException {
+        Objects.requireNonNull(name, "name");
+        int appliedCount = 0;
+        
+        // First check in-memory records (newest first)
+        while (!inMemoryRecords.isEmpty()) {
+            UndoRecord record = inMemoryRecords.getLast();
+            if (record instanceof SavepointMarkerUndo marker && marker.getName().equals(name)) {
+                // Found marker in memory - stop, leave marker in place
+                break;
+            }
+            
+            // Apply and remove the record
+            record = inMemoryRecords.removeLast();
+            inMemoryBytes.addAndGet(-estimateRecordSize(record));
+            applyRecord(record, database);
+            appliedCount++;
+        }
+        
+        // If marker not found in memory, check spill file
+        if (inMemoryRecords.isEmpty() || !(inMemoryRecords.getLast() instanceof SavepointMarkerUndo marker) || !marker.getName().equals(name)) {
+            appliedCount += rollbackToMarkerInSpill(database, name);
+        }
+        
+        if (appliedCount == 0) {
+            throw new IllegalArgumentException("Savepoint not found in undo log: " + name);
+        }
+        
+        return appliedCount;
+    }
+    
+    /**
+     * Helper: rolls back to marker in spill file by reading backwards.
+     * Truncates the file at the marker position and rewrites the marker to preserve it.
+     */
+    private int rollbackToMarkerInSpill(Database database, String name) throws IOException {
+        if (spillFile == null || !Files.exists(spillFile)) {
+            return 0;
+        }
+        
+        int appliedCount = 0;
+        long markerPosition = -1;
+        
+        try (RandomAccessFile raf = new RandomAccessFile(spillFile.toFile(), "r")) {
+            long fileLength = raf.length();
+            long position = fileLength;
+            
+            // Read backwards to find the marker
+            while (position > 0) {
+                // Read the 4-byte length trailer
+                position -= 4;
+                if (position < 0) break;
+                raf.seek(position);
+                int length = raf.readInt();
+                if (length < 0 || length > position) {
+                    throw new IOException("Corrupt undo spill file: record length " + length + " at offset " + position);
+                }
+                
+                // Read record data
+                position -= length;
+                raf.seek(position);
+                byte[] data = new byte[length];
+                raf.readFully(data);
+                
+                try {
+                    UndoRecord record = UndoRecord.deserialize(data);
+                    if (record instanceof SavepointMarkerUndo marker && marker.getName().equals(name)) {
+                        markerPosition = position;
+                        break;
+                    }
+                    
+                    // Apply the record (it's newer than the target marker)
+                    applyRecord(record, database);
+                    appliedCount++;
+                } catch (ClassNotFoundException e) {
+                    System.err.println("Failed to deserialize undo record: " + e.getMessage());
+                }
+            }
+        }
+        
+        if (markerPosition == -1) {
+            return 0; // Marker not found in spill file
+        }
+        
+        // Truncate file at marker position and rewrite the marker
+        try (RandomAccessFile raf = new RandomAccessFile(spillFile.toFile(), "rw")) {
+            // Truncate to marker start
+            raf.setLength(markerPosition);
+            
+            // Rewrite the marker at the end
+            SavepointMarkerUndo marker = new SavepointMarkerUndo(name);
+            byte[] markerData = marker.serialize();
+            raf.seek(markerPosition);
+            raf.write(markerData);
+            raf.writeInt(markerData.length); // Trailer framing
+        }
+        
+        return appliedCount;
     }
     
     /** Resolves the record's table and applies the record, when table context is known. */

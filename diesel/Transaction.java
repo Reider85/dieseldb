@@ -1,10 +1,13 @@
 package diesel;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Objects;
+import diesel.concurrency.SavepointManager;
 
 /**
  * Represents one client transaction session with its own isolation level.
@@ -45,6 +48,11 @@ class Transaction {
      * them so the delete survives a restart (MVCC metadata is transient).
      */
     private final Map<String, Set<Integer>> deletedRows = new HashMap<>();
+    /**
+     * Savepoint manager for nested savepoints (prompt4.md #26).
+     * Lazily initialized on first savepoint creation.
+     */
+    private SavepointManager savepointManager;
 
     /**
      * Starts a transaction at the given isolation level, defaulting to
@@ -127,6 +135,9 @@ class Transaction {
             modifiedTables.clear();
             modifiedRows.clear();
             deletedRows.clear();
+            
+            // Clear savepoints (they die with the transaction)
+            clearSavepoints();
             
             // Mark transaction as inactive
             active = false;
@@ -273,5 +284,73 @@ class Transaction {
      */
     public void setBatchMode(boolean batchMode) {
         this.batchMode = batchMode;
+    }
+
+    /**
+     * Returns the savepoint manager for this transaction.
+     * Lazily initializes on first access.
+     */
+    public SavepointManager getSavepointManager() {
+        if (savepointManager == null) {
+            savepointManager = new SavepointManager();
+        }
+        return savepointManager;
+    }
+
+    /**
+     * Creates a snapshot of the current bookkeeping state (modified/deleted rows)
+     * for savepoint restoration on ROLLBACK TO.
+     *
+     * @return defensive copy of current bookkeeping state
+     */
+    public BookkeepingSnapshot snapshotBookkeeping() {
+        Map<String, Set<Integer>> modifiedCopy = new HashMap<>();
+        Map<String, Set<Integer>> deletedCopy = new HashMap<>();
+
+        // Create defensive copies of the sets
+        for (Map.Entry<String, Set<Integer>> entry : modifiedRows.entrySet()) {
+            modifiedCopy.put(entry.getKey(), Collections.unmodifiableSet(new java.util.HashSet<>(entry.getValue())));
+        }
+        for (Map.Entry<String, Set<Integer>> entry : deletedRows.entrySet()) {
+            deletedCopy.put(entry.getKey(), Collections.unmodifiableSet(new java.util.HashSet<>(entry.getValue())));
+        }
+
+        return new BookkeepingSnapshot(modifiedCopy, deletedCopy);
+    }
+
+    /**
+     * Restores bookkeeping state from a snapshot (used after ROLLBACK TO).
+     * Replaces current modified/deleted rows with the snapshot values.
+     *
+     * @param snapshot the bookkeeping snapshot to restore
+     */
+    public void restoreBookkeeping(BookkeepingSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        // Replace with snapshot's defensive copies
+        this.modifiedRows.clear();
+        this.modifiedRows.putAll(snapshot.modifiedRows());
+        this.deletedRows.clear();
+        this.deletedRows.putAll(snapshot.deletedRows());
+    }
+
+    /**
+     * Clears savepoint manager state (called on COMMIT/ROLLBACK).
+     */
+    public void clearSavepoints() {
+        if (savepointManager != null) {
+            savepointManager.clear();
+        }
+    }
+
+    /**
+     * Immutable snapshot of transaction bookkeeping state for savepoints.
+     */
+    public record BookkeepingSnapshot(
+            Map<String, Set<Integer>> modifiedRows,
+            Map<String, Set<Integer>> deletedRows) {
+        public BookkeepingSnapshot {
+            Objects.requireNonNull(modifiedRows, "modifiedRows");
+            Objects.requireNonNull(deletedRows, "deletedRows");
+        }
     }
 }

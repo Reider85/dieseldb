@@ -34,9 +34,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
+import diesel.concurrency.Savepoint;
 import diesel.storage.page.CatalogTable;
 import diesel.storage.page.CatalogSchema;
 import diesel.concurrency.ConflictDetector;
+import diesel.concurrency.NestedSavepointStack;
+import diesel.concurrency.Savepoint;
 import diesel.wal.WALEntry;
 import diesel.wal.WALConfig;
 import diesel.wal.WALWriter;
@@ -45,6 +48,7 @@ import diesel.wal.AsyncWALWriter;
 import diesel.wal.CommitPayload;
 import diesel.wal.GroupCommitCoordinator;
 import diesel.wal.FsyncPolicy;
+import diesel.wal.SavepointPayload;
 
 /**
  * Central database engine. Owns the shared table map, the active client
@@ -836,6 +840,15 @@ class Database {
         if (parsedQuery instanceof CommitTransactionQuery) {
             return executeCommit(currentTransaction, transactionId);
         }
+        if (parsedQuery instanceof SavepointQuery q) {
+            return executeSavepoint(q, currentTransaction);
+        }
+        if (parsedQuery instanceof RollbackToSavepointQuery q) {
+            return executeRollbackToSavepoint(q, currentTransaction);
+        }
+        if (parsedQuery instanceof ReleaseSavepointQuery q) {
+            return executeReleaseSavepoint(q, currentTransaction);
+        }
         if (parsedQuery instanceof RollbackTransactionQuery) {
             return executeRollback(currentTransaction, transactionId);
         }
@@ -1116,6 +1129,9 @@ class Database {
             );
         }
         
+        // Clear savepoints (they die with the transaction)
+        currentTransaction.clearSavepoints();
+        
         currentTransaction.setInactive();
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
@@ -1210,6 +1226,107 @@ class Database {
         activeTransactions.remove(transactionId);
         setAutoCommit(false);
         return ErrorMessages.TRANSACTION_ROLLED_BACK;
+    }
+
+    /**
+     * Executes SAVEPOINT name: creates a savepoint marker in the undo log.
+     */
+    private Object executeSavepoint(SavepointQuery savepointQuery, Transaction currentTransaction) {
+        if (currentTransaction == null || !currentTransaction.isActive()) {
+            throw new TransactionException("No active transaction to create savepoint");
+        }
+        
+        String name = savepointQuery.getSavepointName().toUpperCase();
+        // Create bookkeeping snapshot and savepoint
+        Transaction.BookkeepingSnapshot snapshot = currentTransaction.snapshotBookkeeping();
+        Savepoint savepoint = currentTransaction.getSavepointManager()
+                .createSavepoint(name, snapshot.modifiedRows(), snapshot.deletedRows());
+        
+        // Append savepoint marker to undo log
+        currentTransaction.getUndoLog().appendSavepointMarker(name);
+        
+        // Write WAL SAVEPOINT record
+        if (isWALEnabled() && asyncWALWriter != null) {
+            try {
+                byte[] payload = SavepointPayload.serialize(name, savepoint.getSequence());
+                asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.SAVEPOINT, null, payload).get();
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "WAL SAVEPOINT record failed: " + e.getMessage());
+                // Continue: savepoint created in memory and undo log
+            }
+        }
+        
+        return ErrorMessages.SAVEPOINT_CREATED + name;
+    }
+
+    /**
+     * Executes ROLLBACK TO SAVEPOINT name: rolls back to the specified savepoint.
+     */
+    private Object executeRollbackToSavepoint(RollbackToSavepointQuery rollbackQuery, Transaction currentTransaction) {
+        if (currentTransaction == null || !currentTransaction.isActive()) {
+            throw new TransactionException("No active transaction to rollback");
+        }
+        
+        String name = rollbackQuery.getSavepointName().toUpperCase();
+        NestedSavepointStack.RollbackResult result = currentTransaction.getSavepointManager()
+                .rollbackToSavepoint(name);
+        
+        // Apply undo records to the savepoint
+        try {
+            int appliedCount = currentTransaction.getUndoLog()
+                    .rollbackToMarker(this, name);
+            LOGGER.log(Level.INFO, "Applied " + appliedCount + " undo records to rollback to savepoint: " + name);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to rollback to savepoint: " + name, e);
+        }
+        
+        // Restore bookkeeping from savepoint snapshot
+        currentTransaction.restoreBookkeeping(
+                new Transaction.BookkeepingSnapshot(
+                        result.getTarget().getModifiedSnapshot(), 
+                        result.getTarget().getDeletedSnapshot()));
+        
+        // Write WAL RELEASE records for invalidated savepoints
+        if (isWALEnabled() && asyncWALWriter != null) {
+            try {
+                for (Savepoint invalidated : result.getInvalidated()) {
+                    byte[] payload = SavepointPayload.serialize(invalidated.getName());
+                    asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.RELEASE_SAVEPOINT, null, payload).get();
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "WAL RELEASE_SAVEPOINT records failed: " + e.getMessage());
+                // Continue: savepoint stack updated in memory
+            }
+        }
+        
+        return ErrorMessages.SAVEPOINT_ROLLED_BACK + name;
+    }
+
+    /**
+     * Executes RELEASE SAVEPOINT name: releases the savepoint and its descendants.
+     */
+    private Object executeReleaseSavepoint(ReleaseSavepointQuery releaseQuery, Transaction currentTransaction) {
+        if (currentTransaction == null || !currentTransaction.isActive()) {
+            throw new TransactionException("No active transaction to release savepoint");
+        }
+        
+        String name = releaseQuery.getSavepointName().toUpperCase();
+        List<Savepoint> released = currentTransaction.getSavepointManager().releaseSavepoint(name);
+        
+        // Write WAL RELEASE records
+        if (isWALEnabled() && asyncWALWriter != null) {
+            try {
+                for (Savepoint savepoint : released) {
+                    byte[] payload = SavepointPayload.serialize(savepoint.getName());
+                    asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.RELEASE_SAVEPOINT, null, payload).get();
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "WAL RELEASE_SAVEPOINT records failed: " + e.getMessage());
+                // Continue: savepoint stack updated in memory
+            }
+        }
+        
+        return ErrorMessages.SAVEPOINT_RELEASED + name;
     }
 
     private Object executeBatchQuery(BatchQuery batchQuery, Transaction currentTransaction, UUID transactionId) {
