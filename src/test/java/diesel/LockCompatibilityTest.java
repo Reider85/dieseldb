@@ -64,8 +64,8 @@ class LockCompatibilityTest {
         // IX should be compatible with IS but not S
         assertFalse(LockCompatibility.isCompatibleWithAll(LockMode.IX, heldModes));
         
-// S should be compatible with S but not IS
-        assertFalse(LockCompatibility.isCompatibleWithAll(LockMode.S, heldModes));
+// S should be compatible with both IS and S
+        assertTrue(LockCompatibility.isCompatibleWithAll(LockMode.S, heldModes));
         
         // X should be compatible with neither
         assertFalse(LockCompatibility.isCompatibleWithAll(LockMode.X, heldModes));
@@ -117,8 +117,8 @@ class LockCompatibilityTest {
         // Tx2 should be able to acquire IS (compatible)
         assertTrue(manager.tryAcquire("table:USERS", LockMode.IS, tx2));
         
-        // Tx2 should NOT be able to acquire S (incompatible with IS)
-        assertFalse(manager.tryAcquire("table:USERS", LockMode.S, tx2));
+        // Tx2 should be able to acquire S (compatible with IS per standard MGL matrix)
+        assertTrue(manager.tryAcquire("table:USERS", LockMode.S, tx2));
         
         // Tx2 should be able to acquire IX (compatible with IS)
         assertTrue(manager.tryAcquire("table:USERS", LockMode.IX, tx2));

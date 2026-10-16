@@ -10,7 +10,7 @@ package diesel.concurrency;
  * <pre>
  * Requested \ Held | IS | IX | S  | X  | SIX
  * -----------------|----|----|----|----|-----
- * IS              | ✓  | ✓  | ✗  | ✗  | ✓
+ * IS              | ✓  | ✓  | ✓  | ✗  | ✓
  * IX              | ✓  | ✓  | ✗  | ✗  | ✗
  * S               | ✓  | ✗  | ✓  | ✗  | ✗
  * X               | ✗  | ✗  | ✗  | ✗  | ✗
@@ -23,7 +23,7 @@ public final class LockCompatibility {
     // True = compatible, False = conflict
     private static final boolean[][] COMPATIBILITY_MATRIX = {
         // Requested: IS, IX, S,  X, SIX
-        /* Held IS */   {true, true, false, false, true},
+        /* Held IS */   {true, true, true, false, true},
         /* Held IX */   {true, true, false, false, false},
         /* Held S */    {true, false, true, false, false},
         /* Held X */    {false, false, false, false, false},

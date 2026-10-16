@@ -965,3 +965,5 @@ chore: test-profiles-audit changelog entry
 3.2.103 Fix stale-row leak after VACUUM/compact: Table.compact() marks table persist-dirty so Avro pushdown is bypassed until flusher rewrites file
 
 3.2.104 Implement LockManager with S/X/IS/IX/SIX compatibility matrix (R3-006 step 1/4)
+
+3.2.105 Prompt 4 #24: WaitForGraph + DeadlockDetector + DeadlockVictimException (R3-006 step 2/4); fix LockCompatibility IS+S matrix bug vs standard MGL; harden DeadlockOverheadTest criteria vs Windows scheduler noise

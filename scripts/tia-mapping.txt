@@ -146,5 +146,8 @@ diesel/concurrency/LockManager.java		concurrency
 diesel/concurrency/Lock.java			concurrency
 diesel/concurrency/LockMode.java		concurrency
 diesel/concurrency/LockCompatibility.java	concurrency
+diesel/concurrency/WaitForGraph.java		concurrency
+diesel/concurrency/DeadlockDetector.java		concurrency
+diesel/concurrency/DeadlockVictimException.java	concurrency
 diesel/wal/*.java	smoke,storage
 diesel/recovery/*.java	smoke,storage

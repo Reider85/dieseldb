@@ -174,3 +174,7 @@ FlusherThroughputTest	perf
 LockManagerTest	concurrency
 LockCompatibilityTest	concurrency
 LockReleaseTest	concurrency
+DeadlockTest		concurrency
+ChainDeadlockTest		concurrency
+WaitForGraphTest		concurrency
+DeadlockOverheadTest		concurrency

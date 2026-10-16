@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +30,12 @@ public final class LockManager {
     // Global index: txid -> set of resources it holds locks on
     private final ConcurrentMap<Long, Set<String>> txResources = new ConcurrentHashMap<>();
 
+    // Index: txid -> ResourceState where it's currently waiting (for abortWait)
+    private final ConcurrentMap<Long, ResourceState> waitingTx = new ConcurrentHashMap<>();
+
+    // Killed waiters: txid -> cycle path (for exception message)
+    private final ConcurrentMap<Long, List<Long>> killedWaiters = new ConcurrentHashMap<>();
+
     /**
      * Attempts to acquire a lock on a resource. Blocks until the lock can be granted
      * or the thread is interrupted.
@@ -46,6 +53,14 @@ public final class LockManager {
 
         synchronized (state) {
             while (true) {
+                // Check if this tx was killed by deadlock detector
+                if (killedWaiters.containsKey(txid)) {
+                    // Clean up waiting state and throw exception
+                    removeWaiterForTx(txid, state);
+                    List<Long> cycle = killedWaiters.remove(txid);
+                    throw new DeadlockVictimException(txid, cycle);
+                }
+
                 // Check if we already hold a compatible lock (or can upgrade)
                 Lock existingLock = state.getLockForTx(txid);
                 if (existingLock != null) {
@@ -70,12 +85,18 @@ public final class LockManager {
                 // Need to wait: add to waiters and wait for notification
                 Waiter waiter = new Waiter(txid, mode, Thread.currentThread());
                 state.addWaiter(waiter);
+                waitingTx.put(txid, state); // Track where this tx is waiting
                 try {
                     state.wait();
                 } catch (InterruptedException e) {
                     state.removeWaiter(waiter);
+                    waitingTx.remove(txid);
                     throw e;
                 }
+                // Woken up: leave the wait queue before re-checking,
+                // otherwise a granted waiter stays in the graph as a phantom edge
+                state.removeWaiter(waiter);
+                waitingTx.remove(txid);
             }
         }
     }
@@ -129,6 +150,10 @@ public final class LockManager {
      * @param txid the transaction ID whose locks should be released
      */
     public void release(long txid) {
+        // Clean up waiting state
+        waitingTx.remove(txid);
+        killedWaiters.remove(txid);
+        
         Set<String> resources = txResources.get(txid);
         if (resources != null) {
             for (String resource : resources) {
@@ -204,6 +229,69 @@ public final class LockManager {
     }
 
     /**
+     * Returns a snapshot of the current wait-for edges.
+     * Each edge waiter→holder represents a transaction waiting for a lock held by another transaction.
+     * 
+     * @return map where keys are waiting txids and values are sets of txids holding locks they wait for
+     */
+    public Map<Long, Set<Long>> getWaitForEdges() {
+        Map<Long, Set<Long>> edges = new ConcurrentHashMap<>();
+        
+        for (Map.Entry<String, ResourceState> entry : resourceStates.entrySet()) {
+            ResourceState state = entry.getValue();
+            if (state == null) continue;
+            
+            synchronized (state) {
+                for (Waiter waiter : state.waiters) {
+                    if (waiter == null) continue;
+                    
+                    // Find all holders that conflict with this waiter
+                    for (Lock holder : state.holders) {
+                        if (holder == null) continue;
+                        
+                        if (holder.getTxid() != waiter.txid && 
+                            !LockCompatibility.isCompatible(holder.getMode(), waiter.mode)) {
+                            // Waiter is blocked by holder
+                            edges.computeIfAbsent(waiter.txid, k -> ConcurrentHashMap.newKeySet())
+                                 .add(holder.getTxid());
+                        }
+                    }
+                }
+            }
+        }
+        return edges;
+    }
+
+    /**
+     * Aborts a transaction that is waiting due to deadlock.
+     * Marks the transaction's waiters as killed and notifies them to throw DeadlockVictimException.
+     * 
+     * @param txid the transaction ID to abort
+     * @param cycle the wait-for cycle that caused the deadlock (for exception message)
+     */
+    public void abortWait(long txid, List<Long> cycle) {
+        ResourceState state = waitingTx.get(txid);
+        if (state != null) {
+            synchronized (state) {
+                // Mark the waiter as killed
+                killedWaiters.put(txid, cycle);
+                state.notifyAll(); // Wake up the waiter to check killed flag
+            }
+        }
+    }
+
+    /**
+     * Helper to remove a waiter for a transaction from a resource state.
+     * Called when the waiter is killed or when the transaction completes.
+     */
+    private void removeWaiterForTx(long txid, ResourceState state) {
+        synchronized (state) {
+            state.waiters.removeIf(waiter -> waiter.txid == txid);
+        }
+        waitingTx.remove(txid);
+    }
+
+    /**
      * State for a single resource: lock holders and waiters.
      */
     private static class ResourceState {
@@ -245,11 +333,13 @@ public final class LockManager {
             return modes;
         }
 
-        synchronized void addWaiter(Waiter waiter) {
-            waiters.addLast(waiter);
-        }
+synchronized void addWaiter(Waiter waiter) {
+        Objects.requireNonNull(waiter, "Waiter cannot be null");
+        waiters.addLast(waiter);
+    }
 
         synchronized void removeWaiter(Waiter waiter) {
+            Objects.requireNonNull(waiter, "Waiter cannot be null");
             waiters.remove(waiter);
         }
 
