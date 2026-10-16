@@ -13,15 +13,16 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingDeque;
 
 /**
- * Lock manager for DieselDB's granular locking system.
- * <p>
- * Manages locks on resources (e.g., "table:USERS", "row:USERS#42") with support for
- * multiple lock modes: IS, IX, S, X, SIX. Provides blocking and non-blocking acquisition,
- * transaction-based release, and compatibility checking.
- * <p>
- * <b>Note:</b> This is a standalone subsystem. Deadlock detection, lock timeouts,
- * and integration with the DML engine are implemented in subsequent steps (R3-006 steps 2-4).
- */
+     * Lock manager for DieselDB's granular locking system.
+     * <p>
+     * Manages locks on resources (e.g., "table:USERS", "row:USERS#42") with support for
+     * multiple lock modes: IS, IX, S, X, SIX. Provides blocking and non-blocking acquisition,
+     * transaction-based release, and compatibility checking.
+     * <p>
+     * <b>Note:</b> This is a standalone subsystem. Deadlock detection (step 2/4),
+     * lock timeouts (step 3/4), and integration with the DML engine (step 4/4)
+     * are implemented in R3-006.
+     */
 public final class LockManager {
 
     // State for each resource: holders + waiters
@@ -35,6 +36,36 @@ public final class LockManager {
 
     // Killed waiters: txid -> cycle path (for exception message)
     private final ConcurrentMap<Long, List<Long>> killedWaiters = new ConcurrentHashMap<>();
+
+    // Timeout waiters: txid -> resource (for LockTimeoutException)
+    private final ConcurrentMap<Long, String> timedOutWaiters = new ConcurrentHashMap<>();
+
+    // Lock timeout manager
+    private final LockTimeoutManager timeoutManager;
+
+        /**
+     * Creates a LockManager with default timeout (30 seconds).
+     */
+    public LockManager() {
+        this.timeoutManager = new LockTimeoutManager(this);
+    }
+
+    /**
+     * Creates a LockManager with a custom timeout.
+     *
+     * @param lockTimeoutMs the lock timeout in milliseconds
+     */
+    public LockManager(long lockTimeoutMs) {
+        this.timeoutManager = new LockTimeoutManager(this, lockTimeoutMs);
+    }
+
+    /**
+     * Returns the LockTimeoutManager for this LockManager.
+     * Must be started via start() to activate timeouts.
+     */
+    public LockTimeoutManager getTimeoutManager() {
+        return timeoutManager;
+    }
 
     /**
      * Attempts to acquire a lock on a resource. Blocks until the lock can be granted
@@ -50,8 +81,10 @@ public final class LockManager {
         Objects.requireNonNull(mode, "Lock mode cannot be null");
 
         ResourceState state = resourceStates.computeIfAbsent(resource, k -> new ResourceState());
+        boolean waited = false;
 
         synchronized (state) {
+            System.out.println("DEBUG: acquire() called for txid=" + txid + " resource=" + resource + " mode=" + mode);
             while (true) {
                 // Check if this tx was killed by deadlock detector
                 if (killedWaiters.containsKey(txid)) {
@@ -77,12 +110,32 @@ public final class LockManager {
                     // Need to wait for upgrade
                 } else if (LockCompatibility.isCompatibleWithAll(mode, state.getHeldModes())) {
                     // Grant the lock immediately
+                    System.out.println("DEBUG: Lock granted immediately for txid=" + txid + " resource=" + resource);
                     state.addLock(new Lock(resource, mode, txid));
                     txResources.computeIfAbsent(txid, k -> ConcurrentHashMap.newKeySet()).add(resource);
+                    // Clean up timeout manager state if we were waiting
+                    if (waited) {
+                        timeoutManager.onWaitEnd(txid);
+                    }
                     return;
                 }
 
-                // Need to wait: add to waiters and wait for notification
+                // Check if this tx timed out
+                String timedOutResource = timedOutWaiters.remove(txid);
+                if (timedOutResource != null) {
+                    // Clean up waiter already done by loop
+                    throw new LockTimeoutException(txid, timedOutResource, timeoutManager.getTimeoutMs());
+                }
+
+                // Need to wait: register with timeout manager if first wait
+                if (!waited) {
+                    System.out.println("DEBUG: Calling onWaitStart for txid=" + txid + " resource=" + resource);
+                    timeoutManager.onWaitStart(txid, resource);
+                    waited = true;
+                }
+
+                System.out.println("DEBUG: About to wait for txid=" + txid + " resource=" + resource);
+                // Add to waiters and wait for notification
                 Waiter waiter = new Waiter(txid, mode, Thread.currentThread());
                 state.addWaiter(waiter);
                 waitingTx.put(txid, state); // Track where this tx is waiting
@@ -153,6 +206,8 @@ public final class LockManager {
         // Clean up waiting state
         waitingTx.remove(txid);
         killedWaiters.remove(txid);
+        timedOutWaiters.remove(txid);
+        timeoutManager.onWaitEnd(txid);
         
         Set<String> resources = txResources.get(txid);
         if (resources != null) {
@@ -278,6 +333,35 @@ public final class LockManager {
                 state.notifyAll(); // Wake up the waiter to check killed flag
             }
         }
+    }
+
+    /**
+     * Aborts a transaction that is waiting due to timeout.
+     * Marks the transaction's waiter as timed out and notifies them to throw LockTimeoutException.
+     * Called by LockTimeoutManager when a timeout expires.
+     * 
+     * @param txid the transaction ID to abort
+     * @param resource the resource that timed out
+     */
+    void abortTimeoutWait(long txid, String resource) {
+        ResourceState state = waitingTx.get(txid);
+        if (state != null) {
+            synchronized (state) {
+                // Mark the waiter as timed out
+                timedOutWaiters.put(txid, resource);
+                state.notifyAll(); // Wake up the waiter to check timeout flag
+            }
+        }
+    }
+
+    /**
+     * Clears a timed out waiter entry.
+     * Called by LockTimeoutManager when a waiter finishes (granted or interrupted).
+     * 
+     * @param txid the transaction ID
+     */
+    void clearTimedOutWaiter(long txid) {
+        timedOutWaiters.remove(txid);
     }
 
     /**

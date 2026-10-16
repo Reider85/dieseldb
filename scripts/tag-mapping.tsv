@@ -178,3 +178,6 @@ DeadlockTest		concurrency
 ChainDeadlockTest		concurrency
 WaitForGraphTest		concurrency
 DeadlockOverheadTest		concurrency
+LockTimeoutTest		concurrency
+CancelTimerTest		concurrency
+LockTimeoutConfigTest	concurrency

@@ -967,3 +967,5 @@ chore: test-profiles-audit changelog entry
 3.2.104 Implement LockManager with S/X/IS/IX/SIX compatibility matrix (R3-006 step 1/4)
 
 3.2.105 Prompt 4 #24: WaitForGraph + DeadlockDetector + DeadlockVictimException (R3-006 step 2/4); fix LockCompatibility IS+S matrix bug vs standard MGL; harden DeadlockOverheadTest criteria vs Windows scheduler noise
+
+3.2.106 Fix LockTimeoutManager race condition: prevent timeout count increment when lock granted immediately
