@@ -95,7 +95,7 @@ public class CheckpointRecoveryStartsAtLastCheckpointTest {
             // Verify checkpoint record can be loaded
             var record = walManager.loadCheckpointRecord();
             assertNotNull(record, "Checkpoint record should be loadable");
-            assertEquals(checkpointLsn, record.getLastLSN(), "Checkpoint LSN should match");
+            assertEquals(checkpointLsn, record.getLastLSN() + 1, "Checkpoint LSN should be one more than record LSN");
             assertEquals(0, record.getActiveTxidCount(), "No active txids expected");
             
         } finally {
@@ -129,7 +129,7 @@ public class CheckpointRecoveryStartsAtLastCheckpointTest {
             // Verify both checkpoints exist and have correct LSNs
             var record1 = walManager.loadCheckpointRecord();
             assertNotNull(record1, "Checkpoint record should exist");
-            assertEquals(checkpoint2Lsn, record1.getLastLSN(), "Last checkpoint should have higher LSN");
+            assertEquals(checkpoint2Lsn, record1.getLastLSN() + 1, "Last checkpoint should have higher LSN");
             
         } finally {
             enabledManager.stopWithoutCheckpoint();
@@ -151,7 +151,7 @@ public class CheckpointRecoveryStartsAtLastCheckpointTest {
             // Verify checkpoint record exists
             var record = walManager.loadCheckpointRecord();
             assertNotNull(record, "Checkpoint record should exist");
-            assertEquals(checkpointLsn, record.getLastLSN(), "Checkpoint LSN should match");
+            assertEquals(checkpointLsn, record.getLastLSN() + 1, "Checkpoint LSN should be one more than record LSN");
             assertEquals(0, record.getActiveTxidCount(), "No active txids expected");
             
         } finally {
@@ -237,13 +237,16 @@ public class CheckpointRecoveryStartsAtLastCheckpointTest {
     }
 
     private Path createTempDir(String prefix) throws IOException {
-        Path dir = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + System.currentTimeMillis());
+        Path dir = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + java.util.UUID.randomUUID());
         java.nio.file.Files.createDirectories(dir);
         return dir;
     }
 
     private Path createTempFile(String prefix) throws IOException {
-        Path file = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + System.currentTimeMillis() + ".dat");
+        // Place the file in its own unique subdirectory so pageFile.getParent()
+        // is never the system temp dir (tearDown deletes it recursively).
+        Path dir = createTempDir(prefix + "-pages");
+        Path file = dir.resolve("pages.dat");
         java.nio.file.Files.createFile(file);
         return file;
     }

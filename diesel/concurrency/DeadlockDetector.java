@@ -128,8 +128,10 @@ public final class DeadlockDetector implements AutoCloseable {
             if (cycle != null && !cycle.isEmpty()) {
                 // Found a deadlock - select and abort victim
                 long victim = WaitForGraph.selectVictim(cycle);
-                lockManager.abortWait(victim, cycle);
-                deadlocksDetected.incrementAndGet();
+                boolean killed = lockManager.abortWait(victim, cycle);
+                if (killed) {
+                    deadlocksDetected.incrementAndGet();
+                }
                 
                 // Log warning
                 System.err.println("Deadlock detected and resolved: cycle " + cycle + 

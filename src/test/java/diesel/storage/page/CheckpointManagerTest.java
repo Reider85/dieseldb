@@ -349,13 +349,16 @@ public class CheckpointManagerTest {
     }
 
     private Path createTempDir(String prefix) throws IOException {
-        Path dir = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + System.currentTimeMillis());
+        Path dir = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + java.util.UUID.randomUUID());
         java.nio.file.Files.createDirectories(dir);
         return dir;
     }
 
     private Path createTempFile(String prefix) throws IOException {
-        Path file = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + System.currentTimeMillis() + ".dat");
+        // Place the file in its own unique subdirectory so pageFile.getParent()
+        // is never the system temp dir (tearDown deletes it recursively).
+        Path dir = createTempDir(prefix + "-pages");
+        Path file = dir.resolve("pages.dat");
         java.nio.file.Files.createFile(file);
         return file;
     }

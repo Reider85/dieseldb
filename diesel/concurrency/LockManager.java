@@ -323,16 +323,20 @@ public final class LockManager {
      * 
      * @param txid the transaction ID to abort
      * @param cycle the wait-for cycle that caused the deadlock (for exception message)
+     * @return true if the transaction was marked as killed for the first time, false if already killed or not waiting
      */
-    public void abortWait(long txid, List<Long> cycle) {
+    public boolean abortWait(long txid, List<Long> cycle) {
         ResourceState state = waitingTx.get(txid);
         if (state != null) {
             synchronized (state) {
-                // Mark the waiter as killed
-                killedWaiters.put(txid, cycle);
-                state.notifyAll(); // Wake up the waiter to check killed flag
+                // Mark the waiter as killed only if not already killed (fresh kill)
+                if (killedWaiters.putIfAbsent(txid, cycle) == null) {
+                    state.notifyAll(); // Wake up the waiter to check killed flag
+                    return true;
+                }
             }
         }
+        return false;
     }
 
     /**

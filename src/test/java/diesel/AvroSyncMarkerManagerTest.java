@@ -115,6 +115,7 @@ class AvroSyncMarkerManagerTest {
 
     /** Writes a single-block file with the default (64 MB) sync interval. */
     private File writeSingleBlock(int rows) throws IOException {
+        System.setProperty("avro.block.sync.interval", "67108864");
         File f = new File(tempDir.toFile(), "single-" + rows + ".avro");
         AvroDataFileWriter w = new AvroDataFileWriter(cols(), types(), f);
         try {

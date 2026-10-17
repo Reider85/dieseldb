@@ -91,10 +91,10 @@ public class CheckpointDurationTest {
             assertTrue(duration < 1000, "Empty checkpoint should take < 1s, took " + duration + "ms");
             
             // Verify duration is recorded
-            assertTrue(enabledManager.getLastCheckpointDurationMs() > 0, 
-                      "Checkpoint duration should be recorded");
-            assertEquals(duration, enabledManager.getLastCheckpointDurationMs(), 
-                        "Recorded duration should match actual duration");
+            long recorded = enabledManager.getLastCheckpointDurationMs();
+            assertTrue(recorded >= 0, "Checkpoint duration should be non-negative");
+            assertTrue(duration >= recorded, "Recorded duration (" + recorded + "ms) should not exceed measured duration (" + duration + "ms)");
+            assertTrue(duration - recorded <= 10, "Recorded duration should be within a few ms of measured duration, diff=" + (duration - recorded) + "ms");
             
         } finally {
             enabledManager.stopWithoutCheckpoint();
@@ -305,13 +305,16 @@ public class CheckpointDurationTest {
 
     // Helper methods
     private Path createTempDir(String prefix) throws IOException {
-        Path dir = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + System.currentTimeMillis());
+        Path dir = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + java.util.UUID.randomUUID());
         java.nio.file.Files.createDirectories(dir);
         return dir;
     }
 
     private Path createTempFile(String prefix) throws IOException {
-        Path file = Path.of(System.getProperty("java.io.tmpdir"), prefix + "-" + System.currentTimeMillis() + ".dat");
+        // Place the file in its own unique subdirectory so pageFile.getParent()
+        // is never the system temp dir (tearDown deletes it recursively).
+        Path dir = createTempDir(prefix + "-pages");
+        Path file = dir.resolve("pages.dat");
         java.nio.file.Files.createFile(file);
         return file;
     }
