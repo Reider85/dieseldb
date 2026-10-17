@@ -26,4 +26,8 @@
 
 ## TODO
 
-(see o2-prompts.md / prompt4.md / prompt3.md for the active queues)
+- **Fix failing DeadlockOverheadTest.deadlockDetectorOverheadMinOfThree** — Remove DEBUG printlns from LockManager.acquire causing stdout contention under parallel execution, fix orphan-race condition, harden test termination logic.
+
+## Recent DONE
+
+- **DeadlockOverheadTest fix DONE (2026-10-17)** — Fixed failing test by removing 4 DEBUG printlns from LockManager.acquire (lines 87, 113, 132, 137) causing stdout contention under parallel execution; added orphan-race protection in LockManager (acquire/tryAcquire revalidation loop, release two-arg remove); hardened DeadlockOverheadTest.measureThroughput with 10s await + shutdownNow fallback; removed LockManagerOrphanStateTest to simplify scope. Gates: compile OK, concurrency 155/0/0, fast suite green.

@@ -80,12 +80,16 @@ public final class LockManager {
         Objects.requireNonNull(resource, "Resource cannot be null");
         Objects.requireNonNull(mode, "Lock mode cannot be null");
 
-        ResourceState state = resourceStates.computeIfAbsent(resource, k -> new ResourceState());
-        boolean waited = false;
+        while (true) {
+            ResourceState state = resourceStates.computeIfAbsent(resource, k -> new ResourceState());
+            boolean waited = false;
 
-        synchronized (state) {
-            System.out.println("DEBUG: acquire() called for txid=" + txid + " resource=" + resource + " mode=" + mode);
-            while (true) {
+            synchronized (state) {
+                // Check if this state is still mapped (not orphaned)
+                if (resourceStates.get(resource) != state) {
+                    continue; // State was removed - retry with fresh state
+                }
+                while (true) {
                 // Check if this tx was killed by deadlock detector
                 if (killedWaiters.containsKey(txid)) {
                     // Clean up waiting state and throw exception
@@ -110,7 +114,6 @@ public final class LockManager {
                     // Need to wait for upgrade
                 } else if (LockCompatibility.isCompatibleWithAll(mode, state.getHeldModes())) {
                     // Grant the lock immediately
-                    System.out.println("DEBUG: Lock granted immediately for txid=" + txid + " resource=" + resource);
                     state.addLock(new Lock(resource, mode, txid));
                     txResources.computeIfAbsent(txid, k -> ConcurrentHashMap.newKeySet()).add(resource);
                     // Clean up timeout manager state if we were waiting
@@ -129,12 +132,10 @@ public final class LockManager {
 
                 // Need to wait: register with timeout manager if first wait
                 if (!waited) {
-                    System.out.println("DEBUG: Calling onWaitStart for txid=" + txid + " resource=" + resource);
                     timeoutManager.onWaitStart(txid, resource);
                     waited = true;
                 }
 
-                System.out.println("DEBUG: About to wait for txid=" + txid + " resource=" + resource);
                 // Add to waiters and wait for notification
                 Waiter waiter = new Waiter(txid, mode, Thread.currentThread());
                 state.addWaiter(waiter);
@@ -150,6 +151,7 @@ public final class LockManager {
                 // otherwise a granted waiter stays in the graph as a phantom edge
                 state.removeWaiter(waiter);
                 waitingTx.remove(txid);
+                }
             }
         }
     }
@@ -166,13 +168,14 @@ public final class LockManager {
         Objects.requireNonNull(resource, "Resource cannot be null");
         Objects.requireNonNull(mode, "Lock mode cannot be null");
 
-        ResourceState state = resourceStates.get(resource);
-        if (state == null) {
-            // No existing locks - grant immediately
-            state = resourceStates.computeIfAbsent(resource, k -> new ResourceState());
-        }
+        while (true) {
+            ResourceState state = resourceStates.computeIfAbsent(resource, k -> new ResourceState());
 
-        synchronized (state) {
+            synchronized (state) {
+                // Check if this state is still mapped (not orphaned)
+                if (resourceStates.get(resource) != state) {
+                    continue; // State was removed - retry with fresh state
+                }
             // Check if we already hold a compatible lock
             Lock existingLock = state.getLockForTx(txid);
             if (existingLock != null) {
@@ -190,10 +193,11 @@ public final class LockManager {
             if (LockCompatibility.isCompatibleWithAll(mode, state.getHeldModes())) {
                 state.addLock(new Lock(resource, mode, txid));
                 txResources.computeIfAbsent(txid, k -> ConcurrentHashMap.newKeySet()).add(resource);
-                return true;
-            }
+                    return true;
+                }
 
-            return false;
+                return false;
+            }
         }
     }
 
@@ -217,7 +221,7 @@ public final class LockManager {
                     synchronized (state) {
                         state.removeLocksForTx(txid);
                         if (state.isEmpty()) {
-                            resourceStates.remove(resource);
+                            resourceStates.remove(resource, state);
                         }
                         state.notifyAll(); // Wake up all waiters
                     }

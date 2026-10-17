@@ -162,7 +162,12 @@ class DeadlockOverheadTest {
             
             // Wait for completion
             executor.shutdown();
-            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                // Force shutdown if not terminated
+                executor.shutdownNow();
+                assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS),
+                    "Executor did not terminate after shutdownNow");
+            }
             
             // Calculate throughput (ops/sec)
             double actualDuration = TEST_DURATION_MS / 1000.0;

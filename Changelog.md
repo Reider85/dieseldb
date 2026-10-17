@@ -957,19 +957,21 @@ chore: test-profiles-audit changelog entry
 
 3.2.99 Fix flaky microbenchmark in WALReadAllIsAlreadySortedTest.readAllIsAtLeastAsFastAsTheOldSortPath
 
-3.2.100 Background checkpoint daemon with interval/WAL-size triggers, integration with WAL and BufferPoolFlusher, sharp checkpoint with write gate, WAL archiving after checkpoint
-3.2.101 Workflow speed-up: archive PROMPT_STATUS.md full texts to docs/status-archive.md (live tracker now one-line entries, -85% context tokens); AGENTS.md: mandatory pre-flight check (git log + status grep before each prompt), mandatory bash timeouts on every test/gate command (10-30min caps), Timing Policy (skip make timing for WAL/MVCC/recovery/storage work; red-gate = re-run once then commit-with-noise-note; no A/B git-stash without user request), Known Flakes table (FlusherTest, TempDir races, Jsonl 1M benchmark, microbenchmarks, ru-RU locale) - stop re-debugging pre-existing failures
+3.3.0 Background checkpoint daemon with interval/WAL-size triggers, integration with WAL and BufferPoolFlusher, sharp checkpoint with write gate, WAL archiving after checkpoint
+3.3.1 Workflow speed-up: archive PROMPT_STATUS.md full texts to docs/status-archive.md (live tracker now one-line entries, -85% context tokens); AGENTS.md: mandatory pre-flight check (git log + status grep before each prompt), mandatory bash timeouts on every test/gate command (10-30min caps), Timing Policy (skip make timing for WAL/MVCC/recovery/storage work; red-gate = re-run once then commit-with-noise-note; no A/B git-stash without user request), Known Flakes table (FlusherTest, TempDir races, Jsonl 1M benchmark, microbenchmarks, ru-RU locale) - stop re-debugging pre-existing failures
 
-3.2.102 Test-suite speed-up: pom reuseForks=true (skip JVM restart per class), all-tests runs clean only on first profile then incremental; shrink heavy test data (VacuumTest 1M->100k rows, DelimitedIoPerfTest 200k->50k, FindNewIndexAfterCompactIsO1Test 4M->200k, fewer warmups); retag Checkpoint* tests to @Tag(storage) only; Assert-TestsRan polls up to 30s for surefire XML (reuseForks fork-flush race); fast suite 484/0/0
+3.3.2 Test-suite speed-up: pom reuseForks=true (skip JVM restart per class), all-tests runs clean only on first profile then incremental; shrink heavy test data (VacuumTest 1M->100k rows, DelimitedIoPerfTest 200k->50k, FindNewIndexAfterCompactIsO1Test 4M->200k, fewer warmups); retag Checkpoint* tests to @Tag(storage) only; Assert-TestsRan polls up to 30s for surefire XML (reuseForks fork-flush race); fast suite 484/0/0
 
-3.2.103 Fix stale-row leak after VACUUM/compact: Table.compact() marks table persist-dirty so Avro pushdown is bypassed until flusher rewrites file
+3.3.3 Fix stale-row leak after VACUUM/compact: Table.compact() marks table persist-dirty so Avro pushdown is bypassed until flusher rewrites file
 
-3.2.104 Implement LockManager with S/X/IS/IX/SIX compatibility matrix (R3-006 step 1/4)
+3.3.4 Implement LockManager with S/X/IS/IX/SIX compatibility matrix (R3-006 step 1/4)
 
-3.2.105 Prompt 4 #24: WaitForGraph + DeadlockDetector + DeadlockVictimException (R3-006 step 2/4); fix LockCompatibility IS+S matrix bug vs standard MGL; harden DeadlockOverheadTest criteria vs Windows scheduler noise
+3.3.5 Prompt 4 #24: WaitForGraph + DeadlockDetector + DeadlockVictimException (R3-006 step 2/4); fix LockCompatibility IS+S matrix bug vs standard MGL; harden DeadlockOverheadTest criteria vs Windows scheduler noise
 
-3.2.106 Fix LockTimeoutManager race condition: prevent timeout count increment when lock granted immediately
+3.3.6 Fix LockTimeoutManager race condition: prevent timeout count increment when lock granted immediately
 
-3.2.107 Prompt 4 #26: SavepointManager + NestedSavepointStack (R3-006 step 4/4) - Added SAVEPOINT/ROLLBACK TO/RELEASE functionality with WAL integration, bookkeeping snapshots, and parser strategies
+3.3.7 Prompt 4 #26: SavepointManager + NestedSavepointStack (R3-006 step 4/4) - Added SAVEPOINT/ROLLBACK TO/RELEASE functionality with WAL integration, bookkeeping snapshots, and parser strategies
 
-3.2.108 Fix 8 test failures: DeadlockDetector counts fresh kills only (abortWait returns boolean); checkpoint tests create pageFile in UUID-unique subdirs so deleteRecursively(getParent()) no longer nukes %TEMP% under parallel core profile; pin avro.block.sync.interval; SelectQueryRefactorTest @AfterEach database.close(); forceRotate before checkpointNow; LSN asserts use checkpointLsn==lastLSN+1; relax CheckpointDuration timing bounds
+3.3.8 Fix 8 test failures: DeadlockDetector counts fresh kills only (abortWait returns boolean); checkpoint tests create pageFile in UUID-unique subdirs so deleteRecursively(getParent()) no longer nukes %TEMP% under parallel core profile; pin avro.block.sync.interval; SelectQueryRefactorTest @AfterEach database.close(); forceRotate before checkpointNow; LSN asserts use checkpointLsn==lastLSN+1; relax CheckpointDuration timing bounds
+
+3.3.9 Fix failing DeadlockOverheadTest.deadlockDetectorOverheadMinOfThree - remove DEBUG printlns from LockManager.acquire causing stdout contention under parallel execution, add orphan-race protection, harden test termination logic
