@@ -975,3 +975,5 @@ chore: test-profiles-audit changelog entry
 3.3.8 Fix 8 test failures: DeadlockDetector counts fresh kills only (abortWait returns boolean); checkpoint tests create pageFile in UUID-unique subdirs so deleteRecursively(getParent()) no longer nukes %TEMP% under parallel core profile; pin avro.block.sync.interval; SelectQueryRefactorTest @AfterEach database.close(); forceRotate before checkpointNow; LSN asserts use checkpointLsn==lastLSN+1; relax CheckpointDuration timing bounds
 
 3.3.9 Fix failing DeadlockOverheadTest.deadlockDetectorOverheadMinOfThree - remove DEBUG printlns from LockManager.acquire causing stdout contention under parallel execution, add orphan-race protection, harden test termination logic
+
+0.0.1 Version numbering rollover: X.Y.99 -> X.(Y+1).0, X.99.99 -> (X+1).0.0 in commit-and-changelog.ps1; AGENTS.md documents scheme

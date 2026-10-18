@@ -301,7 +301,7 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
   ```bash
   make release DESC="Fix JOIN OR OOM by implementing hash join spilling"
   ```
-  This auto-appends the versioned entry to `Changelog.md`, **syncs `pom.xml` project version** to the same value, commits, and pushes. Version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`).
+  This auto-appends the versioned entry to `Changelog.md`, **syncs `pom.xml` project version** to the same value, commits, and pushes. Version prefix is auto-calculated from the last commit (e.g. `3.1.32` → `3.1.33`); when patch reaches 99 it rolls over — `X.Y.99` → `X.(Y+1).0`, `X.99.99` → `(X+1).0.0`.
   **PROMPT_STATUS.md joins this commit:** update it before running `make release`
   (step 7 of the workflow); the release target stages it explicitly, so a DONE
   entry never becomes its own commit. Do not write `Committed as ...` into

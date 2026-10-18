@@ -15,17 +15,26 @@ if (-not $lastCommit) {
     Write-Host "No commits found. Using version 0.0.1"
     $major = 0; $minor = 0; $patch = 1
 } else {
-    # Extract version prefix from the last commit (e.g. "3.1.32 fix(...)" -> "3.1.32")
-    if ($lastCommit -match '^(\d+)\.(\d+)\.(\d+)\s') {
-        $major = [int]$Matches[1]
-        $minor = [int]$Matches[2]
-        $patch = [int]$Matches[3] + 1
-    } else {
-        Write-Host "WARNING: Could not parse version from last commit: '$lastCommit'"
-        Write-Host "Falling back to version 0.0.1"
-        $major = 0; $minor = 0; $patch = 1
+        # Extract version prefix from the last commit (e.g. "3.1.32 fix(...)" -> "3.1.32")
+        if ($lastCommit -match '^(\d+)\.(\d+)\.(\d+)\s') {
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            $patch = [int]$Matches[3] + 1
+            # Rollover: X.Y.99 -> X.(Y+1).0 ; X.99.99 -> (X+1).0.0
+            if ($patch -ge 100) {
+                $patch = 0
+                $minor += 1
+                if ($minor -ge 100) {
+                    $minor = 0
+                    $major += 1
+                }
+            }
+        } else {
+            Write-Host "WARNING: Could not parse version from last commit: '$lastCommit'"
+            Write-Host "Falling back to version 0.0.1"
+            $major = 0; $minor = 0; $patch = 1
+        }
     }
-}
 
 $newVersion = "$major.$minor.$patch"
 $entry = "$newVersion $Description"
