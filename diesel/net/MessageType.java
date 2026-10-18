@@ -31,6 +31,9 @@ public enum MessageType {
     /** Close a prepared statement by id. */
     CLOSE_PREPARED((short) 6),
 
+    /** Response to prepare message (server -> client). */
+    PREPARE_RESPONSE((short) 15),
+
     /** Open a server-side cursor over a query. */
     OPEN_CURSOR((short) 7),
 
@@ -39,6 +42,18 @@ public enum MessageType {
 
     /** Close an open cursor. */
     CLOSE_CURSOR((short) 9),
+
+    /** Response to close prepared message (server -> client). */
+    CLOSE_PREPARED_RESPONSE((short) 16),
+
+    /** Response to open cursor message (server -> client). */
+    OPEN_CURSOR_RESPONSE((short) 17),
+
+    /** Response to fetch cursor message (server -> client). */
+    FETCH_CURSOR_RESPONSE((short) 18),
+
+    /** Response to close cursor message (server -> client). */
+    CLOSE_CURSOR_RESPONSE((short) 19),
 
     /** Health / liveness probe (prompt4.md #28). */
     HEALTH_CHECK((short) 10),

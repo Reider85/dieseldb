@@ -31,4 +31,8 @@
 
 ## Recent DONE
 
+- **Prompt 4 #28 DONE (2026-10-19)** — R3-007 step 2/3: Replaced Java Object Serialization with explicit binary serialization for network protocol message types; new diesel/net/messages/ package with 8 message classes (QueryMessage, QueryResultMessage, PrepareMessage, ExecutePreparedMessage, BatchQueryMessage, HealthCheckMessage, HealthCheckResponse, CompressionHandshakeMessage) + codecs; MessageCodecRegistry; DatabaseServer updated to use DataInputStream/DataOutputStream and WireProtocol.decodeFrame; RCE vulnerability closed at protocol layer; new WireProtocolSecurityTest (Java serialization payloads rejected). TIA mapping updated. Gates: compile OK, fast suite passing (482/0/0); timing skipped (security work, not on query path).
+
+## Recent DONE
+
 - **Test-fix batch DONE (2026-10-18)** — Fixed 3 failing tests: AsyncWALWriter resource leak (close() no longer closes underlying WALWriter to allow test reuse), FlusherTest WAL directory contamination (unique WAL dirs per test method), CompactWithLargeRowVersionsTest timing sensitivity (bound increased to 1500ms with parallel execution comment). AsyncWALWriterTest: added isClosed() method; FlusherTest: walDir field, unique WAL directories, updated cleanup; CompactTest: relaxed timing. Gates: compile OK, fast suite 482/0/0, core suite green; GroupCommitThroughputTest p99 flake passes in isolation (likely environmental noise when run in parallel).

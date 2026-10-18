@@ -979,3 +979,5 @@ chore: test-profiles-audit changelog entry
 3.3.10 Version numbering rollover: X.Y.99 -> X.(Y+1).0, X.99.99 -> (X+1).0.0 in commit-and-changelog.ps1; AGENTS.md documents scheme
 
 3.3.11 Prompt 4 #27: WireProtocol v2 binary framing + MessageCodec (R3-007 step 1/3) - DSEL magic/version/type/length/payload/CRC32 frames, MessageType enum (14 stable ids), Message+MessageCodec interfaces, WireException/InvalidMessageException, 64MiB anti-OOM payload cap; v1 rejected v2 accepted; Java-serialized payloads rejected at magic check; new diesel/net package, no existing code touched; WireProtocolTest 18 tests
+
+3.3.12 Replace Java Object Serialization with explicit binary serialization for network protocol message types
