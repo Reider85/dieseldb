@@ -100,6 +100,7 @@ OomHandlingTest	network
 CursorTest	network
 PreparedStatementTest	network
 AllTestsSampleTest	network
+WireProtocolTest	network
 PerformanceTest	perf
 PerformanceRegressionTest	perf
 StringOpsBenchmarkTest	perf
