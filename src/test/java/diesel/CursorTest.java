@@ -219,7 +219,9 @@ public class CursorTest {
                     client.fetchCursor("00000000-0000-0000-0000-000000000000");
                 } catch (DieselException e) {
                     threw = true;
-                    assertTrue(e.getMessage().contains("Unknown or closed cursor"));
+                    assertTrue(e.getMessage() != null
+                                    && e.getMessage().contains("Unknown or closed cursor"),
+                            "unexpected error message: " + e.getMessage());
                 }
                 assertTrue(threw, "fetching an unknown cursor must raise a server error");
             } finally {

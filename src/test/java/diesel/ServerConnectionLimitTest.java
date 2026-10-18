@@ -7,8 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
@@ -103,26 +101,13 @@ public class ServerConnectionLimitTest {
         int rejected = 0;
         int probeCount = 5;
         for (int i = 0; i < probeCount; i++) {
-            Socket probe = null;
-            try {
-                probe = new Socket("localhost", port);
-                probe.setSoTimeout(2000);
-                
-                ObjectOutputStream out = new ObjectOutputStream(probe.getOutputStream());
-                out.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
-                out.flush();
-                
-                ObjectInputStream in = new ObjectInputStream(probe.getInputStream());
-                Object response = in.readObject();
-                
+            try (WireProbe probe = new WireProbe(port, 2000)) {
+                probe.handshake();
+                Object response = probe.query("SET AUTOCOMMIT = ON");
                 LOGGER.log(Level.INFO, "Probe {0} got response (unexpected): {1}", new Object[]{i, response});
-            } catch (IOException | ClassNotFoundException e) {
+            } catch (IOException e) {
                 rejected++;
                 LOGGER.log(Level.INFO, "Probe {0} rejected as expected: {1}", new Object[]{i, e.getClass().getSimpleName()});
-            } finally {
-                if (probe != null) {
-                    try { probe.close(); } catch (IOException ignored) { /* socket already closed */ }
-                }
             }
         }
         

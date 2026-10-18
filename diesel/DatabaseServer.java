@@ -6,7 +6,6 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
-import java.util.zip.GZIPOutputStream;
 
 import diesel.net.*;
 import diesel.net.messages.*;
@@ -48,9 +47,12 @@ public class DatabaseServer {
     private final int port;
     private final Database database;
     private ServerSocket serverSocket;
+    private ServerSocket legacyServerSocket;
     private volatile boolean running;
     private final ThreadPoolExecutor executor;
     private final int socketTimeout;
+    private final int legacyPort;
+    private final Properties configOverride;
 
     /**
      * Creates a server on the given port with the default socket timeout.
@@ -82,9 +84,34 @@ public class DatabaseServer {
      * @param database      the database instance to serve
      */
     public DatabaseServer(int port, int socketTimeout, Database database) {
+        this(port, socketTimeout, 0, database);
+    }
+
+    public DatabaseServer(int port, int socketTimeout, int legacyPort, Database database) {
+        this(port, socketTimeout, legacyPort, database, null);
+    }
+
+    /**
+     * Creates a server with an explicit configuration overlay (prompt4 #29).
+     * Entries win over {@code config.properties} for this server instance only,
+     * so a test or an embedding host can flip a single key (e.g.
+     * {@code compression.threshold.bytes}) without mutating process-wide state.
+     *
+     * @param port           the port to listen on
+     * @param socketTimeout  the per-client socket read timeout in milliseconds,
+     *                       or -1 to load it from the configuration file
+     * @param legacyPort     the deprecated v1-protocol port, 0 disables it
+     * @param database       the database instance to serve
+     * @param configOverride configuration entries applied on top of the file,
+     *                       or null to use the file as-is
+     */
+    public DatabaseServer(int port, int socketTimeout, int legacyPort, Database database,
+                          Properties configOverride) {
         this.port = port;
         this.socketTimeout = socketTimeout;
+        this.legacyPort = legacyPort;
         this.database = database;
+        this.configOverride = configOverride;
         this.executor = new ThreadPoolExecutor(
                 poolSize, poolSize, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(queueCapacity),
@@ -141,6 +168,11 @@ public class DatabaseServer {
     public void start() {
         // Load and log configuration
         Properties config = loadConfig();
+        // Instance-level overlay (prompt4 #29): wins over config.properties for
+        // this server only, keeping tests free of process-wide property flips.
+        if (configOverride != null) {
+            config.putAll(configOverride);
+        }
         logConfig(config);
         IsolationLevel isolationLevel = getIsolationLevel(config);
         int effectiveSocketTimeout = socketTimeout >= 0 ? socketTimeout : getSocketTimeout(config);
@@ -162,20 +194,64 @@ public class DatabaseServer {
             serverSocket = new ServerSocket(port, backlog);
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
 
+            // Start legacy server if enabled
+            if (legacyPort > 0) {
+                startLegacyServer(database, effectiveSocketTimeout, config);
+            }
+
             while (running) {
-try {
-                        Socket clientSocket = serverSocket.accept();
-                        LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
-                        handleClientConnection(clientSocket, executor, database, effectiveSocketTimeout, config);
-                    } catch (IOException e) {
-                        if (running) {
-                            LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
-                        }
+                try {
+                    Socket clientSocket = serverSocket.accept();
+                    LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
+                    handleClientConnection(clientSocket, executor, database, effectiveSocketTimeout, config);
+                } catch (IOException e) {
+                    if (running) {
+                        LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
                     }
+                }
             }
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to start server: {0}", e.getMessage());
         }
+    }
+
+    /**
+     * Starts the legacy server on the specified port.
+     */
+    private void startLegacyServer(Database database, int effectiveSocketTimeout, Properties config) {
+        Thread legacyThread = new Thread(() -> {
+            try {
+                legacyServerSocket = new ServerSocket(legacyPort, backlog);
+                LOGGER.log(Level.WARNING, "Legacy protocol server started on deprecated port {0} - use v2 protocol instead", legacyPort);
+
+                while (running) {
+                    try {
+                        Socket clientSocket = legacyServerSocket.accept();
+                        LOGGER.log(Level.WARNING, "New legacy client connected: {0}", clientSocket.getInetAddress());
+                        
+                        // Handle legacy connection in a separate thread
+                        Thread legacyHandlerThread = new Thread(() -> {
+                            try {
+                                LegacyProtocolAdapter adapter = new LegacyProtocolAdapter(database, config);
+                                adapter.handleConnection(clientSocket, effectiveSocketTimeout);
+                            } catch (IOException e) {
+                                LOGGER.log(Level.WARNING, "Legacy client handler error: {0}", e.getMessage());
+                            }
+                        });
+                        legacyHandlerThread.setDaemon(true);
+                        legacyHandlerThread.start();
+                    } catch (IOException e) {
+                        if (running) {
+                            LOGGER.log(Level.SEVERE, "Error accepting legacy client connection: {0}", e.getMessage());
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "Failed to start legacy server: {0}", e.getMessage());
+            }
+        });
+        legacyThread.setDaemon(true);
+        legacyThread.start();
     }
 
     /**
@@ -184,6 +260,17 @@ try {
      */
     public void stop() {
         running = false;
+        
+        // Stop legacy server
+        if (legacyServerSocket != null && !legacyServerSocket.isClosed()) {
+            try {
+                legacyServerSocket.close();
+                LOGGER.log(Level.INFO, "Legacy server socket closed");
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "Error closing legacy server socket: {0}", e.getMessage());
+            }
+        }
+        
         database.getVacuumManager().stop();
         // Stop background checkpoint manager (prompt4 #21)
         try {
@@ -257,6 +344,7 @@ try {
         private int compressionLevel;
         private String compressionAlgorithm;
         private boolean compressionEnabled;
+        private CompressionHandshakeHandler compressionHandler;
         
         // Metrics
         private long totalOriginalBytes = 0;
@@ -287,89 +375,33 @@ try {
         private Message performHandshake() throws IOException {
             // Read client handshake message
             MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.COMPRESSION_HANDSHAKE);
-            Message input = WireProtocol.readMessage(codec, in);
+            diesel.net.messages.CompressionHandshakeMessage handshake = 
+                (diesel.net.messages.CompressionHandshakeMessage) WireProtocol.readMessage(codec, in);
             
-            if (input instanceof CompressionHandshakeMessage handshake) {
-                LOGGER.log(Level.INFO, "Received compression handshake from client: {0}", handshake);
-                
-                // Determine agreed settings
-                boolean clientWantsCompression = handshake.isClientSupportsCompression();
-                String agreedAlgorithm = DEFAULT_ALGORITHM;
-                int agreedLevel = compressionLevel;
-                int agreedThreshold = compressionThreshold;
-                
-                // Check if client supports our algorithm
-                if (clientWantsCompression && handshake.getSupportedAlgorithms().contains(DEFAULT_ALGORITHM)) {
-                    // Use client's preferred level if reasonable (1-9)
-                    int clientPreferredLevel = handshake.getPreferredCompressionLevel();
-                    if (clientPreferredLevel >= 1 && clientPreferredLevel <= 9) {
-                        agreedLevel = clientPreferredLevel;
-                    }
-                    // Use client's threshold if reasonable
-                    int clientThreshold = handshake.getCompressionThresholdBytes();
-                    if (clientThreshold > 0) {
-                        agreedThreshold = clientThreshold;
-                    }
-                    compressionEnabled = true;
-                } else {
-                    compressionEnabled = false;
-                }
-                
-                // Update instance variables with agreed settings
-                this.compressionAlgorithm = agreedAlgorithm;
-                this.compressionLevel = agreedLevel;
-                this.compressionThreshold = agreedThreshold;
-                
-                // Send response to client
-                CompressionHandshakeResponse response = new CompressionHandshakeResponse(
-                        compressionEnabled, agreedAlgorithm, agreedLevel, agreedThreshold);
-                // Note: We need to create a wrapper message for the response
-                // For now, just send a simple response
-                sendSerializedResult("Compression handshake completed");
-                return null;
-            } else {
-                // Client doesn't support handshake - use defaults
-                LOGGER.log(Level.INFO, "Client does not support compression handshake, using defaults");
-                compressionEnabled = true;
-                this.compressionAlgorithm = DEFAULT_ALGORITHM;
-                return input;
-            }
+            LOGGER.log(Level.INFO, "Received compression handshake from client: {0}", handshake);
+
+            // Create compression handler with negotiated settings and keep it
+            // for every payload of this session (both directions).
+            compressionHandler = new CompressionHandshakeHandler(
+                handshake, compressionThreshold, compressionLevel);
+            
+            // Update instance variables with agreed settings
+            this.compressionEnabled = compressionHandler.isCompressionEnabled();
+            this.compressionAlgorithm = compressionHandler.getChosenCodec().name();
+            this.compressionLevel = compressionHandler.getActualLevel();
+            this.compressionThreshold = compressionHandler.getActualThreshold();
+            
+            // Send proper response to client
+            diesel.net.messages.CompressionHandshakeResponseMessage response = 
+                compressionHandler.createResponse(handshake.getTransactionId());
+            MessageCodec responseCodec = MessageCodecRegistry.getCodec(MessageType.COMPRESSION_HANDSHAKE_RESPONSE);
+            WireProtocol.writeMessage(response, responseCodec, out);
+            out.flush();
+            
+            return null; // Handshake is complete, no pending message
         }
 
-        /**
-         * Compresses data using GZIP and collects metrics.
-         */
-        private byte[] compressWithMetrics(byte[] data) {
-            if (!compressionEnabled || data.length <= compressionThreshold) {
-                return data; // No compression
-            }
-            
-            long startTime = System.nanoTime();
-            try {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                try (GZIPOutputStream gzos = new GZIPOutputStream(baos)) {
-                    gzos.write(data);
-                }
-                byte[] compressed = baos.toByteArray();
-                long endTime = System.nanoTime();
-                
-                // Collect metrics
-                totalOriginalBytes += data.length;
-                totalCompressedBytes += compressed.length;
-                totalCompressionTimeNanos += (endTime - startTime);
-                compressionCount++;
-                
-                // Log metrics periodically
-                if (compressionCount % 10 == 0) {
-                    logCompressionMetrics();
-                }
-                
-                return compressed;
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Compression failed, sending uncompressed: {0}", e.getMessage());
-                return data;
-            }
-        }
+
 
         /**
          * Logs compression metrics.
@@ -415,19 +447,6 @@ try {
                 sendSerializedResult("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.");
             } catch (IOException io) {
                 LOGGER.log(Level.SEVERE, "Error sending OOM response to client: {0}", io.getMessage());
-            }
-        }
-
-        private byte[] serializeResult(Object result) {
-            try {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ObjectOutputStream oos = new ObjectOutputStream(baos);
-                oos.writeObject(result);
-                oos.close();
-                return baos.toByteArray();
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Error serializing query result: {0}", e.getMessage());
-                return new byte[0];
             }
         }
 
@@ -491,40 +510,26 @@ try {
                 return pendingMessage;
             }
             try {
-                // Read the frame header to determine the message type
-                byte[] magic = new byte[4];
-                in.readFully(magic);
-                if (!Arrays.equals(magic, WireProtocol.MAGIC)) {
-                    throw new InvalidMessageException("Bad magic bytes");
+                WireProtocol.Frame frame = WireProtocol.decodeFrame(in);
+                byte[] payload = frame.payload();
+                if (frame.compressed()) {
+                    if (compressionHandler == null) {
+                        throw new InvalidMessageException(
+                                "Compressed frame received before the compression handshake");
+                    }
+                    payload = compressionHandler.decompress(payload);
                 }
-                
-                // Read the rest of the header
-                int version = in.readUnsignedShort();
-                short typeId = in.readShort();
-                int length = in.readInt();
-                
-                // Validate version and type
-                if (version != WireProtocol.VERSION) {
-                    throw new InvalidMessageException("Unsupported protocol version: " + version);
-                }
-                MessageType type = MessageType.fromId(typeId);
-                
-                // Read the payload
-                byte[] payload = new byte[length];
-                in.readFully(payload);
-                
-                // Read CRC32
-                int expectedCrc = in.readInt();
-                // Note: crcOf is private, we'll skip CRC check for now to allow testing
-                if (false) { // actualCrc != expectedCrc
-                    throw new InvalidMessageException("CRC32 mismatch");
-                }
-                
-                // Decode the message payload
-                MessageCodec codec = MessageCodecRegistry.getCodec(type);
+                MessageCodec codec = MessageCodecRegistry.getCodec(frame.type());
                 DataInputStream payloadIn = new DataInputStream(new ByteArrayInputStream(payload));
-                return codec.decode(payloadIn);
-                
+                Message message = codec.decode(payloadIn);
+                if (message.getType() != frame.type()) {
+                    throw new InvalidMessageException("Payload type tag " + message.getType()
+                            + " does not match frame header type " + frame.type());
+                }
+                return message;
+            } catch (EOFException e) {
+                LOGGER.log(Level.FINE, "Client {0} closed the connection", clientSocket.getInetAddress());
+                return null;
             } catch (SocketTimeoutException e) {
                 LOGGER.log(Level.WARNING, "Socket timeout while waiting for query from client {0}: {1}",
                         new Object[]{clientSocket.getInetAddress(), e.getMessage()});
@@ -551,35 +556,35 @@ try {
                     return true;
                     
                 case PREPARE:
-                    handlePrepare((PrepareMessage) input);
+                    handlePrepare((diesel.net.messages.PrepareMessage) input);
                     return true;
                     
                 case EXECUTE_PREPARED:
-                    handleExecutePrepared((ExecutePreparedMessage) input);
+                    handleExecutePrepared((diesel.net.messages.ExecutePreparedMessage) input);
                     return true;
                     
                 case CLOSE_PREPARED:
-                    handleClosePrepared((ClosePreparedMessage) input);
+                    handleClosePrepared((diesel.net.messages.ClosePreparedMessage) input);
                     return true;
                     
                 case OPEN_CURSOR:
-                    handleOpenCursor((OpenCursorMessage) input);
+                    handleOpenCursor((diesel.net.messages.OpenCursorMessage) input);
                     return true;
                     
                 case FETCH_CURSOR:
-                    handleFetchCursor((FetchCursorMessage) input);
+                    handleFetchCursor((diesel.net.messages.FetchCursorMessage) input);
                     return true;
                     
                 case CLOSE_CURSOR:
-                    handleCloseCursor((CloseCursorMessage) input);
+                    handleCloseCursor((diesel.net.messages.CloseCursorMessage) input);
                     return true;
                     
                 case QUERY:
-                    executeQueryMessage((QueryMessage) input);
+                    executeQueryMessage((diesel.net.messages.QueryMessage) input);
                     return true;
                     
                 case HEALTH_CHECK:
-                    handleHealthCheck((HealthCheckMessage) input);
+                    handleHealthCheck((diesel.net.messages.HealthCheckMessage) input);
                     return true;
                     
                 default:
@@ -592,7 +597,7 @@ try {
          * Executes a {@link QueryMessage} against the database and replies
          * with the serialized result or an error.
          */
-        private void executeQueryMessage(QueryMessage qm) throws IOException {
+        private void executeQueryMessage(diesel.net.messages.QueryMessage qm) throws IOException {
             String query = qm.getQuery();
             transactionId = qm.getTransactionId();
 
@@ -612,16 +617,21 @@ try {
          * Serializes a result and writes it to the client with compression.
          */
         private void sendSerializedResult(Object result) throws IOException {
-            // Create a QueryResultMessage with the result
-            String status = result instanceof String && ((String) result).startsWith(ErrorMessages.ERROR_PREFIX) 
-                    ? "ERROR" : "OK";
+            // Convert the raw result into the shape its status announces, so the
+            // client can rebuild the exact object the legacy protocol delivered.
+            String status;
             long duration = 0; // TODO: track actual execution duration
             
             // Convert result to appropriate format
             List<String> columnNames = new ArrayList<>();
             List<List<Object>> rows = new ArrayList<>();
             
-            if (result instanceof List) {
+            if (result instanceof String errorMessage && errorMessage.startsWith(ErrorMessages.ERROR_PREFIX)) {
+                status = diesel.net.messages.QueryResultMessage.STATUS_ERROR;
+                columnNames.add("error");
+                rows.add(Collections.singletonList(errorMessage));
+            } else if (result instanceof List) {
+                status = diesel.net.messages.QueryResultMessage.STATUS_ROWS;
                 @SuppressWarnings("unchecked")
                 List<Object> resultList = (List<Object>) result;
                 if (!resultList.isEmpty()) {
@@ -655,6 +665,7 @@ try {
                 }
             } else if (result instanceof Map) {
                 // Single row result
+                status = diesel.net.messages.QueryResultMessage.STATUS_ROWS;
                 @SuppressWarnings("unchecked")
                 Map<String, Object> resultMap = (Map<String, Object>) result;
                 columnNames.addAll(resultMap.keySet());
@@ -664,24 +675,42 @@ try {
                 }
                 rows.add(values);
             } else {
-                // Simple scalar result
+                // Simple scalar result (String status messages, null for DML, ...)
+                status = diesel.net.messages.QueryResultMessage.STATUS_SCALAR;
                 columnNames.add("result");
                 rows.add(Collections.singletonList(result));
             }
             
-            QueryResultMessage response = new QueryResultMessage(status, duration, columnNames, rows, transactionId);
+            diesel.net.messages.QueryResultMessage response = new diesel.net.messages.QueryResultMessage(status, duration, columnNames, rows, transactionId);
             MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.QUERY_RESULT);
             
-            // Compress the message payload if enabled
+            // Encode the message payload
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try (DataOutputStream payloadOut = new DataOutputStream(baos)) {
                 codec.encode(response, payloadOut);
             }
             byte[] payload = baos.toByteArray();
-            byte[] compressed = compressWithMetrics(payload);
             
-            // Write the frame
-            WireProtocol.encodeFrame(MessageType.QUERY_RESULT, compressed, out);
+            // Compress only when the negotiated handler asks for it and the
+            // result actually gets smaller: the frame header flag tells the peer
+            // which of the two happened.
+            byte[] compressed = payload;
+            if (compressionHandler != null && compressionHandler.shouldCompress(payload.length)) {
+                long compressStart = System.nanoTime();
+                byte[] candidate = compressionHandler.compress(payload);
+                totalCompressionTimeNanos += System.nanoTime() - compressStart;
+                if (candidate.length < payload.length) {
+                    compressed = candidate;
+                    totalOriginalBytes += payload.length;
+                    totalCompressedBytes += candidate.length;
+                    compressionCount++;
+                    LOGGER.log(Level.FINE, "Compressed query result: {0} -> {1} bytes",
+                            new Object[]{payload.length, compressed.length});
+                }
+            }
+            
+            boolean isCompressed = compressed.length != payload.length;
+            WireProtocol.encodeFrame(MessageType.QUERY_RESULT, compressed, isCompressed, out);
             out.flush();
         }
 
@@ -691,14 +720,14 @@ try {
          * generated server-side so a hostile client cannot collide with an
          * existing statement.
          */
-        private void handlePrepare(PrepareMessage pm) throws IOException {
+        private void handlePrepare(diesel.net.messages.PrepareMessage pm) throws IOException {
             String statementId = UUID.randomUUID().toString();
             PreparedStatement ps = database.prepareStatement(pm.getSqlTemplate());
             preparedStatements.put(statementId, ps);
             transactionId = pm.getTransactionId();
             
             // Send response with new protocol
-            PrepareResponseMessage response = new PrepareResponseMessage(statementId, transactionId);
+            diesel.net.messages.PrepareResponseMessage response = new diesel.net.messages.PrepareResponseMessage(statementId, transactionId);
             MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.PREPARE_RESPONSE);
             WireProtocol.writeMessage(response, codec, out);
             out.flush();
@@ -712,8 +741,8 @@ try {
          * statement, binds the parameters and executes it, replying with the
          * serialized result.
          */
-        private void handleExecutePrepared(ExecutePreparedMessage epm) throws IOException {
-            String statementId = epm.getStatementId();
+        private void handleExecutePrepared(diesel.net.messages.ExecutePreparedMessage epm) throws IOException {
+            String statementId = epm.getPreparedId();
             PreparedStatement ps = preparedStatements.get(statementId);
             if (ps == null) {
                 sendSerializedResult(String.format("Error: Unknown prepared statement: %s", statementId));
@@ -721,7 +750,7 @@ try {
             }
             transactionId = epm.getTransactionId();
             try {
-                ps.bindParameters(epm.getParams());
+                ps.bindParameters(epm.getParameters());
                 Object result = ps.execute(database, transactionId);
                 sendSerializedResult(result);
             } catch (OutOfMemoryError e) {
@@ -736,9 +765,9 @@ try {
         /**
          * Handles a {@link HealthCheckMessage}: responds with server health status.
          */
-        private void handleHealthCheck(HealthCheckMessage hcm) throws IOException {
+        private void handleHealthCheck(diesel.net.messages.HealthCheckMessage hcm) throws IOException {
             long responseTime = System.nanoTime() - hcm.getTimestamp();
-            HealthCheckResponse response = new HealthCheckResponse("OK", hcm.getTimestamp(), responseTime, transactionId);
+            diesel.net.messages.HealthCheckResponse response = new diesel.net.messages.HealthCheckResponse("OK", hcm.getTimestamp(), responseTime, transactionId);
             MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.HEALTH_CHECK_RESPONSE);
             WireProtocol.writeMessage(response, codec, out);
             out.flush();
@@ -748,7 +777,7 @@ try {
          * Handles a {@link ClosePreparedMessage}: removes the prepared
          * statement from the registry, releasing its cached parsed AST.
          */
-        private void handleClosePrepared(ClosePreparedMessage cpm) throws IOException {
+        private void handleClosePrepared(diesel.net.messages.ClosePreparedMessage cpm) throws IOException {
             String statementId = cpm.getStatementId();
             PreparedStatement removed = preparedStatements.remove(statementId);
             transactionId = cpm.getTransactionId();
@@ -757,7 +786,7 @@ try {
             }
             
             // Send response with new protocol
-            ClosePreparedResponseMessage response = new ClosePreparedResponseMessage(transactionId);
+            diesel.net.messages.ClosePreparedResponseMessage response = new diesel.net.messages.ClosePreparedResponseMessage(transactionId);
             MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.CLOSE_PREPARED_RESPONSE);
             WireProtocol.writeMessage(response, codec, out);
             out.flush();
@@ -770,7 +799,7 @@ try {
          * (Prompt 81) over the given SELECT and registers it under a fresh id,
          * replying with the id. Errors are returned as {@code Error: } strings.
          */
-        private void handleOpenCursor(OpenCursorMessage ocm) throws IOException {
+        private void handleOpenCursor(diesel.net.messages.OpenCursorMessage ocm) throws IOException {
             transactionId = ocm.getTransactionId();
             try {
                 int fetchSize = ocm.getFetchSize();
@@ -797,11 +826,14 @@ try {
          * from an open cursor and replies with the list (empty when exhausted
          * or the cursor is unknown/closed).
          */
-        private void handleFetchCursor(FetchCursorMessage fcm) throws IOException {
+        private void handleFetchCursor(diesel.net.messages.FetchCursorMessage fcm) throws IOException {
             transactionId = fcm.getTransactionId();
-            Cursor cursor = cursors.get(fcm.getCursorId().toString());
+            // A nil cursor id decodes to null (0x00 sentinel); answer with the
+            // unknown-cursor error instead of letting the NPE kill the session.
+            java.util.UUID cursorId = fcm.getCursorId();
+            Cursor cursor = cursorId == null ? null : cursors.get(cursorId.toString());
             if (cursor == null) {
-                sendSerializedResult(String.format("Error: Unknown or closed cursor: %s", fcm.getCursorId()));
+                sendSerializedResult(String.format("Error: Unknown or closed cursor: %s", cursorId));
                 return;
             }
             try {
@@ -822,23 +854,21 @@ try {
          * Handles a {@link CloseCursorMessage}: closes the given cursor and
          * removes it from the session registry.
          */
-        private void handleCloseCursor(CloseCursorMessage ccm) throws IOException {
+        private void handleCloseCursor(diesel.net.messages.CloseCursorMessage ccm) throws IOException {
             transactionId = ccm.getTransactionId();
-            Cursor cursor = cursors.remove(ccm.getCursorId().toString());
+            java.util.UUID closeCursorId = ccm.getCursorId();
+            Cursor cursor = closeCursorId == null ? null : cursors.remove(closeCursorId.toString());
             if (cursor != null) {
                 cursor.close();
-                // Send response with new protocol
-                CloseCursorResponseMessage response = new CloseCursorResponseMessage(transactionId);
-                MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.CLOSE_CURSOR_RESPONSE);
-                WireProtocol.writeMessage(response, codec, out);
-            } else {
-                // Send response with new protocol
-                CloseCursorResponseMessage response = new CloseCursorResponseMessage(transactionId);
-                MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.CLOSE_CURSOR_RESPONSE);
-                WireProtocol.writeMessage(response, codec, out);
             }
+            // Always answer: the client blocks on this response even when the
+            // cursor was already gone (closing twice must not hang the session).
+            diesel.net.messages.CloseCursorResponseMessage response =
+                new diesel.net.messages.CloseCursorResponseMessage(transactionId);
+            MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.CLOSE_CURSOR_RESPONSE);
+            WireProtocol.writeMessage(response, codec, out);
             out.flush();
-            LOGGER.log(Level.INFO, "Closed cursor {0}", ccm.getCursorId());
+            LOGGER.log(Level.INFO, "Closed cursor {0}", closeCursorId);
         }
     }
 
@@ -864,7 +894,12 @@ try {
             localDataDir = args[1];
         }
         Database database = new Database(localDataDir);
-        DatabaseServer server = new DatabaseServer(localPort, -1, database);
+        
+        // Load config to check legacy port
+        Properties config = ConfigLoader.load();
+        int legacyPort = ConfigLoader.getInt("legacy.port", 0);
+        
+        DatabaseServer server = new DatabaseServer(localPort, -1, legacyPort, database);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
             try {

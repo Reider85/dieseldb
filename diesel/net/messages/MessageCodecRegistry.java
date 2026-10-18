@@ -18,9 +18,14 @@ public final class MessageCodecRegistry {
         CODECS.put(MessageType.PREPARE, new PrepareMessageCodec());
         CODECS.put(MessageType.EXECUTE_PREPARED, new ExecutePreparedMessageCodec());
         CODECS.put(MessageType.BATCH_QUERY, new BatchQueryMessageCodec());
+        CODECS.put(MessageType.CLOSE_PREPARED, new ClosePreparedMessageCodec());
+        CODECS.put(MessageType.OPEN_CURSOR, new OpenCursorMessageCodec());
+        CODECS.put(MessageType.FETCH_CURSOR, new FetchCursorMessageCodec());
+        CODECS.put(MessageType.CLOSE_CURSOR, new CloseCursorMessageCodec());
         CODECS.put(MessageType.HEALTH_CHECK, new HealthCheckMessageCodec());
         CODECS.put(MessageType.HEALTH_CHECK_RESPONSE, new HealthCheckResponseCodec());
         CODECS.put(MessageType.COMPRESSION_HANDSHAKE, new CompressionHandshakeMessageCodec());
+        CODECS.put(MessageType.COMPRESSION_HANDSHAKE_RESPONSE, new CompressionHandshakeResponseMessageCodec());
         CODECS.put(MessageType.PREPARE_RESPONSE, new PrepareResponseMessageCodec());
         CODECS.put(MessageType.CLOSE_PREPARED_RESPONSE, new ClosePreparedResponseMessageCodec());
         CODECS.put(MessageType.CLOSE_CURSOR_RESPONSE, new CloseCursorResponseMessageCodec());

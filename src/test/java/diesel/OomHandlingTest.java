@@ -6,8 +6,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.Duration;
@@ -87,7 +85,7 @@ public class OomHandlingTest {
         serverThread.start();
         try {
             waitForServer(port);
-            Object response = roundTrip(port, new QueryMessage("SELECT * FROM USERS", null));
+            Object response = roundTrip(port, "SELECT * FROM USERS");
             assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", response,
                     "the client must receive the friendly OOM message instead of a dropped connection");
         } finally {
@@ -124,7 +122,7 @@ public class OomHandlingTest {
             serverThread.start();
             try {
                 waitForServer(port);
-                roundTrip(port, new QueryMessage("SELECT * FROM USERS", null));
+                roundTrip(port, "SELECT * FROM USERS");
             } finally {
                 server.stop();
                 serverThread.interrupt();
@@ -159,13 +157,10 @@ public class OomHandlingTest {
         serverThread.start();
         try {
             waitForServer(port);
-            try (Socket client = new Socket("localhost", port)) {
-                client.setSoTimeout(10000);
-                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-                out.writeObject(new OpenCursorMessage("SELECT * FROM USERS", 10, null));
-                out.flush();
-                Object response = readResult(in);
+            try (WireProbe probe = new WireProbe(port, 10000)) {
+                probe.handshake();
+                probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
+                Object response = probe.readValue();
                 assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", response,
                         "the client must receive the friendly OOM message on cursor open");
             }
@@ -202,38 +197,21 @@ public class OomHandlingTest {
         serverThread.start();
         try {
             waitForServer(port);
-            try (Socket client = new Socket("localhost", port)) {
-                client.setSoTimeout(10000);
-                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-                out.writeObject(new OpenCursorMessage("SELECT * FROM USERS", 10, null));
-                out.flush();
-
-                // Read cursor ID: marker byte + length + serialized object
-                in.readByte(); // protocol marker byte, value intentionally discarded
-                int len = in.readInt();
-                byte[] data = in.readNBytes(len);
-                Object cursorIdResponse = deserializeBytes(data);
+            try (WireProbe probe = new WireProbe(port, 10000)) {
+                probe.handshake();
+                probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
+                Object cursorIdResponse = probe.readValue();
                 assertTrue(cursorIdResponse instanceof String, "server should return a cursor id string");
                 UUID cursorId = UUID.fromString((String) cursorIdResponse);
 
-                out.writeObject(new FetchCursorMessage(cursorId, null));
-                out.flush();
-
-                // OOM is caught and sent via sendSerializedResult (marker + length + data)
-                Object fetchResponse = readResult(in);
+                probe.write(new diesel.net.messages.FetchCursorMessage(cursorId, null));
+                Object fetchResponse = probe.readValue();
                 assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", fetchResponse,
                         "the client must receive the friendly OOM message on cursor fetch");
             }
         } finally {
             server.stop();
             serverThread.interrupt();
-        }
-    }
-
-    private static Object deserializeBytes(byte[] data) throws Exception {
-        try (ObjectInputStream ois = new ObjectInputStream(new java.io.ByteArrayInputStream(data))) {
-            return ois.readObject();
         }
     }
 
@@ -260,30 +238,11 @@ public class OomHandlingTest {
         }, Duration.ofSeconds(15));
     }
 
-    private static Object roundTrip(int port, QueryMessage message) throws Exception {
-        try (Socket client = new Socket("localhost", port)) {
-            client.setSoTimeout(10000);
-            ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-            out.writeObject(message);
-            out.flush();
-            ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-            return readResult(in);
-        }
-    }
-
-    private static Object readResult(ObjectInputStream in) throws Exception {
-        int marker = in.read();
-        int dataLength = in.readInt();
-        byte[] data = in.readNBytes(dataLength);
-        if (marker == 0x01) {
-            java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
-                    new java.io.ByteArrayInputStream(data));
-            java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
-            Object result = ois.readObject();
-            ois.close();
-            return result;
-        } else {
-            return deserializeBytes(data);
+    /** Runs one query over the v2 wire protocol and returns the result value. */
+    private static Object roundTrip(int port, String query) throws Exception {
+        try (WireProbe probe = new WireProbe(port, 10000)) {
+            probe.handshake();
+            return probe.query(query);
         }
     }
 }

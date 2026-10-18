@@ -13,16 +13,50 @@ import java.util.UUID;
  * 
  * <p>Binary layout:
  * <pre>
- *   [type: u16 QUERY_RESULT][status: UTF][duration: long][columnCount: short]
- *   [columnNames: UTF×N][rowCount: int][rows: ×N]
+ *   [type: u16 QUERY_RESULT][status: str][duration: long][columnCount: short]
+ *   [columnNames: str×N][rowCount: int][rows: ×N]
  *   [txid: 16 bytes]
  * </pre>
  * Each row is serialized as:
  * <pre>
  *   [isNull: byte×columnCount][values: ×columnCount]
  * </pre>
+ * Strings use {@code [length: i32][utf8 bytes]} rather than {@code writeUTF},
+ * so a single cell may exceed the 64 KiB {@code DataOutput.writeUTF} limit.
+ *
+ * <p>The {@code status} field carries the shape of the original Java result so
+ * the client can rebuild it exactly:
+ * <ul>
+ *   <li>{@link #STATUS_ROWS} — a row result (rebuilt as
+ *       {@code List<Map<String,Object>>})</li>
+ *   <li>{@link #STATUS_SCALAR} — a single value (rebuilt as that value)</li>
+ *   <li>{@link #STATUS_ERROR} — an {@code Error: } message (rebuilt as the
+ *       message String)</li>
+ * </ul>
  */
 public final class QueryResultMessage implements Message {
+
+    /** Row result: rebuild as a list of rows keyed by column name. */
+    public static final String STATUS_ROWS = "OK";
+
+    /** Scalar result: rebuild as the single value in the first row. */
+    public static final String STATUS_SCALAR = "SCALAR";
+
+    /** Error result: rebuild as the error message String. */
+    public static final String STATUS_ERROR = "ERROR";
+
+    private static final int TAG_STRING = 1;
+    private static final int TAG_INT = 2;
+    private static final int TAG_LONG = 3;
+    private static final int TAG_DOUBLE = 4;
+    private static final int TAG_BOOLEAN = 5;
+    private static final int TAG_FLOAT = 6;
+    private static final int TAG_SHORT = 7;
+    private static final int TAG_BYTE = 8;
+    private static final int TAG_BIG_DECIMAL = 9;
+    private static final int TAG_BIG_INTEGER = 10;
+    private static final int TAG_STRING_FALLBACK = 11;
+
     private final String status;
     private final long duration;
     private final List<String> columnNames;
@@ -104,13 +138,13 @@ public final class QueryResultMessage implements Message {
      * @throws IOException if an I/O error occurs
      */
     public void writeTo(DataOutput out) throws IOException {
-        out.writeUTF(status);
+        writeString(out, status);
         out.writeLong(duration);
         
         // Write column names
         out.writeShort(columnNames.size());
         for (String columnName : columnNames) {
-            out.writeUTF(columnName);
+            writeString(out, columnName);
         }
         
         // Write rows
@@ -131,14 +165,14 @@ public final class QueryResultMessage implements Message {
      * @throws IOException if an I/O error occurs
      */
     public static QueryResultMessage readFrom(DataInput in) throws IOException {
-        String status = in.readUTF();
+        String status = readString(in);
         long duration = in.readLong();
         
         // Read column names
         int columnCount = in.readShort();
         List<String> columnNames = new java.util.ArrayList<>(columnCount);
         for (int i = 0; i < columnCount; i++) {
-            columnNames.add(in.readUTF());
+            columnNames.add(readString(in));
         }
         
         // Read rows
@@ -154,15 +188,12 @@ public final class QueryResultMessage implements Message {
 
     private void writeRow(DataOutput out, List<Object> row) throws IOException {
         int columnCount = columnNames.size();
-        
-        // Write null flags
         for (int i = 0; i < columnCount; i++) {
-            out.writeByte(row.get(i) == null ? 1 : 0);
-        }
-        
-        // Write values
-        for (int i = 0; i < columnCount; i++) {
-            writeValue(out, row.get(i));
+            Object value = row.get(i);
+            out.writeByte(value == null ? 1 : 0);
+            if (value != null) {
+                writeValue(out, value);
+            }
         }
     }
 
@@ -186,38 +217,100 @@ public final class QueryResultMessage implements Message {
         if (value == null) {
             throw new IOException("Cannot write null value in row");
         }
-        
-        if (value instanceof String) {
-            out.writeByte(1);
-            out.writeUTF((String) value);
-        } else if (value instanceof Integer) {
-            out.writeByte(2);
-            out.writeInt((Integer) value);
-        } else if (value instanceof Long) {
-            out.writeByte(3);
-            out.writeLong((Long) value);
-        } else if (value instanceof Double) {
-            out.writeByte(4);
-            out.writeDouble((Double) value);
-        } else if (value instanceof Boolean) {
-            out.writeByte(5);
-            out.writeBoolean((Boolean) value);
+
+        if (value instanceof String s) {
+            out.writeByte(TAG_STRING);
+            writeString(out, s);
+        } else if (value instanceof Integer i) {
+            out.writeByte(TAG_INT);
+            out.writeInt(i);
+        } else if (value instanceof Long l) {
+            out.writeByte(TAG_LONG);
+            out.writeLong(l);
+        } else if (value instanceof Double d) {
+            out.writeByte(TAG_DOUBLE);
+            out.writeDouble(d);
+        } else if (value instanceof Boolean b) {
+            out.writeByte(TAG_BOOLEAN);
+            out.writeBoolean(b);
+        } else if (value instanceof Float f) {
+            out.writeByte(TAG_FLOAT);
+            out.writeFloat(f);
+        } else if (value instanceof Short s) {
+            out.writeByte(TAG_SHORT);
+            out.writeShort(s);
+        } else if (value instanceof Byte b) {
+            out.writeByte(TAG_BYTE);
+            out.writeByte(b);
+        } else if (value instanceof java.math.BigDecimal bd) {
+            out.writeByte(TAG_BIG_DECIMAL);
+            writeString(out, bd.toPlainString());
+        } else if (value instanceof java.math.BigInteger bi) {
+            out.writeByte(TAG_BIG_INTEGER);
+            writeString(out, bi.toString());
         } else {
-            throw new IOException("Unsupported value type: " + value.getClass());
+            // Last resort: keep the value visible instead of failing the whole
+            // result. The client receives the textual form of the type.
+            out.writeByte(TAG_STRING_FALLBACK);
+            writeString(out, value.toString());
         }
     }
 
     private static Object readValue(DataInput in) throws IOException {
         byte type = in.readByte();
         switch (type) {
-            case 1: return in.readUTF();
-            case 2: return in.readInt();
-            case 3: return in.readLong();
-            case 4: return in.readDouble();
-            case 5: return in.readBoolean();
+            case TAG_STRING:
+                return readString(in);
+            case TAG_INT:
+                return in.readInt();
+            case TAG_LONG:
+                return in.readLong();
+            case TAG_DOUBLE:
+                return in.readDouble();
+            case TAG_BOOLEAN:
+                return in.readBoolean();
+            case TAG_FLOAT:
+                return in.readFloat();
+            case TAG_SHORT:
+                return in.readShort();
+            case TAG_BYTE:
+                return in.readByte();
+            case TAG_BIG_DECIMAL:
+                return new java.math.BigDecimal(readString(in));
+            case TAG_BIG_INTEGER:
+                return new java.math.BigInteger(readString(in));
+            case TAG_STRING_FALLBACK:
+                return readString(in);
             default:
                 throw new IOException("Unknown value type: " + type);
         }
+    }
+
+    /**
+     * Writes a length-prefixed UTF-8 string. Unlike {@code DataOutput.writeUTF}
+     * there is no 64 KiB limit on the value.
+     */
+    private static void writeString(DataOutput out, String value) throws IOException {
+        if (value == null) {
+            out.writeInt(-1);
+            return;
+        }
+        byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        out.writeInt(bytes.length);
+        out.write(bytes);
+    }
+
+    private static String readString(DataInput in) throws IOException {
+        int length = in.readInt();
+        if (length < 0) {
+            return null;
+        }
+        if (length > WireProtocol.MAX_PAYLOAD_BYTES) {
+            throw new IOException("String too long: " + length + " bytes");
+        }
+        byte[] bytes = new byte[length];
+        in.readFully(bytes);
+        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static void writeUUID(DataOutput out, UUID uuid) throws IOException {

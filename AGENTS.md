@@ -379,6 +379,7 @@ Failures below are **pre-existing / environmental** on this machine. When one ap
 | Microbenchmarks (e.g. `WALReadAllIsAlreadySortedTest`, Snappy*Benchmark) timing-sensitive | perf | min-of-3 / threshold noise; fix criterion, not code, if red |
 | `@TempDir` delete errors under parallel Windows runs | any | retry isolated; unrelated to logic |
 | ru-RU locale breaks "0.30" string asserts | any toString/format | use `Locale.ROOT` (past bug in AdaptiveFlushStrategy) |
+| `WALBackpressureTest#queueFullBlocksProducerAndLosesNoData` "queue nearly full" assert fails | storage/WAL backpressure | load-sensitive timing; passes in isolation (observed 2026-10-19) |
 
 ## Subagent Discipline
 

@@ -13,13 +13,10 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.ServerSocket;
@@ -41,7 +38,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.zip.GZIPInputStream;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -975,20 +971,17 @@ public class AllTestsSampleTest {
             serverThread.start();
             waitForPrompt69Server(port);
 
-            try (Socket client = new Socket("localhost", port)) {
-                client.setSoTimeout(60000);
-                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-                out.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
-                out.flush();
-                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-                Object response = readSocketResponse(in);
+            try (WireProbe probe = new WireProbe(port, 60000)) {
+                probe.handshake();
+                long start = System.currentTimeMillis();
+                probe.write(new diesel.net.messages.QueryMessage("SET AUTOCOMMIT = ON", null));
+                Object response = probe.readValue();
                 check(response != null && !isErrorResponse(response),
                         "Prompt69Test / the long-running client connection is functional (server answers a query without an error)");
 
-                long start = System.currentTimeMillis();
                 boolean closedByServer = false;
                 try {
-                    in.readObject();
+                    probe.readFrame();
                 } catch (IOException e) {
                     closedByServer = true;
                 }
@@ -1001,13 +994,9 @@ public class AllTestsSampleTest {
                         "Prompt69Test / the close is caused by the server's 30s timeout, not by the client's own read timeout (elapsed " + elapsed + " ms)");
             }
 
-            try (Socket probe = new Socket("localhost", port)) {
-                probe.setSoTimeout(5000);
-                ObjectOutputStream probeOut = new ObjectOutputStream(probe.getOutputStream());
-                probeOut.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
-                probeOut.flush();
-                ObjectInputStream probeIn = new ObjectInputStream(probe.getInputStream());
-                Object probeResponse = readSocketResponse(probeIn);
+            try (WireProbe probe = new WireProbe(port, 5000)) {
+                probe.handshake();
+                Object probeResponse = probe.query("SET AUTOCOMMIT = ON");
                 check(probeResponse != null && !isErrorResponse(probeResponse),
                         "Prompt69Test / the server stays alive and accepts a new connection after the timed-out client was closed");
             }
@@ -1081,32 +1070,32 @@ public class AllTestsSampleTest {
             waitForPrompt70Server(port);
             check(true, "Prompt70Test / server subprocess started on port " + port);
 
-            try (Socket client = new Socket("localhost", port)) {
-                client.setSoTimeout(15000);
-                ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-                ObjectInputStream in = new ObjectInputStream(client.getInputStream());
+            try (WireProbe probe = new WireProbe(port, 15000)) {
+                probe.handshake();
 
-                Object createResponse = prompt70RoundTrip(out, in, "CREATE TABLE PROMPT70_TEST (ID LONG PRIMARY KEY SEQUENCE(p70_seq 1 1), NAME STRING)");
+                Object createResponse = prompt70RoundTrip(probe, "CREATE TABLE PROMPT70_TEST (ID LONG PRIMARY KEY SEQUENCE(p70_seq 1 1), NAME STRING)");
                 check(createResponse != null && !isErrorResponse(createResponse),
                         "Prompt70Test / CREATE TABLE round-trip against the separate server process succeeds");
 
-                Object insert1 = prompt70RoundTrip(out, in, "INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-first')");
+                Object insert1 = prompt70RoundTrip(probe, "INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-first')");
                 check(!isErrorResponse(insert1),
                         "Prompt70Test / first INSERT round-trip against the separate server process succeeds");
 
-                Object insert2 = prompt70RoundTrip(out, in, "INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-second')");
+                Object insert2 = prompt70RoundTrip(probe, "INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-second')");
                 check(!isErrorResponse(insert2),
                         "Prompt70Test / second INSERT round-trip against the separate server process succeeds");
 
-                Object beginResponse = prompt70RoundTrip(out, in, "BEGIN TRANSACTION");
+                Object beginResponse = prompt70RoundTrip(probe, "BEGIN TRANSACTION");
                 String beginText = beginResponse instanceof String ? (String) beginResponse : null;
                 UUID prompt70Tx = beginText != null && beginText.startsWith("Transaction started: ")
                         ? UUID.fromString(beginText.substring("Transaction started: ".length())) : null;
-                Object insert3 = prompt70RoundTrip(out, in, new QueryMessage("INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-third')", prompt70Tx));
+                Object insert3 = prompt70RoundTrip(probe,
+                        new diesel.net.messages.QueryMessage("INSERT INTO PROMPT70_TEST (NAME) VALUES ('prompt70-third')", prompt70Tx));
                 check(!isErrorResponse(insert3),
                         "Prompt70Test / INSERT inside a BEGIN/COMMIT transaction against the separate server process succeeds");
 
-                Object commitResponse = prompt70RoundTrip(out, in, new QueryMessage("COMMIT", prompt70Tx));
+                Object commitResponse = prompt70RoundTrip(probe,
+                        new diesel.net.messages.QueryMessage("COMMIT", prompt70Tx));
                 check(commitResponse != null && !isErrorResponse(commitResponse),
                         "Prompt70Test / COMMIT round-trip against the separate server process succeeds");
             }
@@ -1167,32 +1156,15 @@ public class AllTestsSampleTest {
         }
     }
 
-    private Object readSocketResponse(ObjectInputStream in) throws IOException, ClassNotFoundException {
-        int marker = in.read();
-        if (marker == 0x01) {
-            int dataLength = in.readInt();
-            byte[] compressedData = new byte[dataLength];
-            in.readFully(compressedData);
-            GZIPInputStream gzis = new GZIPInputStream(new ByteArrayInputStream(compressedData));
-            ObjectInputStream ois = new ObjectInputStream(gzis);
-            return ois.readObject();
-        } else {
-            int dataLength = in.readInt();
-            byte[] uncompressedData = new byte[dataLength];
-            in.readFully(uncompressedData);
-            ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(uncompressedData));
-            return ois.readObject();
-        }
+    /** Sends one query over the v2 wire protocol and reads back the result. */
+    private Object prompt70RoundTrip(WireProbe probe, String query) throws IOException {
+        return prompt70RoundTrip(probe, new diesel.net.messages.QueryMessage(query, null));
     }
 
-    private Object prompt70RoundTrip(ObjectOutputStream out, ObjectInputStream in, String query) throws IOException, ClassNotFoundException {
-        return prompt70RoundTrip(out, in, new QueryMessage(query, null));
-    }
-
-    private Object prompt70RoundTrip(ObjectOutputStream out, ObjectInputStream in, QueryMessage message) throws IOException, ClassNotFoundException {
-        out.writeObject(message);
-        out.flush();
-        return readSocketResponse(in);
+    private Object prompt70RoundTrip(WireProbe probe, diesel.net.messages.QueryMessage message)
+            throws IOException {
+        probe.write(message);
+        return probe.readValue();
     }
 
     private static String resolveSubprocessClasspath() {

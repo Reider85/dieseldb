@@ -6,10 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
@@ -85,30 +82,19 @@ public class SocketTimeoutTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void idleConnectionIsClosedAfterSocketTimeout() throws Exception {
         long start = System.currentTimeMillis();
-        try (Socket client = new Socket("localhost", port)) {
-            // Client read timeout longer than the server one, so the client observes
-            // the server closing the connection instead of timing out itself.
-            client.setSoTimeout(SOCKET_TIMEOUT_MS + 5000);
+        // Client read timeout longer than the server one, so the client observes
+        // the server closing the connection instead of timing out itself.
+        try (WireProbe probe = new WireProbe(port, SOCKET_TIMEOUT_MS + 5000)) {
+            probe.handshake();
 
-            ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-            out.writeObject(new QueryMessage("SET AUTOCOMMIT = ON", null));
-            out.flush();
-
-            ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-            in.read();
-            int dataLength = in.readInt();
-            byte[] data = new byte[dataLength];
-            in.readFully(data);
-            ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data));
-            Object response = ois.readObject();
-            LOGGER.log(Level.INFO, "Received response to round-trip query: {0}", response);
+            Object response = probe.query("SET AUTOCOMMIT = ON");
             assertFalse(response instanceof String && ((String) response).startsWith("Error:"),
                     "Round-trip query should be answered without an error");
 
-            // The server blocks in in.readObject() with a socket timeout. After
+            // The server blocks in its frame read with a socket timeout. After
             // SOCKET_TIMEOUT_MS of idle time the server times out, breaks the loop
             // and closes the connection, which makes this read fail with IOException.
-            assertThrows(IOException.class, in::readObject,
+            assertThrows(IOException.class, probe::readFrame,
                     "Idle connection should be closed by the server after the socket timeout");
         }
         long elapsed = System.currentTimeMillis() - start;

@@ -47,6 +47,9 @@ public final class WireProtocol {
     /** Current protocol version written into every frame. */
     public static final int VERSION = 2;
 
+    /** High bit flag indicating the frame payload is compressed. */
+    public static final int COMPRESSED_FLAG = 0x8000;
+
     /** Frame header size in bytes: magic(4) + version(2) + type(2) + length(4). */
     public static final int HEADER_SIZE = 12;
 
@@ -69,22 +72,38 @@ public final class WireProtocol {
      * A decoded frame: the validated message type plus the raw payload bytes
      * (without header or CRC footer).
      *
-     * @param type    the message type from the frame header
-     * @param payload the raw payload bytes
+     * @param type      the message type from the frame header
+     * @param payload   the raw payload bytes
+     * @param compressed whether the payload is compressed
      */
-    public record Frame(MessageType type, byte[] payload) {
+    public record Frame(MessageType type, byte[] payload, boolean compressed) {
     }
 
     /**
      * Encodes one frame to the given output.
      *
-     * @param type    the message type, never null
-     * @param payload the payload bytes, never null (may be empty)
-     * @param out     the destination stream
+     * @param type      the message type, never null
+     * @param payload   the payload bytes, never null (may be empty)
+     *param out     the destination stream
      * @throws IOException if the payload exceeds {@link #MAX_PAYLOAD_BYTES}
      *                     or the stream cannot be written
      */
     public static void encodeFrame(MessageType type, byte[] payload, DataOutput out)
+            throws IOException {
+        encodeFrame(type, payload, false, out);
+    }
+
+    /**
+     * Encodes one frame to the given output.
+     *
+     * @param type      the message type, never null
+     * @param payload   the payload bytes, never null (may be empty)
+     * @param compressed whether the payload is compressed
+     * @param out       the destination stream
+     * @throws IOException if the payload exceeds {@link #MAX_PAYLOAD_BYTES}
+     *                     or the stream cannot be written
+     */
+    public static void encodeFrame(MessageType type, byte[] payload, boolean compressed, DataOutput out)
             throws IOException {
         if (type == null) {
             throw new IllegalArgumentException("type must not be null");
@@ -96,12 +115,13 @@ public final class WireProtocol {
             throw new IOException("Payload too large: " + payload.length
                     + " > " + MAX_PAYLOAD_BYTES);
         }
+        int version = compressed ? VERSION | COMPRESSED_FLAG : VERSION;
         out.write(MAGIC);
-        out.writeShort(VERSION);
+        out.writeShort(version);
         out.writeShort(type.id());
         out.writeInt(payload.length);
         out.write(payload);
-        out.writeInt(crcOf(VERSION, type.id(), payload));
+        out.writeInt(crcOf(version, type.id(), payload));
     }
 
     /**
@@ -154,10 +174,12 @@ public final class WireProtocol {
             throw new InvalidMessageException("Truncated frame: header", e);
         }
 
-        if (version != VERSION) {
+        int actualVersion = version & ~COMPRESSED_FLAG;
+        if (actualVersion != VERSION) {
             throw new InvalidMessageException("Unsupported protocol version: "
-                    + version + " (supported: " + VERSION + ")");
+                    + actualVersion + " (supported: " + VERSION + ")");
         }
+        boolean compressed = (version & COMPRESSED_FLAG) != 0;
         MessageType type = MessageType.fromId(typeId);
         if (length < 0 || length > MAX_PAYLOAD_BYTES) {
             throw new InvalidMessageException("Invalid payload length: " + length
@@ -178,13 +200,13 @@ public final class WireProtocol {
         } catch (EOFException e) {
             throw new InvalidMessageException("Truncated frame: CRC footer", e);
         }
-        int actualCrc = crcOf(version, typeId, payload);
+        int actualCrc = crcOf(actualVersion, typeId, payload);
         if (actualCrc != expectedCrc) {
             throw new InvalidMessageException("CRC32 mismatch: expected 0x"
                     + Integer.toHexString(expectedCrc) + ", actual 0x"
                     + Integer.toHexString(actualCrc));
         }
-        return new Frame(type, payload);
+        return new Frame(type, payload, compressed);
     }
 
     /**
@@ -238,11 +260,13 @@ public final class WireProtocol {
         return message;
     }
 
-    private static int crcOf(int version, short typeId, byte[] payload) {
+    public static int crcOf(int version, short typeId, byte[] payload) {
         CRC32 crc = new CRC32();
         byte[] headerFields = new byte[8];
-        headerFields[0] = (byte) (version >>> 8);
-        headerFields[1] = (byte) version;
+        // Use version without compressed flag for CRC calculation
+        int cleanVersion = version & ~COMPRESSED_FLAG;
+        headerFields[0] = (byte) (cleanVersion >>> 8);
+        headerFields[1] = (byte) cleanVersion;
         headerFields[2] = (byte) (typeId >>> 8);
         headerFields[3] = (byte) typeId;
         int length = payload.length;

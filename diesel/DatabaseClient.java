@@ -1,36 +1,86 @@
 package diesel;
 
-import java.io.*;
-import java.net.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.Socket;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.net.CompressionHandshakeHandler;
+import diesel.net.InvalidMessageException;
+import diesel.net.Message;
+import diesel.net.MessageCodec;
+import diesel.net.MessageType;
+import diesel.net.WireProtocol;
+import diesel.net.messages.BatchQueryMessage;
+import diesel.net.messages.CloseCursorMessage;
+import diesel.net.messages.CloseCursorResponseMessage;
+import diesel.net.messages.ClosePreparedMessage;
+import diesel.net.messages.ClosePreparedResponseMessage;
+import diesel.net.messages.CompressionHandshakeMessage;
+import diesel.net.messages.CompressionHandshakeResponseMessage;
+import diesel.net.messages.ExecutePreparedMessage;
+import diesel.net.messages.FetchCursorMessage;
+import diesel.net.messages.MessageCodecRegistry;
+import diesel.net.messages.OpenCursorMessage;
+import diesel.net.messages.PrepareMessage;
+import diesel.net.messages.PrepareResponseMessage;
+import diesel.net.messages.QueryMessage;
+import diesel.net.messages.QueryResultMessage;
+
 /**
- * TCP client for a {@link DatabaseServer}: connects over a socket, sends SQL
- * queries as serialized {@link QueryMessage} objects and reads back the
- * results.
+ * TCP client for a {@link DatabaseServer}: speaks the binary v2 wire protocol
+ * ({@link WireProtocol} frames + explicit field codecs) with ZSTD/GZIP payload
+ * compression negotiated by the handshake (prompt4.md #27-#29). Java Object
+ * Serialization is gone from this path — it was an RCE vector.
  *
  * <p>The client tracks the server-side transaction state: a "Transaction
  * started" response stores the transaction id and sends it with every
  * following query, while COMMIT/ROLLBACK reset it. Server error responses
- * (prefixed with {@code Error: }) are rethrown as {@link RuntimeException}.
+ * (prefixed with {@code Error: }) are rethrown as {@link DieselException}.
+ *
+ * <p>The public API and the shapes it returns are unchanged from the v1 era:
+ * SELECT comes back as {@code List<Map<String,Object>>}, transaction / DDL /
+ * DML status messages come back as {@code String}, and {@code null} for DML
+ * that produces no value.
  *
  * @see DatabaseServer
- * @see QueryMessage
+ * @see WireProtocol
  */
 public class DatabaseClient {
     private static final Logger LOGGER = LoggerFactory.getLogger(DatabaseClient.class);
+
+    /** Algorithms this client can decode, most preferred first. */
+    private static final List<String> SUPPORTED_ALGORITHMS = List.of("ZSTD", "GZIP");
+
+    /** Compression level asked for in the handshake. */
+    private static final int PREFERRED_LEVEL = 6;
+
+    /**
+     * Payload threshold asked for in the handshake; the server may lower or
+     * raise it (and switches compression off entirely with a threshold of 0).
+     */
+    private static final int PREFERRED_THRESHOLD = 4096;
+
     private final String host;
     private final int port;
     private Socket socket;
-    private ObjectOutputStream out;
-    private ObjectInputStream in;
+    private DataOutputStream out;
+    private DataInputStream in;
     private UUID transactionId;
+    private CompressionHandshakeHandler compressionHandler;
 
     /**
      * Creates a client for the given server endpoint. No connection is opened
@@ -46,45 +96,44 @@ public class DatabaseClient {
     }
 
     /**
-     * Connects to the server at the configured host and port, opening
-     * the output and input streams and performing the compression handshake.
+     * Connects to the server, opens the v2 streams and runs the compression
+     * handshake.
      */
     public void connect() {
         try {
             socket = new Socket(host, port);
-            out = new ObjectOutputStream(socket.getOutputStream());
-            in = new ObjectInputStream(socket.getInputStream());
+            out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+            in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
             performHandshake();
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException e) {
             throw new QuerySyntaxException("", "Failed to connect to " + host + ":" + port);
         }
     }
 
     /**
-     * Performs compression handshake with server.
-     * Reads server handshake message and stores agreed compression settings.
+     * Advertises the supported algorithms and stores what the server picked.
+     *
+     * @throws IOException if the server refuses the handshake or answers with
+     *                     something that is not a v2 handshake response
      */
-    private void performHandshake() throws IOException, ClassNotFoundException {
-        // Send client handshake
-        out.writeObject(new CompressionHandshakeMessage(true, List.of("GZIP"), 6, 1024));
-        out.flush();
-        
-        // Read server handshake response
-        Object response = in.readObject();
-        if (response instanceof CompressionHandshakeResponse serverResponse) {
-            LOGGER.info("Received compression handshake response: {}", serverResponse);
-            if (serverResponse.isCompressionEnabled()) {
-                LOGGER.info("Server compression enabled with algorithm: {}, level: {}, threshold: {}",
-                        serverResponse.getAgreedAlgorithm(),
-                        serverResponse.getAgreedCompressionLevel(),
-                        serverResponse.getAgreedThresholdBytes());
-            } else {
-                LOGGER.warn("Server compression disabled, using uncompressed responses");
-            }
-        } else {
-            // Legacy server or unexpected response
-            LOGGER.warn("Unexpected handshake response: {}. Using default compression settings.", response);
+    private void performHandshake() throws IOException {
+        CompressionHandshakeMessage handshake = new CompressionHandshakeMessage(
+                true, SUPPORTED_ALGORITHMS, PREFERRED_LEVEL, PREFERRED_THRESHOLD, null);
+        writeMessage(handshake);
+
+        Message response = readMessage();
+        if (!(response instanceof CompressionHandshakeResponseMessage handshakeResponse)) {
+            throw new InvalidMessageException("Expected a compression handshake response, got "
+                    + response.getType());
         }
+        compressionHandler = new CompressionHandshakeHandler(
+                handshakeResponse.getChosenAlgorithm(),
+                handshakeResponse.getActualCompressionLevel(),
+                handshakeResponse.getActualCompressionThresholdBytes());
+        LOGGER.info("Negotiated compression: algorithm={}, level={}, threshold={} bytes",
+                handshakeResponse.getChosenAlgorithm(),
+                handshakeResponse.getActualCompressionLevel(),
+                handshakeResponse.getActualCompressionThresholdBytes());
     }
 
     /**
@@ -99,35 +148,11 @@ public class DatabaseClient {
      *                          communication breaks
      */
     public Object executeQuery(String query) {
-        // Prompt 22 (java:S2259): out/in are only assigned by connect(); a
-        // query before connect() would NPE on out.writeObject below and mask
-        // the real cause, so fail with a clear message instead.
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         try {
-            Object result;
             String normalizedQuery = query.trim();
-            out.writeObject(new QueryMessage(normalizedQuery, transactionId));
-            out.flush();
-            // Read compression marker byte (0x00 = uncompressed, 0x01 = GZIP compressed)
-            try {
-                result = readQueryResult();
-            } catch (ClassNotFoundException e) {
-                throw new IOException("Failed to deserialize query result", e);
-            }
-            if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
-                transactionId = UUID.fromString(s.split(": ")[1]);
-            } else if (result instanceof String s &&
-                    (s.equals(ErrorMessages.TRANSACTION_COMMITTED) || s.equals(ErrorMessages.TRANSACTION_ROLLED_BACK))) {
-                transactionId = null;
-            }
-            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
-                LOGGER.error("Server error for query '{}': {}", normalizedQuery, result);
-                throw new DieselException(s);
-            }
-            LOGGER.info("Query executed: {}, Result: {}", normalizedQuery, result);
-            return result;
+            writeMessage(new QueryMessage(normalizedQuery, transactionId));
+            return readResult();
         } catch (IOException e) {
             LOGGER.error("Query execution failed: {}, Error: {}", query, e.getMessage());
             throw new DieselIOException("Query failed: " + e.getMessage(), e);
@@ -142,37 +167,18 @@ public class DatabaseClient {
      * @throws RuntimeException if the batch fails on the server or the communication breaks
      */
     public List<Object> executeBatch(List<String> queries) {
-        // Prompt 22 (java:S2259): out/in are only assigned by connect(); a
-        // query before connect() would NPE on out.writeObject below and mask
-        // the real cause, so fail with a clear message instead.
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         if (queries == null || queries.isEmpty()) {
             return Collections.emptyList();
         }
         try {
-            out.writeObject(new BatchQueryMessage(queries, transactionId));
-            out.flush();
-            Object result = in.readObject();
-            
-            // Handle transaction state changes from batch execution
-            if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
-                transactionId = UUID.fromString(s.split(": ")[1]);
-            } else if (result instanceof String s &&
-                    (s.equals(ErrorMessages.TRANSACTION_COMMITTED) || s.equals(ErrorMessages.TRANSACTION_ROLLED_BACK))) {
-                transactionId = null;
-            }
-            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
-                LOGGER.error("Server error for batch query: {}", result);
-                throw new DieselException(s);
-            }
-            
+            writeMessage(new BatchQueryMessage(queries, transactionId));
+            Object result = readResult();
             @SuppressWarnings("unchecked")
             List<Object> results = (List<Object>) result;
             LOGGER.info("Batch query executed: {} queries", queries.size());
             return results;
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException e) {
             LOGGER.error("Batch query execution failed: {}, Error: {}", queries, e.getMessage());
             throw new DieselIOException("Batch query failed: " + e.getMessage(), e);
         }
@@ -187,18 +193,21 @@ public class DatabaseClient {
      * @return the server-assigned statement id
      */
     public String prepareStatement(String sqlTemplate) {
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         try {
-            out.writeObject(new PrepareMessage(sqlTemplate, transactionId));
-            out.flush();
-            Object result = in.readObject();
-            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
-                throw new DieselException(s);
+            writeMessage(new PrepareMessage(sqlTemplate, transactionId));
+            Message response = readMessage();
+            if (response instanceof PrepareResponseMessage prepareResponse) {
+                return prepareResponse.getPreparedId();
             }
-            return (String) result;
-        } catch (IOException | ClassNotFoundException e) {
+            if (response instanceof QueryResultMessage result) {
+                Object value = toJavaResult(result);
+                if (value instanceof String error && error.startsWith(ErrorMessages.ERROR_PREFIX)) {
+                    throw new DieselException(error);
+                }
+            }
+            throw new InvalidMessageException("Unexpected prepare response: " + response.getType());
+        } catch (IOException e) {
             LOGGER.error("Prepare statement failed: {}, Error: {}", sqlTemplate, e.getMessage());
             throw new DieselIOException("Prepare statement failed: " + e.getMessage(), e);
         }
@@ -206,32 +215,18 @@ public class DatabaseClient {
 
     /**
      * Executes a previously prepared statement on the server with the given
-     * bound parameters, returning the server-serialized result (Prompt 79).
+     * bound parameters, returning the server result (Prompt 79).
      *
      * @param statementId the statement id from {@link #prepareStatement}
      * @param params      the bound parameter values, in placeholder order
      * @return the query result (row list, null, or a status String)
      */
     public Object executePrepared(String statementId, List<Object> params) {
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         try {
-            out.writeObject(new ExecutePreparedMessage(statementId, params, transactionId));
-            out.flush();
-            Object result = readResultFromStream();
-            if (result instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
-                transactionId = UUID.fromString(s.split(": ")[1]);
-            } else if (result instanceof String s &&
-                    (s.equals(ErrorMessages.TRANSACTION_COMMITTED) || s.equals(ErrorMessages.TRANSACTION_ROLLED_BACK))) {
-                transactionId = null;
-            }
-            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
-                LOGGER.error("Server error for prepared statement '{}': {}", statementId, result);
-                throw new DieselException(s);
-            }
-            return result;
-        } catch (IOException | ClassNotFoundException e) {
+            writeMessage(new ExecutePreparedMessage(statementId, params, transactionId));
+            return readResult();
+        } catch (IOException e) {
             LOGGER.error("Execute prepared statement failed: {}, Error: {}", statementId, e.getMessage());
             throw new DieselIOException("Execute prepared statement failed: " + e.getMessage(), e);
         }
@@ -256,14 +251,14 @@ public class DatabaseClient {
      * @param statementId the statement id from {@link #prepareStatement}
      */
     public void closePrepared(String statementId) {
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         try {
-            out.writeObject(new ClosePreparedMessage(statementId, transactionId));
-            out.flush();
-            in.readObject();
-        } catch (IOException | ClassNotFoundException e) {
+            writeMessage(new ClosePreparedMessage(statementId, transactionId));
+            Message response = readMessage();
+            if (!(response instanceof ClosePreparedResponseMessage)) {
+                throw new InvalidMessageException("Unexpected close-prepared response: " + response.getType());
+            }
+        } catch (IOException e) {
             LOGGER.error("Close prepared statement failed: {}, Error: {}", statementId, e.getMessage());
             throw new DieselIOException("Close prepared statement failed: " + e.getMessage(), e);
         }
@@ -281,20 +276,13 @@ public class DatabaseClient {
      *                          communication breaks
      */
     public String openCursor(String query, int fetchSize) {
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         try {
-            out.writeObject(new OpenCursorMessage(query, fetchSize, transactionId));
-            out.flush();
-            Object result = readResultFromStream();
-            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
-                LOGGER.error("Server error for cursor open '{}': {}", query, result);
-                throw new DieselException(s);
-            }
+            writeMessage(new OpenCursorMessage(query, fetchSize, transactionId));
+            Object result = readResult();
             LOGGER.info("Opened cursor {} for query: {}, fetchSize={}", result, query, fetchSize);
             return (String) result;
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException e) {
             LOGGER.error("Open cursor failed: {}, Error: {}", query, e.getMessage());
             throw new DieselIOException("Open cursor failed: " + e.getMessage(), e);
         }
@@ -311,19 +299,12 @@ public class DatabaseClient {
      */
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> fetchCursor(String cursorId) {
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         try {
-            out.writeObject(new FetchCursorMessage(java.util.UUID.fromString(cursorId), transactionId));
-            out.flush();
-            Object result = readResultFromStream();
-            if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
-                LOGGER.error("Server error fetching cursor '{}': {}", cursorId, result);
-                throw new DieselException(s);
-            }
+            writeMessage(new FetchCursorMessage(UUID.fromString(cursorId), transactionId));
+            Object result = readResult();
             return (List<Map<String, Object>>) result;
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException e) {
             LOGGER.error("Fetch cursor failed: {}, Error: {}", cursorId, e.getMessage());
             throw new DieselIOException("Fetch cursor failed: " + e.getMessage(), e);
         }
@@ -336,70 +317,152 @@ public class DatabaseClient {
      * @param cursorId the cursor id from {@link #openCursor}
      */
     public void closeCursor(String cursorId) {
-        if (out == null || in == null) {
-            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
-        }
+        ensureConnected();
         try {
-            out.writeObject(new CloseCursorMessage(java.util.UUID.fromString(cursorId), transactionId));
-            out.flush();
-            in.readObject();
+            writeMessage(new CloseCursorMessage(UUID.fromString(cursorId), transactionId));
+            Message response = readMessage();
+            if (!(response instanceof CloseCursorResponseMessage)) {
+                throw new InvalidMessageException("Unexpected close-cursor response: " + response.getType());
+            }
             LOGGER.info("Closed cursor {}", cursorId);
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException e) {
             LOGGER.error("Close cursor failed: {}, Error: {}", cursorId, e.getMessage());
             throw new DieselIOException("Close cursor failed: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Reads a result object from the stream, handling the compression marker
-     * byte protocol used by the server for query results.
-     *
-     * @return the deserialized result object
-     * @throws IOException            on stream errors
-     * @throws ClassNotFoundException if a deserialized type is unknown
-     */
-    private Object readResultFromStream() throws IOException, ClassNotFoundException {
-        int marker = in.read();
-        if (marker == 0x01) { // compressed
-            int dataLength = in.readInt();
-            byte[] compressedData = new byte[dataLength];
-            in.readFully(compressedData);
-            java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
-                    new java.io.ByteArrayInputStream(compressedData));
-            java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
-            Object result = ois.readObject();
-            ois.close();
-            return result;
-        } else { // uncompressed (marker 0x00 or any other value)
-            int dataLength = in.readInt();
-            byte[] uncompressedData = new byte[dataLength];
-            in.readFully(uncompressedData);
-            java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
-                    new java.io.ByteArrayInputStream(uncompressedData));
-            Object result = ois.readObject();
-            ois.close();
-            return result;
-        }
-    }
-
-    /**
-     * Closes the connection: an {@code EXIT} message is sent first, then the
-     * streams and the socket are closed. Any active server-side transaction is
-     * rolled back by the server.
+     * Closes the connection: streams and socket are closed (the v2 protocol
+     * has no farewell message — the server notices the EOF). Any active
+     * server-side transaction is rolled back by the server.
      */
     public void disconnect() {
-        try {
-            if (out != null) {
-                out.writeObject(ErrorMessages.EXIT_COMMAND);
-                out.flush();
-            }
-        } catch (IOException e) {
-            LOGGER.error("Error sending EXIT: {}", e.getMessage());
-        }
         closeQuietly(in);
         closeQuietly(out);
         closeQuietly(socket);
         LOGGER.info("Disconnected from server");
+    }
+
+    /**
+     * Reads one framed message from the server, transparently decompressing a
+     * payload that arrived with {@link WireProtocol#COMPRESSED_FLAG} set.
+     *
+     * @return the decoded message
+     * @throws IOException on framing, decompression or codec failure
+     */
+    private Message readMessage() throws IOException {
+        WireProtocol.Frame frame = WireProtocol.decodeFrame(in);
+        byte[] payload = frame.payload();
+        if (frame.compressed()) {
+            if (compressionHandler == null) {
+                throw new InvalidMessageException(
+                        "Compressed frame received before the compression handshake");
+            }
+            payload = compressionHandler.decompress(payload);
+        }
+        MessageCodec codec = MessageCodecRegistry.getCodec(frame.type());
+        Message message = codec.decode(new DataInputStream(new ByteArrayInputStream(payload)));
+        if (message.getType() != frame.type()) {
+            throw new InvalidMessageException("Payload type tag " + message.getType()
+                    + " does not match frame header type " + frame.type());
+        }
+        return message;
+    }
+
+    /**
+     * Encodes one message, compresses it when the negotiated handler asks for
+     * it and the result shrinks, then writes it as a single frame.
+     *
+     * @param message the message to send
+     * @throws IOException on codec or stream failure
+     */
+    private void writeMessage(Message message) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+        try (DataOutputStream payloadOut = new DataOutputStream(buffer)) {
+            MessageCodecRegistry.getCodec(message.getType()).encode(message, payloadOut);
+        }
+        byte[] payload = buffer.toByteArray();
+        byte[] wirePayload = payload;
+        boolean compressed = false;
+        if (compressionHandler != null && compressionHandler.shouldCompress(payload.length)) {
+            byte[] candidate = compressionHandler.compress(payload);
+            if (candidate.length < payload.length) {
+                wirePayload = candidate;
+                compressed = true;
+            }
+        }
+        WireProtocol.encodeFrame(message.getType(), wirePayload, compressed, out);
+        out.flush();
+    }
+
+    /**
+     * Reads the next query result and applies the protocol-level rules the
+     * caller relies on: transaction bookkeeping and rethrowing server errors.
+     *
+     * @return the reconstructed result object
+     * @throws IOException if the peer did not answer with a query result
+     */
+    private Object readResult() throws IOException {
+        Message message = readMessage();
+        if (!(message instanceof QueryResultMessage result)) {
+            throw new InvalidMessageException("Expected a query result, got " + message.getType());
+        }
+        Object value = toJavaResult(result);
+        if (value instanceof String s && s.startsWith(ErrorMessages.TRANSACTION_STARTED)) {
+            transactionId = UUID.fromString(s.split(": ")[1]);
+        } else if (value instanceof String s
+                && (s.equals(ErrorMessages.TRANSACTION_COMMITTED) || s.equals(ErrorMessages.TRANSACTION_ROLLED_BACK))) {
+            transactionId = null;
+        }
+        if (value instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
+            LOGGER.error("Server error: {}", s);
+            throw new DieselException(s);
+        }
+        LOGGER.debug("Result: {}", value);
+        return value;
+    }
+
+    /**
+     * Rebuilds the Java object the v1 protocol used to hand over verbatim.
+     *
+     * <p>{@link QueryResultMessage#STATUS_SCALAR} and
+     * {@link QueryResultMessage#STATUS_ERROR} collapse to their single value
+     * (a status String, {@code null} for plain DML, or the error message);
+     * {@link QueryResultMessage#STATUS_ROWS} rebuilds the row list keyed by
+     * column name.
+     *
+     * @param result the decoded result message
+     * @return the reconstructed object
+     */
+    public static Object toJavaResult(QueryResultMessage result) {
+        List<String> columns = result.getColumnNames();
+        List<List<Object>> rows = result.getRows();
+        String status = result.getStatus();
+
+        if (QueryResultMessage.STATUS_SCALAR.equals(status)
+                || QueryResultMessage.STATUS_ERROR.equals(status)) {
+            if (rows.isEmpty() || rows.get(0).isEmpty()) {
+                return null;
+            }
+            return rows.get(0).get(0);
+        }
+
+        List<Map<String, Object>> list = new ArrayList<>(rows.size());
+        for (List<Object> row : rows) {
+            Map<String, Object> record = new LinkedHashMap<>(columns.size());
+            for (int i = 0; i < columns.size() && i < row.size(); i++) {
+                record.put(columns.get(i), row.get(i));
+            }
+            list.add(record);
+        }
+        return list;
+    }
+
+    /** Prompt 22 (java:S2259): fail clearly instead of NPE-ing on a dead socket. */
+    private void ensureConnected() {
+        if (out == null || in == null) {
+            throw new IllegalStateException(ErrorMessages.ERROR_NOT_CONNECTED);
+        }
     }
 
     private static void closeQuietly(java.io.Closeable c) {
@@ -488,41 +551,6 @@ public class DatabaseClient {
             }
         } finally {
             client.disconnect();
-        }
-    }
-    
-    /**
-     * Reads a query result from the input stream, handling compression.
-     */
-    private Object readQueryResult() throws IOException, ClassNotFoundException {
-        try {
-            int marker = in.read();
-            if (marker == 0x01) { // compressed
-                int dataLength = in.readInt();
-                byte[] compressedData = new byte[dataLength];
-                in.readFully(compressedData);
-                java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(
-                        new java.io.ByteArrayInputStream(compressedData));
-                java.io.ObjectInputStream ois = new java.io.ObjectInputStream(gzis);
-                Object result = ois.readObject();
-                ois.close();
-                return result;
-            } else { // uncompressed (marker 0x00 or any other value)
-                // Put the marker byte back by creating a wrapper - 
-                // instead we just read the object directly since marker was already consumed
-                // Actually, we need to re-read. Let's use a different approach.
-                // Read the length and the object
-                int dataLength = in.readInt();
-                byte[] uncompressedData = new byte[dataLength];
-                in.readFully(uncompressedData);
-                java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
-                        new java.io.ByteArrayInputStream(uncompressedData));
-                Object result = ois.readObject();
-                ois.close();
-                return result;
-            }
-        } catch (IOException | ClassNotFoundException e) {
-            throw new DieselIOException("Failed to read query result: " + e.getMessage(), e);
         }
     }
 }
