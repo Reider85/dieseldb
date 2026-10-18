@@ -107,6 +107,49 @@ public final class TupleVisibility {
     }
 
     /**
+     * Primitive visibility check using xmin/xmax directly (no Row allocation).
+     * Delegates to the Row-based version for consistency.
+     */
+    public static boolean visible(long xmin, long xmax, long currentTxid, long snapshotTxid,
+                                 IsolationLevel level, LongPredicate txCommitted) {
+        Objects.requireNonNull(level);
+        Objects.requireNonNull(txCommitted);
+        
+        // READ_UNCOMMITTED: always visible (dirty reads allowed)
+        if (level == IsolationLevel.READ_UNCOMMITTED) {
+            return true;
+        }
+        
+        // 1. Own insert — visible to the creating transaction
+        if (xmin == currentTxid) {
+            return true;
+        }
+        
+        // 2. Own delete — invisible to the deleting transaction
+        if (xmax == currentTxid) {
+            return false;
+        }
+        
+        // 3. Created after snapshot — invisible
+        if (xmin > snapshotTxid) {
+            return false;
+        }
+        
+        // 4. Insert by uncommitted tx — invisible
+        if (xmin != 0 && !txCommitted.test(xmin)) {
+            return false;
+        }
+        
+        // 5. Deleted at/before snapshot by committed tx — invisible
+        if (xmax != 0 && xmax <= snapshotTxid && txCommitted.test(xmax)) {
+            return false;
+        }
+        
+        // 6. Otherwise — visible
+        return true;
+    }
+
+    /**
      * Status-based canonical contract used by the production read path
      * ({@link MvccReadContext} → {@link Table#isRowVisibleToReader(int)} → SELECT/DML scans).
      *

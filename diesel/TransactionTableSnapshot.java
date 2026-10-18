@@ -49,6 +49,12 @@ public class TransactionTableSnapshot {
     private volatile int cachedVisibleRowCount = -1;
     
     /**
+     * Pre-built txCommitted predicate for visibility checks.
+     * Avoids per-row lambda allocation.
+     */
+    private final LongPredicate txCommittedPredicate;
+    
+    /**
      * Creates a new transaction table snapshot.
      * 
      * @param tableName the name of the table
@@ -70,6 +76,14 @@ public class TransactionTableSnapshot {
         this.snapshotCsn = snapshotCsn;
         this.isolationLevel = isolationLevel;
         this.txStatusTracker = txStatusTracker;
+        
+        // Pre-build txCommitted predicate to avoid per-row allocation
+        this.txCommittedPredicate = txid -> {
+            if (txid == currentTxid) {
+                return false; // Own writes are handled separately by TupleVisibility
+            }
+            return txStatusTracker.isCommittedBefore(txid, snapshotCsn);
+        };
     }
     
     /**
@@ -107,8 +121,9 @@ public class TransactionTableSnapshot {
             for (int i = 0; i < rowCount; i++) {
                 if (!table.isDeleted(i)) {
                     RowVersionMeta meta = table.getRowVersionMeta(i);
-                    Map<String, Object> row = table.readPhysicalRow(i);
-                    if (isRowVisible(meta, row)) {
+                    if (isRowVisible(meta)) {
+                        // Only fetch physical row for visible rows
+                        Map<String, Object> row = table.readPhysicalRow(i);
                         result.add(getVisibleRowValues(meta, row));
                     }
                 }
@@ -171,8 +186,7 @@ public class TransactionTableSnapshot {
             for (int i = 0; i < rowCount; i++) {
                 if (!table.isDeleted(i)) {
                     RowVersionMeta meta = table.getRowVersionMeta(i);
-                    Map<String, Object> row = table.readPhysicalRow(i);
-                    if (isRowVisible(meta, row)) {
+                    if (isRowVisible(meta)) {
                         count++;
                     }
                 }
@@ -203,9 +217,10 @@ public class TransactionTableSnapshot {
             for (int i = 0; i < rowCount; i++) {
                 if (!table.isDeleted(i)) {
                     RowVersionMeta meta = table.getRowVersionMeta(i);
-                    Map<String, Object> row = table.readPhysicalRow(i);
-                    if (isRowVisible(meta, row)) {
+                    if (isRowVisible(meta)) {
                         if (visible == index) {
+                            // Only fetch the physical row for the matching row
+                            Map<String, Object> row = table.readPhysicalRow(i);
                             return getVisibleRowValues(meta, row);
                         }
                         visible++;
@@ -251,6 +266,31 @@ public class TransactionTableSnapshot {
      */
     Table getTable() {
         return table;
+    }
+    
+    /**
+     * Checks if the row with the given metadata is visible in this snapshot.
+     * Meta-only version - no Row allocation needed for visibility checks.
+     *
+     * @param meta the MVCC metadata for the row, or null
+     */
+    private boolean isRowVisible(RowVersionMeta meta) {
+        // Bootstrap row (xmin=0) - check visibility based on xmax
+        if (meta == null || meta.getXmin() == 0) {
+            if (meta == null || meta.getXmax() == 0) {
+                return true;
+            }
+            if (meta.getXmax() == currentTxid) {
+                // Own uncommitted delete hides the row from its deleter
+                // (mirrors TupleVisibility rule 2).
+                return false;
+            }
+            return !isTxCommittedBefore(meta.getXmax());
+        }
+        
+        // Use TupleVisibility primitive overload to avoid Row allocation
+        return TupleVisibility.visible(meta.getXmin(), meta.getXmax(), currentTxid, 
+                                      snapshotTxid, isolationLevel, txCommittedPredicate);
     }
     
     /**

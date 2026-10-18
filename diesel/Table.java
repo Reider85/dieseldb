@@ -1678,7 +1678,11 @@ class Table implements Serializable {
      * the delete is pending. Index entries stay in place until vacuum.
      */
     public void markDelete(int rowIndex, long txid) {
-        markDelete(rowIndex, txid, getRows().get(rowIndex));
+        Map<String, Object> preImage = readPhysicalRow(rowIndex);
+        if (preImage == null && (rowIndex < 0 || rowIndex >= getRawRowCount())) {
+            throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
+        }
+        markDelete(rowIndex, txid, preImage);
     }
 
     /**
