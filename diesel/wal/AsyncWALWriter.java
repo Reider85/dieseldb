@@ -248,7 +248,19 @@ public final class AsyncWALWriter implements AutoCloseable, DynamicMBean {
         // Flush any remaining entries
         writer.flush();
         
+        // Note: Don't close the underlying WALWriter here as it may be reused
+        // The caller is responsible for managing the lifecycle of the WALWriter
+        
         unregisterMBean();
+    }
+    
+    /**
+     * Returns true if this AsyncWALWriter has been closed.
+     *
+     * @return true if closed, false otherwise
+     */
+    public boolean isClosed() {
+        return !running;
     }
 
     // ─── DynamicMBean implementation ─────────────────────────────────────

@@ -26,11 +26,15 @@ public class FlusherTest {
     private static final int ROW_COUNT = 50000; // 50k for efficiency, test runs faster
 
     private Database database;
+    private String walDir;
 
     @BeforeEach
     void setUp() throws IOException {
-        // Clean up any existing test directory
+        // Clean up any existing test directory and WAL directory
         cleanupTestDir();
+        
+        // Create unique WAL directory per test method to avoid cross-test contamination
+        walDir = TEST_DIR + "_wal_" + getTestMethodName();
         
         // Create database with WAL enabled
         database = new Database(TEST_DIR, createWALConfig());
@@ -38,6 +42,21 @@ public class FlusherTest {
         // Persist the empty table structure so loadTablesFromDisk finds it after restart
         database.getTable(TABLE_NAME).saveToFile(TABLE_NAME);
         database.getTable(TABLE_NAME).saveToSerializedFile(TABLE_NAME);
+    }
+    
+    private String getTestMethodName() {
+        // Get the current test method name for unique WAL directory
+        StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+        // Look for the method in the call stack that's in this class
+        for (StackTraceElement element : stackTrace) {
+            if (element.getClassName().equals(getClass().getName()) && 
+                !element.getMethodName().equals("getTestMethodName") &&
+                !element.getMethodName().startsWith("setUp") &&
+                !element.getMethodName().startsWith("tearDown")) {
+                return element.getMethodName();
+            }
+        }
+        return "unknown";
     }
 
     @AfterEach
@@ -224,9 +243,18 @@ try {
 
     // Helper methods
     private void cleanupTestDir() {
+        // Clean up test data directory
         File dir = new File(TEST_DIR);
         if (dir.exists()) {
             deleteDirectory(dir);
+        }
+        
+        // Clean up WAL directory (unique per test method)
+        if (walDir != null) {
+            File walDirFile = new File(walDir);
+            if (walDirFile.exists()) {
+                deleteDirectory(walDirFile);
+            }
         }
     }
 
@@ -251,9 +279,9 @@ try {
     }
 
     private diesel.wal.WALConfig createWALConfig() {
-        // Create WAL config enabled for testing
-        return diesel.wal.WALConfig.of(java.nio.file.Paths.get("data/wal_test"), 64 * 1024 * 1024, 1024, 
-                                      3600000, java.nio.file.Paths.get("data/wal_archive"), 7, 3600000,
+        // Create WAL config enabled for testing with unique WAL directory per test method
+        return diesel.wal.WALConfig.of(java.nio.file.Paths.get(walDir), 64 * 1024 * 1024, 1024, 
+                                      3600000, java.nio.file.Paths.get(walDir + "_archive"), 7, 3600000,
                                       true, diesel.wal.FsyncPolicy.GROUP, 5, 64);
     }
 }
