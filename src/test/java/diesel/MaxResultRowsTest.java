@@ -36,10 +36,10 @@ public class MaxResultRowsTest {
     @AfterEach
     void tearDown() {
         if (database != null) {
+            dropTables();
             database.close();
             database = null;
         }
-        dropTables();
         SelectQuery.loadHashJoinConfig();
     }
 

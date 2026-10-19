@@ -37,18 +37,18 @@ public class OomHandlingTest {
     @AfterEach
     void tearDown() {
         if (database != null) {
+            try {
+                database.dropTable("OOMT_LEFT");
+            } catch (TableNotFoundException ignored) {
+                // Ignore: table may not have been created
+            }
+            try {
+                database.dropTable("OOMT_RIGHT");
+            } catch (TableNotFoundException ignored) {
+                // Ignore: table may not have been created
+            }
             database.close();
             database = null;
-        }
-        try {
-            database.dropTable("OOMT_LEFT");
-        } catch (TableNotFoundException ignored) {
-            // Ignore: table may not have been created
-        }
-        try {
-            database.dropTable("OOMT_RIGHT");
-        } catch (TableNotFoundException ignored) {
-            // Ignore: table may not have been created
         }
         SelectQuery.loadHashJoinConfig();
     }
