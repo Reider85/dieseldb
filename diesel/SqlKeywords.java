@@ -56,6 +56,10 @@ public final class SqlKeywords {
     public static final String CREATE_UNIQUE_INDEX = "CREATE UNIQUE INDEX";
     public static final String CREATE_HASH_INDEX = "CREATE HASH INDEX";
     public static final String CREATE_UNIQUE_CLUSTERED_INDEX = "CREATE UNIQUE CLUSTERED INDEX";
+    public static final String CREATE_USER = "CREATE USER";
+    public static final String CREATE_ROLE = "CREATE ROLE";
+    public static final String GRANT = "GRANT";
+    public static final String PASSWORD = "PASSWORD";
     public static final String COVERING = "COVERING";
 
     // Single keywords (used in SqlLexer and elsewhere)

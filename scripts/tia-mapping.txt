@@ -134,6 +134,10 @@ pom.xml					all
 .github/workflows/ci.yml		none
 Makefile				none
 diesel/UndoLog.java		concurrency
+diesel/security/*.java		smoke,query
+diesel/CreateUserQuery.java	smoke,query
+diesel/CreateRoleQuery.java	smoke,query
+diesel/GrantRoleQuery.java	smoke,query
 diesel/RowVersionMeta.java		concurrency
 diesel/MvccReadContext.java		concurrency
 diesel/TxStatusTracker.java		concurrency

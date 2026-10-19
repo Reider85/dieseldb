@@ -96,6 +96,13 @@ class QueryParser {
     private static final Pattern LIMIT_VALUE_PATTERN = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s+OFFSET\\s+\\d+)|(?:\\s*;\\s*)?\\s*$)");
     private static final Pattern OFFSET_TAIL_PATTERN = Pattern.compile("(?i)\\s+OFFSET\\s+(\\d+)");
     private static final Pattern OFFSET_VALUE_PATTERN = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
+    // RBAC DDL (prompt4 #30): identifiers/password taken from the ORIGINAL text
+    private static final Pattern CREATE_USER_PATTERN = Pattern.compile(
+            "(?i)^CREATE\\s+USER\\s+(" + IDENTIFIER_PATTERN + ")\\s+PASSWORD\\s+'([^']*)'\\s*;?\\s*$");
+    private static final Pattern CREATE_ROLE_PATTERN = Pattern.compile(
+            "(?i)^CREATE\\s+ROLE\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    private static final Pattern GRANT_ROLE_PATTERN = Pattern.compile(
+            "(?i)^GRANT\\s+(" + IDENTIFIER_PATTERN + ")\\s+TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Map<String, Pattern> CLAUSE_SCAN_PATTERN_CACHE = new ConcurrentHashMap<>();
     private static final Pattern CLAUSE_QUOTED_STRING_PATTERN = Pattern.compile("'([^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+)'");
     private static final Pattern ON_KEYWORD_PATTERN = Pattern.compile("(?i)\\bON\\b");
@@ -726,12 +733,45 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
-                return n.startsWith(SqlKeywords.SELECT);
+                return n.startsWith(SqlKeywords.DELETE_FROM);
             }
             @Override
             @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
-                return parseSelectQuery(o, d);
+                return parseDeleteQuery(n, o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.CREATE_USER);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateUserQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.CREATE_ROLE);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateRoleQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.GRANT + " ");
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseGrantRoleQuery(o);
             }
         });
         strategies.add(new QueryParseStrategy() {
@@ -1148,6 +1188,38 @@ class QueryParser {
                     "Invalid VACUUM syntax: expected 'VACUUM [TABLE <table name>]'");
         }
         return new VacuumQuery(rest.toUpperCase());
+    }
+
+    /**
+     * Parses {@code CREATE USER <name> PASSWORD '<password>'} (prompt4 #30).
+     * Name and password are taken from the original text so their case is
+     * preserved; the normalized form has already been uppercased.
+     */
+    private Query<?> parseCreateUserQuery(String original) {
+        Matcher m = CREATE_USER_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException(
+                    "Invalid CREATE USER syntax: expected CREATE USER <name> PASSWORD '<password>'");
+        }
+        return new CreateUserQuery(unquoteIdentifier(m.group(1)), m.group(2));
+    }
+
+    /** Parses {@code CREATE ROLE <name>} (prompt4 #30). */
+    private Query<?> parseCreateRoleQuery(String original) {
+        Matcher m = CREATE_ROLE_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid CREATE ROLE syntax: expected CREATE ROLE <name>");
+        }
+        return new CreateRoleQuery(unquoteIdentifier(m.group(1)));
+    }
+
+    /** Parses {@code GRANT <role> TO <user>} (prompt4 #30). */
+    private Query<?> parseGrantRoleQuery(String original) {
+        Matcher m = GRANT_ROLE_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid GRANT syntax: expected GRANT <role> TO <user>");
+        }
+        return new GrantRoleQuery(unquoteIdentifier(m.group(1)), unquoteIdentifier(m.group(2)));
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -49,6 +50,9 @@ import diesel.wal.CommitPayload;
 import diesel.wal.GroupCommitCoordinator;
 import diesel.wal.FsyncPolicy;
 import diesel.wal.SavepointPayload;
+import diesel.security.PasswordHasher;
+import diesel.security.UserStore;
+import diesel.security.UserStoreBackend;
 
 /**
  * Central database engine. Owns the shared table map, the active client
@@ -94,6 +98,7 @@ class Database {
     private volatile RecoveryManager recoveryManager;                             // ARIES startup recovery (prompt4 #19)
     private volatile diesel.storage.page.BufferPoolFlusher bufferPoolFlusher;   // Background page flusher (prompt4 #20)
     private volatile diesel.storage.page.CheckpointManager checkpointManager;  // Background checkpoint manager (prompt4 #21)
+    private volatile UserStore userStore;                                      // RBAC account store (prompt4 #30), lazy
     private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "diesel-wal-scheduler");
         t.setDaemon(true);
@@ -858,6 +863,15 @@ class Database {
         if (parsedQuery instanceof CreateTableQuery q) {
             return executeCreateTable(q);
         }
+        if (parsedQuery instanceof CreateUserQuery q) {
+            return executeCreateUser(q);
+        }
+        if (parsedQuery instanceof CreateRoleQuery q) {
+            return executeCreateRole(q);
+        }
+        if (parsedQuery instanceof GrantRoleQuery q) {
+            return executeGrantRole(q);
+        }
         if (parsedQuery instanceof CreateCompositeIndexQuery q) {
             return executeCreateCompositeIndex(q, currentTransaction);
         }
@@ -1401,6 +1415,83 @@ class Database {
             table.getSequences().put(entry.getKey(), entry.getValue());
         }
         return "Table created successfully";
+    }
+
+    /**
+     * Returns the RBAC user store, creating the four {@code DIESEL_*} system
+     * tables on first use (prompt4 #30). Lazy so non-security workloads never
+     * pay for it.
+     */
+    UserStore getUserStore() {
+        UserStore local = userStore;
+        if (local != null) {
+            return local;
+        }
+        synchronized (this) {
+            if (userStore == null) {
+                ensureSystemTables();
+                int iterations = ConfigLoader.getInt("security.pbkdf2.iterations",
+                        PasswordHasher.DEFAULT_ITERATIONS);
+                userStore = new UserStore(new SystemTableBackend(), new PasswordHasher(iterations));
+            }
+            return userStore;
+        }
+    }
+
+    private void ensureSystemTables() {
+        ensureSystemTable(UserStoreBackend.USERS,
+                List.of("ID", "NAME", "PASSWORD_HASH", "CREATED_AT"), "ID");
+        ensureSystemTable(UserStoreBackend.ROLES,
+                List.of("ID", "NAME", "CREATED_AT"), "ID");
+        ensureSystemTable(UserStoreBackend.USER_ROLES,
+                List.of("ID", "USER_ID", "ROLE_ID"), "ID");
+        ensureSystemTable(UserStoreBackend.PRIVILEGES,
+                List.of("ID", "ROLE_ID", "ACTION", "TABLE_NAME"), "ID");
+    }
+
+    private void ensureSystemTable(String name, List<String> columns, String primaryKey) {
+        if (tables.containsKey(name)) {
+            return;
+        }
+        Map<String, Class<?>> types = new HashMap<>();
+        for (String column : columns) {
+            types.put(column, String.class);
+        }
+        createTable(name, columns, types, primaryKey);
+        LOGGER.log(Level.INFO, "Created system table {0}", name);
+    }
+
+    /** CREATE USER — hashes the password and stores the account (prompt4 #30). */
+    String executeCreateUser(CreateUserQuery query) {
+        getUserStore().createUser(query.getUserName(), query.getPassword());
+        return "User created: " + query.getUserName();
+    }
+
+    /** CREATE ROLE — stores the role (prompt4 #30). */
+    String executeCreateRole(CreateRoleQuery query) {
+        getUserStore().createRole(query.getRoleName());
+        return "Role created: " + query.getRoleName();
+    }
+
+    /** GRANT role TO user — links the two (prompt4 #30). */
+    String executeGrantRole(GrantRoleQuery query) {
+        getUserStore().grantRoleToUser(query.getUserName(), query.getRoleName());
+        return "Role granted: " + query.getRoleName() + " -> " + query.getUserName();
+    }
+
+    /** Bridges UserStore onto the DIESEL_* system tables (prompt4 #30). */
+    private final class SystemTableBackend implements UserStoreBackend {
+        @Override
+        public List<Map<String, Object>> readAll(String tableName) {
+            return getTable(tableName).getRows();
+        }
+
+        @Override
+        public void appendRow(String tableName, Map<String, Object> row) {
+            Table table = getTable(tableName);
+            table.addRow(row);
+            table.saveToFile(tableName);
+        }
     }
 
     private Object executeCreateIndex(CreateIndexQueryBase indexQuery, Transaction currentTransaction) {
@@ -1987,6 +2078,10 @@ class Database {
      * @throws IllegalArgumentException if no such table exists
      */
     public void dropTable(String tableName) {
+        if (tableName != null && tableName.toUpperCase(Locale.ROOT).startsWith("DIESEL_")) {
+            throw new IllegalArgumentException(
+                    "Cannot drop system table " + tableName + ": the diesel_ prefix is reserved");
+        }
         if (tables.remove(tableName) == null) {
             throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
         }
