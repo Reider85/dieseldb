@@ -36,6 +36,10 @@ public class ExplainTest {
 
     @AfterEach
     void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
         SelectQuery.loadHashJoinConfig();
     }
 

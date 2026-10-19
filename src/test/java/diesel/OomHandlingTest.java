@@ -36,6 +36,10 @@ public class OomHandlingTest {
 
     @AfterEach
     void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
         try {
             database.dropTable("OOMT_LEFT");
         } catch (TableNotFoundException ignored) {

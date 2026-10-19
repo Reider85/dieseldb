@@ -33,6 +33,10 @@ public class AnalyzeTableTest {
 
     @AfterEach
     void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
         SelectQuery.loadHashJoinConfig();
     }
 
