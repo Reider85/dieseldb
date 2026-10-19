@@ -24,6 +24,8 @@ import diesel.net.Message;
 import diesel.net.MessageCodec;
 import diesel.net.MessageType;
 import diesel.net.WireProtocol;
+import diesel.net.messages.AuthMessage;
+import diesel.net.messages.AuthResponseMessage;
 import diesel.net.messages.BatchQueryMessage;
 import diesel.net.messages.CloseCursorMessage;
 import diesel.net.messages.CloseCursorResponseMessage;
@@ -39,6 +41,7 @@ import diesel.net.messages.PrepareMessage;
 import diesel.net.messages.PrepareResponseMessage;
 import diesel.net.messages.QueryMessage;
 import diesel.net.messages.QueryResultMessage;
+import diesel.security.AuthException;
 
 /**
  * TCP client for a {@link DatabaseServer}: speaks the binary v2 wire protocol
@@ -76,11 +79,16 @@ public class DatabaseClient {
 
     private final String host;
     private final int port;
+    private final String user;
+    private final String password;
+    private final String databaseName;
     private Socket socket;
     private DataOutputStream out;
     private DataInputStream in;
     private UUID transactionId;
     private CompressionHandshakeHandler compressionHandler;
+    private UUID sessionToken;
+    private boolean mustChangePassword;
 
     /**
      * Creates a client for the given server endpoint. No connection is opened
@@ -90,23 +98,107 @@ public class DatabaseClient {
      * @param port the server port
      */
     public DatabaseClient(String host, int port) {
+        this(host, port, null, null, null);
+    }
+
+    /**
+     * Creates a client that authenticates on {@link #connect()}
+     * (prompt4 #31).
+     *
+     * @param host     the server host name
+     * @param port     the server port
+     * @param user     the account name
+     * @param password the plaintext password
+     */
+    public DatabaseClient(String host, int port, String user, String password) {
+        this(host, port, user, password, null);
+    }
+
+    /**
+     * Creates a client that authenticates on {@link #connect()}
+     * (prompt4 #31).
+     *
+     * @param host         the server host name
+     * @param port         the server port
+     * @param user         the account name
+     * @param password     the plaintext password
+     * @param databaseName the database to use, or null for the server default
+     */
+    public DatabaseClient(String host, int port, String user, String password, String databaseName) {
         this.host = host;
         this.port = port;
+        this.user = user;
+        this.password = password;
+        this.databaseName = databaseName;
         this.transactionId = null;
     }
 
     /**
-     * Connects to the server, opens the v2 streams and runs the compression
-     * handshake.
+     * Connects to the server, opens the v2 streams, runs the credentials
+     * handshake when credentials were supplied (prompt4 #31), then the
+     * compression handshake.
+     *
+     * @throws AuthException when the server rejects the credentials
      */
     public void connect() {
         try {
             socket = new Socket(host, port);
             out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
             in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+            if (user != null) {
+                performAuth();
+            }
             performHandshake();
         } catch (IOException e) {
             throw new QuerySyntaxException("", "Failed to connect to " + host + ":" + port);
+        }
+    }
+
+    /** The session token issued by the server, or null when not authenticated. */
+    public UUID getSessionToken() {
+        return sessionToken;
+    }
+
+    /** True when the server demands a password change before this session proceeds. */
+    public boolean isMustChangePassword() {
+        return mustChangePassword;
+    }
+
+    /**
+     * Sends the credentials handshake and stores the issued session
+     * (prompt4 #31).
+     *
+     * @throws AuthException when the server rejects the credentials; the
+     *                       socket is closed first so no half-open session
+     *                       remains
+     */
+    private void performAuth() {
+        try {
+            AuthMessage auth = new AuthMessage(user, password, databaseName, null);
+            writeMessage(auth);
+
+            Message response = readMessage();
+            if (!(response instanceof AuthResponseMessage authResponse)) {
+                throw new InvalidMessageException("Expected an auth response, got "
+                        + (response == null ? "end of stream" : response.getType().name()));
+            }
+            if (!authResponse.isSuccess()) {
+                closeQuietly();
+                throw new AuthException(authResponse.getMessage());
+            }
+            sessionToken = authResponse.getToken();
+            mustChangePassword = authResponse.isMustChangePassword();
+            LOGGER.info("Authenticated as {}", authResponse.getMessage());
+        } catch (IOException e) {
+            throw new AuthException("Authentication handshake failed: " + e.getMessage(), e);
+        }
+    }
+
+    private void closeQuietly() {
+        try {
+            disconnect();
+        } catch (RuntimeException ignored) {
+            // best effort while unwinding a failed auth
         }
     }
 
@@ -476,12 +568,14 @@ public class DatabaseClient {
     }
 
     /**
-     * Demo entry point: connects to {@code localhost:3306} by default (host
-     * and port may be given as arguments), sets the isolation level, runs a
-     * small create/insert/update/select/commit scenario inside a transaction
-     * and prints the SELECT result.
+     * Demo entry point: connects to {@code localhost:3306} by default (host,
+     * port and optional user/password may be given as arguments), sets the
+     * isolation level, runs a small create/insert/update/select/commit
+     * scenario inside a transaction and prints the SELECT result.
      *
-     * @param args optional {@code host} and {@code port} arguments
+     * @param args optional {@code host}, {@code port}, {@code user},
+     *             {@code password} arguments (user/password default to the
+     *             bootstrap admin account, prompt4 #31)
      */
     public static void main(String[] args) {
         String localHost = "localhost";
@@ -496,7 +590,9 @@ public class DatabaseClient {
                 LOGGER.warn("Invalid port {}, using default {}", args[1], localPort);
             }
         }
-        DatabaseClient client = new DatabaseClient(localHost, localPort);
+        String localUser = args.length > 2 ? args[2] : "admin";
+        String localPassword = args.length > 3 ? args[3] : "admin";
+        DatabaseClient client = new DatabaseClient(localHost, localPort, localUser, localPassword);
         try {
             client.connect();
 

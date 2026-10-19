@@ -86,6 +86,7 @@ public class SocketTimeoutTest {
         // the server closing the connection instead of timing out itself.
         try (WireProbe probe = new WireProbe(port, SOCKET_TIMEOUT_MS + 5000)) {
             probe.handshake();
+            probe.auth("admin", "admin");
 
             Object response = probe.query("SET AUTOCOMMIT = ON");
             assertFalse(response instanceof String && ((String) response).startsWith("Error:"),

@@ -181,7 +181,7 @@ public class CursorTest {
     @Test
     void clientServerOpenFetchCloseRoundTrip() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port);
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 String cursorId = client.openCursor("SELECT ID, NAME FROM CUR_TEST ORDER BY ID", 8);
@@ -211,7 +211,7 @@ public class CursorTest {
     @Test
     void clientServerFetchUnknownCursorReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port);
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 boolean threw = false;
@@ -233,7 +233,7 @@ public class CursorTest {
     @Test
     void clientServerOpenNonSelectReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port);
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 boolean threw = false;

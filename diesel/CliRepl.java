@@ -3,6 +3,8 @@ package diesel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.security.UserStore;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -63,40 +65,207 @@ public class CliRepl {
     }
 
     /**
-     * Entry point. With {@code --local [dataDir]} a local in-memory database
-     * is used; otherwise the arguments are interpreted as {@code [host] [port]}
-     * (defaults {@code localhost:3306}) and the REPL connects to the server,
-     * printing the error and exiting when the connection fails.
+     * Parsed command-line arguments of {@link #main} (prompt4 #31).
+     *
+     * @param host       remote server host (default {@code localhost})
+     * @param port       remote server port (default {@code 3306})
+     * @param dataDir    local data directory for {@code --local}/{@code --reset-admin}
+     * @param local      whether to run against a local {@link Database}
+     * @param resetAdmin whether to reset the admin password and exit
+     * @param user       login account, or null for no credentials
+     * @param password   login password, or null
+     * @param database   requested database name, or null for the default
+     */
+    record CliArgs(String host, int port, String dataDir, boolean local, boolean resetAdmin,
+                   String user, String password, String database) {
+        static CliArgs defaults() {
+            return new CliArgs("localhost", 3306, "data", false, false, null, null, null);
+        }
+    }
+
+    /**
+     * Parses {@code --local [dir]}, {@code --user u}, {@code --password p},
+     * {@code --database d} and {@code --reset-admin} flags; remaining
+     * positionals stay {@code [host] [port]} (remote) or {@code [dir]}
+     * (local / reset-admin). Package-private for tests (prompt4 #31).
+     */
+    static CliArgs parseArgs(String[] args) {
+        CliArgs d = CliArgs.defaults();
+        String host = d.host();
+        int port = d.port();
+        String dataDir = d.dataDir();
+        boolean local = false;
+        boolean resetAdmin = false;
+        String user = null;
+        String password = null;
+        String database = null;
+        List<String> positional = new ArrayList<>();
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "--local":
+                    local = true;
+                    break;
+                case "--reset-admin":
+                    resetAdmin = true;
+                    break;
+                case "--user":
+                    user = requireFlagValue(args, ++i, "--user");
+                    break;
+                case "--password":
+                    password = requireFlagValue(args, ++i, "--password");
+                    break;
+                case "--database":
+                    database = requireFlagValue(args, ++i, "--database");
+                    break;
+                default:
+                    positional.add(args[i]);
+                    break;
+            }
+        }
+        if (local || resetAdmin) {
+            if (!positional.isEmpty()) {
+                dataDir = positional.get(0);
+            }
+        } else {
+            if (positional.size() > 0) {
+                host = positional.get(0);
+            }
+            if (positional.size() > 1) {
+                try {
+                    port = Integer.parseInt(positional.get(1));
+                } catch (NumberFormatException e) {
+                    LOGGER.warn("Invalid port {}, using default {}", positional.get(1), port);
+                }
+            }
+        }
+        return new CliArgs(host, port, dataDir, local, resetAdmin, user, password, database);
+    }
+
+    private static String requireFlagValue(String[] args, int index, String flag) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException("Missing value for " + flag);
+        }
+        return args[index];
+    }
+
+    /**
+     * Entry point. {@code --local [dataDir]} runs against a local database;
+     * {@code --reset-admin [dataDir]} resets the admin account and exits
+     * (filesystem access to the data directory is required, prompt4 #31);
+     * otherwise flags {@code --user}/{@code --password}/{@code --database}
+     * are combined with {@code [host] [port]} (defaults {@code localhost:3306}).
      *
      * @param args the command-line arguments
      */
     public static void main(String[] args) {
-        if (args.length > 0 && "--local".equals(args[0])) {
-            String dataDir = args.length > 1 ? args[1] : "data";
-            new CliRepl(new Database(dataDir)).run();
+        CliArgs cli;
+        try {
+            cli = parseArgs(args);
+        } catch (IllegalArgumentException e) {
+            System.err.println("Error: " + e.getMessage());
             return;
         }
-        String host = "localhost";
-        int port = 3306;
-        if (args.length > 0) {
-            host = args[0];
+        if (cli.resetAdmin()) {
+            resetAdmin(cli.dataDir());
+            return;
         }
-        if (args.length > 1) {
-            try {
-                port = Integer.parseInt(args[1]);
-            } catch (NumberFormatException e) {
-                LOGGER.warn("Invalid port {}, using default {}", args[1], port);
-            }
+        if (cli.local()) {
+            new CliRepl(new Database(cli.dataDir())).run();
+            return;
         }
-        DatabaseClient client = new DatabaseClient(host, port);
+        DatabaseClient client = cli.user() != null
+                ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
+                : new DatabaseClient(cli.host(), cli.port());
         try {
             client.connect();
         } catch (RuntimeException e) {
             LOGGER.error("Connection failed: {}", e.getMessage());
             return;
         }
+        if (client.isMustChangePassword()) {
+            boolean changed = forcePasswordChange(client, cli.user());
+            if (!changed) {
+                client.disconnect();
+                return;
+            }
+        }
         new CliRepl(client).run();
     }
+
+    /**
+     * Resets the admin account to {@code admin}/{@code admin} with the
+     * forced-change flag (prompt4 #31 {@code --reset-admin}). Deliberately
+     * local-only: it opens the data directory directly, so it works only
+     * with filesystem access and never over the wire.
+     */
+    static void resetAdmin(String dataDir) {
+        Database database = null;
+        try {
+            database = new Database(dataDir);
+            database.loadTablesFromDisk();
+            database.getUserStore().resetAdminPassword();
+            database.saveTablesToDisk();
+            System.out.println("Admin password reset to '" + UserStore.DEFAULT_ADMIN_PASSWORD
+                    + "' in data directory '" + database.getDataDir() + "'.");
+            System.out.println("Password change is required at the next login.");
+        } catch (RuntimeException e) {
+            System.err.println("Reset failed: filesystem access to the data directory '"
+                    + dataDir + "' is required: " + e.getMessage());
+        } finally {
+            if (database != null) {
+                database.close();
+            }
+        }
+    }
+
+    /**
+     * Runs the forced password change demanded after the first admin login
+     * (prompt4 #31): up to {@value #PASSWORD_CHANGE_ATTEMPTS} attempts of
+     * typing the new password twice, applied with {@code ALTER USER}.
+     *
+     * @return true when the password was changed successfully
+     */
+    static boolean forcePasswordChange(DatabaseClient client, String userName) {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+        out().println("Password must be changed at first login.");
+        for (int attempt = 1; attempt <= PASSWORD_CHANGE_ATTEMPTS; attempt++) {
+            try {
+                out().print("New password: ");
+                out().flush();
+                String first = reader.readLine();
+                if (first == null) {
+                    return false;
+                }
+                out().print("Repeat new password: ");
+                out().flush();
+                String second = reader.readLine();
+                if (first.isEmpty()) {
+                    out().println("Password must not be empty.");
+                    continue;
+                }
+                if (!first.equals(second)) {
+                    out().println("Passwords do not match.");
+                    continue;
+                }
+                client.executeQuery("ALTER USER " + userName + " PASSWORD '" + first + "'");
+                out().println("Password changed.");
+                return true;
+            } catch (IOException e) {
+                LOGGER.error("Error reading input: {}", e.getMessage());
+                return false;
+            } catch (RuntimeException e) {
+                out().println("Password change failed: " + e.getMessage());
+            }
+        }
+        out().println("Giving up after " + PASSWORD_CHANGE_ATTEMPTS + " attempts.");
+        return false;
+    }
+
+    private static PrintWriter out() {
+        return new PrintWriter(System.out, true);
+    }
+
+    private static final int PASSWORD_CHANGE_ATTEMPTS = 3;
 
     /**
      * Runs the REPL loop until EXIT/QUIT is entered, an empty line or EOF is
@@ -248,8 +417,10 @@ public class CliRepl {
         out.println("  HELP                    show this help");
         out.println("  EXIT or QUIT            exit the REPL");
         out.println("Usage:");
-        out.println("  CliRepl [host] [port]   connect to a running server (default localhost:3306)");
-        out.println("  CliRepl --local [dir]   use a local database directly (default dir .)");
+        out.println("  CliRepl [host] [port]                  connect to a running server (default localhost:3306)");
+        out.println("  CliRepl --local [dir]                  use a local database directly (default dir data)");
+        out.println("  CliRepl --user u --password p [--db d] login on connect (prompt4 #31)");
+        out.println("  CliRepl --reset-admin [dir]            reset admin/admin locally, requires filesystem access");
     }
 
     private void disconnect() {

@@ -39,6 +39,14 @@ public final class User {
         return createdAt;
     }
 
+    /**
+     * True when this account must change its password at the next login
+     * (bootstrap admin, prompt4 #31).
+     */
+    public boolean isMustChangePassword() {
+        return PasswordHasher.requiresPasswordChange(passwordHash);
+    }
+
     @Override
     public String toString() {
         return "User{id=" + id + ", name='" + name + "', createdAt=" + createdAt + "}";

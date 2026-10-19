@@ -988,3 +988,5 @@ chore: test-profiles-audit changelog entry
 3.3.15 Prompt 4 #30: RBAC foundation (R3-008 step 1/4) - diesel/security User/Role/Privilege models, PBKDF2-HmacSHA256 PasswordHasher (salted, configurable iterations), UserStore + 4 exceptions; DIESEL_USERS/ROLES/USER_ROLES/PRIVILEGES system tables (lazy init, diesel_% DROP-guarded); SQL CREATE USER / CREATE ROLE / GRANT role TO user with case-preserving parse; new PasswordHasherTest(8) UserStoreTest(9) RbacDdlTest(10); gates: fast 509 green (WALBackpressure flake isolated-pass), timing skipped (not on query path; precedent #27-29); note: 100k PBKDF2 ~101-135ms on this VM, test bound min-of-3 <200ms
 
 3.3.16 Fix @TempDir deletion race in 5 query-full tests: close Database in tearDown to release persist-flusher handles
+
+3.3.17 Prompt4 #31: Authenticator handshake AUTH + CLI login, admin/admin bootstrap with forced password change, --reset-admin, ALTER USER self-service

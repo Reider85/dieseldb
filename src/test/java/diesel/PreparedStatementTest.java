@@ -208,7 +208,7 @@ public class PreparedStatementTest {
     @Test
     void clientServerPrepareExecuteCloseRoundTrip() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port);
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 client.executeQuery("INSERT INTO PS_TEST (NAME, AGE) VALUES ('server1', 11)");
@@ -248,7 +248,7 @@ public class PreparedStatementTest {
     @Test
     void clientServerExecutesUnknownStatementReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port);
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 boolean threw = false;

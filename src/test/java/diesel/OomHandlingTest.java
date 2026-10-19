@@ -163,6 +163,7 @@ public class OomHandlingTest {
             waitForServer(port);
             try (WireProbe probe = new WireProbe(port, 10000)) {
                 probe.handshake();
+                probe.auth("admin", "admin");
                 probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
                 Object response = probe.readValue();
                 assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", response,
@@ -203,6 +204,7 @@ public class OomHandlingTest {
             waitForServer(port);
             try (WireProbe probe = new WireProbe(port, 10000)) {
                 probe.handshake();
+                probe.auth("admin", "admin");
                 probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
                 Object cursorIdResponse = probe.readValue();
                 assertTrue(cursorIdResponse instanceof String, "server should return a cursor id string");
@@ -246,6 +248,7 @@ public class OomHandlingTest {
     private static Object roundTrip(int port, String query) throws Exception {
         try (WireProbe probe = new WireProbe(port, 10000)) {
             probe.handshake();
+            probe.auth("admin", "admin");
             return probe.query(query);
         }
     }

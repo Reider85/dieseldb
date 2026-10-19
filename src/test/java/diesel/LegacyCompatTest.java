@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -60,7 +61,11 @@ public class LegacyCompatTest {
         port = freePort();
         legacyPort = freePort();
         database = new Database(tempDir.toString());
-        server = new DatabaseServer(port, 15000, legacyPort, database);
+        // Prompt4 #31: the v1 protocol has no AUTH handshake, so this server
+        // must run with authentication off to keep pre-v2 clients working.
+        Properties override = new Properties();
+        override.setProperty("security.auth.required", "false");
+        server = new DatabaseServer(port, 15000, legacyPort, database, override);
         serverThread = new Thread(server::start, "legacy-compat-server");
         serverThread.start();
         waitForServer(port);

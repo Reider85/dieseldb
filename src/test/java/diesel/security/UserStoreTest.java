@@ -6,9 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,31 +16,18 @@ import org.junit.jupiter.api.Test;
  * Prompt 4 #30 acceptance: create user stores a salted hash (never
  * plaintext), duplicates raise UserExistsException, roles and grants work.
  * Uses an in-memory {@link UserStoreBackend} so the store logic is tested
- * without the engine.
+ * without the engine. Password updates (#31) exercise the backend
+ * {@code updateRow} path.
  */
 @Tag("smoke")
 class UserStoreTest {
 
-    private static final class InMemoryBackend implements UserStoreBackend {
-        private final Map<String, List<Map<String, Object>>> tables = new HashMap<>();
-
-        @Override
-        public List<Map<String, Object>> readAll(String tableName) {
-            return tables.getOrDefault(tableName, List.of());
-        }
-
-        @Override
-        public void appendRow(String tableName, Map<String, Object> row) {
-            tables.computeIfAbsent(tableName, k -> new ArrayList<>()).add(new LinkedHashMap<>(row));
-        }
-    }
-
-    private InMemoryBackend backend;
+    private InMemoryUserStoreBackend backend;
     private UserStore store;
 
     @BeforeEach
     void setUp() {
-        backend = new InMemoryBackend();
+        backend = new InMemoryUserStoreBackend();
         // Low iteration count keeps the unit suite fast; the 100k acceptance
         // timing lives in PasswordHasherTest.
         store = new UserStore(backend, new PasswordHasher(1_000));
@@ -126,5 +110,17 @@ class UserStoreTest {
         assertEquals("alice", user.getName());
         assertTrue(store.getPasswordHasher().verify("pw", user.getPasswordHash()));
         assertTrue(store.findUser("ghost").isEmpty());
+    }
+
+    @Test
+    void updatePasswordReplacesHashInPlace() {
+        store.createUser("alice", "old-pw");
+        store.updatePassword("alice", "new-pw");
+        Map<String, Object> row = backend.readAll(UserStoreBackend.USERS).get(0);
+        String stored = String.valueOf(row.get("PASSWORD_HASH"));
+        assertTrue(store.getPasswordHasher().verify("new-pw", stored));
+        assertFalse(store.getPasswordHasher().verify("old-pw", stored));
+        assertThrows(UserNotFoundException.class, () -> store.updatePassword("ghost", "pw"));
+        assertThrows(IllegalArgumentException.class, () -> store.updatePassword("alice", ""));
     }
 }

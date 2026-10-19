@@ -104,6 +104,7 @@ public class CompressionDisableTest {
     void largeFrameStaysUncompressed() throws Exception {
         try (WireProbe probe = new WireProbe(port)) {
             probe.handshake();
+            probe.auth("admin", "admin");
             probe.write(new QueryMessage("SELECT ID, DATA FROM NET_RAW", null));
 
             diesel.net.WireProtocol.Frame frame = probe.readFrame();
@@ -121,7 +122,7 @@ public class CompressionDisableTest {
 
     @Test
     void clientServesLargeResultsWithCompressionOff() {
-        DatabaseClient client = new DatabaseClient("localhost", port);
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
         try {
             client.connect();
             Object result = client.executeQuery("SELECT ID, DATA FROM NET_RAW");

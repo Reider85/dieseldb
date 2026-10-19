@@ -92,6 +92,7 @@ public class NetCompressionTest {
     void largeSelectFrameIsCompressedOnTheWire() throws Exception {
         try (WireProbe probe = new WireProbe(port)) {
             probe.handshake();
+            probe.auth("admin", "admin");
             probe.write(new QueryMessage("SELECT ID, DATA FROM NET_COMP", null));
 
             diesel.net.WireProtocol.Frame frame = probe.readFrame();
@@ -123,6 +124,7 @@ public class NetCompressionTest {
     void smallSelectFrameIsNotCompressed() throws Exception {
         try (WireProbe probe = new WireProbe(port)) {
             probe.handshake();
+            probe.auth("admin", "admin");
             probe.write(new QueryMessage("SELECT ID, DATA FROM NET_COMP WHERE ID = 0", null));
 
             diesel.net.WireProtocol.Frame frame = probe.readFrame();
@@ -137,7 +139,7 @@ public class NetCompressionTest {
 
     @Test
     void clientRoundTripsLargeResult() {
-        DatabaseClient client = new DatabaseClient("localhost", port);
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
         try {
             client.connect();
             long startNanos = System.nanoTime();
@@ -163,7 +165,7 @@ public class NetCompressionTest {
 
     @Test
     void aggregateAndStatusResultsRoundTrip() {
-        DatabaseClient client = new DatabaseClient("localhost", port);
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
         try {
             client.connect();
             Object count = client.executeQuery("SELECT COUNT(*) AS CNT FROM NET_COMP");
@@ -186,7 +188,7 @@ public class NetCompressionTest {
         // The server refuses to serve anything before the handshake: a plain
         // query frame is rejected at decode time, so DatabaseClient must open
         // with COMPRESSION_HANDSHAKE. Connecting and running a query proves it.
-        DatabaseClient client = new DatabaseClient("localhost", port);
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
         try {
             client.connect();
             assertNotNull(client.executeQuery("SELECT COUNT(*) AS CNT FROM NET_COMP"));

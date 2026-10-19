@@ -20,6 +20,12 @@ import java.util.UUID;
  */
 public final class UserStore {
 
+    /** Account bootstrapped on the first server start (prompt4 #31). */
+    public static final String ADMIN_NAME = "admin";
+
+    /** Bootstrap / reset password for {@link #ADMIN_NAME}; must be changed at first login. */
+    public static final String DEFAULT_ADMIN_PASSWORD = "admin";
+
     private final UserStoreBackend backend;
     private final PasswordHasher hasher;
 
@@ -91,6 +97,75 @@ public final class UserStore {
         grant.put("USER_ID", user.getId().toString());
         grant.put("ROLE_ID", role.getId().toString());
         backend.appendRow(UserStoreBackend.USER_ROLES, grant);
+    }
+
+    /**
+     * Replaces the user's password hash (prompt4 #31). The freshly hashed
+     * value carries no must-change flag, so a successful call clears a
+     * pending forced change.
+     *
+     * @param userName  the account to update
+     * @param newPassword the new plaintext password
+     * @throws UserNotFoundException when the user does not exist
+     * @throws IllegalArgumentException when the password is null or empty
+     */
+    public void updatePassword(String userName, String newPassword) {
+        requireName(userName, "User");
+        if (newPassword == null || newPassword.isEmpty()) {
+            throw new IllegalArgumentException("Password must not be null or empty");
+        }
+        User user = findUser(userName)
+                .orElseThrow(() -> new UserNotFoundException("User '" + userName + "' does not exist"));
+        User updated = new User(user.getId(), user.getName(), hasher.hash(newPassword), user.getCreatedAt());
+        backend.updateRow(UserStoreBackend.USERS, userRow(updated));
+    }
+
+    /**
+     * Bootstraps the {@link #ADMIN_NAME}/{@link #DEFAULT_ADMIN_PASSWORD}
+     * account on the very first run (prompt4 #31, no users exist yet).
+     * The account is flagged so the first login must change the password.
+     *
+     * @return the admin user; when bootstrap is skipped because users are
+     *         already present, the admin itself (or the first user when no
+     *         account is named {@code admin})
+     */
+    public synchronized User ensureDefaultAdmin() {
+        Optional<User> admin = findUser(ADMIN_NAME);
+        if (admin.isPresent()) {
+            return admin.get();
+        }
+        for (Map<String, Object> row : backend.readAll(UserStoreBackend.USERS)) {
+            return userFromRow(row);
+        }
+        return createAdminWithFlag();
+    }
+
+    /**
+     * Restores the admin account to the bootstrap state: password
+     * {@link #DEFAULT_ADMIN_PASSWORD} plus the forced-change flag
+     * (prompt4 #31 {@code --reset-admin}). Recreates the account when it
+     * was removed.
+     *
+     * @return the admin user
+     */
+    public synchronized User resetAdminPassword() {
+        String hash = PasswordHasher.withMustChangeFlag(hasher.hash(DEFAULT_ADMIN_PASSWORD));
+        User existing = findUser(ADMIN_NAME).orElse(null);
+        if (existing != null) {
+            User reset = new User(existing.getId(), existing.getName(), hash, existing.getCreatedAt());
+            backend.updateRow(UserStoreBackend.USERS, userRow(reset));
+            return reset;
+        }
+        User created = new User(UUID.randomUUID(), ADMIN_NAME, hash, LocalDateTime.now());
+        backend.appendRow(UserStoreBackend.USERS, userRow(created));
+        return created;
+    }
+
+    private User createAdminWithFlag() {
+        String hash = PasswordHasher.withMustChangeFlag(hasher.hash(DEFAULT_ADMIN_PASSWORD));
+        User admin = new User(UUID.randomUUID(), ADMIN_NAME, hash, LocalDateTime.now());
+        backend.appendRow(UserStoreBackend.USERS, userRow(admin));
+        return admin;
     }
 
     /** Returns the user with the given name, when present. */

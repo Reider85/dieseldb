@@ -103,6 +103,7 @@ public class ServerConnectionLimitTest {
         for (int i = 0; i < probeCount; i++) {
             try (WireProbe probe = new WireProbe(port, 2000)) {
                 probe.handshake();
+                probe.auth("admin", "admin");
                 Object response = probe.query("SET AUTOCOMMIT = ON");
                 LOGGER.log(Level.INFO, "Probe {0} got response (unexpected): {1}", new Object[]{i, response});
             } catch (IOException e) {

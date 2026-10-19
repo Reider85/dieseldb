@@ -872,6 +872,9 @@ class Database {
         if (parsedQuery instanceof GrantRoleQuery q) {
             return executeGrantRole(q);
         }
+        if (parsedQuery instanceof AlterUserQuery q) {
+            return executeAlterUser(q);
+        }
         if (parsedQuery instanceof CreateCompositeIndexQuery q) {
             return executeCreateCompositeIndex(q, currentTransaction);
         }
@@ -1479,6 +1482,12 @@ class Database {
         return "Role granted: " + query.getRoleName() + " -> " + query.getUserName();
     }
 
+    /** ALTER USER — replaces the password hash and clears a forced change (prompt4 #31). */
+    String executeAlterUser(AlterUserQuery query) {
+        getUserStore().updatePassword(query.getUserName(), query.getPassword());
+        return "Password changed: " + query.getUserName();
+    }
+
     /** Bridges UserStore onto the DIESEL_* system tables (prompt4 #30). */
     private final class SystemTableBackend implements UserStoreBackend {
         @Override
@@ -1491,6 +1500,21 @@ class Database {
             Table table = getTable(tableName);
             table.addRow(row);
             table.saveToFile(tableName);
+        }
+
+        @Override
+        public void updateRow(String tableName, Map<String, Object> row) {
+            Table table = getTable(tableName);
+            Object id = row.get("ID");
+            List<Map<String, Object>> current = table.getRows();
+            for (int i = 0; i < current.size(); i++) {
+                if (Objects.equals(id, current.get(i).get("ID"))) {
+                    table.updateRowInPlace(i, row);
+                    table.saveToFile(tableName);
+                    return;
+                }
+            }
+            throw new IllegalStateException("No row with ID " + id + " in " + tableName);
         }
     }
 

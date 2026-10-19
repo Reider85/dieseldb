@@ -29,6 +29,8 @@ public final class MessageCodecRegistry {
         CODECS.put(MessageType.PREPARE_RESPONSE, new PrepareResponseMessageCodec());
         CODECS.put(MessageType.CLOSE_PREPARED_RESPONSE, new ClosePreparedResponseMessageCodec());
         CODECS.put(MessageType.CLOSE_CURSOR_RESPONSE, new CloseCursorResponseMessageCodec());
+        CODECS.put(MessageType.AUTH, new AuthMessageCodec());
+        CODECS.put(MessageType.AUTH_RESPONSE, new AuthResponseMessageCodec());
     }
     
     /**

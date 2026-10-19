@@ -68,7 +68,13 @@ public enum MessageType {
     COMPRESSION_HANDSHAKE_RESPONSE((short) 13),
 
     /** Generic error payload (server -> client). */
-    ERROR((short) 14);
+    ERROR((short) 14),
+
+    /** Credentials handshake, client -> server (prompt4.md #31, R3-008 step 2/4). */
+    AUTH((short) 20),
+
+    /** Credentials handshake result, server -> client (prompt4.md #31). */
+    AUTH_RESPONSE((short) 21);
 
     private final short id;
 

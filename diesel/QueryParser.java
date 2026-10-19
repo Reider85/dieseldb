@@ -103,6 +103,8 @@ class QueryParser {
             "(?i)^CREATE\\s+ROLE\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern GRANT_ROLE_PATTERN = Pattern.compile(
             "(?i)^GRANT\\s+(" + IDENTIFIER_PATTERN + ")\\s+TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    private static final Pattern ALTER_USER_PATTERN = Pattern.compile(
+            "(?i)^ALTER\\s+USER\\s+(" + IDENTIFIER_PATTERN + ")\\s+PASSWORD\\s+'([^']*)'\\s*;?\\s*$");
     private static final Map<String, Pattern> CLAUSE_SCAN_PATTERN_CACHE = new ConcurrentHashMap<>();
     private static final Pattern CLAUSE_QUOTED_STRING_PATTERN = Pattern.compile("'([^'\\\\]*+(?:\\\\.[^'\\\\]*+)*+)'");
     private static final Pattern ON_KEYWORD_PATTERN = Pattern.compile("(?i)\\bON\\b");
@@ -777,6 +779,17 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.ALTER_USER);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseAlterUserQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
                 return n.startsWith(SqlKeywords.INSERT_INTO);
             }
             @Override
@@ -1220,6 +1233,16 @@ class QueryParser {
             throw new SyntaxErrorException("Invalid GRANT syntax: expected GRANT <role> TO <user>");
         }
         return new GrantRoleQuery(unquoteIdentifier(m.group(1)), unquoteIdentifier(m.group(2)));
+    }
+
+    /** Parses {@code ALTER USER <name> PASSWORD '<password>'} (prompt4 #31). */
+    private Query<?> parseAlterUserQuery(String original) {
+        Matcher m = ALTER_USER_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException(
+                    "Invalid ALTER USER syntax: expected ALTER USER <name> PASSWORD '<password>'");
+        }
+        return new AlterUserQuery(unquoteIdentifier(m.group(1)), m.group(2));
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

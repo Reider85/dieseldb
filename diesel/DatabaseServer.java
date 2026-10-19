@@ -9,6 +9,9 @@ import java.util.logging.Level;
 
 import diesel.net.*;
 import diesel.net.messages.*;
+import diesel.security.AuthException;
+import diesel.security.Authenticator;
+import diesel.security.Session;
 
 /**
  * TCP server that accepts client connections and executes their SQL queries
@@ -53,6 +56,8 @@ public class DatabaseServer {
     private final int socketTimeout;
     private final int legacyPort;
     private final Properties configOverride;
+    /** Shared session registry for all connections (prompt4 #31). */
+    private volatile Authenticator authenticator;
 
     /**
      * Creates a server on the given port with the default socket timeout.
@@ -190,6 +195,11 @@ public class DatabaseServer {
         // Start background checkpoint manager (prompt4 #21)
         database.startCheckpointManager();
         database.getVacuumManager().startAutoVacuum();
+        // Bootstrap the admin account on the first run (prompt4 #31, #30 step 2/4)
+        if (Boolean.parseBoolean(config.getProperty("security.auth.bootstrap-admin", "true"))) {
+            database.getUserStore().ensureDefaultAdmin();
+        }
+        getAuthenticator();
         try {
             serverSocket = new ServerSocket(port, backlog);
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
@@ -308,6 +318,11 @@ public class DatabaseServer {
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
         private final Database database;
+        private final Authenticator authenticator;
+        /** Authenticated session for this connection, or null (prompt4 #31). */
+        private Session session;
+        /** When true, data-plane messages require an authenticated session. */
+        private final boolean authRequired;
         private DataOutputStream out;
         private DataInputStream in;
         private UUID transactionId;
@@ -352,9 +367,11 @@ public class DatabaseServer {
         private long totalCompressionTimeNanos = 0;
         private int compressionCount = 0;
 
-        public ClientHandler(Socket socket, Database database, int socketTimeout, Properties config) {
+        public ClientHandler(Socket socket, Database database, int socketTimeout, Properties config,
+                Authenticator authenticator) {
             this.clientSocket = socket;
             this.database = database;
+            this.authenticator = authenticator;
             this.transactionId = null;
             this.compressionAlgorithm = DEFAULT_ALGORITHM;
             try {
@@ -366,6 +383,89 @@ public class DatabaseServer {
             this.compressionThreshold = Integer.parseInt(config.getProperty("compression.threshold.bytes", String.valueOf(defaultCompressionThreshold)));
             this.compressionLevel = Integer.parseInt(config.getProperty("compression.level", String.valueOf(defaultCompressionLevel)));
             this.compressionEnabled = true;
+            // Auth is opt-out (prompt4 #31): unauthenticated data-plane queries
+            // are rejected unless the deployment turns enforcement off.
+            this.authRequired = Boolean.parseBoolean(config.getProperty("security.auth.required", "true"));
+        }
+
+        /**
+         * Runs the startup handshake: an optional AUTH frame first (prompt4
+         * #31), then the compression negotiation. Frames that are neither are
+         * handed to the dispatch loop untouched for maximum compatibility.
+         *
+         * @return the pending message for the dispatch loop, or null
+         */
+        private Message performStartupHandshake() throws IOException {
+            Message first = readNextMessage(null);
+            if (first == null) {
+                return null;
+            }
+            if (first.getType() == MessageType.AUTH) {
+                handleAuthMessage((diesel.net.messages.AuthMessage) first);
+                first = readNextMessage(null);
+                if (first == null) {
+                    return null;
+                }
+            }
+            if (first.getType() == MessageType.COMPRESSION_HANDSHAKE) {
+                return performHandshake((diesel.net.messages.CompressionHandshakeMessage) first);
+            }
+            return first;
+        }
+
+        /**
+         * Verifies credentials through the {@link Authenticator} and answers
+         * with an {@link AuthResponseMessage} (prompt4 #31). A failed attempt
+         * leaves the session unauthenticated; the connection stays open so the
+         * client receives the verdict.
+         */
+        private void handleAuthMessage(diesel.net.messages.AuthMessage message) {
+            boolean success = false;
+            java.util.UUID token = null;
+            java.util.UUID userId = null;
+            boolean mustChange = false;
+            String text;
+            try {
+                Session authenticated = authenticator.authenticate(
+                        message.getUserName(), message.getPassword());
+                if (session != null) {
+                    authenticator.invalidate(session.getToken());
+                }
+                session = authenticated;
+                success = true;
+                token = authenticated.getToken().getId();
+                userId = authenticated.getUserId();
+                mustChange = authenticated.isMustChangePassword();
+                text = "Authenticated as " + authenticated.getUserName();
+                LOGGER.log(Level.INFO, "Client {0} authenticated as user {1}",
+                        new Object[]{clientSocket.getInetAddress(), authenticated.getUserName()});
+            } catch (AuthException e) {
+                text = e.getMessage();
+                LOGGER.log(Level.WARNING, "Authentication failure for user ''{0}'' from {1}: {2}",
+                        new Object[]{message.getUserName(), clientSocket.getInetAddress(), e.getMessage()});
+            }
+            try {
+                AuthResponseMessage response = new AuthResponseMessage(
+                        success, token, userId, mustChange, text, message.getTransactionId());
+                MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.AUTH_RESPONSE);
+                WireProtocol.writeMessage(response, codec, out);
+                out.flush();
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to send auth response: {0}", e.getMessage());
+            }
+        }
+
+        /**
+         * Gates data-plane messages behind an authenticated session
+         * (prompt4 #31). Replies with an error when authentication is
+         * required but missing; returns whether the caller may proceed.
+         */
+        private boolean ensureAuthenticated() throws IOException {
+            if (session != null || !authRequired) {
+                return true;
+            }
+            sendSerializedResult("Error: Authentication required");
+            return false;
         }
 
 /**
@@ -377,7 +477,16 @@ public class DatabaseServer {
             MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.COMPRESSION_HANDSHAKE);
             diesel.net.messages.CompressionHandshakeMessage handshake = 
                 (diesel.net.messages.CompressionHandshakeMessage) WireProtocol.readMessage(codec, in);
-            
+            return performHandshake(handshake);
+        }
+
+        /**
+         * Applies an already-read compression handshake message (prompt4 #31:
+         * the startup flow may deliver it after AUTH) and replies with the
+         * negotiated settings.
+         */
+        private Message performHandshake(diesel.net.messages.CompressionHandshakeMessage handshake)
+                throws IOException {
             LOGGER.log(Level.INFO, "Received compression handshake from client: {0}", handshake);
 
             // Create compression handler with negotiated settings and keep it
@@ -456,8 +565,8 @@ public class DatabaseServer {
                 out = new DataOutputStream(clientSocket.getOutputStream());
                 in = new DataInputStream(clientSocket.getInputStream());
 
-                // Perform compression handshake before starting query loop
-                Message pendingInput = performHandshake();
+                // Startup handshake: optional AUTH (prompt4 #31) then compression
+                Message pendingInput = performStartupHandshake();
 
                 Message input = readNextMessage(pendingInput);
                 while (input != null && dispatchMessage(input)) {
@@ -480,6 +589,10 @@ public class DatabaseServer {
                     cursor.close();
                 }
                 cursors.clear();
+                if (session != null) {
+                    authenticator.invalidate(session.getToken());
+                    session = null;
+                }
                 closeQuietly(out);
                 closeQuietly(in);
                 closeQuietly(clientSocket);
@@ -554,12 +667,22 @@ public class DatabaseServer {
                 case COMPRESSION_HANDSHAKE:
                     performHandshake();
                     return true;
-                    
+
+                case AUTH:
+                    handleAuthMessage((diesel.net.messages.AuthMessage) input);
+                    return true;
+
                 case PREPARE:
+                    if (!ensureAuthenticated()) {
+                        return true;
+                    }
                     handlePrepare((diesel.net.messages.PrepareMessage) input);
                     return true;
                     
                 case EXECUTE_PREPARED:
+                    if (!ensureAuthenticated()) {
+                        return true;
+                    }
                     handleExecutePrepared((diesel.net.messages.ExecutePreparedMessage) input);
                     return true;
                     
@@ -568,10 +691,16 @@ public class DatabaseServer {
                     return true;
                     
                 case OPEN_CURSOR:
+                    if (!ensureAuthenticated()) {
+                        return true;
+                    }
                     handleOpenCursor((diesel.net.messages.OpenCursorMessage) input);
                     return true;
                     
                 case FETCH_CURSOR:
+                    if (!ensureAuthenticated()) {
+                        return true;
+                    }
                     handleFetchCursor((diesel.net.messages.FetchCursorMessage) input);
                     return true;
                     
@@ -580,6 +709,9 @@ public class DatabaseServer {
                     return true;
                     
                 case QUERY:
+                    if (!ensureAuthenticated()) {
+                        return true;
+                    }
                     executeQueryMessage((diesel.net.messages.QueryMessage) input);
                     return true;
                     
@@ -601,8 +733,22 @@ public class DatabaseServer {
             String query = qm.getQuery();
             transactionId = qm.getTransactionId();
 
+            // Self-service password change only (prompt4 #31): cross-account
+            // ALTER USER arrives with the Authorizer in prompt4 #32.
+            if (session != null && AlterUserQuery.isAlterUser(query)) {
+                String target = AlterUserQuery.targetUserName(query);
+                if (target != null && !target.equals(session.getUserName())) {
+                    sendSerializedResult("Error: Can only change your own password");
+                    return;
+                }
+            }
+
             try {
                 Object result = database.executeQuery(query, transactionId);
+                if (session != null && AlterUserQuery.isAlterUser(query)
+                        && !(result instanceof String error && error.startsWith(ErrorMessages.ERROR_PREFIX))) {
+                    session.setMustChangePassword(false);
+                }
                 sendSerializedResult(result);
             } catch (OutOfMemoryError e) {
                 handleOutOfMemory(query, e);
@@ -916,12 +1062,31 @@ public class DatabaseServer {
     }
     
     /**
+     * Returns the shared authenticator, creating it on first use so that
+     * servers with authentication disabled never touch the user store
+     * (prompt4 #31).
+     */
+    Authenticator getAuthenticator() {
+        Authenticator local = authenticator;
+        if (local != null) {
+            return local;
+        }
+        synchronized (this) {
+            if (authenticator == null) {
+                authenticator = new Authenticator(database.getUserStore());
+            }
+            return authenticator;
+        }
+    }
+
+    /**
      * Handles a client connection, submitting it to the executor or closing it if rejected.
      */
     private void handleClientConnection(Socket clientSocket, ThreadPoolExecutor executor, 
                                      Database database, int effectiveSocketTimeout, Properties config) {
         try {
-            executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout, config));
+            executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout,
+                    config, getAuthenticator()));
         } catch (RejectedExecutionException e) {
             LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
                     new Object[]{clientSocket.getInetAddress(), e.getMessage()});

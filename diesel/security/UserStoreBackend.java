@@ -34,4 +34,14 @@ public interface UserStoreBackend {
      * @param row       the column-value mapping; all values are Strings
      */
     void appendRow(String tableName, Map<String, Object> row);
+
+    /**
+     * Replaces the row carrying the same {@code ID} and makes it durable
+     * (prompt4 #31 password changes).
+     *
+     * @param tableName one of the constants in this interface
+     * @param row       the full replacement row; all values are Strings
+     * @throws IllegalStateException when no row with that ID exists
+     */
+    void updateRow(String tableName, Map<String, Object> row);
 }

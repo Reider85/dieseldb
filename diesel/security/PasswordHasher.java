@@ -22,6 +22,8 @@ public final class PasswordHasher {
 
     private static final String ALGORITHM = "PBKDF2WithHmacSHA256";
     private static final String PREFIX = "pbkdf2_sha256";
+    /** Optional 5th part marking a hash whose account must change its password (#31). */
+    public static final String MUST_CHANGE_SUFFIX = "must_change";
     private static final int SALT_BYTES = 16;
     private static final int KEY_BITS = 256;
 
@@ -77,7 +79,7 @@ public final class PasswordHasher {
         if (password == null || encoded == null) {
             return false;
         }
-        String[] parts = encoded.split("\\$");
+        String[] parts = splitEncoded(encoded);
         if (parts.length != 4 || !PREFIX.equals(parts[0])) {
             return false;
         }
@@ -95,6 +97,59 @@ public final class PasswordHasher {
         } catch (IllegalArgumentException e) {
             return false;
         }
+    }
+
+    /**
+     * Returns the encoded hash with the must-change flag appended
+     * (prompt4.md #31). The flag survives restarts without a schema change.
+     *
+     * @param encoded an encoded hash, with or without the flag
+     * @return the hash carrying the {@link #MUST_CHANGE_SUFFIX} marker
+     */
+    public static String withMustChangeFlag(String encoded) {
+        if (encoded == null) {
+            throw new IllegalArgumentException("encoded hash must not be null");
+        }
+        if (requiresPasswordChange(encoded)) {
+            return encoded;
+        }
+        return encoded + "$" + MUST_CHANGE_SUFFIX;
+    }
+
+    /**
+     * Returns the encoded hash without the must-change flag.
+     *
+     * @param encoded an encoded hash, with or without the flag
+     * @return the hash stripped of the {@link #MUST_CHANGE_SUFFIX} marker
+     */
+    public static String withoutMustChangeFlag(String encoded) {
+        if (encoded == null) {
+            throw new IllegalArgumentException("encoded hash must not be null");
+        }
+        if (!requiresPasswordChange(encoded)) {
+            return encoded;
+        }
+        return encoded.substring(0, encoded.lastIndexOf('$'));
+    }
+
+    /** True when the hash is flagged so its account must change the password first (#31). */
+    public static boolean requiresPasswordChange(String encoded) {
+        if (encoded == null) {
+            return false;
+        }
+        String[] parts = encoded.split("\\$");
+        return parts.length == 5 && MUST_CHANGE_SUFFIX.equals(parts[4]);
+    }
+
+    /** Splits an encoded hash, tolerating the optional must-change suffix. */
+    private static String[] splitEncoded(String encoded) {
+        String[] parts = encoded.split("\\$");
+        if (parts.length == 5 && MUST_CHANGE_SUFFIX.equals(parts[4])) {
+            String[] stripped = new String[4];
+            System.arraycopy(parts, 0, stripped, 0, 4);
+            return stripped;
+        }
+        return parts;
     }
 
     private static byte[] pbkdf2(String password, byte[] salt, int iterations) {

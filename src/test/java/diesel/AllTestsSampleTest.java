@@ -973,6 +973,7 @@ public class AllTestsSampleTest {
 
             try (WireProbe probe = new WireProbe(port, 60000)) {
                 probe.handshake();
+                probe.auth("admin", "admin");
                 long start = System.currentTimeMillis();
                 probe.write(new diesel.net.messages.QueryMessage("SET AUTOCOMMIT = ON", null));
                 Object response = probe.readValue();
@@ -996,6 +997,7 @@ public class AllTestsSampleTest {
 
             try (WireProbe probe = new WireProbe(port, 5000)) {
                 probe.handshake();
+                probe.auth("admin", "admin");
                 Object probeResponse = probe.query("SET AUTOCOMMIT = ON");
                 check(probeResponse != null && !isErrorResponse(probeResponse),
                         "Prompt69Test / the server stays alive and accepts a new connection after the timed-out client was closed");
@@ -1072,6 +1074,7 @@ public class AllTestsSampleTest {
 
             try (WireProbe probe = new WireProbe(port, 15000)) {
                 probe.handshake();
+                probe.auth("admin", "admin");
 
                 Object createResponse = prompt70RoundTrip(probe, "CREATE TABLE PROMPT70_TEST (ID LONG PRIMARY KEY SEQUENCE(p70_seq 1 1), NAME STRING)");
                 check(createResponse != null && !isErrorResponse(createResponse),

@@ -5,6 +5,8 @@ import diesel.net.InvalidMessageException;
 import diesel.net.Message;
 import diesel.net.MessageCodec;
 import diesel.net.WireProtocol;
+import diesel.net.messages.AuthMessage;
+import diesel.net.messages.AuthResponseMessage;
 import diesel.net.messages.CompressionHandshakeMessage;
 import diesel.net.messages.CompressionHandshakeResponseMessage;
 import diesel.net.messages.MessageCodecRegistry;
@@ -77,6 +79,25 @@ final class WireProbe implements AutoCloseable {
                 responseMessage.getActualCompressionLevel(),
                 responseMessage.getActualCompressionThresholdBytes());
         return responseMessage;
+    }
+
+    /**
+     * Authenticates the probe session (prompt4 #31): may be called before or
+     * after {@link #handshake()}, the server accepts AUTH as the first frame
+     * or as a mid-session re-login.
+     *
+     * @param user     the account name
+     * @param password the plaintext password
+     * @return the server's auth verdict
+     * @throws IOException if the stream fails or the answer is no auth response
+     */
+    AuthResponseMessage auth(String user, String password) throws IOException {
+        write(new AuthMessage(user, password, null, null));
+        Message response = read();
+        if (!(response instanceof AuthResponseMessage authResponse)) {
+            throw new InvalidMessageException("Expected an auth response, got " + response.getType());
+        }
+        return authResponse;
     }
 
     /** Sends a message as one plain (uncompressed) frame. */
