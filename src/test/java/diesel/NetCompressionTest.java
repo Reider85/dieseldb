@@ -42,7 +42,7 @@ public class NetCompressionTest {
     void setUp() throws Exception {
         tempDir = Files.createTempDirectory("dieseldb-net-compression");
         port = freePort();
-        database = new Database(tempDir.toString());
+database = new Database(tempDir.toString());
         server = new DatabaseServer(port, 15000, database);
         serverThread = new Thread(server::start, "net-compression-server");
         serverThread.start();
@@ -50,10 +50,23 @@ public class NetCompressionTest {
 
         database.executeQuery(
                 "CREATE TABLE NET_COMP (ID LONG PRIMARY KEY, DATA STRING)", null);
+        
+        // Reset must-change password for admin to allow queries
+        // Note: This needs to be done after the database is fully initialized
+        try {
+            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
+        } catch (Exception e) {
+            // If admin doesn't exist yet, create it first
+            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
+        }
+        
         List<String> inserts = new ArrayList<>(ROWS);
         for (int i = 0; i < ROWS; i++) {
-            inserts.add("INSERT INTO NET_COMP (ID, DATA) VALUES (" + i + ", '"
-                    + payloadFor(i) + "')");
+            inserts.add("INSERT INTO NET_COMP (ID, DATA) VALUES (" + i + ','
+                    + payloadFor(i) + ')');
+        }
+        for (String insert : inserts) {
+            database.executeQuery(insert, null);
         }
         for (String insert : inserts) {
             database.executeQuery(insert, null);
@@ -92,7 +105,7 @@ public class NetCompressionTest {
     void largeSelectFrameIsCompressedOnTheWire() throws Exception {
         try (WireProbe probe = new WireProbe(port)) {
             probe.handshake();
-            probe.auth("admin", "admin");
+            probe.auth("admin", "test-admin-pw");
             probe.write(new QueryMessage("SELECT ID, DATA FROM NET_COMP", null));
 
             diesel.net.WireProtocol.Frame frame = probe.readFrame();
@@ -124,7 +137,7 @@ public class NetCompressionTest {
     void smallSelectFrameIsNotCompressed() throws Exception {
         try (WireProbe probe = new WireProbe(port)) {
             probe.handshake();
-            probe.auth("admin", "admin");
+            probe.auth("admin", "test-admin-pw");
             probe.write(new QueryMessage("SELECT ID, DATA FROM NET_COMP WHERE ID = 0", null));
 
             diesel.net.WireProtocol.Frame frame = probe.readFrame();
@@ -139,7 +152,7 @@ public class NetCompressionTest {
 
     @Test
     void clientRoundTripsLargeResult() {
-        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "test-admin-pw");
         try {
             client.connect();
             long startNanos = System.nanoTime();
@@ -165,7 +178,7 @@ public class NetCompressionTest {
 
     @Test
     void aggregateAndStatusResultsRoundTrip() {
-        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "test-admin-pw");
         try {
             client.connect();
             Object count = client.executeQuery("SELECT COUNT(*) AS CNT FROM NET_COMP");
@@ -188,7 +201,7 @@ public class NetCompressionTest {
         // The server refuses to serve anything before the handshake: a plain
         // query frame is rejected at decode time, so DatabaseClient must open
         // with COMPRESSION_HANDSHAKE. Connecting and running a query proves it.
-        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "test-admin-pw");
         try {
             client.connect();
             assertNotNull(client.executeQuery("SELECT COUNT(*) AS CNT FROM NET_COMP"));

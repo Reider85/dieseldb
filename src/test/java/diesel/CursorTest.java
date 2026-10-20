@@ -33,6 +33,16 @@ public class CursorTest {
     void setUp() {
         database = new Database();
         dropTable();
+        
+        // Reset must-change password for admin to allow queries
+        // Note: This needs to be done after the database is fully initialized
+        try {
+            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
+        } catch (Exception e) {
+            // If admin doesn't exist yet, create it first
+            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
+        }
+        
         database.executeQuery("CREATE TABLE CUR_TEST (ID LONG PRIMARY KEY SEQUENCE(cur_seq 1 1), NAME STRING, AGE INTEGER)", null);
         for (int i = 0; i < 25; i++) {
             database.executeQuery(
@@ -186,7 +196,7 @@ public class CursorTest {
     @Test
     void clientServerOpenFetchCloseRoundTrip() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
             try {
                 client.connect();
                 String cursorId = client.openCursor("SELECT ID, NAME FROM CUR_TEST ORDER BY ID", 8);
@@ -216,7 +226,7 @@ public class CursorTest {
     @Test
     void clientServerFetchUnknownCursorReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
             try {
                 client.connect();
                 boolean threw = false;
@@ -238,7 +248,7 @@ public class CursorTest {
     @Test
     void clientServerOpenNonSelectReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
             try {
                 client.connect();
                 boolean threw = false;

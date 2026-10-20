@@ -81,7 +81,9 @@ class AuthHandshakeTest {
             client.connect();
             assertNotNull(client.getSessionToken(), "a successful handshake issues a session token");
             assertTrue(client.isMustChangePassword(), "the bootstrap admin must change its password");
-            assertNotNull(client.executeQuery("SELECT NAME FROM DIESEL_USERS"));
+            // With the hard block in place, only ALTER USER is allowed for must-change accounts
+            Object result = client.executeQuery("ALTER USER admin PASSWORD 'new-admin-pw'");
+            assertEquals("Password changed: admin", result);
         } finally {
             client.disconnect();
         }
@@ -106,9 +108,14 @@ class AuthHandshakeTest {
             assertNotNull(auth.getToken());
             assertTrue(auth.isMustChangePassword());
 
-            Object response = probe.query("SELECT NAME FROM DIESEL_USERS");
+            // With the hard block in place, only ALTER USER is allowed for must-change accounts
+            Object response = probe.query("ALTER USER admin PASSWORD 'new-admin-pw'");
+            assertEquals("Password changed: admin", response);
+            
+            // After changing password, regular queries should work
+            response = probe.query("SELECT NAME FROM DIESEL_USERS");
             assertFalse(response instanceof String && ((String) response).startsWith("Error:"),
-                    "an authenticated probe runs queries, got: " + response);
+                    "an authenticated probe runs queries after password change, got: " + response);
         }
     }
 

@@ -27,9 +27,19 @@ public class OomHandlingTest {
 
     private Database database;
 
-    @BeforeEach
+@BeforeEach
     void setUp() {
         database = new Database();
+        
+        // Reset must-change password for admin to allow queries
+        // Note: This needs to be done after the database is fully initialized
+        try {
+            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
+        } catch (Exception e) {
+            // If admin doesn't exist yet, create it first
+            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
+        }
+        
         database.executeQuery("CREATE TABLE OOMT_LEFT (ID LONG PRIMARY KEY SEQUENCE(oomt_lseq 1 1), VAL INTEGER)", null);
         database.executeQuery("CREATE TABLE OOMT_RIGHT (ID LONG PRIMARY KEY SEQUENCE(oomt_rseq 1 1), VAL INTEGER)", null);
     }
@@ -163,7 +173,7 @@ public class OomHandlingTest {
             waitForServer(port);
             try (WireProbe probe = new WireProbe(port, 10000)) {
                 probe.handshake();
-                probe.auth("admin", "admin");
+                probe.auth("admin", "test-admin-pw");
                 probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
                 Object response = probe.readValue();
                 assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", response,
@@ -204,7 +214,7 @@ public class OomHandlingTest {
             waitForServer(port);
             try (WireProbe probe = new WireProbe(port, 10000)) {
                 probe.handshake();
-                probe.auth("admin", "admin");
+                probe.auth("admin", "test-admin-pw");
                 probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
                 Object cursorIdResponse = probe.readValue();
                 assertTrue(cursorIdResponse instanceof String, "server should return a cursor id string");
@@ -248,7 +258,7 @@ public class OomHandlingTest {
     private static Object roundTrip(int port, String query) throws Exception {
         try (WireProbe probe = new WireProbe(port, 10000)) {
             probe.handshake();
-            probe.auth("admin", "admin");
+            probe.auth("admin", "test-admin-pw");
             return probe.query(query);
         }
     }

@@ -58,6 +58,16 @@ public class CompressionDisableTest {
 
         database.executeQuery(
                 "CREATE TABLE NET_RAW (ID LONG PRIMARY KEY, DATA STRING)", null);
+        
+        // Reset must-change password for admin to allow queries
+        // Note: This needs to be done after the database is fully initialized
+        try {
+            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
+        } catch (Exception e) {
+            // If admin doesn't exist yet, create it first
+            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
+        }
+        
         List<String> inserts = new ArrayList<>(ROWS);
         for (int i = 0; i < ROWS; i++) {
             inserts.add("INSERT INTO NET_RAW (ID, DATA) VALUES (" + i + ", '"
@@ -104,7 +114,7 @@ public class CompressionDisableTest {
     void largeFrameStaysUncompressed() throws Exception {
         try (WireProbe probe = new WireProbe(port)) {
             probe.handshake();
-            probe.auth("admin", "admin");
+            probe.auth("admin", "test-admin-pw");
             probe.write(new QueryMessage("SELECT ID, DATA FROM NET_RAW", null));
 
             diesel.net.WireProtocol.Frame frame = probe.readFrame();
@@ -122,7 +132,7 @@ public class CompressionDisableTest {
 
     @Test
     void clientServesLargeResultsWithCompressionOff() {
-        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "admin");
+        DatabaseClient client = new DatabaseClient("localhost", port, "admin", "test-admin-pw");
         try {
             client.connect();
             Object result = client.executeQuery("SELECT ID, DATA FROM NET_RAW");

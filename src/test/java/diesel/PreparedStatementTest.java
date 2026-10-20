@@ -35,6 +35,16 @@ public class PreparedStatementTest {
         tempDir = Files.createTempDirectory("diesel-ps-test");
         database = new Database(tempDir.toString());
         dropTable();
+        
+        // Reset must-change password for admin to allow queries
+        // Note: This needs to be done after the database is fully initialized
+        try {
+            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
+        } catch (Exception e) {
+            // If admin doesn't exist yet, create it first
+            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
+        }
+        
         database.executeQuery("CREATE TABLE PS_TEST (ID LONG PRIMARY KEY SEQUENCE(ps_seq 1 1), NAME STRING, AGE INTEGER)", null);
         insert("alpha", 25);
         insert("beta", 30);
@@ -213,7 +223,7 @@ public class PreparedStatementTest {
     @Test
     void clientServerPrepareExecuteCloseRoundTrip() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
             try {
                 client.connect();
                 client.executeQuery("INSERT INTO PS_TEST (NAME, AGE) VALUES ('server1', 11)");

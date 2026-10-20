@@ -37,7 +37,18 @@ public class SocketTimeoutTest {
         try (ServerSocket tempSocket = new ServerSocket(0)) {
             port = tempSocket.getLocalPort();
         }
-        server = new DatabaseServer(port, SOCKET_TIMEOUT_MS, new Database(tempDir.toString()));
+        Database database = new Database(tempDir.toString());
+        
+        // Reset must-change password for admin to allow queries
+        // Note: This needs to be done after the database is fully initialized
+        try {
+            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
+        } catch (Exception e) {
+            // If admin doesn't exist yet, create it first
+            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
+        }
+        
+        server = new DatabaseServer(port, SOCKET_TIMEOUT_MS, database);
         serverThread = new Thread(() -> server.start(), "test-server");
         serverThread.start();
         waitForServerReady(port);
@@ -86,7 +97,7 @@ public class SocketTimeoutTest {
         // the server closing the connection instead of timing out itself.
         try (WireProbe probe = new WireProbe(port, SOCKET_TIMEOUT_MS + 5000)) {
             probe.handshake();
-            probe.auth("admin", "admin");
+            probe.auth("admin", "test-admin-pw");
 
             Object response = probe.query("SET AUTOCOMMIT = ON");
             assertFalse(response instanceof String && ((String) response).startsWith("Error:"),
