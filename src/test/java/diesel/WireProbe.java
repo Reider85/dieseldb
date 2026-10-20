@@ -54,6 +54,11 @@ final class WireProbe implements AutoCloseable {
         in = new DataInputStream(socket.getInputStream());
     }
 
+    /** The underlying socket (never an SSLSocket unless TLS is on, prompt4 #34). */
+    Socket rawSocket() {
+        return socket;
+    }
+
     /** Runs the default handshake (ZSTD+GZIP, level 6, threshold 4096). */
     CompressionHandshakeResponseMessage handshake() throws IOException {
         return handshake(new CompressionHandshakeMessage(

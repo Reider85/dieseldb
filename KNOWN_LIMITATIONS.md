@@ -290,7 +290,9 @@ in-memory B-tree индекс на колонке соединения и лог
   через `legacy.port = 0`;
 - смена пароля другого пользователя: пользователю с правом ADMIN или
   локальный `--reset-admin`;
-- шифрование учётных данных в транспорте придёт с TLS (Prompt 4 #34).
+- шифрование учётных данных в транспорте: серверный TLS доступен с
+  Prompt 4 #34 (`tls.enabled`); клиентские флаги `--tls`/`--tls-ca` — #35,
+  mTLS/SNI — #36; legacy-порт шифрование не поддерживает.
 
 **Ключи конфигурации:** `security.auth.required` (default: true),
 `security.auth.bootstrap-admin` (default: true).
@@ -333,3 +335,43 @@ in-memory B-tree индекс на колонке соединения и лог
 udit.retention.days (default: 90), udit.queue.capacity (default: 10000),
 udit.retention.interval.ms (default: 86400000), udit.archive.dir
 (default: data/audit-archive).
+
+## 16. TLS transport, шаг 1/3 (prompt4 #34, 2026-10-20)
+
+Серверный TLS поверх TCP accept (R3-009 step 1/3):
+
+- **TLS выключен по умолчанию** — `tls.enabled = false`; для продакшена
+  включайте явно и поднимайте keystore (см. команду keytool в комментариях
+  `config.properties`);
+- **broken keystore → отказ в старте** — при `tls.enabled=true` с
+  отсутствующим/битым keystore сервер не поднимает accept-сокет
+  (fail fast вместо молчаливого downgrade на plaintext);
+- **handshake ленивый** — обёртка в SSLSocket происходит после accept,
+  сам handshake — на первом чтении в worker-потоке; медленный/вредоносный
+  клиент не может заблокировать accept-цикл (anti handshake-DoS); сбой
+  handshake закрывает соединение в ClientHandler;
+- **cipher whitelist — allow-list** — только 3 TLS 1.3 suites + PFS/AEAD
+  TLS 1.2 (ECDHE/DHE + AES-GCM/CHACHA20); legacy (TLS 1.0/1.1, RSA key
+  exchange, CBC, RC4, 3DES, анон/NULL) отключены белым списком, не deny-list;
+  включены только протоколы TLSv1.3/TLSv1.2;
+- **клиент (`DatabaseClient`, CLI) TLS ещё не умеет** — при
+  `tls.enabled=true` шифруется только серверная сторона; подключение
+  обычным DatabaseClient к TLS-серверу упадёт на handshake (клиентские
+  флаги `--tls`/`--tls-ca`/`--tls-cert`/`--tls-key` придут с Prompt 4 #35);
+- **legacy-порт (5440) не шифруется** — TLS врезан только в основной
+  v2-порт; legacy v1-адаптер остаётся plaintext (ещё один повод держать
+  `legacy.port = 0` в проде);
+- **mTLS и SNI не реализованы** — truststore-путь и
+  `tls.client.auth=none|request|require`, выбор keystore по SNI —
+  Prompt 4 #36; сейчас сервер принимает клиентов без client-cert.
+
+**Workaround:**
+- в проде: `tls.enabled = true` + валидный PKCS12 keystore;
+- тестовая пара ключей: `keytool -genkeypair -alias dieseldb -keyalg RSA
+  -keysize 2048 -storetype PKCS12 -keystore data/diesel-keystore.p12
+  -storepass <password> -dname "CN=localhost"
+  -ext "SAN=dns:localhost,ip:127.0.0.1"`.
+
+**Ключи конфигурации:** tls.enabled (default: false), tls.keystore.path
+(default: data/diesel-keystore.p12), tls.keystore.password (default:
+changeit), tls.keystore.type (default: PKCS12).

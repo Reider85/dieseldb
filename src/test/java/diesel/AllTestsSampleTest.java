@@ -968,49 +968,66 @@ public class AllTestsSampleTest {
             check(false, "Prompt69Test / failed to allocate a port: " + e.getMessage());
             return;
         }
-        DatabaseServer server = new DatabaseServer(port);
-        Thread serverThread = new Thread(() -> server.start(), "prompt69-server");
+        // Own temp data dir (prompt4 #32): the shared CWD ./data makes the
+        // bootstrap admin credentials order-dependent across test classes.
+        Database prompt69Database = null;
         try {
-            serverThread.start();
-            waitForPrompt69Server(port);
+            java.nio.file.Path prompt69Dir = Files.createTempDirectory("prompt69-data");
+            prompt69Database = new Database(prompt69Dir.toString());
+            DatabaseServer server = new DatabaseServer(port, -1, 0, prompt69Database);
+            Thread serverThread = new Thread(() -> server.start(), "prompt69-server");
+            try {
+                serverThread.start();
+                waitForPrompt69Server(port);
 
-            try (WireProbe probe = new WireProbe(port, 60000)) {
-                probe.handshake();
-                probe.auth("admin", "test-admin-pw");
-                long start = System.currentTimeMillis();
-                probe.write(new diesel.net.messages.QueryMessage("SET AUTOCOMMIT = ON", null));
-                Object response = probe.readValue();
-                check(response != null && !isErrorResponse(response),
-                        "Prompt69Test / the long-running client connection is functional (server answers a query without an error)");
+                try (WireProbe probe = new WireProbe(port, 60000)) {
+                    probe.handshake();
+                    probe.auth("admin", "admin");
+                    // Clear the must-change hard block (prompt4 #32) with the
+                    // same password so admin/admin keeps working.
+                    probe.query("ALTER USER admin PASSWORD 'admin'");
+                    long start = System.currentTimeMillis();
+                    probe.write(new diesel.net.messages.QueryMessage("SET AUTOCOMMIT = ON", null));
+                    Object response = probe.readValue();
+                    check(response != null && !isErrorResponse(response),
+                            "Prompt69Test / the long-running client connection is functional (server answers a query without an error)");
 
-                boolean closedByServer = false;
-                try {
-                    probe.readFrame();
-                } catch (IOException e) {
-                    closedByServer = true;
+                    boolean closedByServer = false;
+                    try {
+                        probe.readFrame();
+                    } catch (IOException e) {
+                        closedByServer = true;
+                    }
+                    long elapsed = System.currentTimeMillis() - start;
+                    check(closedByServer,
+                            "Prompt69Test / the server closes the connection when the idle long query (no next query) exceeds the 30s timeout");
+                    check(elapsed >= 30000,
+                            "Prompt69Test / the timeout fires only after ~30 seconds (elapsed " + elapsed + " ms, configured server.socket.timeout 30000 ms)");
+                    check(elapsed < 50000,
+                            "Prompt69Test / the close is caused by the server's 30s timeout, not by the client's own read timeout (elapsed " + elapsed + " ms)");
                 }
-                long elapsed = System.currentTimeMillis() - start;
-                check(closedByServer,
-                        "Prompt69Test / the server closes the connection when the idle long query (no next query) exceeds the 30s timeout");
-                check(elapsed >= 30000,
-                        "Prompt69Test / the timeout fires only after ~30 seconds (elapsed " + elapsed + " ms, configured server.socket.timeout 30000 ms)");
-                check(elapsed < 50000,
-                        "Prompt69Test / the close is caused by the server's 30s timeout, not by the client's own read timeout (elapsed " + elapsed + " ms)");
-            }
 
-            try (WireProbe probe = new WireProbe(port, 5000)) {
-                probe.handshake();
-                probe.auth("admin", "test-admin-pw");
-                Object probeResponse = probe.query("SET AUTOCOMMIT = ON");
-                check(probeResponse != null && !isErrorResponse(probeResponse),
-                        "Prompt69Test / the server stays alive and accepts a new connection after the timed-out client was closed");
+                try (WireProbe probe = new WireProbe(port, 5000)) {
+                    probe.handshake();
+                    probe.auth("admin", "admin");
+                    probe.query("ALTER USER admin PASSWORD 'admin'");
+                    Object probeResponse = probe.query("SET AUTOCOMMIT = ON");
+                    check(probeResponse != null && !isErrorResponse(probeResponse),
+                            "Prompt69Test / the server stays alive and accepts a new connection after the timed-out client was closed");
+                }
+            } catch (Exception e) {
+                check(false, "Prompt69Test / long-query 30s timeout test failed: " + e.getMessage());
+                LOGGER.log(Level.SEVERE, "Prompt69Test / long-query 30s timeout test failed", e);
+            } finally {
+                server.stop();
+                serverThread.interrupt();
             }
-        } catch (Exception e) {
-            check(false, "Prompt69Test / long-query 30s timeout test failed: " + e.getMessage());
-            LOGGER.log(Level.SEVERE, "Prompt69Test / long-query 30s timeout test failed", e);
+        } catch (IOException e) {
+            check(false, "Prompt69Test / failed to create temp data dir: " + e.getMessage());
         } finally {
-            server.stop();
-            serverThread.interrupt();
+            if (prompt69Database != null) {
+                prompt69Database.close();
+            }
         }
     }
 

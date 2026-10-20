@@ -2,6 +2,7 @@ package diesel;
 
 import java.io.*;
 import java.net.*;
+import java.security.GeneralSecurityException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
@@ -61,6 +62,8 @@ public class DatabaseServer {
     private final Properties configOverride;
     /** Shared session registry for all connections (prompt4 #31). */
     private volatile Authenticator authenticator;
+    /** TLS wrapper for accepted connections (prompt4 #34); null when disabled. */
+    private volatile TlsHandshakeHandler tlsHandler;
 
     /**
      * Creates a server on the given port with the default socket timeout.
@@ -203,6 +206,18 @@ public class DatabaseServer {
             database.getUserStore().ensureDefaultAdmin();
         }
         getAuthenticator();
+        // TLS transport (prompt4 #34): initialise before binding so a broken
+        // keystore fails fast at startup instead of silently serving plain TCP.
+        try {
+            tlsHandler = TlsHandshakeHandler.fromConfig(config);
+            if (tlsHandler != null) {
+                LOGGER.log(Level.INFO, "TLS enabled on port {0} (whitelisted protocols/ciphers)", port);
+            }
+        } catch (IOException | GeneralSecurityException e) {
+            LOGGER.log(Level.SEVERE,
+                    "TLS is enabled but cannot be initialised, aborting startup: {0}", e.getMessage());
+            return;
+        }
         try {
             serverSocket = new ServerSocket(port, backlog);
             LOGGER.log(Level.INFO, "Database server started on port {0}", port);
@@ -215,6 +230,11 @@ public class DatabaseServer {
             while (running) {
                 try {
                     Socket clientSocket = serverSocket.accept();
+                    if (tlsHandler != null) {
+                        // Wrap only; the handshake runs lazily on the first
+                        // read in the worker thread (anti handshake-DoS).
+                        clientSocket = tlsHandler.wrap(clientSocket);
+                    }
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
                     handleClientConnection(clientSocket, executor, database, effectiveSocketTimeout, config);
                 } catch (IOException e) {
