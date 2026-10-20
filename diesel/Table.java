@@ -213,6 +213,14 @@ class Table implements Serializable {
      */
     private transient volatile boolean mvccDirtySincePersist;
 
+    /**
+     * True while {@link #saveToFile} is rewriting the data file: the dirty
+     * flags were already cleared but the temp+rename has not landed yet, so
+     * the on-disk file is still the previous version. Avro pushdown readers
+     * must scan in memory while this is set (fix for COUNT(*)=999 stale read).
+     */
+    private transient volatile boolean persistSaving;
+
     /** True when clustered index was restored from serialized data. */
     private transient boolean restoredClustered;
 
@@ -3040,6 +3048,7 @@ class Table implements Serializable {
      */
     public void saveToFile(String tableName) {
         tableLock.writeLock().lock();
+        persistSaving = true;
         try {
             // Clear dirty BEFORE the save so concurrent mutations during IO re-mark it
             boolean wasDirty = persistDirty;
@@ -3074,6 +3083,7 @@ class Table implements Serializable {
                 }
             }
         } finally {
+            persistSaving = false;
             tableLock.writeLock().unlock();
         }
     }
@@ -3161,6 +3171,16 @@ class Table implements Serializable {
      */
     public boolean hasPendingPersist() {
         return persistDirty;
+    }
+
+    /**
+     * Returns whether {@link #saveToFile} is currently rewriting the data file:
+     * the dirty flags were cleared but the temp+rename has not landed yet, so
+     * the on-disk file may still be the previous version. Avro pushdown readers
+     * must scan in memory while this is true.
+     */
+    public boolean isPersistSaving() {
+        return persistSaving;
     }
 
     /**

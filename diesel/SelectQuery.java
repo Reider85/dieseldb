@@ -1074,7 +1074,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     // Use in-memory scan for small tables or tables with pending changes
                     // to avoid flush overhead and ensure read-your-writes correctness
                     int threshold = Integer.parseInt(System.getProperty("avro.pushdown.min.rows", "1000"));
-                    if (table.getDeletedCount() > 0 || table.hasPendingPersist() || table.getLiveRowCount() < threshold) {
+                    // persistSaving must be checked LAST: the writer sets it before
+                    // clearing persistDirty, so a reader that saw the cleared flag is
+                    // guaranteed to then observe isPersistSaving()==true (in-flight) or
+                    // false (rename already landed). During a save the on-disk file is
+                    // the previous version — scanning it returned COUNT(*)=999 once.
+                    if (table.getDeletedCount() > 0 || table.hasPendingPersist() || table.getLiveRowCount() < threshold
+                            || table.isPersistSaving()) {
                         // Tombstoned rows or small/dirty tables: scan in memory
                         // so deleted rows never leak back into results and RYW
                         // is guaranteed (shared-map fast path).
@@ -1159,7 +1165,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (table.getStorage() instanceof AvroRowStorage avroStorage) {
             // Use in-memory scan for small tables or tables with pending changes
             int threshold = Integer.parseInt(System.getProperty("avro.pushdown.min.rows", "1000"));
-            if (table.getDeletedCount() > 0 || table.hasPendingPersist() || table.getLiveRowCount() < threshold) {
+            if (table.getDeletedCount() > 0 || table.hasPendingPersist() || table.getLiveRowCount() < threshold
+                    || table.isPersistSaving()) {
                 // Tombstoned rows or small/dirty tables: scan in memory
                 // (shared-map fast path, no per-row materialization).
                 for (Map<String, Object> row : table.getLiveRows()) {
@@ -2864,7 +2871,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             // of that. Auto-commit readers keep the binary pushdown.
             if (table.getDeletedCount() > 0 || table.hasPendingPersist()
                     || table.hasUncommittedMvccChanges() || inExplicitTransaction()
-                    || table.isMvccDirtySincePersist()) {
+                    || table.isMvccDirtySincePersist() || table.isPersistSaving()) {
                 return table.getLiveRows();
             }
 
