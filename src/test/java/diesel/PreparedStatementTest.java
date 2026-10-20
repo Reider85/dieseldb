@@ -263,7 +263,7 @@ public class PreparedStatementTest {
     @Test
     void clientServerExecutesUnknownStatementReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
             try {
                 client.connect();
                 boolean threw = false;

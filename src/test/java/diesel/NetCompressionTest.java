@@ -63,10 +63,7 @@ database = new Database(tempDir.toString());
         List<String> inserts = new ArrayList<>(ROWS);
         for (int i = 0; i < ROWS; i++) {
             inserts.add("INSERT INTO NET_COMP (ID, DATA) VALUES (" + i + ','
-                    + payloadFor(i) + ')');
-        }
-        for (String insert : inserts) {
-            database.executeQuery(insert, null);
+                    + '\'' + payloadFor(i) + '\'' + ')');
         }
         for (String insert : inserts) {
             database.executeQuery(insert, null);

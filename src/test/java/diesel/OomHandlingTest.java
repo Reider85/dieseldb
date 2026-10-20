@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -21,6 +22,9 @@ import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import diesel.security.Session;
+import diesel.security.SessionToken;
 
 @Tag("network")
 public class OomHandlingTest {
@@ -87,6 +91,14 @@ public class OomHandlingTest {
     static class OomThrowingDatabase extends Database {
         @Override
         public Object executeQuery(String query, UUID transactionId) {
+            // Bypass hard block by using a session without must-change password
+            SessionToken token = new SessionToken(UUID.randomUUID(), LocalDateTime.now());
+            Session session = new Session(UUID.randomUUID(), "admin", token, false, LocalDateTime.now());
+            return executeQuery(query, transactionId, session);
+        }
+        
+        @Override
+        public Object executeQuery(String query, UUID transactionId, Session session) {
             throw new OutOfMemoryError("Java heap space");
         }
     }
