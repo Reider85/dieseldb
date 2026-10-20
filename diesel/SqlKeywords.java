@@ -52,6 +52,7 @@ public final class SqlKeywords {
     public static final String COMMIT_TRANSACTION = "COMMIT TRANSACTION";
     public static final String ROLLBACK_TRANSACTION = "ROLLBACK TRANSACTION";
     public static final String CREATE_TABLE = "CREATE TABLE";
+    public static final String DROP_TABLE = "DROP TABLE";
     public static final String CREATE_INDEX = "CREATE INDEX";
     public static final String CREATE_UNIQUE_INDEX = "CREATE UNIQUE INDEX";
     public static final String CREATE_HASH_INDEX = "CREATE HASH INDEX";
@@ -59,6 +60,7 @@ public final class SqlKeywords {
     public static final String CREATE_USER = "CREATE USER";
     public static final String CREATE_ROLE = "CREATE ROLE";
     public static final String GRANT = "GRANT";
+    public static final String REVOKE = "REVOKE";
     public static final String ALTER_USER = "ALTER USER";
     public static final String PASSWORD = "PASSWORD";
     public static final String COVERING = "COVERING";

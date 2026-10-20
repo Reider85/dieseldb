@@ -15,6 +15,7 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 import javax.annotation.Nullable;
 import javax.annotation.Nonnull;
+import diesel.security.Privilege;
 
 /**
  * Parser that turns a SQL string into a {@link Query} execution object.
@@ -97,10 +98,17 @@ class QueryParser {
     private static final Pattern OFFSET_TAIL_PATTERN = Pattern.compile("(?i)\\s+OFFSET\\s+(\\d+)");
     private static final Pattern OFFSET_VALUE_PATTERN = Pattern.compile("^\\s*(\\d+)\\s*(?:(?:\\s*;\\s*)?\\s*$)");
     // RBAC DDL (prompt4 #30): identifiers/password taken from the ORIGINAL text
+    // Comma-separated list of privilege actions (SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ADMIN)
+    private static final String PRIVILEGE_ACTIONS_PATTERN = 
+            "(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|ADMIN)(?:\\s*,\\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|ADMIN))*";
     private static final Pattern CREATE_USER_PATTERN = Pattern.compile(
             "(?i)^CREATE\\s+USER\\s+(" + IDENTIFIER_PATTERN + ")\\s+PASSWORD\\s+'([^']*)'\\s*;?\\s*$");
     private static final Pattern CREATE_ROLE_PATTERN = Pattern.compile(
             "(?i)^CREATE\\s+ROLE\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    private static final Pattern GRANT_PRIVILEGE_PATTERN = Pattern.compile(
+            "(?i)^GRANT\\s+(" + PRIVILEGE_ACTIONS_PATTERN + ")\\s+(?:ON\\s+(" + IDENTIFIER_PATTERN + ")\\s+)?TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    private static final Pattern REVOKE_PRIVILEGE_PATTERN = Pattern.compile(
+            "(?i)^REVOKE\\s+(" + PRIVILEGE_ACTIONS_PATTERN + ")\\s+(?:ON\\s+(" + IDENTIFIER_PATTERN + ")\\s+)?FROM\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern GRANT_ROLE_PATTERN = Pattern.compile(
             "(?i)^GRANT\\s+(" + IDENTIFIER_PATTERN + ")\\s+TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern ALTER_USER_PATTERN = Pattern.compile(
@@ -773,7 +781,18 @@ class QueryParser {
             @Override
             @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
-                return parseGrantRoleQuery(o);
+                return parseGrantQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.REVOKE + " ");
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseRevokePrivilegeQuery(o);
             }
         });
         strategies.add(new QueryParseStrategy() {
@@ -785,6 +804,16 @@ class QueryParser {
             @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
                 return parseAlterUserQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.SELECT);
+            }
+            @Override
+            public Query<?> parse(String n, String o, Database d) {
+                return parseSelectQuery(o, d);
             }
         });
         strategies.add(new QueryParseStrategy() {
@@ -985,6 +1014,17 @@ class QueryParser {
                 return parseVacuumQuery(n);
             }
         });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.DROP_TABLE);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseDropTableQuery(n);
+            }
+        });
         return strategies;
     }
 
@@ -1134,6 +1174,26 @@ class QueryParser {
     }
 
     /**
+     * Parses a {@code DROP TABLE <name>} statement (prompt4 #32: the RBAC
+     * tests drop tables through SQL). Returns a {@link DropTableQuery}.
+     *
+     * @param normalized the uppercased (identifier-preserving) statement text
+     * @return the parsed drop-table query
+     * @throws IllegalArgumentException when the table name is missing
+     */
+    private Query<?> parseDropTableQuery(String normalized) {
+        String rest = stripLeadingKeyword(normalized, SqlKeywords.DROP_TABLE).trim();
+        if (rest.endsWith(";")) {
+            rest = rest.substring(0, rest.length() - 1).trim();
+        }
+        if (rest.isEmpty()) {
+            throw new IllegalArgumentException("DROP TABLE requires a table name");
+        }
+        String tableName = rest.split("\\s+")[0];
+        return new DropTableQuery(unquoteIdentifier(tableName));
+    }
+
+    /**
      * Parses the {@code SET AUTOCOMMIT = {ON|OFF}} command (optionally with the
      * {@code SESSION} keyword, e.g. {@code SET SESSION AUTOCOMMIT = OFF}) and
      * returns a {@link SetAutoCommitQuery} that changes the session's
@@ -1233,6 +1293,47 @@ class QueryParser {
             throw new SyntaxErrorException("Invalid GRANT syntax: expected GRANT <role> TO <user>");
         }
         return new GrantRoleQuery(unquoteIdentifier(m.group(1)), unquoteIdentifier(m.group(2)));
+    }
+
+    /** Parses {@code GRANT <action>[, ...] [ON <table>] TO <role>} (prompt4 #32). */
+    private Query<?> parseGrantQuery(String original) {
+        // Try privilege grant first (has ON clause or starts with action keyword)
+        Matcher m = GRANT_PRIVILEGE_PATTERN.matcher(original.trim());
+        if (m.matches()) {
+            String actionsStr = m.group(1);
+            String tableName = m.group(2);
+            String roleName = m.group(3);
+            
+            // Parse the full comma-separated action list
+            List<Privilege.Action> actions = new ArrayList<>();
+            for (String actionName : actionsStr.split("\\s*,\\s*")) {
+                actions.add(Privilege.Action.valueOf(actionName.trim().toUpperCase(Locale.ROOT)));
+            }
+            return new GrantPrivilegeQuery(unquoteIdentifier(roleName), actions, 
+                    tableName != null ? unquoteIdentifier(tableName) : "");
+        }
+        
+        // Fall back to role grant
+        return parseGrantRoleQuery(original);
+    }
+
+    /** Parses {@code REVOKE <action>[, ...] [ON <table>] FROM <role>} (prompt4 #32). */
+    private Query<?> parseRevokePrivilegeQuery(String original) {
+        Matcher m = REVOKE_PRIVILEGE_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid REVOKE syntax: expected REVOKE <action>[, ...] [ON <table>] FROM <role>");
+        }
+        String actionsStr = m.group(1);
+        String tableName = m.group(2);
+        String roleName = m.group(3);
+        
+        // Parse the full comma-separated action list
+        List<Privilege.Action> actions = new ArrayList<>();
+        for (String actionName : actionsStr.split("\\s*,\\s*")) {
+            actions.add(Privilege.Action.valueOf(actionName.trim().toUpperCase(Locale.ROOT)));
+        }
+        return new RevokePrivilegeQuery(unquoteIdentifier(roleName), actions, 
+                tableName != null ? unquoteIdentifier(tableName) : "");
     }
 
     /** Parses {@code ALTER USER <name> PASSWORD '<password>'} (prompt4 #31). */

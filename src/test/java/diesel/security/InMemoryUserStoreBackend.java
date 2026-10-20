@@ -39,4 +39,19 @@ class InMemoryUserStoreBackend implements UserStoreBackend {
         }
         throw new IllegalStateException("No row with ID " + row.get("ID") + " in " + tableName);
     }
+
+    @Override
+    public void deleteRow(String tableName, String id) {
+        List<Map<String, Object>> rows = tables.get(tableName);
+        if (rows == null) {
+            throw new IllegalStateException("No such table: " + tableName);
+        }
+        for (int i = 0; i < rows.size(); i++) {
+            if (String.valueOf(rows.get(i).get("ID")).equals(id)) {
+                rows.remove(i);
+                return;
+            }
+        }
+        throw new IllegalStateException("No row with ID " + id + " in " + tableName);
+    }
 }

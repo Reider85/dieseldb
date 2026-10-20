@@ -44,4 +44,14 @@ public interface UserStoreBackend {
      * @throws IllegalStateException when no row with that ID exists
      */
     void updateRow(String tableName, Map<String, Object> row);
+
+    /**
+     * Deletes the row carrying the given {@code ID} and makes it durable
+     * (prompt4 #32 privilege revocation).
+     *
+     * @param tableName one of the constants in this interface
+     * @param id       the ID of the row to delete
+     * @throws IllegalStateException when no row with that ID exists
+     */
+    void deleteRow(String tableName, String id);
 }

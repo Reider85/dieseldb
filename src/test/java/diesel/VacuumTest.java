@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
 import javax.management.ObjectName;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -59,9 +60,20 @@ class VacuumTest {
     @TempDir
     static Path tempDir;
 
+    private Database openDb;
+
+    @AfterEach
+    void tearDown() {
+        if (openDb != null) {
+            openDb.close();
+            openDb = null;
+        }
+    }
+
     @Test
     void vacuumReclaimsAtLeastThirtyPercentOfHeapOnMillionRowTable() throws Exception {
         Database db = new Database();
+        openDb = db;
         db.setDataDir(tempDir.toString());
         String tableName = "VAC_HEAP";
         db.executeQuery("CREATE TABLE " + tableName
@@ -152,6 +164,7 @@ class VacuumTest {
 
     private void runVacuumWriterLatencyAcceptance() throws Exception {
         Database db = new Database();
+        openDb = db;
         db.setDataDir(tempDir.toString());
         String heavy = "VAC_WRITE_A";
         String writerTable = "VAC_WRITE_B";

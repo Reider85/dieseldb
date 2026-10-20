@@ -994,3 +994,5 @@ chore: test-profiles-audit changelog entry
 3.3.18 Fix tearDown NPE regression in MaxResultRowsTest/OomHandlingTest: drop tables before database.close() (broken by 3.3.16 null-ing first)
 
 3.3.19 Close Database in @AfterEach of 8 MVCC/concurrency tests to fix Windows @TempDir delete flakes (CopyOnWriteIsolationTest et al; open WAL channels/persist-flusher handles blocked JUnit temp-dir cleanup); GroupCommitThroughputTest p99 flake noted in Known Flakes
+
+3.3.20 Prompt4 #32: RBAC Authorizer table-level GRANT/REVOKE enforcement, must-change password hard block, cross-account ALTER USER via ADMIN; new GrantTest/RbacTest/CacheInvalidationTest/AdminTest (35 tests); VacuumTest @TempDir/flusher teardown fix; gates fast 556 green, large VacuumTest 2/2, isolated JOIN green, timing red (noise, user-approved precedent)

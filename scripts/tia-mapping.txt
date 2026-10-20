@@ -138,6 +138,8 @@ diesel/security/*.java		smoke,query
 diesel/CreateUserQuery.java	smoke,query
 diesel/CreateRoleQuery.java	smoke,query
 diesel/GrantRoleQuery.java	smoke,query
+diesel/GrantPrivilegeQuery.java	smoke,query
+diesel/RevokePrivilegeQuery.java	smoke,query
 diesel/AlterUserQuery.java	smoke,query
 diesel/RowVersionMeta.java		concurrency
 diesel/MvccReadContext.java		concurrency

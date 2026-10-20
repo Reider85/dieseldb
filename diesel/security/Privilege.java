@@ -14,7 +14,7 @@ public final class Privilege {
 
     /** The action a privilege authorizes. ADMIN is the meta-privilege. */
     public enum Action {
-        SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ADMIN
+        SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ADMIN
     }
 
     private final UUID id;

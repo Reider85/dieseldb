@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import diesel.security.Session;
+
 /**
  * A prepared statement: an SQL template with {@code ?} placeholder parameters
  * plus an LRU cache of the parsed AST for parameter bindings (Prompt 79).
@@ -237,6 +239,19 @@ public class PreparedStatement {
      */
     public Object executeUpdate(Database database, UUID transactionId) {
         return execute(database, transactionId);
+    }
+
+    /**
+     * Executes the prepared statement with privilege checking (prompt4 #32).
+     *
+     * @param database      the database to execute against
+     * @param transactionId the caller's transaction id, or null
+     * @param session       the authenticated session, or null for embedded
+     * @return the execution result
+     */
+    public Object executeWithSession(Database database, UUID transactionId, Session session) {
+        Query<?> parsed = getParsedQuery(database);
+        return database.executeParsedPreparedWithSession(parsed, buildSql(), transactionId, session);
     }
 
     /**

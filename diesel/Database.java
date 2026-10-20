@@ -50,7 +50,11 @@ import diesel.wal.CommitPayload;
 import diesel.wal.GroupCommitCoordinator;
 import diesel.wal.FsyncPolicy;
 import diesel.wal.SavepointPayload;
+import diesel.security.AccessDeniedException;
+import diesel.security.Authorizer;
 import diesel.security.PasswordHasher;
+import diesel.security.Privilege;
+import diesel.security.Session;
 import diesel.security.UserStore;
 import diesel.security.UserStoreBackend;
 
@@ -99,6 +103,7 @@ class Database {
     private volatile diesel.storage.page.BufferPoolFlusher bufferPoolFlusher;   // Background page flusher (prompt4 #20)
     private volatile diesel.storage.page.CheckpointManager checkpointManager;  // Background checkpoint manager (prompt4 #21)
     private volatile UserStore userStore;                                      // RBAC account store (prompt4 #30), lazy
+    private volatile Authorizer authorizer;                                     // Privilege checker (prompt4 #32), lazy
     private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "diesel-wal-scheduler");
         t.setDaemon(true);
@@ -683,6 +688,156 @@ class Database {
     }
 
     /**
+     * Executes a query with privilege checking (prompt4 #32). This overload
+     * is used by the server when a session is available; embedded usage
+     * (without session) bypasses all privilege checks.
+     *
+     * @param query         the SQL to execute
+     * @param transactionId the caller's transaction id, or null
+     * @param session       the authenticated session (for privilege checking), or null for embedded
+     * @return the query result (row list, null, or a status String)
+     * @throws RuntimeException when the query cannot be parsed or executed
+     */
+    public Object executeQuery(String query, UUID transactionId, Session session) {
+        // Authorizer check (only when session is present)
+        if (session != null) {
+            authorize(session, query);
+        }
+
+        Object result = executeQuery(query, transactionId);
+
+        // A successful own-account password change clears the must-change flag
+        // on the live session (prompt4 #32): the flag inside the password hash
+        // was already rewritten by UserStore.updatePassword, but Session keeps
+        // its own volatile copy that must follow suit.
+        if (session != null && session.isMustChangePassword() && AlterUserQuery.isAlterUser(query)) {
+            String target = AlterUserQuery.targetUserName(query);
+            if (target != null && target.equalsIgnoreCase(session.getUserName())) {
+                session.setMustChangePassword(false);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Authorizes the given query for the session (prompt4 #32).
+     *
+     * <p>Order of checks: the must-change password hard block fires before
+     * parsing (every statement except {@code ALTER USER} is rejected), then
+     * account-targeted and meta operations are resolved, and finally the
+     * table-level privileges are checked for each table the statement touches.
+     */
+    private void authorize(Session session, String query) {
+        // Hard must-change password block (prompt4 #32): everything except
+        // ALTER USER is rejected before parsing.
+        if (session.isMustChangePassword() && !AlterUserQuery.isAlterUser(query)) {
+            throw new AccessDeniedException(
+                "Password change required: user '" + session.getUserName() + "' must change password first");
+        }
+
+        Query<?> parsedQuery = parse(query);
+        String cleanQuery = stripMaxRowsHint(query);
+
+        // ALTER USER: self-service is always allowed, cross-account changes
+        // require the database-wide ADMIN privilege (prompt4 #32). With the
+        // must-change flag still set, the check inside denies cross-account.
+        if (parsedQuery instanceof AlterUserQuery aq) {
+            if (aq.getUserName() != null && aq.getUserName().equalsIgnoreCase(session.getUserName())) {
+                return;
+            }
+            getAuthorizer().check(session, Privilege.Action.ADMIN, "");
+            return;
+        }
+
+        // Meta-operations (CREATE USER/ROLE, GRANT/REVOKE) require the
+        // database-wide ADMIN privilege and no table-level lookup.
+        Privilege.Action action = extractAction(parsedQuery);
+        if (action == Privilege.Action.ADMIN) {
+            getAuthorizer().check(session, Privilege.Action.ADMIN, "");
+            return;
+        }
+
+        // Table-level checks
+        List<String> tables;
+        try {
+            tables = extractTables(parsedQuery, cleanQuery);
+        } catch (IllegalArgumentException unsupported) {
+            // Statements without a table model (BEGIN/COMMIT/ROLLBACK/
+            // SAVEPOINT/EXPLAIN/SET/VACUUM/ANALYZE/BATCH ...) carry no
+            // table-level privilege requirement.
+            return;
+        }
+
+        if (tables.size() == 1) {
+            // Single table access
+            getAuthorizer().check(session, action, tables.get(0));
+        } else {
+            // Multi-table access (e.g., JOIN) - check each table
+            Set<Privilege.Action> actions = Set.of(action);
+            for (String table : tables) {
+                getAuthorizer().checkAny(session, actions, table);
+            }
+        }
+    }
+
+    /**
+     * Extracts the action type from a parsed query.
+     */
+    private Privilege.Action extractAction(Query<?> parsedQuery) {
+        if (parsedQuery instanceof SelectQuery) return Privilege.Action.SELECT;
+        if (parsedQuery instanceof InsertQuery) return Privilege.Action.INSERT;
+        if (parsedQuery instanceof UpdateQuery) return Privilege.Action.UPDATE;
+        if (parsedQuery instanceof DeleteQuery) return Privilege.Action.DELETE;
+        if (parsedQuery instanceof CreateTableQuery) return Privilege.Action.CREATE;
+        if (parsedQuery instanceof DropTableQuery) return Privilege.Action.DROP;
+        if (parsedQuery instanceof CreateIndexQueryBase
+                || parsedQuery instanceof CreateCompositeIndexQuery
+                || parsedQuery instanceof CreateCoveringIndexQuery) {
+            return Privilege.Action.CREATE;
+        }
+        if (parsedQuery instanceof CreateUserQuery || parsedQuery instanceof CreateRoleQuery ||
+            parsedQuery instanceof GrantRoleQuery || parsedQuery instanceof GrantPrivilegeQuery ||
+            parsedQuery instanceof RevokePrivilegeQuery || parsedQuery instanceof AlterUserQuery) {
+            return Privilege.Action.ADMIN;
+        }
+        return Privilege.Action.SELECT; // Default for unknown query types
+    }
+
+    /**
+     * Extracts table names from a query using existing helpers. Statements
+     * without a table model (transaction control, EXPLAIN, VACUUM ...) fail
+     * the extraction with {@link IllegalArgumentException}, which the caller
+     * treats as "no table privileges required".
+     */
+    private List<String> extractTables(Query<?> parsedQuery, String cleanQuery) {
+        List<String> tables = new ArrayList<>();
+        
+        if (parsedQuery instanceof SelectQuery sq) {
+            if (sq.getDerivedMainTable() != null) {
+                tables.add(sq.getDerivedMainTable().getName());
+            } else {
+                // Plain SELECT: authorize the main table and every joined table
+                if (sq.getTableName() != null && !sq.getTableName().isEmpty()) {
+                    tables.add(sq.getTableName());
+                }
+                for (QueryParser.JoinInfo join : sq.getJoins()) {
+                    if (join.tableName != null && !join.tableName.isEmpty()
+                            && !join.tableName.equals(sq.getTableName())) {
+                        tables.add(join.tableName);
+                    }
+                }
+            }
+        } else {
+            String tableName = extractTableName(cleanQuery);
+            if (tableName != null) {
+                tables.add(tableName);
+            }
+        }
+        
+        return tables;
+    }
+
+    /**
      * Opens a server-side cursor over a SELECT query (Prompt 81). The query is
      * parsed and executed immediately, and the resulting rows are exposed via
      * the returned {@link Cursor}, which the caller (typically the server's
@@ -748,6 +903,28 @@ class Database {
     }
 
     /**
+     * Opens a server-side cursor over a SELECT query with privilege checking (prompt4 #32).
+     * This overload is used by the server when a session is available.
+     *
+     * @param query         the SQL SELECT to run
+     * @param fetchSize     the number of rows each {@link Cursor#fetch()} returns
+     * @param transactionId the caller's transaction id, or null
+     * @param session       the authenticated session (for privilege checking), or null for embedded
+     * @return a new open cursor over the query result
+     * @throws IllegalArgumentException when the query is null, not a SELECT, or
+     *                                  references a missing table
+     */
+    public Cursor executeCursor(String query, int fetchSize, UUID transactionId, Session session) {
+        // Authorizer check first (prompt4 #32): a cursor must never expose
+        // rows the session is not allowed to read.
+        if (session != null) {
+            authorize(session, query);
+        }
+
+        return executeCursor(query, fetchSize, transactionId);
+    }
+
+    /**
      * Executes an already-parsed query (from a {@link PreparedStatement})
      * against the database, reusing the caller's derived bindings but skipping
      * the parse phase (Prompt 79). The query string is the concrete SQL the
@@ -782,6 +959,19 @@ class Database {
             recordQueryProfiling(parsedQuery, concreteSql, 0, System.nanoTime() - execStart);
             throw e;
         }
+    }
+
+    /**
+     * Executes a prepared statement with privilege checking (prompt4 #32).
+     */
+    public Object executeParsedPreparedWithSession(Query<?> parsedQuery, String concreteSql, UUID transactionId, Session session) {
+        // Authorizer check first (prompt4 #32): never execute before the
+        // privilege decision.
+        if (session != null) {
+            authorize(session, concreteSql);
+        }
+
+        return executeParsedPrepared(parsedQuery, concreteSql, transactionId);
     }
 
     /**
@@ -863,6 +1053,10 @@ class Database {
         if (parsedQuery instanceof CreateTableQuery q) {
             return executeCreateTable(q);
         }
+        if (parsedQuery instanceof DropTableQuery q) {
+            dropTable(q.getTableName());
+            return "Table dropped successfully";
+        }
         if (parsedQuery instanceof CreateUserQuery q) {
             return executeCreateUser(q);
         }
@@ -871,6 +1065,12 @@ class Database {
         }
         if (parsedQuery instanceof GrantRoleQuery q) {
             return executeGrantRole(q);
+        }
+        if (parsedQuery instanceof GrantPrivilegeQuery q) {
+            return executeGrantPrivilege(q);
+        }
+        if (parsedQuery instanceof RevokePrivilegeQuery q) {
+            return executeRevokePrivilege(q);
         }
         if (parsedQuery instanceof AlterUserQuery q) {
             return executeAlterUser(q);
@@ -1436,6 +1636,7 @@ class Database {
                 int iterations = ConfigLoader.getInt("security.pbkdf2.iterations",
                         PasswordHasher.DEFAULT_ITERATIONS);
                 userStore = new UserStore(new SystemTableBackend(), new PasswordHasher(iterations));
+                userStore.ensureAdminPrivileges();
             }
             return userStore;
         }
@@ -1488,6 +1689,51 @@ class Database {
         return "Password changed: " + query.getUserName();
     }
 
+    /** GRANT privilege TO role — grants one or more privileges (prompt4 #32). */
+    String executeGrantPrivilege(GrantPrivilegeQuery query) {
+        for (Privilege.Action action : query.getActions()) {
+            getUserStore().grantPrivilege(query.getRoleName(), action, query.getTableName());
+        }
+        return "Privilege granted: " + String.join(", ", actionNames(query.getActions())) + 
+               " on " + (query.getTableName().isEmpty() ? "database" : query.getTableName()) + 
+               " -> " + query.getRoleName();
+    }
+
+    /** REVOKE privilege FROM role — revokes one or more privileges (prompt4 #32). */
+    String executeRevokePrivilege(RevokePrivilegeQuery query) {
+        for (Privilege.Action action : query.getActions()) {
+            getUserStore().revokePrivilege(query.getRoleName(), action, query.getTableName());
+        }
+        return "Privilege revoked: " + String.join(", ", actionNames(query.getActions())) + 
+               " on " + (query.getTableName().isEmpty() ? "database" : query.getTableName()) + 
+               " -> " + query.getRoleName();
+    }
+
+    private static List<String> actionNames(List<Privilege.Action> actions) {
+        List<String> names = new ArrayList<>(actions.size());
+        for (Privilege.Action action : actions) {
+            names.add(action.name());
+        }
+        return names;
+    }
+
+    /**
+     * Returns the authorizer for privilege checking (prompt4 #32). Lazy so
+     * non-security workloads never pay for it.
+     */
+    Authorizer getAuthorizer() {
+        Authorizer local = authorizer;
+        if (local != null) {
+            return local;
+        }
+        synchronized (this) {
+            if (authorizer == null) {
+                authorizer = new Authorizer(getUserStore());
+            }
+            return authorizer;
+        }
+    }
+
     /** Bridges UserStore onto the DIESEL_* system tables (prompt4 #30). */
     private final class SystemTableBackend implements UserStoreBackend {
         @Override
@@ -1510,6 +1756,20 @@ class Database {
             for (int i = 0; i < current.size(); i++) {
                 if (Objects.equals(id, current.get(i).get("ID"))) {
                     table.updateRowInPlace(i, row);
+                    table.saveToFile(tableName);
+                    return;
+                }
+            }
+            throw new IllegalStateException("No row with ID " + id + " in " + tableName);
+        }
+
+        @Override
+        public void deleteRow(String tableName, String id) {
+            Table table = getTable(tableName);
+            List<Map<String, Object>> current = table.getRows();
+            for (int i = 0; i < current.size(); i++) {
+                if (Objects.equals(id, current.get(i).get("ID"))) {
+                    table.removeRow(i);
                     table.saveToFile(tableName);
                     return;
                 }
@@ -1765,9 +2025,20 @@ class Database {
         if (normalized.startsWith(SqlKeywords.CREATE_TABLE)) {
             return extractTableFromCreateTable(normalized);
         }
+        if (normalized.startsWith(SqlKeywords.DROP_TABLE)) {
+            return extractTableFromDropTable(normalized);
+        }
         if (normalized.startsWith(SqlKeywords.CREATE_INDEX) || normalized.startsWith(SqlKeywords.CREATE_HASH_INDEX)
                 || normalized.startsWith(SqlKeywords.CREATE_UNIQUE_INDEX) || normalized.startsWith(SqlKeywords.CREATE_UNIQUE_CLUSTERED_INDEX)) {
             return extractTableFromCreateIndex(normalized);
+        }
+        if (normalized.startsWith(SqlKeywords.ALTER_USER)) {
+            // ALTER USER doesn't operate on a regular table, it's a system operation
+            return "DIESEL_USERS";
+        }
+        if (normalized.startsWith(SqlKeywords.GRANT)) {
+            // GRANT doesn't operate on a regular table, it's a system operation
+            return "DIESEL_PRIVILEGES";
         }
         throw new IllegalArgumentException("Cannot extract table name from query: unsupported query type");
     }
@@ -1810,6 +2081,18 @@ class Database {
             throw new IllegalArgumentException("Cannot extract table name from query: invalid CREATE TABLE format");
         }
         return firstIdentifier(parts[1].split("\\s+")[0]);
+    }
+
+    private String extractTableFromDropTable(String normalized) {
+        String[] parts = normalized.split("(?i)DROP TABLE\\s+", 2);
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Cannot extract table name from query: invalid DROP TABLE format");
+        }
+        String token = parts[1].split("\\s+")[0];
+        if (token.endsWith(";")) {
+            token = token.substring(0, token.length() - 1);
+        }
+        return firstIdentifier(token);
     }
 
     private String extractTableFromCreateIndex(String normalized) {

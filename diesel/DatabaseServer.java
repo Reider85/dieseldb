@@ -9,8 +9,11 @@ import java.util.logging.Level;
 
 import diesel.net.*;
 import diesel.net.messages.*;
+import diesel.security.AccessDeniedException;
 import diesel.security.AuthException;
 import diesel.security.Authenticator;
+import diesel.security.Authorizer;
+import diesel.security.Privilege;
 import diesel.security.Session;
 
 /**
@@ -733,18 +736,22 @@ public class DatabaseServer {
             String query = qm.getQuery();
             transactionId = qm.getTransactionId();
 
-            // Self-service password change only (prompt4 #31): cross-account
-            // ALTER USER arrives with the Authorizer in prompt4 #32.
-            if (session != null && AlterUserQuery.isAlterUser(query)) {
-                String target = AlterUserQuery.targetUserName(query);
-                if (target != null && !target.equals(session.getUserName())) {
-                    sendSerializedResult("Error: Can only change your own password");
-                    return;
-                }
-            }
+            // No ALTER USER pre-check here (prompt4 #32): cross-account
+            // password changes are authorized by the Authorizer inside
+            // Database.executeQuery - self-service, ADMIN privilege, or denial.
 
             try {
-                Object result = database.executeQuery(query, transactionId);
+                Object result = database.executeQuery(query, transactionId, session);
+                
+                // Invalidate privilege cache after any GRANT or REVOKE (prompt4 #32)
+                if (session != null && result instanceof String) {
+                    String resultStr = (String) result;
+                    if (resultStr.startsWith("Privilege granted:") || resultStr.startsWith("Privilege revoked:") ||
+                        resultStr.startsWith("Role granted:")) {
+                        database.getAuthorizer().invalidateAll();
+                    }
+                }
+                
                 if (session != null && AlterUserQuery.isAlterUser(query)
                         && !(result instanceof String error && error.startsWith(ErrorMessages.ERROR_PREFIX))) {
                     session.setMustChangePassword(false);
@@ -897,7 +904,7 @@ public class DatabaseServer {
             transactionId = epm.getTransactionId();
             try {
                 ps.bindParameters(epm.getParameters());
-                Object result = ps.execute(database, transactionId);
+                Object result = ps.executeWithSession(database, transactionId, session);
                 sendSerializedResult(result);
             } catch (OutOfMemoryError e) {
                 handleOutOfMemory(ps.getSqlTemplate(), e);
@@ -952,7 +959,7 @@ public class DatabaseServer {
                 if (fetchSize <= 0) {
                     fetchSize = DEFAULT_CURSOR_FETCH_SIZE;
                 }
-                Cursor cursor = database.executeCursor(ocm.getQuery(), fetchSize, transactionId);
+                Cursor cursor = database.executeCursor(ocm.getQuery(), fetchSize, transactionId, session);
                 String cursorId = cursor.getId().toString();
                 cursors.put(cursorId, cursor);
                 sendSerializedResult(cursorId);
