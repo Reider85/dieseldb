@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -18,6 +19,16 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Tag("query-full")
 class IsolationSemanticsTest {
+
+    private Database db;
+
+    @AfterEach
+    void tearDown() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
 
     private UUID begin(Database db, String isolation) {
         String result = (String) db.executeQuery(
@@ -39,7 +50,7 @@ class IsolationSemanticsTest {
 
     @Test
     void readCommittedSeesCommitsLandedBeforeTheStatement(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE iso (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("INSERT INTO iso (id, val) VALUES (1, 'a')", null);
 
@@ -55,7 +66,7 @@ class IsolationSemanticsTest {
 
     @Test
     void repeatableReadKeepsBeginSnapshot(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE iso (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("INSERT INTO iso (id, val) VALUES (1, 'a')", null);
 
@@ -71,7 +82,7 @@ class IsolationSemanticsTest {
 
     @Test
     void readCommittedSeesCommittedDeletesFromLaterStatements(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE iso (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("INSERT INTO iso (id, val) VALUES (1, 'a')", null);
         db.executeQuery("INSERT INTO iso (id, val) VALUES (2, 'b')", null);
@@ -88,7 +99,7 @@ class IsolationSemanticsTest {
 
     @Test
     void repeatableReadKeepsRowsDeletedAfterBegin(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE iso (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("INSERT INTO iso (id, val) VALUES (1, 'a')", null);
         db.executeQuery("INSERT INTO iso (id, val) VALUES (2, 'b')", null);

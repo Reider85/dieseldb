@@ -374,10 +374,10 @@ Failures below are **pre-existing / environmental** on this machine. When one ap
 |---|---|---|
 | Timing compare flags a heavy query, isolated times unchanged | `make timing` overall | CPU/background-service drift; see Timing Policy |
 | `FlusherTest#testMixedCommittedUncommitted` O(N²)/slow or flaky | storage/page flusher | pre-existing insert path; thread-dump proven unrelated to MVCC work |
-| `CopyOnWriteIsolationTest#beginDoesNotCopyTablesEagerly` teardown delete fails | concurrency | @TempDir delete races diesel-persist-flusher daemon |
 | `JsonlStorageAdvancedTest` 1M-row benchmark exceeds bound | jsonl storage | A/B-proven pre-existing (~70s on clean HEAD) |
 | Microbenchmarks (e.g. `WALReadAllIsAlreadySortedTest`, Snappy*Benchmark) timing-sensitive | perf | min-of-3 / threshold noise; fix criterion, not code, if red |
-| `@TempDir` delete errors under parallel Windows runs | any | retry isolated; unrelated to logic |
+| `GroupCommitThroughputTest#testAcceptanceThroughputAndP99` p99 > 20ms under full-suite load | WAL group commit | load-sensitive timing; passes in isolation p99≈5ms (observed 2026-10-20) |
+| `@TempDir` delete errors under parallel Windows runs | any | retry isolated; unrelated to logic — classes that create `Database(tempDir)` must call `db.close()` in `@AfterEach` (fixed in CopyOnWriteIsolationTest/ConcurrentConflictTest/RollbackTest/UndoLogSpillTest/IsolationSemanticsTest/MvccDeleteTest/MvccUpdateTest/LazyDeleteTest 2026-10-20) |
 | ru-RU locale breaks "0.30" string asserts | any toString/format | use `Locale.ROOT` (past bug in AdaptiveFlushStrategy) |
 | `WALBackpressureTest#queueFullBlocksProducerAndLosesNoData` "queue nearly full" assert fails | storage/WAL backpressure | load-sensitive timing; passes in isolation (observed 2026-10-19) |
 

@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,6 +26,16 @@ import static org.junit.jupiter.api.Assertions.*;
 @Tag("concurrency")
 class ConcurrentConflictTest {
 
+    private Database db;
+
+    @AfterEach
+    void tearDown() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
+
     private UUID beginTransaction(Database db) {
         String result = (String) db.executeQuery("BEGIN TRANSACTION", null);
         return UUID.fromString(result.substring("Transaction started: ".length()));
@@ -32,7 +43,7 @@ class ConcurrentConflictTest {
 
     @Test
     void concurrentWriteWriteConflictDetected(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE accounts (id LONG PRIMARY KEY, balance LONG)", null);
         db.executeQuery("INSERT INTO accounts (id, balance) VALUES (1, 1000)", null);
 
@@ -56,7 +67,7 @@ class ConcurrentConflictTest {
 
     @Test
     void nonConflictingTransactionsCommitSuccessfully(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE t1 (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("CREATE TABLE t2 (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("INSERT INTO t1 (id, val) VALUES (1, 'a')", null);
@@ -75,7 +86,7 @@ class ConcurrentConflictTest {
     @Test
     void hundredWritersOnOwnRowsCommitWithoutConflict(@TempDir Path tempDir) throws Exception {
         final int writers = 100;
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE acc (id LONG PRIMARY KEY, balance LONG)", null);
         for (int i = 1; i <= writers; i++) {
             db.executeQuery("INSERT INTO acc (id, balance) VALUES (" + i + ", 0)", null);

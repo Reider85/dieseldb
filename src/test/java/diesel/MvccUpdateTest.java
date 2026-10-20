@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,6 +20,16 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Tag("query-full")
 class MvccUpdateTest {
+
+    private Database db;
+
+    @AfterEach
+    void tearDown() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
 
     private Database setup(Path tempDir) {
         Database db = new Database(tempDir.toString());
@@ -52,7 +63,7 @@ class MvccUpdateTest {
 
     @Test
     void writerReadsOwnUpdateAndRollbackRestoresOldValue(@TempDir Path tempDir) {
-        Database db = setup(tempDir);
+        db = setup(tempDir);
         UUID tx = begin(db);
         db.executeQuery("UPDATE t SET val = 'new' WHERE id = 1", tx);
 
@@ -66,7 +77,7 @@ class MvccUpdateTest {
 
     @Test
     void committedUpdateIsVisibleToFreshReaders(@TempDir Path tempDir) {
-        Database db = setup(tempDir);
+        db = setup(tempDir);
         UUID tx = begin(db);
         db.executeQuery("UPDATE t SET val = 'new' WHERE id = 1", tx);
         db.executeQuery("COMMIT", tx);
@@ -77,7 +88,7 @@ class MvccUpdateTest {
 
     @Test
     void foreignReaderSeesPreImageWhileUpdateIsPending(@TempDir Path tempDir) {
-        Database db = setup(tempDir);
+        db = setup(tempDir);
         UUID tx = begin(db);
         db.executeQuery("UPDATE t SET val = 'new' WHERE id = 1", tx);
 
@@ -91,7 +102,7 @@ class MvccUpdateTest {
 
     @Test
     void repeatableReadKeepsPreImageCommittedAfterBegin(@TempDir Path tempDir) {
-        Database db = setup(tempDir);
+        db = setup(tempDir);
         UUID rr = beginIsolation(db, "REPEATABLE READ");
         assertEquals("old", selectVal(db, "SELECT val FROM t WHERE id = 1", rr), "baseline");
 

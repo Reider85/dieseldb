@@ -23,6 +23,15 @@ class UndoLogSpillTest {
     private UndoLog undoLog;
     private Table testTable;
     private Database testDatabase;
+    private Database db;
+    
+    @AfterEach
+    void tearDown() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
     
     @BeforeEach
     void setUp() {
@@ -147,7 +156,7 @@ testTable = new Table(testDatabase, "test", List.of("id", "name"),
         String previous = System.getProperty("undo.spill.threshold.mb");
         System.setProperty("undo.spill.threshold.mb", "1");
         try {
-            Database db = new Database();
+            db = new Database();
             db.setDataDir(tempDir.toString());
             db.executeQuery("CREATE TABLE SPILL_ACCEPT (ID LONG PRIMARY KEY SEQUENCE(spill_accept_seq 1 1), VAL STRING)", null);
             for (int i = 0; i < 5; i++) {

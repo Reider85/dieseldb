@@ -992,3 +992,5 @@ chore: test-profiles-audit changelog entry
 3.3.17 Prompt4 #31: Authenticator handshake AUTH + CLI login, admin/admin bootstrap with forced password change, --reset-admin, ALTER USER self-service
 
 3.3.18 Fix tearDown NPE regression in MaxResultRowsTest/OomHandlingTest: drop tables before database.close() (broken by 3.3.16 null-ing first)
+
+3.3.19 Close Database in @AfterEach of 8 MVCC/concurrency tests to fix Windows @TempDir delete flakes (CopyOnWriteIsolationTest et al; open WAL channels/persist-flusher handles blocked JUnit temp-dir cleanup); GroupCommitThroughputTest p99 flake noted in Known Flakes

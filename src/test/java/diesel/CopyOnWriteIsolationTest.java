@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
@@ -14,6 +15,16 @@ import static org.junit.jupiter.api.Assertions.*;
 @Tag("concurrency")
 class CopyOnWriteIsolationTest {
 
+    private Database db;
+
+    @AfterEach
+    void tearDown() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
+
     private UUID beginTransaction(Database db) {
         String result = (String) db.executeQuery("BEGIN TRANSACTION", null);
         return UUID.fromString(result.substring("Transaction started: ".length()));
@@ -21,7 +32,7 @@ class CopyOnWriteIsolationTest {
 
     @Test
     void transactionInsertDoesNotLeakToSharedTable(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE users (id LONG PRIMARY KEY, name STRING)", null);
         db.executeQuery("INSERT INTO users (id, name) VALUES (1, 'Alice')", null);
 
@@ -42,7 +53,7 @@ class CopyOnWriteIsolationTest {
 
     @Test
     void transactionUpdateDoesNotLeakToSharedTable(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE users (id LONG PRIMARY KEY, name STRING)", null);
         db.executeQuery("INSERT INTO users (id, name) VALUES (1, 'Alice')", null);
 
@@ -66,7 +77,7 @@ class CopyOnWriteIsolationTest {
 
     @Test
     void transactionDeleteDoesNotLeakToSharedTable(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE users (id LONG PRIMARY KEY, name STRING)", null);
         db.executeQuery("INSERT INTO users (id, name) VALUES (1, 'Alice')", null);
         db.executeQuery("INSERT INTO users (id, name) VALUES (2, 'Bob')", null);
@@ -88,7 +99,7 @@ class CopyOnWriteIsolationTest {
 
     @Test
     void beginDoesNotCopyTablesEagerly(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         for (int t = 0; t < 10; t++) {
             db.executeQuery("CREATE TABLE t" + t + " (id LONG PRIMARY KEY, val STRING)", null);
             for (int i = 0; i < 100; i++) {

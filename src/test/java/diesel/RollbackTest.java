@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -35,9 +36,19 @@ class RollbackTest {
     @TempDir
     static Path tempDir;
 
+    private Database db;
+
+    @AfterEach
+    void tearDown() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
+
     @Test
     void beginTransactionOnHundredThousandRowTableIsFasterThanOneMillisecond() throws Exception {
-        Database db = new Database();
+        db = new Database();
         db.setDataDir(tempDir.toString());
         db.executeQuery("CREATE TABLE BENCH_BEGIN (ID LONG PRIMARY KEY SEQUENCE(bench_begin_seq 1 1), VAL STRING)", null);
 
@@ -74,7 +85,7 @@ class RollbackTest {
 
     @Test
     void rollbackAfterThousandOperationsRestoresStateWithoutHeapGrowth() throws Exception {
-        Database db = new Database();
+        db = new Database();
         db.setDataDir(tempDir.toString());
         db.executeQuery("CREATE TABLE ROLLBACK_OPS (ID LONG PRIMARY KEY SEQUENCE(rollback_ops_seq 1 1), VAL STRING)", null);
         for (int i = 0; i < SEED; i++) {

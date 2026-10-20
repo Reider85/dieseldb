@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,6 +21,16 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Tag("query-full")
 class MvccDeleteTest {
+
+    private Database db;
+
+    @AfterEach
+    void tearDown() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
 
     private Database setup(Path tempDir) {
         Database db = new Database(tempDir.toString());
@@ -64,7 +75,7 @@ class MvccDeleteTest {
 
     @Test
     void writerLosesRowWhileForeignReadersStillSeeIt(@TempDir Path tempDir) {
-        Database db = setup(tempDir);
+        db = setup(tempDir);
         UUID tx = begin(db);
         db.executeQuery("DELETE FROM t WHERE id = 1", tx);
 
@@ -81,7 +92,7 @@ class MvccDeleteTest {
 
     @Test
     void committedDeleteDisappearsForFreshReaders(@TempDir Path tempDir) {
-        Database db = setup(tempDir);
+        db = setup(tempDir);
         UUID tx = begin(db);
         db.executeQuery("DELETE FROM t WHERE id = 1", tx);
         db.executeQuery("COMMIT", tx);
@@ -92,7 +103,7 @@ class MvccDeleteTest {
 
     @Test
     void repeatableReadKeepsRowDeletedAfterBegin(@TempDir Path tempDir) {
-        Database db = setup(tempDir);
+        db = setup(tempDir);
         UUID rr = beginIsolation(db, "REPEATABLE READ");
         assertEquals(1, select(db, "SELECT * FROM t", rr).size(), "baseline");
 
@@ -110,7 +121,7 @@ class MvccDeleteTest {
 
     @Test
     void insertAfterCommittedDeleteReusesPrimaryKey(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE pk (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("INSERT INTO pk (id, val) VALUES (1, 'old')", null);
 
@@ -133,7 +144,7 @@ class MvccDeleteTest {
 
     @Test
     void insertAfterCommittedDeleteReusesUniqueSecondaryKey(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         // Indexed columns are registered uppercase (CREATE UNIQUE INDEX is
         // parsed from the normalized statement), so the schema must match.
         db.executeQuery("CREATE TABLE u (id LONG PRIMARY KEY, CODE STRING)", null);
@@ -159,7 +170,7 @@ class MvccDeleteTest {
 
     @Test
     void insertAfterRolledBackDeleteStillDuplicates(@TempDir Path tempDir) {
-        Database db = new Database(tempDir.toString());
+        db = new Database(tempDir.toString());
         db.executeQuery("CREATE TABLE pk (id LONG PRIMARY KEY, val STRING)", null);
         db.executeQuery("INSERT INTO pk (id, val) VALUES (1, 'old')", null);
 

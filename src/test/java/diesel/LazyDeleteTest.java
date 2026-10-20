@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,14 @@ public class LazyDeleteTest {
         database.executeQuery("CREATE HASH INDEX ON USERS (NAME)", null);
         database.executeQuery("CREATE UNIQUE INDEX ON USERS (USER_CODE)", null);
         insertRecords();
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     private void insertRecords() {
