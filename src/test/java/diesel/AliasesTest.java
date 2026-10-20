@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.AfterEach;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -37,6 +38,14 @@ public class AliasesTest {
         insertTransactionsRecords();
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     private void createUsersTable() {
         dropTable("USERS");
         String createTableQuery = "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)";

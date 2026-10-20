@@ -3,6 +3,7 @@ package diesel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,14 @@ class BatchQueryTest {
         database.executeQuery("INSERT INTO BATCH_TEST2 (VALUE) VALUES (300)", null);
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @Test
     void batchQueryOnDifferentTablesShouldWork() {
         // Execute queries on different tables in a batch

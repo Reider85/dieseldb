@@ -7,6 +7,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -41,6 +42,14 @@ public class DeadCodeRemovalTest {
         database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, BALANCE) VALUES (3, 'Carol', 25, 50.5)", null);
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> select(String sql) {
         return (List<Map<String, Object>>) database.executeQuery(sql, null);

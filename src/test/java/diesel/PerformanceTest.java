@@ -4,6 +4,7 @@ import diesel.Database;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.AfterEach;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,6 +46,13 @@ public class PerformanceTest {
 
     public PerformanceTest() {
         this.database = new Database();
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+        }
     }
 
     private void assertQueryRowCount(String query, Object result) {
@@ -297,12 +305,12 @@ public class PerformanceTest {
     }
 
     private void runReadUncommittedPerformanceTest() {
-        LOGGER.info("Тестирование производительности READ UNCOMMITTED с {} записями", RECORD_COUNT);
+        LOGGER.info("РўРµСЃС‚РёСЂРѕРІР°РЅРёРµ РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚Рё READ UNCOMMITTED СЃ {} Р·Р°РїРёСЃСЏРјРё", RECORD_COUNT);
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
 
         for (int i = 0; i < WARMUP_RUNS; i++) {
-            LOGGER.info("Прогревочный запуск {}", i);
+            LOGGER.info("РџСЂРѕРіСЂРµРІРѕС‡РЅС‹Р№ Р·Р°РїСѓСЃРє {}", i);
             dropTable();
             database.executeQuery("CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER)", null);
             String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
@@ -320,7 +328,7 @@ public class PerformanceTest {
                 }
             });
 
-            // Транзакция 2: Чтение неподтверждённых данных
+            // РўСЂР°РЅР·Р°РєС†РёСЏ 2: Р§С‚РµРЅРёРµ РЅРµРїРѕРґС‚РІРµСЂР¶РґС‘РЅРЅС‹С… РґР°РЅРЅС‹С…
             Future<?> tx2 = executor.submit(() -> {
                 TestWaitHelper.waitForCondition(tx1Started::get, Duration.ofSeconds(5));
                 String selectQuery = "SELECT NAME, AGE FROM USERS WHERE AGE < 30";
@@ -333,13 +341,13 @@ public class PerformanceTest {
                 database.executeQuery("COMMIT TRANSACTION", tx1Id);
                 database.executeQuery("COMMIT TRANSACTION", tx2Id);
             } catch (Exception e) {
-                LOGGER.error("Ошибка в прогревочном запуске: {}", e.getMessage(), e);
+                LOGGER.error("РћС€РёР±РєР° РІ РїСЂРѕРіСЂРµРІРѕС‡РЅРѕРј Р·Р°РїСѓСЃРєРµ: {}", e.getMessage(), e);
             }
         }
 
         List<Long> executionTimes = new ArrayList<>();
         for (int i = 0; i < TEST_RUNS; i++) {
-            LOGGER.info("Тестовый запуск {}", i);
+            LOGGER.info("РўРµСЃС‚РѕРІС‹Р№ Р·Р°РїСѓСЃРє {}", i);
             dropTable();
             database.executeQuery("CREATE TABLE USERS (ID STRING, USER_CODE STRING, NAME STRING, AGE INTEGER)", null);
             String createIndexQuery = "CREATE UNIQUE CLUSTERED INDEX ON USERS (USER_CODE)";
@@ -370,7 +378,7 @@ public class PerformanceTest {
                 database.executeQuery("COMMIT TRANSACTION", tx1Id);
                 database.executeQuery("COMMIT TRANSACTION", tx2Id);
             } catch (Exception e) {
-                LOGGER.error("Ошибка в тесте: {}", e.getMessage(), e);
+                LOGGER.error("РћС€РёР±РєР° РІ С‚РµСЃС‚Рµ: {}", e.getMessage(), e);
             }
             long endTime = System.nanoTime();
             executionTimes.add(endTime - startTime);
@@ -380,7 +388,7 @@ public class PerformanceTest {
         try {
             executor.awaitTermination(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
-            LOGGER.error("Прерывание завершения исполнителя: {}", e.getMessage(), e);
+            LOGGER.error("РџСЂРµСЂС‹РІР°РЅРёРµ Р·Р°РІРµСЂС€РµРЅРёСЏ РёСЃРїРѕР»РЅРёС‚РµР»СЏ: {}", e.getMessage(), e);
         }
 
         double averageTimeMs = executionTimes.stream()
@@ -391,15 +399,15 @@ public class PerformanceTest {
         long maxTimeNs = executionTimes.stream().max(Long::compareTo).orElse(0L);
         double stdDevMs = calculateStandardDeviation(executionTimes, averageTimeMs * 1_000_000.0) / 1_000_000.0;
 
-        LOGGER.info("Производительность READ UNCOMMITTED для {} записей", RECORD_COUNT);
-        LOGGER.info("Среднее время выполнения: {} мс", String.format("%.3f", averageTimeMs));
-        LOGGER.info("Минимальное время выполнения: {} мс", String.format("%.3f", minTimeNs / 1_000_000.0));
-        LOGGER.info("Максимальное время выполнения: {} мс", String.format("%.3f", maxTimeNs / 1_000_000.0));
-        LOGGER.info("Стандартное отклонение: {} мс", String.format("%.3f", stdDevMs));
+        LOGGER.info("РџСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚СЊ READ UNCOMMITTED РґР»СЏ {} Р·Р°РїРёСЃРµР№", RECORD_COUNT);
+        LOGGER.info("РЎСЂРµРґРЅРµРµ РІСЂРµРјСЏ РІС‹РїРѕР»РЅРµРЅРёСЏ: {} РјСЃ", String.format("%.3f", averageTimeMs));
+        LOGGER.info("РњРёРЅРёРјР°Р»СЊРЅРѕРµ РІСЂРµРјСЏ РІС‹РїРѕР»РЅРµРЅРёСЏ: {} РјСЃ", String.format("%.3f", minTimeNs / 1_000_000.0));
+        LOGGER.info("РњР°РєСЃРёРјР°Р»СЊРЅРѕРµ РІСЂРµРјСЏ РІС‹РїРѕР»РЅРµРЅРёСЏ: {} РјСЃ", String.format("%.3f", maxTimeNs / 1_000_000.0));
+        LOGGER.info("РЎС‚Р°РЅРґР°СЂС‚РЅРѕРµ РѕС‚РєР»РѕРЅРµРЅРёРµ: {} РјСЃ", String.format("%.3f", stdDevMs));
         LOGGER.info("--------------------------------");
         writeBenchmarkResult("READ_UNCOMMITTED", RECORD_COUNT, averageTimeMs, minTimeNs / 1_000_000.0, maxTimeNs / 1_000_000.0, stdDevMs);
 
-        // Восстановление исходной схемы таблицы
+        // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ РёСЃС…РѕРґРЅРѕР№ СЃС…РµРјС‹ С‚Р°Р±Р»РёС†С‹
         setupTable();
     }
 

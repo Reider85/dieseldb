@@ -4,6 +4,7 @@ import diesel.Database;
 
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
@@ -182,5 +183,10 @@ public abstract class AbstractDieselTest {
             LOGGER.log(Level.SEVERE, "countRows failed for {0}: {1}", new Object[]{query, e.getMessage()});
         }
         return -1;
+    }
+
+    @AfterAll
+    void closeDatabase() {
+        database.close();
     }
 }

@@ -2,6 +2,7 @@ package diesel;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 
 import java.util.HashMap;
 import java.util.List;
@@ -20,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@link Table#readPhysicalRow(int)} accessor.
  *
  * <p>Note: the o2_prompts.md acceptance "snapshot read <= 2x the time of
- * Table.getRows()" is unattainable by design — getVisibleRowValues()
+ * Table.getRows()" is unattainable by design вЂ” getVisibleRowValues()
  * defensively copies every visible row (O(N * columns) allocations) while
  * Table.getRows() copies only row references. The O(N) property is instead
  * proven by an absolute bound plus a linearity ratio t(2N)/t(N) < 3
@@ -94,7 +95,7 @@ public class SnapshotReadBenchmarkTest {
         double ratio = (double) fullNanos / Math.max(1L, halfNanos);
         assertTrue(ratio < LINEARITY_RATIO_BOUND,
                 String.format("snapshot read scaling t(%d)/t(%d) = %.2f exceeds %.1f"
-                                + " — read is not linear in N",
+                                + " вЂ” read is not linear in N",
                         N_FULL, N_HALF, ratio, LINEARITY_RATIO_BOUND));
 
         System.out.printf(
@@ -104,6 +105,7 @@ public class SnapshotReadBenchmarkTest {
                 K_SNAPSHOTS, kNanos / 1_000_000,
                 N_FULL, N_HALF, ratio,
                 (double) singleNanos / Math.max(1L, baseNanos));
+        database.close();
     }
 
     private static Table buildTable(Database database, String name, int rows) {

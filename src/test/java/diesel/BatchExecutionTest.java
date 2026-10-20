@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.AfterEach;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -41,6 +42,14 @@ class BatchExecutionTest {
         }
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @Test
     void beginBatchShouldStartTransaction() {
         Object result = database.executeQuery("BEGIN BATCH", null);

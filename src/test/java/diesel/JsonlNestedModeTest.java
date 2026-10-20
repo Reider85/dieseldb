@@ -6,6 +6,7 @@ import diesel.storage.json.JsonParserConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.AfterEach;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -43,7 +44,7 @@ class JsonlNestedModeTest {
                 .arrayColumns(JsonParserConfig.ArrayColumnsMode.EXPAND).build();
     }
 
-    // ── Flatten mode: dotted columns round-trip ───────────────────────
+    // в”Ђв”Ђ Flatten mode: dotted columns round-trip в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void flattenDepth3RoundTrip() {
@@ -59,7 +60,7 @@ class JsonlNestedModeTest {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ID", 1L);
         r.put("user.name", "Alice");
-        r.put("user.address.city", "Москва");
+        r.put("user.address.city", "РњРѕСЃРєРІР°");
         r.put("user.address.country", "RU");
         storage.insert(r);
         storage.saveToFile("F3");
@@ -71,7 +72,7 @@ class JsonlNestedModeTest {
 
         List<Map<String, Object>> rows = loaded.scan();
         assertEquals(1, rows.size());
-        assertEquals("Москва", rows.get(0).get("user.address.city"));
+        assertEquals("РњРѕСЃРєРІР°", rows.get(0).get("user.address.city"));
         assertEquals("RU", rows.get(0).get("user.address.country"));
         assertEquals("Alice", rows.get(0).get("user.name"));
         assertTrue(rows.get(0).containsKey("user.address.city"),
@@ -94,7 +95,7 @@ class JsonlNestedModeTest {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ID", 1L);
         r.put("user.name", "Alice");
-        r.put("user.address.city", "Москва");
+        r.put("user.address.city", "РњРѕСЃРєРІР°");
         r.put("settings", "{\"notif\":true,\"theme\":\"dark\"}");
         storage.insert(r);
         storage.saveToFile("FMX");
@@ -105,7 +106,7 @@ class JsonlNestedModeTest {
         loaded.loadFromFile("FMX");
 
         Map<String, Object> row = loaded.scan().get(0);
-        assertEquals("Москва", row.get("user.address.city"));
+        assertEquals("РњРѕСЃРєРІР°", row.get("user.address.city"));
         assertEquals("{\"notif\":true,\"theme\":\"dark\"}",
                 row.get("settings"), "whole-nested value stays in a JSON column");
         storage.close();
@@ -121,7 +122,7 @@ class JsonlNestedModeTest {
                 "a dot-prefix column pair is ambiguous in flatten mode");
     }
 
-    // ── Json-column mode: whole structure in one column ───────────────
+    // в”Ђв”Ђ Json-column mode: whole structure in one column в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void jsonColumnDepth3RoundTripAndPathExtraction() {
@@ -131,7 +132,7 @@ class JsonlNestedModeTest {
         storage.setDataDir(tempDir.toString());
         storage.open();
         Map<String, Object> inner = new LinkedHashMap<>();
-        inner.put("user", Map.of("name", "Alice", "address", Map.of("city", "Москва", "country", "RU")));
+        inner.put("user", Map.of("name", "Alice", "address", Map.of("city", "РњРѕСЃРєРІР°", "country", "RU")));
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ID", 1L);
         r.put("PROFL", inner);
@@ -147,12 +148,12 @@ class JsonlNestedModeTest {
         JsonlSchemaManager manager = new JsonlSchemaManager(cols, types, jsonColumn());
         JsonlSchemaManager.ProjectionSlot slot = manager.resolveProjectionItem("PROFL.user.address.city");
         assertEquals(List.of("user", "address", "city"), slot.segments());
-        assertEquals("Москва", manager.extractPathValue(jsonText, slot.segments()));
+        assertEquals("РњРѕСЃРєРІР°", manager.extractPathValue(jsonText, slot.segments()));
         storage.close();
         loaded.close();
     }
 
-    // ── Arrays ────────────────────────────────────────────────────────
+    // в”Ђв”Ђ Arrays в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void arrayOfObjectsRoundsTripAsJsonColumn() {
@@ -225,16 +226,16 @@ class JsonlNestedModeTest {
         loaded.close();
     }
 
-    // ── SQL glue: dot-paths work in both nested modes ────────────────
+    // в”Ђв”Ђ SQL glue: dot-paths work in both nested modes в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void sqlJsonPathWhereFindsRowsInJsonColumnMode() {
         Database db = new Database();
         db.executeQuery("CREATE TABLE JPF (ID LONG, PROFL STRING)", null);
-        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (1, '{\"user\":{\"name\":\"Alice\",\"address\":{\"city\":\"Москва\",\"country\":\"RU\"}}}')", null);
-        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (2, '{\"user\":{\"name\":\"Bob\",\"address\":{\"city\":\"Париж\",\"country\":\"FR\"}}}')", null);
+        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (1, '{\"user\":{\"name\":\"Alice\",\"address\":{\"city\":\"РњРѕСЃРєРІР°\",\"country\":\"RU\"}}}')", null);
+        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (2, '{\"user\":{\"name\":\"Bob\",\"address\":{\"city\":\"РџР°СЂРёР¶\",\"country\":\"FR\"}}}')", null);
 
-        List<Map<String, Object>> rows = query(db, "SELECT * FROM JPF WHERE PROFL.user.address.city = 'Москва'");
+        List<Map<String, Object>> rows = query(db, "SELECT * FROM JPF WHERE PROFL.user.address.city = 'РњРѕСЃРєРІР°'");
         assertEquals(1, rows.size());
         assertEquals(1L, rows.get(0).get("ID"));
     }
@@ -243,23 +244,23 @@ class JsonlNestedModeTest {
     void sqlJsonPathProjectionExtractsLeafInJsonColumnMode() {
         Database db = new Database();
         db.executeQuery("CREATE TABLE JPF (ID LONG, PROFL STRING)", null);
-        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (1, '{\"user\":{\"name\":\"Alice\",\"address\":{\"city\":\"Москва\"}}}')", null);
-        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (2, '{\"user\":{\"name\":\"Bob\",\"address\":{\"city\":\"Париж\"}}}')", null);
+        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (1, '{\"user\":{\"name\":\"Alice\",\"address\":{\"city\":\"РњРѕСЃРєРІР°\"}}}')", null);
+        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (2, '{\"user\":{\"name\":\"Bob\",\"address\":{\"city\":\"РџР°СЂРёР¶\"}}}')", null);
 
         List<Map<String, Object>> proj = query(db, "SELECT PROFL.user.address.city FROM JPF");
         assertEquals(2, proj.size());
-        assertEquals("Москва", proj.get(0).get("PROFL"));
-        assertEquals("Париж", proj.get(1).get("PROFL"));
+        assertEquals("РњРѕСЃРєРІР°", proj.get(0).get("PROFL"));
+        assertEquals("РџР°СЂРёР¶", proj.get(1).get("PROFL"));
     }
 
     @Test
     void sqlDottedLeafWhereFindsRowsInFlattenMode() {
         Database db = new Database();
         db.executeQuery("CREATE TABLE FLATU (ID LONG, \"user.name\" STRING, \"user.address.city\" STRING)", null);
-        db.executeQuery("INSERT INTO FLATU (ID, \"user.name\", \"user.address.city\") VALUES (1, 'Alice', 'Москва')", null);
-        db.executeQuery("INSERT INTO FLATU (ID, \"user.name\", \"user.address.city\") VALUES (2, 'Bob', 'Париж')", null);
+        db.executeQuery("INSERT INTO FLATU (ID, \"user.name\", \"user.address.city\") VALUES (1, 'Alice', 'РњРѕСЃРєРІР°')", null);
+        db.executeQuery("INSERT INTO FLATU (ID, \"user.name\", \"user.address.city\") VALUES (2, 'Bob', 'РџР°СЂРёР¶')", null);
 
-        List<Map<String, Object>> rows = query(db, "SELECT * FROM FLATU WHERE \"user.address.city\" = 'Москва'");
+        List<Map<String, Object>> rows = query(db, "SELECT * FROM FLATU WHERE \"user.address.city\" = 'РњРѕСЃРєРІР°'");
         assertEquals(1, rows.size());
         assertEquals(1L, rows.get(0).get("ID"));
         assertEquals("Alice", rows.get(0).get("user.name"));

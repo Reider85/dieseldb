@@ -48,6 +48,11 @@ public class QueryProfilerTest {
         profiler.resetForTest();
         profiler.setSlowThresholdMsForTest(QueryProfiler.DEFAULT_SLOW_THRESHOLD_MS);
         dropTable();
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     private void dropTable() {

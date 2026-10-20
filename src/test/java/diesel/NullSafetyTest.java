@@ -8,6 +8,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -46,6 +47,14 @@ public class NullSafetyTest {
         database.executeQuery("INSERT INTO " + TABLE_B + " (ID, Z) VALUES (1, 'z')", null);
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @Test
     void databaseExecuteQueryWithNullQueryThrowsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class, () -> database.executeQuery(null, null));

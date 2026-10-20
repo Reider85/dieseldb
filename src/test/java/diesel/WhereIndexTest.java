@@ -30,6 +30,11 @@ public class WhereIndexTest {
         for (String name : new String[]{"T1", "T2"}) {
             try { database.dropTable(name); } catch (TableNotFoundException ignored) { /* intentionally empty */ }
         }
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -41,7 +46,7 @@ public class WhereIndexTest {
         return (String) database.executeQuery(sql, null);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────
+    // в”Ђв”Ђ Helpers в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     private void createIndexedTable() {
         database.executeQuery("CREATE TABLE T1 (ID LONG PRIMARY KEY, NAME STRING, AGE LONG, SALARY DOUBLE)", null);
@@ -59,7 +64,7 @@ public class WhereIndexTest {
 
     
 
-    // ── Range conditions (no exception = index used) ─────────────────
+    // в”Ђв”Ђ Range conditions (no exception = index used) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void lessThanUsesBTreeIndex() {
@@ -85,7 +90,7 @@ public class WhereIndexTest {
         assertDoesNotThrow(() -> query("SELECT ID FROM T1 WHERE AGE >= 45"));
     }
 
-    // ── Multi-condition AND intersection ─────────────────────────────
+    // в”Ђв”Ђ Multi-condition AND intersection в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void equalityAndRangeIntersect() {
@@ -108,7 +113,7 @@ public class WhereIndexTest {
                 "SELECT ID FROM T1 WHERE NAME = 'name10' AND AGE > 5 AND AGE < 15"));
     }
 
-    // ── OR still disables index pre-filter ───────────────────────────
+    // в”Ђв”Ђ OR still disables index pre-filter в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void orDisablesIndexPreFilter() {
@@ -117,7 +122,7 @@ public class WhereIndexTest {
                 "SELECT ID FROM T1 WHERE AGE = 5 OR AGE = 10"));
     }
 
-    // ── Negated conditions skip index ────────────────────────────────
+    // в”Ђв”Ђ Negated conditions skip index в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void notEqualsDoesNotUseIndex() {
@@ -131,7 +136,7 @@ public class WhereIndexTest {
         assertDoesNotThrow(() -> query("SELECT ID FROM T1 WHERE AGE NOT IN (5, 10, 15)"));
     }
 
-    // ── EXPLAIN output ───────────────────────────────────────────────
+    // в”Ђв”Ђ EXPLAIN output в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void explainReportsBTreeIndexForRange() {
@@ -165,7 +170,7 @@ public class WhereIndexTest {
                 "EXPLAIN should report B-tree index on AGE for >= : " + plan);
     }
 
-    // ── Full scan fallback ───────────────────────────────────────────
+    // в”Ђв”Ђ Full scan fallback в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void fullScanWhenNoIndexExists() {
@@ -173,7 +178,7 @@ public class WhereIndexTest {
         assertDoesNotThrow(() -> query("SELECT ID FROM T1 WHERE SALARY > 50000"));
     }
 
-    // ── Edge cases ───────────────────────────────────────────────────
+    // в”Ђв”Ђ Edge cases в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void rangeOnEmptyResult() {

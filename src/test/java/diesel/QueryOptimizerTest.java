@@ -28,6 +28,11 @@ public class QueryOptimizerTest {
     void tearDown() {
         QueryOptimizer.loadAdaptiveConfig();
         QueryOptimizer.clearCacheForTest();
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     private void createAndPopulateTables() {
@@ -45,11 +50,11 @@ public class QueryOptimizerTest {
 
     @Test
     void testFingerprintComputation() {
-        // Single table – no joins
+        // Single table вЂ“ no joins
         String fp1 = QueryOptimizer.QueryFingerprint.compute(List.of("USERS"), null);
         assertEquals("USERS", fp1);
 
-        // Two tables, one join – table names sorted
+        // Two tables, one join вЂ“ table names sorted
         QueryParser.JoinInfo join = new QueryParser.JoinInfo(
                 "T1", "T2", null, "ID", "T1_ID", QueryParser.JoinType.INNER, List.of());
 
@@ -82,7 +87,7 @@ public class QueryOptimizerTest {
                 new QueryOptimizer.QueryExecutionState("test", java.util.Set.of("hash"), 0.5);
         assertEquals(0, state.stepIndex());
 
-        // Perfect match – no deviation
+        // Perfect match вЂ“ no deviation
         boolean needsReplan = state.reportStep(100, 100);
         assertFalse(needsReplan);
         assertFalse(state.hasSignificantDeviation());
@@ -93,7 +98,7 @@ public class QueryOptimizerTest {
         assertFalse(needsReplan);
         assertFalse(state.hasSignificantDeviation());
 
-        // Significant deviation (2x) – should trigger replan
+        // Significant deviation (2x) вЂ“ should trigger replan
         needsReplan = state.reportStep(100, 20);
         assertTrue(needsReplan);
         assertTrue(state.hasSignificantDeviation());
@@ -163,7 +168,7 @@ public class QueryOptimizerTest {
     @Test
     void testJoinWithAdaptiveReplan() {
         createAndPopulateTables();
-        // Run a multi-join query – adaptive system may or may not replan,
+        // Run a multi-join query вЂ“ adaptive system may or may not replan,
         // but the query must return correct results regardless.
         List<Map<String, Object>> result = (List<Map<String, Object>>)
                 database.executeQuery(
@@ -172,7 +177,7 @@ public class QueryOptimizerTest {
                         "WHERE T2.SCORE > 5", null);
         assertNotNull(result);
         assertFalse(result.isEmpty());
-        // Verify results are correct – only SCORE > 5
+        // Verify results are correct вЂ“ only SCORE > 5
         // Column aliases are unqualified (SCORE, not T2.SCORE) in DieselDB
         for (Map<String, Object> row : result) {
             Object score = row.get("SCORE");

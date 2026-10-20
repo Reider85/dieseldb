@@ -5,6 +5,7 @@ import diesel.Database;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 
 import java.util.List;
 
@@ -29,6 +30,14 @@ class DatabaseSmokeTest {
         database.executeQuery("INSERT INTO SMOKE (NAME, AGE) VALUES ('Bob', 30)", null);
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @Test
     void selectAllReturnsAllInsertedRows() {
         Object result = database.executeQuery("SELECT ID, NAME FROM SMOKE", null);

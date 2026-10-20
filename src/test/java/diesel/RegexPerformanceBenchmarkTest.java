@@ -5,13 +5,14 @@ import diesel.QueryParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Prompt 27 (java:S5842) — regression + performance benchmark for the
+ * Prompt 27 (java:S5842) вЂ” regression + performance benchmark for the
  * LIMIT/OFFSET/LIKE/subquery parsing regexes that were optimized with
  * possessive quantifiers and atomic groups.
  *
@@ -51,6 +52,14 @@ public class RegexPerformanceBenchmarkTest {
                 null);
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @Test
     void benchmarkParse10kQueries() {
         QueryParser parser = new QueryParser();

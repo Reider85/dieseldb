@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.AfterEach;
 
 /**
  * Prompt 4 #30 acceptance: CREATE USER / CREATE ROLE / GRANT SQL end to end
@@ -37,6 +38,14 @@ class RbacDdlTest {
         database.setDataDir(tempDir.toString());
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @Test
     void createUserSqlStoresHashedPassword() {
         Object result = database.executeQuery("CREATE USER alice PASSWORD 'secret'", null);

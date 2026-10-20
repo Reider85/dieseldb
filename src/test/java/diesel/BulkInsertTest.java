@@ -3,6 +3,7 @@ package diesel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 
 import java.util.*;
 
@@ -19,7 +20,15 @@ class BulkInsertTest {
         try { database.dropTable("BULK"); } catch (TableNotFoundException ignored) { /* intentionally empty */ }
     }
 
-    // ── helpers ──────────────────────────────────────────────────────
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
+    // в”Ђв”Ђ helpers в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     private void createTable(String ddl) {
         database.executeQuery(ddl, null);
@@ -37,7 +46,7 @@ class BulkInsertTest {
         return m;
     }
 
-    // ── bulkInsert ───────────────────────────────────────────────────
+    // в”Ђв”Ђ bulkInsert в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void bulkInsertAddsAllRows() {
@@ -133,7 +142,7 @@ class BulkInsertTest {
         assertEquals(2, ((Map<?, ?>) rows.get(1)).get("ID"));
     }
 
-    // ── disableIndices / enableAndRebuildIndices ──────────────────────
+    // в”Ђв”Ђ disableIndices / enableAndRebuildIndices в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void bulkLoadModeSkipsIndexUpdates() {
@@ -177,7 +186,7 @@ class BulkInsertTest {
         assertEquals(41, idx.search("User42").get(0).intValue());
     }
 
-    // ── deferIndexUpdates / flushDeferredIndexUpdates ─────────────────
+    // в”Ђв”Ђ deferIndexUpdates / flushDeferredIndexUpdates в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void deferredIndexModeQueuesAndFlushes() {
@@ -195,7 +204,7 @@ class BulkInsertTest {
         assertEquals(1, idx.search("Bob").size());
     }
 
-    // ── stress / correctness ─────────────────────────────────────────
+    // в”Ђв”Ђ stress / correctness в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void bulkInsertLargeBatchMaintainsIndexConsistency() {

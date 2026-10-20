@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.AfterEach;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -31,6 +32,14 @@ class InsertQueryTest {
         database = new Database(tempDir.toString());
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     @Test
     void rejectsMismatchedColumnAndValueCounts() {
         Table table = createTable("MISMATCH", Map.of("ID", Integer.class), null);

@@ -44,6 +44,11 @@ class Phase0IntegrationTest {
                         });
             }
         }
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     @Test

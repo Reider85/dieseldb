@@ -31,6 +31,11 @@ public class CompositeIndexTest {
         for (String name : new String[]{"T1"}) {
             try { database.dropTable(name); } catch (TableNotFoundException ignored) { /* intentionally empty */ }
         }
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     @SuppressWarnings("unchecked")

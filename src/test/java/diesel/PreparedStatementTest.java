@@ -58,6 +58,11 @@ public class PreparedStatementTest {
                         }
                     });
         }
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     private void dropTable() {

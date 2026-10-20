@@ -27,6 +27,11 @@ public class QueryCacheTest {
     @AfterEach
     void tearDown() {
         dropTable();
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     private void dropTable() {

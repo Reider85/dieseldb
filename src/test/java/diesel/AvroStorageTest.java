@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>This is the first test suite that drives AVRO storage exclusively through
  * the SQL parser and executor rather than calling {@code AvroRowStorage} APIs
- * directly — closing the integration gap identified in Prompt 93.
+ * directly вЂ” closing the integration gap identified in Prompt 93.
  */
 @Tag("storage")
 @StorageType("avro")
@@ -61,9 +61,14 @@ class AvroStorageTest {
         } else {
             System.clearProperty("diesel.storage.type");
         }
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
-    // ─── Helpers ────────────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђ Helpers в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> runSelect(String sql) {
@@ -86,7 +91,7 @@ class AvroStorageTest {
         database.getTable("USERS").saveToFile("USERS");
     }
 
-    // ─── CREATE TABLE via SQL ──────────────────────────────────────
+    // в”Ђв”Ђв”Ђ CREATE TABLE via SQL в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void createTableProducesAvroStorage() {
@@ -114,7 +119,7 @@ class AvroStorageTest {
         assertThrows(TableNotFoundException.class, () -> database.getTable("TEMP_TABLE"));
     }
 
-    // ─── INSERT via SQL ────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђ INSERT via SQL в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void insertSingleRow() {
@@ -147,7 +152,7 @@ class AvroStorageTest {
         assertEquals(id1 + 1, id2, "Sequence should auto-increment");
     }
 
-    // ─── SELECT via SQL ────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђ SELECT via SQL в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void selectAllRows() {
@@ -170,7 +175,7 @@ class AvroStorageTest {
         insertRows(100);
         List<Map<String, Object>> rows = runSelect(
                 "SELECT ID, AGE FROM USERS WHERE AGE > 80");
-        // AGE = 18 + (i % 82), i in 1..100 → AGE in [18,99], >80 means AGE 81..99
+        // AGE = 18 + (i % 82), i in 1..100 в†’ AGE in [18,99], >80 means AGE 81..99
         assertTrue(rows.size() > 0, "Expected rows with AGE > 80");
         for (Map<String, Object> row : rows) {
             // AGE is Integer in the map
@@ -221,7 +226,7 @@ class AvroStorageTest {
         assertEquals(1, rows.size());
     }
 
-    // ─── UPDATE via SQL ────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђ UPDATE via SQL в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void updateRow() {
@@ -242,7 +247,7 @@ class AvroStorageTest {
         assertTrue(rows.size() > 0, "Expected rows updated to AGE 99");
     }
 
-    // ─── DELETE via SQL ────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђ DELETE via SQL в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void deleteRow() {
@@ -263,7 +268,7 @@ class AvroStorageTest {
         assertTrue(remaining.size() < 100, "Some rows should have been deleted");
     }
 
-    // ─── Persistence round-trip via SQL ────────────────────────────
+    // в”Ђв”Ђв”Ђ Persistence round-trip via SQL в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void persistenceRoundTripThroughDatabase() {
@@ -299,7 +304,7 @@ class AvroStorageTest {
         assertTrue(avroFile.length() > 0, "AVRO file should not be empty");
     }
 
-    // ─── Multi-table isolation ─────────────────────────────────────
+    // в”Ђв”Ђв”Ђ Multi-table isolation в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void twoTablesDoNotInterfere() {
@@ -320,7 +325,7 @@ class AvroStorageTest {
         assertTrue(new File(tempDir.toString(), "ORDERS.avro").exists());
     }
 
-    // ─── Index integration ─────────────────────────────────────────
+    // в”Ђв”Ђв”Ђ Index integration в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void createIndexOnAvroTable() {
@@ -347,7 +352,7 @@ class AvroStorageTest {
         assertTrue(rows.size() > 0, "Index-backed SELECT should return rows");
     }
 
-    // ─── Error cases ───────────────────────────────────────────────
+    // в”Ђв”Ђв”Ђ Error cases в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void duplicatePrimaryKeyRejected() {
@@ -375,7 +380,7 @@ class AvroStorageTest {
                 database.executeQuery("THIS IS NOT SQL", null));
     }
 
-    // ─── Large dataset stress test ─────────────────────────────────
+    // в”Ђв”Ђв”Ђ Large dataset stress test в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void largeDatasetThroughSql() {
@@ -394,7 +399,7 @@ class AvroStorageTest {
         assertTrue(filtered.size() > 0, "Filtered query on large set should return rows");
     }
 
-    // ─── Transaction integration ───────────────────────────────────
+    // в”Ђв”Ђв”Ђ Transaction integration в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void insertWithExplicitTransaction() {
@@ -427,7 +432,7 @@ class AvroStorageTest {
         assertEquals(0, rows.size(), "Rolled-back row should not be visible");
     }
 
-    // ─── All scalar types through SQL ──────────────────────────────
+    // в”Ђв”Ђв”Ђ All scalar types through SQL в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void allScalarTypesRoundTrip() {
@@ -456,7 +461,7 @@ class AvroStorageTest {
         assertEquals(Boolean.TRUE, row.get("ACTIVE"));
     }
 
-    // ─── Storage factory verification ──────────────────────────────
+    // в”Ђв”Ђв”Ђ Storage factory verification в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void storageFactoryCreatesAvroForAvroType() {

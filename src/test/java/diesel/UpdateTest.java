@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.AfterEach;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -37,6 +38,14 @@ public class UpdateTest {
         insertRecords();
     }
 
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
+    }
     private void insertRecords() {
         for (int i = 1; i <= RECORD_COUNT; i++) {
             String query = String.format(
@@ -52,7 +61,7 @@ public class UpdateTest {
         return (List<Map<String, Object>>) database.executeQuery(sql, null);
     }
 
-    // ── Index-assisted WHERE tests ──────────────────────────────────
+    // в”Ђв”Ђ Index-assisted WHERE tests в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void updateWithHashIndexWhere() {
@@ -122,7 +131,7 @@ public class UpdateTest {
         }
     }
 
-    // ── Index maintenance correctness tests ─────────────────────────
+    // в”Ђв”Ђ Index maintenance correctness tests в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void updateIndexedColumnMaintainsIndex() {
@@ -146,11 +155,11 @@ public class UpdateTest {
         assertEquals("User3", result.get(0).get("NAME"));
     }
 
-    // ── Full table scan fallback tests ──────────────────────────────
+    // в”Ђв”Ђ Full table scan fallback tests в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void updateWithNoIndexCondition() {
-        // BALANCE has no index — must fall back to full scan
+        // BALANCE has no index вЂ” must fall back to full scan
         assertDoesNotThrow(() ->
                 database.executeQuery(
                         "UPDATE USERS SET BALANCE = 1111 WHERE BALANCE > 500", null));
@@ -158,7 +167,7 @@ public class UpdateTest {
 
     @Test
     void updateWithOrCondition() {
-        // OR conditions cannot use a single index — full scan fallback
+        // OR conditions cannot use a single index вЂ” full scan fallback
         assertDoesNotThrow(() ->
                 database.executeQuery(
                         "UPDATE USERS SET BALANCE = 2222 WHERE AGE = 23 OR NAME = 'User7'", null));
@@ -166,7 +175,7 @@ public class UpdateTest {
 
     @Test
     void updateAllRows() {
-        // No WHERE clause — update every row
+        // No WHERE clause вЂ” update every row
         database.executeQuery("UPDATE USERS SET BALANCE = 0", null);
         List<Map<String, Object>> result = runSelect("SELECT BALANCE FROM USERS");
         assertEquals(RECORD_COUNT, result.size());
@@ -175,7 +184,7 @@ public class UpdateTest {
         }
     }
 
-    // ── Bulk update mode tests ──────────────────────────────────────
+    // в”Ђв”Ђ Bulk update mode tests в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void bulkUpdateManyRows() {
@@ -193,7 +202,7 @@ public class UpdateTest {
         assertEquals(1, result.size(), "index must be consistent after bulk rebuild");
     }
 
-    // ── Edge cases ──────────────────────────────────────────────────
+    // в”Ђв”Ђ Edge cases в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     @Test
     void updateWithNullValue() {
@@ -211,7 +220,7 @@ public class UpdateTest {
 
     @Test
     void updateUniqueIndexedColumn() {
-        // Update USER_CODE (unique-indexed) — index must reflect the new value
+        // Update USER_CODE (unique-indexed) вЂ” index must reflect the new value
         database.executeQuery(
                 "UPDATE USERS SET USER_CODE = 'NEWCODE5' WHERE USER_CODE = 'CODE5'", null);
         List<Map<String, Object>> result = runSelect(
@@ -222,7 +231,7 @@ public class UpdateTest {
         assertEquals(0, oldResult.size(), "old value must not be findable via index");
     }
 
-    // ── MVCC transaction tests (prompt4.md #4, acceptance) ──────────
+    // в”Ђв”Ђ MVCC transaction tests (prompt4.md #4, acceptance) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     private java.util.UUID beginTransaction() {
         String result = (String) database.executeQuery("BEGIN TRANSACTION", null);

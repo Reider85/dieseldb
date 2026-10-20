@@ -2,6 +2,7 @@ package diesel;
 
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.AfterEach;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -39,6 +40,14 @@ testTable = new Table(testDatabase, "test", List.of("id", "name"),
         row2.put("id", 2);
         row2.put("name", "Bob");
         testTable.addRow(row2);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (testDatabase != null) {
+            testDatabase.close();
+            testDatabase = null;
+        }
     }
     
     @Test
@@ -163,7 +172,7 @@ testTable = new Table(testDatabase, "test", List.of("id", "name"),
     @Test
     void testDeleteUndoApply() throws IOException {
         // Capture the pre-delete state (xmax=0, alive) before marking the
-        // delete — markDelete mutates the live meta in place.
+        // delete вЂ” markDelete mutates the live meta in place.
         RowVersionMeta oldMeta = new RowVersionMeta();
         testTable.markDelete(0, 1);
         

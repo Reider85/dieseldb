@@ -63,6 +63,11 @@ public class AutoJoinIndexTest {
     void tearDown() {
         Logger.getLogger("diesel.SelectQuery").removeHandler(handler);
         dropTables();
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     private void dropTables() {

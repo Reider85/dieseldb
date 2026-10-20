@@ -30,6 +30,11 @@ public class CoveringIndexTest {
         for (String name : new String[]{"T1"}) {
             try { database.dropTable(name); } catch (TableNotFoundException ignored) { /* intentionally empty */ }
         }
+            
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -135,7 +140,7 @@ public class CoveringIndexTest {
         createTable();
         // Create a plain (non-covering) index on AGE only
         database.executeQuery("CREATE INDEX ON T1(AGE)", null);
-        // Query SELECTs AGE, NAME, SALARY — not all covered by the plain index
+        // Query SELECTs AGE, NAME, SALARY вЂ” not all covered by the plain index
         query("SELECT AGE, NAME, SALARY FROM T1 WHERE AGE = 5");
         String result = explain("EXPLAIN ANALYZE SELECT AGE, NAME, SALARY FROM T1 WHERE AGE = 5");
         assertTrue(result.contains("index lookups: 1") || result.contains("index lookups: 2"),

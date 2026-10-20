@@ -2,6 +2,7 @@ package diesel;
 
 import diesel.Database;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -36,6 +37,13 @@ public class QuantitativeTest {
 
     public QuantitativeTest() {
         this.database = new Database();
+    }
+
+    @AfterAll
+    void closeDatabase() {
+        if (database != null) {
+            database.close();
+        }
     }
 
     @BeforeAll

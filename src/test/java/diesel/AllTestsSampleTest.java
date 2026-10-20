@@ -263,6 +263,9 @@ public class AllTestsSampleTest {
 
     @AfterAll
     void afterAllWriteTimingReport() {
+        if (database != null) {
+            database.close();
+        }
         writeTimingReport();
     }
 

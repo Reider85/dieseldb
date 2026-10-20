@@ -9,12 +9,16 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 
 **Workflow for each prompt:**
 
-0. **Pre-flight check (MANDATORY, ~10s, saves 10+ min):**
+0. **Pre-flight check (MANDATORY, ~15s, saves 10+ min):**
    ```powershell
+   git fetch origin main
    git log --oneline -8
+   git log --oneline origin/main..HEAD   # local-only commits (should be empty)
+   git log --oneline HEAD..origin/main   # remote-only commits (must rebase first)
    Select-String -Path PROMPT_STATUS.md -Pattern "<prompt-id>"
    ```
    If the prompt is already DONE (in `PROMPT_STATUS.md` or the last 8 commits) — **do not re-implement and do not ask the user**; pick the next TODO instead. Never burn a session re-verifying completed work.
+   If `origin/main` is ahead — rebase **before** implementing, not at push time (avoids mid-release version collisions).
 
 1. Read `PROMPT_STATUS.md` → select next TODO with highest priority.
 2. Read the prompt source (`prompt3.md` / `prompt4.md` / `o2-prompts.md` — whichever owns the task) → find detailed description.
@@ -67,6 +71,10 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 2. Fix the code
 3. Re-run isolated: `make test-one T=TestClassName#methodName`
 4. Full gate (only after isolated passes): `make test`
+
+**Isolation cost notes:**
+- `@Tag("large")` classes (e.g. VacuumTest): isolation = full `-P large` run with 1M-row tests (~10 min). Before re-running, read `target/surefire-reports/TEST-*.xml` suppressed-exceptions + stack trace — the root cause is usually visible without a re-run.
+- If you need to verify **2+ independent** isolated tests, run them as **parallel bash tool calls** in one message (they are independent Maven invocations).
 
 ---
 
@@ -139,6 +147,14 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 - If push fails, run `.\scripts\git-helpers.ps1 fix-lock` first, then retry
 - Never force-push. If history diverges, ask the user.
 - The `make release` target handles push automatically with the correct branch
+- **Pre-release fetch (multi-agent safety):** before `make release`, run `git fetch origin main`. If `origin/main` moved since your session started (another agent/user pushed), **rebase first** (`git rebase origin/main`), then run release. This avoids the push-rejected → rebase → Changelog conflict → renumber cascade that cost ~5 min on 3.3.20.
+- **Version collision recipe** (push rejected "fetch first", remote has the same version you just committed):
+  1. `git fetch origin main && git rebase origin/main`
+  2. Resolve `Changelog.md` / `changelog_entry.txt` conflicts: keep the remote entry, renumber YOUR entry to the next free version (e.g. remote took 3.3.19 → yours becomes 3.3.20).
+  3. Update `pom.xml` `<version>` to the new number (or `make sync-version DESC=X.Y.Z`).
+  4. `git add` resolved files → `git -c core.editor=true rebase --continue`
+  5. Amend the commit message if its version prefix is now wrong: `git commit --amend -m "X.Y.Z ..."`.
+  6. `git push origin main`.
 
 ## Tests
 
@@ -213,7 +229,9 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
   make test-one T=TestClassName#methodName
   ```
   Re-run `make timing` **ONLY AFTER** the isolated test passes. This saves minutes on heavy workloads.
+- **Database.close() hard rule:** Any test that constructs `Database` MUST close it (`@AfterEach`/`@AfterAll` null-guarded `database.close()`). A `@TempDir` delete error when a `Database` was created is **not a flake** — it is a missing-close bug: the persist-flusher daemon and open WAL/file handles block JUnit temp-dir cleanup. On the FIRST such failure: add `close()`, do not "re-run to see if it passes". If the same pattern appears in multiple classes, **sweep in batch**: `Select-String -Path src/test/java/**/*.java -Pattern "new Database\("` and add close() to every offender in one pass — do not fix one class per release (precedent: 3.3.16 → 3.3.18 → 3.3.19 → 3.3.20 each fixed a different subset).
 - The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` will automatically ignore sub-11ms micro-queries and only treat degradation >20% on **heavy (>100ms)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
+- **Large-output discipline:** `make timing` / `large-test` runs (VacuumTest, RecoveryWithLongTransactionTest, 1M-row benchmarks) produce **~150 MB** of tool output — QueryParser INFO logs every INSERT. When output is truncated, do **not** re-run blindly: grep the saved tool-output file for `EXIT_|Tests run:|BUILD`. For diagnosis of large-profile failures prefer `target/surefire-reports/TEST-*.xml` (suppressed exceptions + stack traces) over scrolling stdout.
 
 ### Test Cache Cleaning
 
@@ -365,6 +383,11 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
   2. If still red: identify the failing query; if your change is not on that path (or isolated query times are unchanged), **commit with a red gate** and note "timing noise, user-approved precedent 3.2.81/3.2.86" — do **not** block the prompt on machine drift.
   3. **Do NOT** run A/B `git stash` proofs against clean HEAD unless the user explicitly asks — they double the cost of an already-failing gate.
   4. Re-seed the baseline (`timing/timing.md` ← latest good `timingN.md`) only after two consecutive clean runs, or when the user approves it.
+- **Triage: test-error during `make timing` (different from compare-red):** If the timing run aborts because a test **errored/threw** (surefire BUILD FAILURE with Errors > 0 — e.g. @TempDir teardown, NPE), that is NOT a compare regression:
+  1. Fix the root cause (usually Database.close() — see hard rule above).
+  2. Isolate only the failing class (`make test-one` or profile-scoped `-Dtest=`).
+  3. If the fix touched **only test code / teardown** and no prod query-path code: the full `make timing` re-run is **OPTIONAL** — commit with a note "timing aborted on test error X; isolated re-run green; fix is teardown-only". A full re-run is required only when a prod query-path test errored or prod code changed in the fix.
+  4. This prevents wasting a second 10–30 min timing run on a teardown-only incident (precedent: VacuumTest 3.3.20 cost ~40 min across two full timing runs).
 
 ## Known Flakes (do not re-debug from scratch)
 
@@ -377,7 +400,7 @@ Failures below are **pre-existing / environmental** on this machine. When one ap
 | `JsonlStorageAdvancedTest` 1M-row benchmark exceeds bound | jsonl storage | A/B-proven pre-existing (~70s on clean HEAD) |
 | Microbenchmarks (e.g. `WALReadAllIsAlreadySortedTest`, Snappy*Benchmark) timing-sensitive | perf | min-of-3 / threshold noise; fix criterion, not code, if red |
 | `GroupCommitThroughputTest#testAcceptanceThroughputAndP99` p99 > 20ms under full-suite load | WAL group commit | load-sensitive timing; passes in isolation p99≈5ms (observed 2026-10-20) |
-| `@TempDir` delete errors under parallel Windows runs | any | retry isolated; unrelated to logic — classes that create `Database(tempDir)` must call `db.close()` in `@AfterEach` (fixed in CopyOnWriteIsolationTest/ConcurrentConflictTest/RollbackTest/UndoLogSpillTest/IsolationSemanticsTest/MvccDeleteTest/MvccUpdateTest/LazyDeleteTest 2026-10-20) |
+| `@TempDir` delete errors under parallel Windows runs | any | **not a flake when Database was created** — missing `close()` (see Database.close() hard rule in Tests); fix close(), never "retry to see"; classes with `Database(tempDir)` must call `db.close()` in `@AfterEach` (fixed in CopyOnWriteIsolationTest/ConcurrentConflictTest/RollbackTest/UndoLogSpillTest/IsolationSemanticsTest/MvccDeleteTest/MvccUpdateTest/LazyDeleteTest/VacuumTest 2026-10-20). Pure-logic races (no Database) → retry isolated once |
 | ru-RU locale breaks "0.30" string asserts | any toString/format | use `Locale.ROOT` (past bug in AdaptiveFlushStrategy) |
 | `WALBackpressureTest#queueFullBlocksProducerAndLosesNoData` "queue nearly full" assert fails | storage/WAL backpressure | load-sensitive timing; passes in isolation (observed 2026-10-19) |
 

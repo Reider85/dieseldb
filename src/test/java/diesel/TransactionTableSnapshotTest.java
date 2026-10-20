@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterEach;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
@@ -37,6 +38,14 @@ class TransactionTableSnapshotTest {
         row3.put("id", 3);
         row3.put("name", "Charlie");
         testTable.addRow(row3);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (database != null) {
+            database.close();
+            database = null;
+        }
     }
     
     @Test
