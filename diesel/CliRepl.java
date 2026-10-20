@@ -9,10 +9,13 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 
 /**
@@ -65,7 +68,7 @@ public class CliRepl {
     }
 
     /**
-     * Parsed command-line arguments of {@link #main} (prompt4 #31).
+     * Parsed command-line arguments of {@link #main} (prompt4 #31, #35).
      *
      * @param host       remote server host (default {@code localhost})
      * @param port       remote server port (default {@code 3306})
@@ -75,11 +78,15 @@ public class CliRepl {
      * @param user       login account, or null for no credentials
      * @param password   login password, or null
      * @param database   requested database name, or null for the default
+     * @param tls        whether to use TLS encryption (requires remote mode)
+     * @param tlsCa      path to CA/truststore file (PEM or PKCS12), or null for system truststore
+     * @param tlsCert    path to client certificate file (PEM or PKCS12), or null
+     * @param tlsKey     path to client private key file (PEM), or null (ignored if tlsCert is PKCS12)
      */
     record CliArgs(String host, int port, String dataDir, boolean local, boolean resetAdmin,
-                   String user, String password, String database) {
+                   String user, String password, String database, boolean tls, String tlsCa, String tlsCert, String tlsKey) {
         static CliArgs defaults() {
-            return new CliArgs("localhost", 3306, "data", false, false, null, null, null);
+            return new CliArgs("localhost", 3306, "data", false, false, null, null, null, false, null, null, null);
         }
     }
 
@@ -99,6 +106,10 @@ public class CliRepl {
         String user = null;
         String password = null;
         String database = null;
+        boolean tls = false;
+        String tlsCa = null;
+        String tlsCert = null;
+        String tlsKey = null;
         List<String> positional = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -117,11 +128,41 @@ public class CliRepl {
                 case "--database":
                     database = requireFlagValue(args, ++i, "--database");
                     break;
+                case "--tls":
+                    tls = true;
+                    break;
+                case "--tls-ca":
+                    tlsCa = requireFlagValue(args, ++i, "--tls-ca");
+                    break;
+                case "--tls-cert":
+                    tlsCert = requireFlagValue(args, ++i, "--tls-cert");
+                    break;
+                case "--tls-key":
+                    tlsKey = requireFlagValue(args, ++i, "--tls-key");
+                    break;
                 default:
                     positional.add(args[i]);
                     break;
             }
         }
+        
+        // Validate TLS flags
+        if (tls && local) {
+            throw new IllegalArgumentException("--tls requires remote mode, not --local");
+        }
+        if (tlsCa != null && !tls) {
+            throw new IllegalArgumentException("--tls-ca requires --tls");
+        }
+        if (tlsCert != null && !tls) {
+            throw new IllegalArgumentException("--tls-cert requires --tls");
+        }
+        if (tlsKey != null && !tls) {
+            throw new IllegalArgumentException("--tls-key requires --tls");
+        }
+        if (tlsKey != null && tlsCert == null) {
+            throw new IllegalArgumentException("--tls-key requires --tls-cert");
+        }
+        
         if (local || resetAdmin) {
             if (!positional.isEmpty()) {
                 dataDir = positional.get(0);
@@ -138,7 +179,7 @@ public class CliRepl {
                 }
             }
         }
-        return new CliArgs(host, port, dataDir, local, resetAdmin, user, password, database);
+        return new CliArgs(host, port, dataDir, local, resetAdmin, user, password, database, tls, tlsCa, tlsCert, tlsKey);
     }
 
     private static String requireFlagValue(String[] args, int index, String flag) {
@@ -173,15 +214,87 @@ public class CliRepl {
             new CliRepl(new Database(cli.dataDir())).run();
             return;
         }
-        DatabaseClient client = cli.user() != null
-                ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
-                : new DatabaseClient(cli.host(), cli.port());
-        try {
-            client.connect();
-        } catch (RuntimeException e) {
-            LOGGER.error("Connection failed: {}", e.getMessage());
-            return;
+        
+        // Load client config and merge with CLI flags
+        Properties clientConfig = loadClientConfig();
+        boolean tls = cli.tls();
+        if (!tls && Boolean.parseBoolean(clientConfig.getProperty("tls.enabled", "false"))) {
+            tls = true;
         }
+        
+        if (tls) {
+            // Build TLS configuration
+            Properties tlsConfig = new Properties();
+            tlsConfig.setProperty("tls.enabled", "true");
+            if (cli.tlsCa() != null) {
+                tlsConfig.setProperty("tls.ca.path", cli.tlsCa());
+            } else {
+                String caPath = clientConfig.getProperty("tls.ca.path");
+                if (caPath != null) {
+                    tlsConfig.setProperty("tls.ca.path", caPath);
+                }
+            }
+            if (cli.tlsCert() != null) {
+                tlsConfig.setProperty("tls.cert.path", cli.tlsCert());
+            } else {
+                String certPath = clientConfig.getProperty("tls.cert.path");
+                if (certPath != null) {
+                    tlsConfig.setProperty("tls.cert.path", certPath);
+                }
+            }
+            if (cli.tlsKey() != null) {
+                tlsConfig.setProperty("tls.key.path", cli.tlsKey());
+            } else {
+                String keyPath = clientConfig.getProperty("tls.key.path");
+                if (keyPath != null) {
+                    tlsConfig.setProperty("tls.key.path", keyPath);
+                }
+            }
+            // Optional passwords from config
+            String trustPass = clientConfig.getProperty("tls.truststore.password");
+            if (trustPass != null) {
+                tlsConfig.setProperty("tls.truststore.password", trustPass);
+            }
+            String keyPass = clientConfig.getProperty("tls.keystore.password");
+            if (keyPass != null) {
+                tlsConfig.setProperty("tls.keystore.password", keyPass);
+            }
+            
+            try {
+                javax.net.ssl.SSLContext context = diesel.net.SslContextFactory.createClient(tlsConfig);
+                javax.net.ssl.SSLSocketFactory factory = context.getSocketFactory();
+                DatabaseClient client = cli.user() != null
+                        ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
+                        : new DatabaseClient(cli.host(), cli.port());
+                client.setSslSocketFactory(factory);
+                client.connect();
+            } catch (Exception e) {
+                LOGGER.error("TLS connection failed: {}", e.getMessage());
+                if (e.getCause() != null) {
+                    LOGGER.debug("Cause: {}", e.getCause().getMessage());
+                }
+                return;
+            }
+        }
+        
+        DatabaseClient client;
+        if (tls) {
+            client = cli.user() != null
+                    ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
+                    : new DatabaseClient(cli.host(), cli.port());
+            // TLS connection already done above
+        } else {
+            client = cli.user() != null
+                    ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
+                    : new DatabaseClient(cli.host(), cli.port());
+            try {
+                client.connect();
+            } catch (RuntimeException e) {
+                LOGGER.error("Connection failed: {}", e.getMessage());
+                return;
+            }
+        }
+        
         if (client.isMustChangePassword()) {
             boolean changed = forcePasswordChange(client, cli.user());
             if (!changed) {
@@ -190,6 +303,40 @@ public class CliRepl {
             }
         }
         new CliRepl(client).run();
+    }
+
+    /**
+     * Loads client TLS configuration from diesel-client.conf if present.
+     * Configuration keys (all optional, CLI flags override):
+     * tls.enabled, tls.ca.path, tls.cert.path, tls.key.path,
+     * tls.truststore.password, tls.keystore.password
+     */
+    private static Properties loadClientConfig() {
+        Properties config = new Properties();
+        String configPath = System.getProperty("diesel.client.config", "diesel-client.conf");
+        try {
+            java.nio.file.Path path = java.nio.file.Path.of(configPath);
+            if (java.nio.file.Files.isRegularFile(path)) {
+                try (var in = java.nio.file.Files.newBufferedReader(path)) {
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        line = line.trim();
+                        if (line.isEmpty() || line.startsWith("#")) {
+                            continue;
+                        }
+                        int eq = line.indexOf('=');
+                        if (eq > 0) {
+                            String key = line.substring(0, eq).trim();
+                            String value = line.substring(eq + 1).trim();
+                            config.setProperty(key, value);
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Could not read client config {}: {}", configPath, e.getMessage());
+        }
+        return config;
     }
 
     /**
@@ -421,6 +568,11 @@ public class CliRepl {
         out.println("  CliRepl --local [dir]                  use a local database directly (default dir data)");
         out.println("  CliRepl --user u --password p [--db d] login on connect (prompt4 #31)");
         out.println("  CliRepl --reset-admin [dir]            reset admin/admin locally, requires filesystem access");
+        out.println("TLS options (remote mode only):");
+        out.println("  --tls                         enable TLS encryption");
+        out.println("  --tls-ca <path>              CA/truststore file (PEM or PKCS12)");
+        out.println("  --tls-cert <path>            client certificate file (PEM or PKCS12)");
+        out.println("  --tls-key <path>             client private key file (PEM, required if --tls-cert is PEM)");
     }
 
     private void disconnect() {

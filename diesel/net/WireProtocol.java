@@ -84,7 +84,7 @@ public final class WireProtocol {
      *
      * @param type      the message type, never null
      * @param payload   the payload bytes, never null (may be empty)
-     *param out     the destination stream
+     * @param out      the destination stream
      * @throws IOException if the payload exceeds {@link #MAX_PAYLOAD_BYTES}
      *                     or the stream cannot be written
      */

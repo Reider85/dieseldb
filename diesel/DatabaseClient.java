@@ -82,6 +82,7 @@ public class DatabaseClient {
     private final String user;
     private final String password;
     private final String databaseName;
+    private javax.net.ssl.SSLSocketFactory sslSocketFactory;
     private Socket socket;
     private DataOutputStream out;
     private DataInputStream in;
@@ -134,6 +135,16 @@ public class DatabaseClient {
     }
 
     /**
+     * Sets the SSL socket factory for TLS connections. Call this before
+     * {@link #connect()} to enable TLS.
+     *
+     * @param factory the SSL socket factory, or null to use plain TCP
+     */
+    public void setSslSocketFactory(javax.net.ssl.SSLSocketFactory factory) {
+        this.sslSocketFactory = factory;
+    }
+
+    /**
      * Connects to the server, opens the v2 streams, runs the credentials
      * handshake when credentials were supplied (prompt4 #31), then the
      * compression handshake.
@@ -142,15 +153,34 @@ public class DatabaseClient {
      */
     public void connect() {
         try {
-            socket = new Socket(host, port);
+            if (sslSocketFactory != null) {
+                // TLS connection
+                javax.net.ssl.SSLSocket sslSocket = (javax.net.ssl.SSLSocket) sslSocketFactory.createSocket(host, port);
+                
+                // Apply cipher suite whitelist and endpoint identification
+                diesel.net.CipherSuiteWhitelist.apply(sslSocket);
+                javax.net.ssl.SSLParameters params = sslSocket.getSSLParameters();
+                params.setEndpointIdentificationAlgorithm("HTTPS");
+                sslSocket.setSSLParameters(params);
+                
+                // Perform eager handshake (client-side should fail fast)
+                sslSocket.startHandshake();
+                
+                socket = sslSocket;
+            } else {
+                // Plain TCP connection
+                socket = new Socket(host, port);
+            }
+            
             out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
             in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+            
             if (user != null) {
                 performAuth();
             }
             performHandshake();
         } catch (IOException e) {
-            throw new QuerySyntaxException("", "Failed to connect to " + host + ":" + port);
+            throw new QuerySyntaxException("", "Failed to connect to " + host + ":" + port, e);
         }
     }
 

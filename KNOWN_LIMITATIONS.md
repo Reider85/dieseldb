@@ -290,9 +290,8 @@ in-memory B-tree индекс на колонке соединения и лог
   через `legacy.port = 0`;
 - смена пароля другого пользователя: пользователю с правом ADMIN или
   локальный `--reset-admin`;
-- шифрование учётных данных в транспорте: серверный TLS доступен с
-  Prompt 4 #34 (`tls.enabled`); клиентские флаги `--tls`/`--tls-ca` — #35,
-  mTLS/SNI — #36; legacy-порт шифрование не поддерживает.
+- шифрование учётных данных в транспорте: серверный и клиентский TLS доступны с
+  Prompt 4 #34/35 (`tls.enabled`, CLI-флаги); mTLS/SNI — #36; legacy-порт шифрование не поддерживает.
 
 **Ключи конфигурации:** `security.auth.required` (default: true),
 `security.auth.bootstrap-admin` (default: true).
@@ -354,10 +353,10 @@ in-memory B-tree индекс на колонке соединения и лог
   TLS 1.2 (ECDHE/DHE + AES-GCM/CHACHA20); legacy (TLS 1.0/1.1, RSA key
   exchange, CBC, RC4, 3DES, анон/NULL) отключены белым списком, не deny-list;
   включены только протоколы TLSv1.3/TLSv1.2;
-- **клиент (`DatabaseClient`, CLI) TLS ещё не умеет** — при
-  `tls.enabled=true` шифруется только серверная сторона; подключение
-  обычным DatabaseClient к TLS-серверу упадёт на handshake (клиентские
-  флаги `--tls`/`--tls-ca`/`--tls-cert`/`--tls-key` придут с Prompt 4 #35);
+- **клиент TLS реализован (Prompt 4 #35)** — CLI-флаги `--tls`/`--tls-ca`/`--tls-cert`/`--tls-key` 
+  работают; DatabaseClient поддерживает TLS через setSslSocketFactory(); hostname+chain 
+  verification, expired cert rejection; опциональный diesel-client.conf; 
+  остаётся mTLS/SNI → #36;
 - **legacy-порт (5440) не шифруется** — TLS врезан только в основной
   v2-порт; legacy v1-адаптер остаётся plaintext (ещё один повод держать
   `legacy.port = 0` в проде);
