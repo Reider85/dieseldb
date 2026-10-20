@@ -46,6 +46,8 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 import java.util.zip.CRC32;
 import java.util.stream.IntStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import diesel.storage.RowStorage;
 import diesel.storage.InMemoryRowStorage;
 import diesel.storage.AbstractRowStorage;
@@ -203,6 +205,13 @@ class Table implements Serializable {
      */
     private transient volatile boolean persistDirty;
 
+    /**
+     * Returns the table's read-write lock for synchronization.
+     */
+    public ReentrantReadWriteLock getTableLock() {
+        return tableLock;
+    }
+
     /** Number of auto-commit mutations folded into the pending write. */
     private transient volatile int pendingPersistCount;
     
@@ -352,11 +361,6 @@ class Table implements Serializable {
      */
     public Database getDatabase() {
         return database;
-    }
-
-    /** Returns the table-level read-write lock for MVCC operations. */
-    public ReentrantReadWriteLock getTableLock() {
-        return tableLock;
     }
 
     /**
@@ -3152,17 +3156,21 @@ class Table implements Serializable {
      * Re-registers the table when the write fails so a later flush retries.
      */
     public void flushPendingPersist(String tableName) {
-        if (!persistDirty) {
-            return;
-        }
-        unregisterPendingPersist(this);
+        tableLock.writeLock().lock();
         try {
+            if (!persistDirty) {
+                unregisterPendingPersist(this);
+                return;
+            }
+            unregisterPendingPersist(this);
             saveToFile(tableName);
         } catch (RuntimeException e) {
             if (persistDirty) {
                 registerPendingPersist(this);
             }
             throw e;
+        } finally {
+            tableLock.writeLock().unlock();
         }
     }
 
@@ -3202,6 +3210,13 @@ class Table implements Serializable {
     public static void flushAllPendingPersists() {
         for (Set<Table> tables : PENDING_PERSISTS.values()) {
             for (Table table : tables) {
+                // Skip tables whose data directory no longer exists (e.g., @TempDir deleted by JUnit)
+                if (!Files.exists(Path.of(table.database.getDataDir()))) {
+                    unregisterPendingPersist(table);
+                    LOGGER.log(Level.FINE, "Skipped persist for table {0} (data dir deleted): {1}", 
+                            new Object[]{table.name, table.database.getDataDir()});
+                    continue;
+                }
                 try {
                     table.flushPendingPersist(table.name);
                 } catch (RuntimeException e) {

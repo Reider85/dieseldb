@@ -2600,6 +2600,25 @@ class Database {
             entry.getValue().saveToSerializedFile(entry.getKey());
         }
         LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
+
+        // Wait for any in-flight persist to complete (e.g., from PersistFlusher daemon)
+        // to prevent @TempDir deletion races
+        awaitPersistIdle();
+    }
+
+    /**
+     * Waits for all pending persists to complete; ensures no persist is in-flight.
+     */
+    private void awaitPersistIdle() {
+        for (Table table : tables.values()) {
+            // Acquire and release write lock to wait for any in-flight saveToFile
+            table.getTableLock().writeLock().lock();
+            try {
+                // Hold briefly to let any in-flight save complete
+            } finally {
+                table.getTableLock().writeLock().unlock();
+            }
+        }
     }
 
     /**
