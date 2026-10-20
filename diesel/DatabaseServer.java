@@ -435,6 +435,7 @@ public class DatabaseServer {
                     authenticator.invalidate(session.getToken());
                 }
                 session = authenticated;
+                authenticated.setSourceIp(clientSocket.getInetAddress().getHostAddress());
                 success = true;
                 token = authenticated.getToken().getId();
                 userId = authenticated.getUserId();

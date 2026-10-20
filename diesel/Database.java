@@ -22,6 +22,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 import diesel.recovery.CheckpointRecord;
 import java.util.concurrent.CompletableFuture;
@@ -51,6 +52,9 @@ import diesel.wal.GroupCommitCoordinator;
 import diesel.wal.FsyncPolicy;
 import diesel.wal.SavepointPayload;
 import diesel.security.AccessDeniedException;
+import diesel.security.AuditBackend;
+import diesel.security.AuditLogger;
+import diesel.security.AuditRecord;
 import diesel.security.Authorizer;
 import diesel.security.PasswordHasher;
 import diesel.security.Privilege;
@@ -104,6 +108,10 @@ class Database {
     private volatile diesel.storage.page.CheckpointManager checkpointManager;  // Background checkpoint manager (prompt4 #21)
     private volatile UserStore userStore;                                      // RBAC account store (prompt4 #30), lazy
     private volatile Authorizer authorizer;                                     // Privilege checker (prompt4 #32), lazy
+    private volatile AuditLogger auditLogger;                                   // SQL audit logger (prompt4 #33), lazy
+    private volatile boolean auditInitDone;                                     // audit config resolved at most once
+    /** True while an audited top-level statement runs on this thread; subquery/batch re-entries skip their own audit record. */
+    private static final ThreadLocal<Boolean> AUDIT_INNER = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "diesel-wal-scheduler");
         t.setDaemon(true);
@@ -632,6 +640,16 @@ class Database {
         if (query == null) {
             throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
+        return audited(AuditRecord.USER_EMBEDDED, AuditRecord.USER_EMBEDDED, query,
+                () -> executeQueryInternal(query, transactionId));
+    }
+
+    /**
+     * Executes a fully parsed SQL string (prompt4 #33): the audit-free core
+     * shared by both public {@link #executeQuery} overloads so a session
+     * query is recorded exactly once with its session identity.
+     */
+    Object executeQueryInternal(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
         Long maxRowsHint = parseMaxRowsHint(query);
         String cleanQuery = stripMaxRowsHint(query);
@@ -699,12 +717,20 @@ class Database {
      * @throws RuntimeException when the query cannot be parsed or executed
      */
     public Object executeQuery(String query, UUID transactionId, Session session) {
-        // Authorizer check (only when session is present)
-        if (session != null) {
-            authorize(session, query);
+        if (query == null) {
+            throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
-
-        Object result = executeQuery(query, transactionId);
+        String user = session != null ? session.getUserName() : AuditRecord.USER_EMBEDDED;
+        String ip = session != null ? session.getSourceIp() : AuditRecord.USER_EMBEDDED;
+        // The authorize() call sits inside the audited body (prompt4 #33) so
+        // AccessDeniedException rejections are recorded as ERROR audit events
+        // — denied attempts are the most security-relevant records.
+        Object result = audited(user, ip, query, () -> {
+            if (session != null) {
+                authorize(session, query);
+            }
+            return executeQueryInternal(query, transactionId);
+        });
 
         // A successful own-account password change clears the must-change flag
         // on the live session (prompt4 #32): the flag inside the password hash
@@ -717,6 +743,48 @@ class Database {
             }
         }
         return result;
+    }
+
+    /**
+     * Records one SQL operation in the audit log (prompt4 #33) around the
+     * given body. When auditing is off (the default) the body runs with no
+     * added work beyond a null check; nested re-entries on the same thread
+     * (subquery evaluation, batch items) inherit the outer statement's single
+     * audit record instead of producing their own.
+     *
+     * @param userName the acting user, or {@code "embedded"} without a session
+     * @param sourceIp the client address, or {@code "embedded"}
+     * @param query    the SQL being executed (already null-checked by callers)
+     * @param body     the execution to audit
+     * @return the body's result
+     */
+    private <T> T audited(String userName, String sourceIp, String query, Supplier<T> body) {
+        AuditLogger audit = getAuditLogger();
+        if (audit == null || AUDIT_INNER.get()) {
+            return body.get();
+        }
+        AUDIT_INNER.set(Boolean.TRUE);
+        long start = System.nanoTime();
+        try {
+            T result = body.get();
+            audit.record(userName, sourceIp, query, auditStatus(result),
+                    (System.nanoTime() - start) / 1_000_000L);
+            return result;
+        } catch (RuntimeException e) {
+            audit.record(userName, sourceIp, query, AuditRecord.STATUS_ERROR,
+                    (System.nanoTime() - start) / 1_000_000L);
+            throw e;
+        } finally {
+            AUDIT_INNER.set(Boolean.FALSE);
+        }
+    }
+
+    /** ERROR when the result carries the engine's error prefix, else OK. */
+    private static String auditStatus(Object result) {
+        if (result instanceof String s && s.startsWith(ErrorMessages.ERROR_PREFIX)) {
+            return AuditRecord.STATUS_ERROR;
+        }
+        return AuditRecord.STATUS_OK;
     }
 
     /**
@@ -860,6 +928,15 @@ class Database {
         if (query == null) {
             throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
+        if (AUDIT_INNER.get()) {
+            return executeCursorInternal(query, fetchSize, transactionId);
+        }
+        return audited(AuditRecord.USER_EMBEDDED, AuditRecord.USER_EMBEDDED, query,
+                () -> executeCursorInternal(query, fetchSize, transactionId));
+    }
+
+    /** Audit-free cursor core shared by both {@link #executeCursor} overloads (prompt4 #33). */
+    private Cursor executeCursorInternal(String query, int fetchSize, UUID transactionId) {
         if (fetchSize <= 0) {
             throw new IllegalArgumentException("Cursor fetch size must be positive, got " + fetchSize);
         }
@@ -915,13 +992,21 @@ class Database {
      *                                  references a missing table
      */
     public Cursor executeCursor(String query, int fetchSize, UUID transactionId, Session session) {
-        // Authorizer check first (prompt4 #32): a cursor must never expose
-        // rows the session is not allowed to read.
-        if (session != null) {
-            authorize(session, query);
+        if (query == null) {
+            throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
-
-        return executeCursor(query, fetchSize, transactionId);
+        String user = session != null ? session.getUserName() : AuditRecord.USER_EMBEDDED;
+        String ip = session != null ? session.getSourceIp() : AuditRecord.USER_EMBEDDED;
+        // authorize() sits inside the audited body so a denied cursor-open is
+        // recorded as an ERROR audit event (prompt4 #33).
+        return audited(user, ip, query, () -> {
+            // Authorizer check first (prompt4 #32): a cursor must never expose
+            // rows the session is not allowed to read.
+            if (session != null) {
+                authorize(session, query);
+            }
+            return executeCursor(query, fetchSize, transactionId);
+        });
     }
 
     /**
@@ -945,6 +1030,15 @@ class Database {
         if (parsedQuery == null || concreteSql == null) {
             throw new IllegalArgumentException("Parsed query and SQL must not be null");
         }
+        if (AUDIT_INNER.get()) {
+            return executeParsedPreparedInternal(parsedQuery, concreteSql, transactionId);
+        }
+        return audited(AuditRecord.USER_EMBEDDED, AuditRecord.USER_EMBEDDED, concreteSql,
+                () -> executeParsedPreparedInternal(parsedQuery, concreteSql, transactionId));
+    }
+
+    /** Audit-free prepared core shared by both overloads (prompt4 #33). */
+    private Object executeParsedPreparedInternal(Query<?> parsedQuery, String concreteSql, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing prepared query: {0}", concreteSql);
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
         long execStart = System.nanoTime();
@@ -965,13 +1059,21 @@ class Database {
      * Executes a prepared statement with privilege checking (prompt4 #32).
      */
     public Object executeParsedPreparedWithSession(Query<?> parsedQuery, String concreteSql, UUID transactionId, Session session) {
-        // Authorizer check first (prompt4 #32): never execute before the
-        // privilege decision.
-        if (session != null) {
-            authorize(session, concreteSql);
+        if (concreteSql == null) {
+            throw new IllegalArgumentException("Parsed query and SQL must not be null");
         }
-
-        return executeParsedPrepared(parsedQuery, concreteSql, transactionId);
+        String user = session != null ? session.getUserName() : AuditRecord.USER_EMBEDDED;
+        String ip = session != null ? session.getSourceIp() : AuditRecord.USER_EMBEDDED;
+        // authorize() inside the audited body so denied prepared executions
+        // are recorded as ERROR audit events (prompt4 #33).
+        return audited(user, ip, concreteSql, () -> {
+            // Authorizer check first (prompt4 #32): never execute before the
+            // privilege decision.
+            if (session != null) {
+                authorize(session, concreteSql);
+            }
+            return executeParsedPrepared(parsedQuery, concreteSql, transactionId);
+        });
     }
 
     /**
@@ -1731,6 +1833,70 @@ class Database {
                 authorizer = new Authorizer(getUserStore());
             }
             return authorizer;
+        }
+    }
+
+    /**
+     * Returns the SQL audit logger (prompt4 #33), or {@code null} when
+     * {@code audit.enabled} is false (the default). Lazy so development
+     * workloads pay nothing: the hot path is a single volatile read.
+     * On first use with auditing enabled the {@code DIESEL_AUDIT_LOG}
+     * system table is created.
+     */
+    AuditLogger getAuditLogger() {
+        if (auditInitDone) {
+            return auditLogger;
+        }
+        synchronized (this) {
+            if (!auditInitDone) {
+                AuditLogger created = AuditLogger.create(new AuditTableBackend(),
+                        Path.of(dataDir, "audit-archive"));
+                if (created.isEnabled()) {
+                    ensureSystemTable(AuditBackend.AUDIT,
+                            List.of("ID", "EVENT_TIME", "USER_NAME", "SOURCE_IP",
+                                    "QUERY", "STATUS", "DURATION_MS"),
+                            "ID");
+                    auditLogger = created;
+                }
+                auditInitDone = true;
+            }
+            return auditLogger;
+        }
+    }
+
+    /** Bridges AuditLogger onto the DIESEL_AUDIT_LOG table (prompt4 #33). */
+    private final class AuditTableBackend implements AuditBackend {
+        @Override
+        public List<Map<String, Object>> readAll() {
+            return getTable(AUDIT).getRows();
+        }
+
+        @Override
+        public void appendRow(Map<String, Object> row) {
+            Table table = getTable(AUDIT);
+            table.addRow(row);
+            table.saveToFile(AUDIT);
+        }
+
+        @Override
+        public void appendBatch(List<Map<String, Object>> rows) {
+            Table table = getTable(AUDIT);
+            for (Map<String, Object> row : rows) {
+                table.addRow(row);
+            }
+            table.saveToFile(AUDIT);
+        }
+
+        @Override
+        public void deleteRows(List<String> ids) {
+            Table table = getTable(AUDIT);
+            List<Map<String, Object>> current = table.getRows();
+            for (int i = current.size() - 1; i >= 0; i--) {
+                if (ids.contains(String.valueOf(current.get(i).get("ID")))) {
+                    table.removeRow(i);
+                }
+            }
+            table.saveToFile(AUDIT);
         }
     }
 
@@ -2550,6 +2716,14 @@ class Database {
      * daemon and unregisters its JMX MBean.
      */
     public void close() {
+        // Stop the SQL audit consumer first (prompt4 #33): its final drain
+        // appends any queued records to DIESEL_AUDIT_LOG before the tables
+        // themselves are persisted below.
+        AuditLogger audit = auditLogger;
+        if (audit != null) {
+            audit.close();
+        }
+
         // Stop page flusher first (final flush)
         stopPageFlusher();
         

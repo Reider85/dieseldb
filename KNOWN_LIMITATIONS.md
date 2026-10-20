@@ -294,3 +294,42 @@ in-memory B-tree индекс на колонке соединения и лог
 
 **Ключи конфигурации:** `security.auth.required` (default: true),
 `security.auth.bootstrap-admin` (default: true).
+
+## 15. SQL Audit log (prompt4 #33, 2026-10-20)
+
+Ограничения аудита SQL-операций (R3-008 step 4/4):
+
+- **audit выключен по умолчанию** — udit.enabled = false для dev-среды;
+  включайте явно для production (compliance-логирование);
+- **legacy-порт (5440) аудируется как `embedded`** — v1-адаптер вызывает
+  session-less `executeQuery`, поэтому USER_NAME/SOURCE_IP записываются как
+  `embedded` (IP недоступен без сессии). Основной v2-порт пишет реальные
+  user/IP из сессии;
+- **вложенные subquery/batch-выражения не аудируются отдельно** — внешний
+  оператор получает одну запись (AUDIT_INNER guard); это осознанно: одна
+  запись на пользовательский стейтмент, без шума от внутренних переиспользований;
+- **переполнение очереди → graceful drop** — при полной bounded-очереди
+  (`audit.queue.capacity`, default 10000) запись отбрасывается, счётчик
+  `droppedCount` растёт, WARN логируется каждые 1000; основной запрос
+  никогда не блокируется;
+- **retention архивирует, а не удаляет** — строки старше
+  `audit.retention.days` (default 90) переносятся в gzip-архив
+  (`data/audit-archive/audit-<ts>.log.gz`, pipe-delimited) и только потом
+  удаляются из таблицы; данные не теряются;
+- **`DIESEL_AUDIT_LOG` защищён от DROP** — как и все `diesel_*` системные
+  таблицы (guard в `Database.dropTable`);
+- **отличие от AVRO audit (Prompt 95)**: `diesel.security.AuditLogger` —
+  SQL-аудит (кто/что/когда/ip/статус), `AvroAuditLogger` — storage-level
+  аудит операций AVRO-бэкенда; независимые подсистемы с разными ключами
+  (`audit.*` vs `avro.audit.*`).
+
+**Workaround:**
+- в проде: `audit.enabled = true`, `audit.retention.days` по политике
+  compliance (обычно 90-365);
+- для отладки: `-Daudit.enabled=true` как system property (перекрывает
+  config.properties).
+
+**Ключи конфигурации:** udit.enabled (default: false),
+udit.retention.days (default: 90), udit.queue.capacity (default: 10000),
+udit.retention.interval.ms (default: 86400000), udit.archive.dir
+(default: data/audit-archive).

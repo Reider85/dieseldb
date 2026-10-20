@@ -16,6 +16,7 @@ public final class Session {
     private final SessionToken token;
     private final LocalDateTime createdAt;
     private volatile boolean mustChangePassword;
+    private volatile String sourceIp = "embedded";
 
     /**
      * @param userId             the authenticated user id
@@ -58,6 +59,19 @@ public final class Session {
     /** Clears (or re-raises) the forced password-change requirement. */
     public void setMustChangePassword(boolean mustChangePassword) {
         this.mustChangePassword = mustChangePassword;
+    }
+    /**
+     * Remote address of the client owning this session (prompt4 #33), or
+     * {@code "embedded"} when the session was created outside the network
+     * stack (tests, CLI local mode).
+     */
+    public String getSourceIp() {
+        return sourceIp;
+    }
+
+    /** Records the client's remote address for the audit log (prompt4 #33). */
+    public void setSourceIp(String sourceIp) {
+        this.sourceIp = sourceIp == null || sourceIp.isBlank() ? "embedded" : sourceIp;
     }
 
     @Override
