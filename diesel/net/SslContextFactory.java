@@ -4,10 +4,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyStore;
@@ -17,7 +13,9 @@ import java.security.cert.CertificateFactory;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Collection;
+import java.util.Locale;
 import java.util.Properties;
+import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
@@ -42,6 +40,9 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code tls.keystore.password} — keystore password (never logged)</li>
  *   <li>{@code tls.keystore.type} — optional, {@code PKCS12} by default;
  *       {@code JKS} also accepted</li>
+ *   <li>{@code tls.client.auth} — optional, {@code none} by default; with
+ *       {@code request} or {@code require} the server loads a truststore from
+ *       {@code tls.ca.path} to verify client certificates (prompt4 #36, mTLS)</li>
  * </ul>
  *
  * <p>Misconfiguration (enabled without a readable keystore) throws instead of
@@ -62,6 +63,12 @@ public final class SslContextFactory {
 
     /** Config key: keystore type, PKCS12 by default. */
     public static final String KEYSTORE_TYPE_KEY = "tls.keystore.type";
+
+    /** Config key: client-cert mode for mTLS (prompt4 #36): none | request | require. */
+    public static final String CLIENT_AUTH_KEY = "tls.client.auth";
+
+    /** Default client-cert mode: none (no client-certificate verification). */
+    public static final String DEFAULT_CLIENT_AUTH = "none";
 
     /** Default keystore type: PKCS12 (the modern standard, JKS legacy). */
     public static final String DEFAULT_KEYSTORE_TYPE = "PKCS12";
@@ -103,9 +110,12 @@ public final class SslContextFactory {
      *
      * @param config the merged server configuration (file + instance overlay)
      * @return a {@code TLS} context initialised with the keystore key managers
-     *         and the default trust managers (client-cert trust is wired in
-     *         prompt4 #36, mTLS)
-     * @throws IOException              if the keystore file is missing/unreadable
+     *         and trust managers: platform defaults when
+     *         {@code tls.client.auth=none}, otherwise the server truststore
+     *         from {@code tls.ca.path} used to verify client certificates
+     *         (prompt4 #36, mTLS)
+     * @throws IOException              if the keystore file is missing/unreadable,
+     *                                  or mTLS is requested without a truststore
      * @throws GeneralSecurityException if the keystore cannot be parsed or the
      *                                  password is wrong
      */
@@ -120,15 +130,83 @@ public final class SslContextFactory {
         KeyStore keyStore = loadKeyStore(Path.of(path), type, password.toCharArray());
         KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
         kmf.init(keyStore, password.toCharArray());
-        // Trust managers: platform defaults for now. Trusting client certs and
-        // the truststore path land with mTLS in prompt4 #36.
+
         TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init((KeyStore) null);
+        String clientAuth = config.getProperty(CLIENT_AUTH_KEY, DEFAULT_CLIENT_AUTH).trim()
+                .toLowerCase(Locale.ROOT);
+        if ("none".equals(clientAuth)) {
+            // Trust managers: platform defaults (no client-certificate verification).
+            tmf.init((KeyStore) null);
+        } else {
+            // mTLS (prompt4 #36): request|require — verify client certs against
+            // the server truststore (tls.ca.path). Fail fast when it is absent:
+            // never fall back to platform defaults while mTLS is on.
+            String caPath = config.getProperty(TRUSTSTORE_PATH_KEY, "").trim();
+            if (caPath.isEmpty()) {
+                throw new IOException("TLS client auth '" + clientAuth + "' requires "
+                        + TRUSTSTORE_PATH_KEY + " (server truststore for client certificates)");
+            }
+            KeyStore trustStore = loadTrustStore(config);
+            tmf.init(trustStore);
+        }
 
         SSLContext context = SSLContext.getInstance("TLS");
         context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
-        LOGGER.info("TLS SSLContext created from keystore {} (type={})", path, type);
+        LOGGER.info("TLS SSLContext created from keystore {} (type={}, clientAuth={})",
+                path, type, clientAuth);
         return context;
+    }
+
+    /**
+     * Creates the server {@code SSLContext} with an explicit key-manager array
+     * (used by {@link SniSelector} to install a composite SNI-aware key
+     * manager, prompt4 #36). Trust managers follow the same
+     * {@code tls.client.auth} logic as {@link #create(Properties)}.
+     *
+     * @param config         the merged server configuration
+     * @param keyManagers    the key managers to install (replaces the keystore
+     *                       default; the {@code tls.keystore.*} keys are ignored)
+     * @return a {@code TLS} context with the given key managers
+     * @throws IOException              if mTLS is requested without a truststore
+     * @throws GeneralSecurityException if the truststore cannot be parsed
+     */
+    static SSLContext createWithKeyManagers(Properties config, KeyManager[] keyManagers)
+            throws IOException, GeneralSecurityException {
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        String clientAuth = config.getProperty(CLIENT_AUTH_KEY, DEFAULT_CLIENT_AUTH).trim()
+                .toLowerCase(Locale.ROOT);
+        if ("none".equals(clientAuth)) {
+            tmf.init((KeyStore) null);
+        } else {
+            String caPath = config.getProperty(TRUSTSTORE_PATH_KEY, "").trim();
+            if (caPath.isEmpty()) {
+                throw new IOException("TLS client auth '" + clientAuth + "' requires "
+                        + TRUSTSTORE_PATH_KEY + " (server truststore for client certificates)");
+            }
+            tmf.init(loadTrustStore(config));
+        }
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(keyManagers, tmf.getTrustManagers(), null);
+        return context;
+    }
+
+    /**
+     * Builds key managers for a server keystore (used per tenant by
+     * {@link SniSelector}, prompt4 #36).
+     *
+     * @param path     keystore file path
+     * @param type     keystore type ({@code PKCS12}/{@code JKS}/{@code PEM})
+     * @param password keystore password
+     * @return initialised key managers for the keystore
+     * @throws IOException              if the file is missing/unreadable
+     * @throws GeneralSecurityException if the keystore cannot be parsed
+     */
+    static KeyManager[] serverKeyManagers(Path path, String type, String password)
+            throws IOException, GeneralSecurityException {
+        KeyStore keyStore = loadKeyStore(path, type, password.toCharArray());
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, password.toCharArray());
+        return kmf.getKeyManagers();
     }
 
     /**
@@ -163,7 +241,7 @@ public final class SslContextFactory {
         return context;
     }
 
-    private static KeyStore loadTrustStore(Properties config) throws IOException, GeneralSecurityException {
+    static KeyStore loadTrustStore(Properties config) throws IOException, GeneralSecurityException {
         String caPath = config.getProperty(TRUSTSTORE_PATH_KEY, "").trim();
         if (caPath.isEmpty()) {
             // No truststore specified → use platform defaults (JVM cacerts)
@@ -215,7 +293,7 @@ public final class SslContextFactory {
         return password.isEmpty() ? new char[0] : password.toCharArray();
     }
 
-    private static String detectKeystoreType(Path path) {
+    static String detectKeystoreType(Path path) {
         String filename = path.getFileName().toString().toLowerCase();
         if (filename.endsWith(".p12") || filename.endsWith(".pfx")) {
             return "PKCS12";
@@ -279,7 +357,7 @@ public final class SslContextFactory {
         }
     }
 
-    private static KeyStore loadKeyStore(Path path, String type, char[] password)
+    static KeyStore loadKeyStore(Path path, String type, char[] password)
             throws IOException, GeneralSecurityException {
         if (!Files.isRegularFile(path)) {
             throw new IOException("TLS keystore not found: " + path);

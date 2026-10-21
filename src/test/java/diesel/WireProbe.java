@@ -48,8 +48,20 @@ final class WireProbe implements AutoCloseable {
     }
 
     WireProbe(int port, int soTimeoutMs) throws IOException {
-        socket = new Socket("localhost", port);
-        socket.setSoTimeout(soTimeoutMs);
+        this(new Socket("localhost", port), soTimeoutMs);
+    }
+
+    /**
+     * Wraps an already-connected socket (prompt4 #36): lets mTLS/SNI tests
+     * hand in a connected {@code SSLSocket} so the full v2 probe (handshake,
+     * AUTH, queries) runs over TLS.
+     *
+     * @param socket       a connected socket (plain or SSL)
+     * @param soTimeoutMs  read timeout in milliseconds
+     */
+    WireProbe(Socket socket, int soTimeoutMs) throws IOException {
+        this.socket = socket;
+        this.socket.setSoTimeout(soTimeoutMs);
         out = new DataOutputStream(socket.getOutputStream());
         in = new DataInputStream(socket.getInputStream());
     }

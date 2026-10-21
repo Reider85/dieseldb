@@ -137,6 +137,8 @@ diesel/UndoLog.java		concurrency
 diesel/security/*.java		smoke,query
 diesel/CreateUserQuery.java	smoke,query
 diesel/CreateRoleQuery.java	smoke,query
+diesel/CreateTenantQuery.java	smoke,query,network
+diesel/DropTenantQuery.java	smoke,query,network
 diesel/GrantRoleQuery.java	smoke,query
 diesel/GrantPrivilegeQuery.java	smoke,query
 diesel/RevokePrivilegeQuery.java	smoke,query

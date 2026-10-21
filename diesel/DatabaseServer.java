@@ -208,8 +208,13 @@ public class DatabaseServer {
         getAuthenticator();
         // TLS transport (prompt4 #34): initialise before binding so a broken
         // keystore fails fast at startup instead of silently serving plain TCP.
+        // mTLS + SNI (prompt4 #36): client-auth mode and per-tenant keystores.
         try {
-            tlsHandler = TlsHandshakeHandler.fromConfig(config);
+            java.util.List<diesel.security.Tenant> sniTenants =
+                    Boolean.parseBoolean(config.getProperty("tls.enabled", "false"))
+                            ? database.getTenantStore().loadAllTenants()
+                            : java.util.List.of();
+            tlsHandler = TlsHandshakeHandler.fromConfig(config, sniTenants);
             if (tlsHandler != null) {
                 LOGGER.log(Level.INFO, "TLS enabled on port {0} (whitelisted protocols/ciphers)", port);
             }

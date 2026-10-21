@@ -59,6 +59,9 @@ import diesel.security.Authorizer;
 import diesel.security.PasswordHasher;
 import diesel.security.Privilege;
 import diesel.security.Session;
+import diesel.security.Tenant;
+import diesel.security.TenantStore;
+import diesel.security.TenantStoreBackend;
 import diesel.security.UserStore;
 import diesel.security.UserStoreBackend;
 
@@ -109,6 +112,7 @@ class Database {
     private volatile UserStore userStore;                                      // RBAC account store (prompt4 #30), lazy
     private volatile Authorizer authorizer;                                     // Privilege checker (prompt4 #32), lazy
     private volatile AuditLogger auditLogger;                                   // SQL audit logger (prompt4 #33), lazy
+    private volatile TenantStore tenantStore;                                   // SNI tenant store (prompt4 #36), lazy
     private volatile boolean auditInitDone;                                     // audit config resolved at most once
     /** True while an audited top-level statement runs on this thread; subquery/batch re-entries skip their own audit record. */
     private static final ThreadLocal<Boolean> AUDIT_INNER = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -864,6 +868,7 @@ class Database {
             return Privilege.Action.CREATE;
         }
         if (parsedQuery instanceof CreateUserQuery || parsedQuery instanceof CreateRoleQuery ||
+            parsedQuery instanceof CreateTenantQuery || parsedQuery instanceof DropTenantQuery ||
             parsedQuery instanceof GrantRoleQuery || parsedQuery instanceof GrantPrivilegeQuery ||
             parsedQuery instanceof RevokePrivilegeQuery || parsedQuery instanceof AlterUserQuery) {
             return Privilege.Action.ADMIN;
@@ -1164,6 +1169,12 @@ class Database {
         }
         if (parsedQuery instanceof CreateRoleQuery q) {
             return executeCreateRole(q);
+        }
+        if (parsedQuery instanceof CreateTenantQuery q) {
+            return executeCreateTenant(q);
+        }
+        if (parsedQuery instanceof DropTenantQuery q) {
+            return executeDropTenant(q);
         }
         if (parsedQuery instanceof GrantRoleQuery q) {
             return executeGrantRole(q);
@@ -1767,6 +1778,40 @@ class Database {
         LOGGER.log(Level.INFO, "Created system table {0}", name);
     }
 
+    /**
+     * Returns the SNI tenant store, creating the {@code DIESEL_TENANTS}
+     * system table on first use (prompt4 #36). Lazy so deployments without
+     * multi-tenant TLS never pay for it.
+     */
+    TenantStore getTenantStore() {
+        TenantStore local = tenantStore;
+        if (local != null) {
+            return local;
+        }
+        synchronized (this) {
+            if (tenantStore == null) {
+                ensureSystemTable(TenantStoreBackend.TENANTS,
+                        List.of("ID", "NAME", "SNI_HOSTNAME", "KEYSTORE_PATH",
+                                "KEYSTORE_PASSWORD", "CREATED_AT"), "ID");
+                tenantStore = new TenantStore(new TenantTableBackend());
+            }
+            return tenantStore;
+        }
+    }
+
+    /** CREATE TENANT — stores the SNI→keystore mapping (prompt4 #36). */
+    String executeCreateTenant(CreateTenantQuery query) {
+        getTenantStore().createTenant(query.getTenantName(), query.getSniHostname(),
+                query.getKeystorePath(), query.getKeystorePassword());
+        return "Tenant created: " + query.getTenantName();
+    }
+
+    /** DROP TENANT — removes the mapping (prompt4 #36). */
+    String executeDropTenant(DropTenantQuery query) {
+        getTenantStore().dropTenant(query.getTenantName());
+        return "Tenant dropped: " + query.getTenantName();
+    }
+
     /** CREATE USER — hashes the password and stores the account (prompt4 #30). */
     String executeCreateUser(CreateUserQuery query) {
         getUserStore().createUser(query.getUserName(), query.getPassword());
@@ -1941,6 +1986,35 @@ class Database {
                 }
             }
             throw new IllegalStateException("No row with ID " + id + " in " + tableName);
+        }
+    }
+
+    /** Bridges TenantStore onto the DIESEL_TENANTS system table (prompt4 #36). */
+    private final class TenantTableBackend implements TenantStoreBackend {
+        @Override
+        public List<Map<String, Object>> readAll() {
+            return getTable(TENANTS).getRows();
+        }
+
+        @Override
+        public void appendRow(Map<String, Object> row) {
+            Table table = getTable(TENANTS);
+            table.addRow(row);
+            table.saveToFile(TENANTS);
+        }
+
+        @Override
+        public void deleteRow(String id) {
+            Table table = getTable(TENANTS);
+            List<Map<String, Object>> current = table.getRows();
+            for (int i = 0; i < current.size(); i++) {
+                if (Objects.equals(id, current.get(i).get("ID"))) {
+                    table.removeRow(i);
+                    table.saveToFile(TENANTS);
+                    return;
+                }
+            }
+            throw new IllegalStateException("No row with ID " + id + " in " + TENANTS);
         }
     }
 

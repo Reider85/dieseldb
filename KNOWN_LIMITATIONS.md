@@ -335,7 +335,7 @@ in-memory B-tree индекс на колонке соединения и лог
 udit.retention.interval.ms (default: 86400000), udit.archive.dir
 (default: data/audit-archive).
 
-## 16. TLS transport, шаг 1/3 (prompt4 #34, 2026-10-20)
+## 16. TLS transport (prompt4 #34/#35/#36, 2026-10-20/21)
 
 Серверный TLS поверх TCP accept (R3-009 step 1/3):
 
@@ -356,16 +356,38 @@ in-memory B-tree индекс на колонке соединения и лог
 - **клиент TLS реализован (Prompt 4 #35)** — CLI-флаги `--tls`/`--tls-ca`/`--tls-cert`/`--tls-key` 
   работают; DatabaseClient поддерживает TLS через setSslSocketFactory(); hostname+chain 
   verification, expired cert rejection; опциональный diesel-client.conf; 
-  остаётся mTLS/SNI → #36;
+  mTLS/SNI реализованы в #36 (см. ниже);
 - **legacy-порт (5440) не шифруется** — TLS врезан только в основной
   v2-порт; legacy v1-адаптер остаётся plaintext (ещё один повод держать
   `legacy.port = 0` в проде);
-- **mTLS и SNI не реализованы** — truststore-путь и
-  `tls.client.auth=none|request|require`, выбор keystore по SNI —
-  Prompt 4 #36; сейчас сервер принимает клиентов без client-cert.
+- **mTLS (Prompt 4 #36)** — `tls.client.auth = none|request|require`
+  (default `none`); при `require` клиент обязан предоставить сертификат,
+  проверяемый серверным truststore (`tls.ca.path`); при `request` cert
+  опционален, но при наличии — проверяется; невалидный/отсутствующий cert
+  при `require` = сбой handshake в worker-потоке (клиент получает
+  IOException, соединение закрывается); отсутствие `tls.ca.path` при
+  `auth != none` → отказ в старте (fail fast, без downgrade);
+- **SNI multi-tenant (Prompt 4 #36)** — выбор keystore по SNI-хостнейму:
+  конфиг-ключи `tls.sni.<hostname>.keystore.path/.password/.type` или
+  строки системной таблицы `DIESEL_TENANTS` (SQL `CREATE TENANT <name>
+  SNI '<host>' KEYSTORE '<path>' [PASSWORD '<pw>']` / `DROP TENANT <name>`).
+  Неизвестный/отсутствующий SNI → fallback на дефолтный `tls.keystore.*`;
+  таблица читается один раз при старте сервера (restart для изменений);
+  конфиг-ключи приоритетнее таблицы при конфликте хостнеймов;
+- **SSL Labs A+ — ручная ops-валидация** — автоматического прогона
+  testssl.sh/sslyze в CI нет; prerequisites (TLS 1.2/1.3 only, AEAD-only
+  cipher whitelist, no renegotiation) уже покрыты `CipherAuditTest`; при
+  включённом mTLS/SNI и валидных сертификатах конфигурация соответствует
+  требованиям A+ (HSTS/OCSP stapling — на уровне reverse proxy);
+- **пароль keystore в DIESEL_TENANTS хранится открытым** — как и
+  `tls.keystore.password` в config.properties (all-String колонки
+  системных таблиц); защита — filesystem permissions доступа к БД.
 
 **Workaround:**
 - в проде: `tls.enabled = true` + валидный PKCS12 keystore;
+- mTLS: `tls.client.auth = require` + `tls.ca.path` (CA, подписавший
+  клиентские сертификаты);
+- SNI: `CREATE TENANT` для каждого хостнейма или `tls.sni.*` ключи;
 - тестовая пара ключей: `keytool -genkeypair -alias dieseldb -keyalg RSA
   -keysize 2048 -storetype PKCS12 -keystore data/diesel-keystore.p12
   -storepass <password> -dname "CN=localhost"
@@ -373,4 +395,7 @@ in-memory B-tree индекс на колонке соединения и лог
 
 **Ключи конфигурации:** tls.enabled (default: false), tls.keystore.path
 (default: data/diesel-keystore.p12), tls.keystore.password (default:
-changeit), tls.keystore.type (default: PKCS12).
+changeit), tls.keystore.type (default: PKCS12), tls.client.auth (default:
+none), tls.ca.path (server truststore для mTLS), tls.truststore.type
+(default: AUTO), tls.truststore.password, tls.sni.<hostname>.keystore.path
+(per-tenant SNI keystore).

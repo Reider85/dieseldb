@@ -59,6 +59,8 @@ public final class SqlKeywords {
     public static final String CREATE_UNIQUE_CLUSTERED_INDEX = "CREATE UNIQUE CLUSTERED INDEX";
     public static final String CREATE_USER = "CREATE USER";
     public static final String CREATE_ROLE = "CREATE ROLE";
+    public static final String CREATE_TENANT = "CREATE TENANT";
+    public static final String DROP_TENANT = "DROP TENANT";
     public static final String GRANT = "GRANT";
     public static final String REVOKE = "REVOKE";
     public static final String ALTER_USER = "ALTER USER";

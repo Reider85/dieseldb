@@ -105,6 +105,13 @@ class QueryParser {
             "(?i)^CREATE\\s+USER\\s+(" + IDENTIFIER_PATTERN + ")\\s+PASSWORD\\s+'([^']*)'\\s*;?\\s*$");
     private static final Pattern CREATE_ROLE_PATTERN = Pattern.compile(
             "(?i)^CREATE\\s+ROLE\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    // Tenant DDL (prompt4 #36): CREATE TENANT <name> SNI '<host>' KEYSTORE '<path>' [PASSWORD '<pw>']
+    private static final Pattern CREATE_TENANT_PATTERN = Pattern.compile(
+            "(?i)^CREATE\\s+TENANT\\s+(" + IDENTIFIER_PATTERN + ")\\s+"
+            + "SNI\\s+'([^']*)'\\s+KEYSTORE\\s+'([^']*)'"
+            + "(?:\\s+PASSWORD\\s+'([^']*)')?\\s*;?\\s*$");
+    private static final Pattern DROP_TENANT_PATTERN = Pattern.compile(
+            "(?i)^DROP\\s+TENANT\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern GRANT_PRIVILEGE_PATTERN = Pattern.compile(
             "(?i)^GRANT\\s+(" + PRIVILEGE_ACTIONS_PATTERN + ")\\s+(?:ON\\s+(" + IDENTIFIER_PATTERN + ")\\s+)?TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern REVOKE_PRIVILEGE_PATTERN = Pattern.compile(
@@ -776,6 +783,28 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.CREATE_TENANT);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateTenantQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.DROP_TENANT);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseDropTenantQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
                 return n.startsWith(SqlKeywords.GRANT + " ");
             }
             @Override
@@ -1284,6 +1313,31 @@ class QueryParser {
             throw new SyntaxErrorException("Invalid CREATE ROLE syntax: expected CREATE ROLE <name>");
         }
         return new CreateRoleQuery(unquoteIdentifier(m.group(1)));
+    }
+
+    /**
+     * Parses {@code CREATE TENANT <name> SNI '<host>' KEYSTORE '<path>'
+     * [PASSWORD '<password>']} (prompt4 #36). Names/paths are taken from the
+     * original text so their case is preserved; the normalized form has
+     * already been uppercased.
+     */
+    private Query<?> parseCreateTenantQuery(String original) {
+        Matcher m = CREATE_TENANT_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid CREATE TENANT syntax: expected "
+                    + "CREATE TENANT <name> SNI '<hostname>' KEYSTORE '<path>' [PASSWORD '<password>']");
+        }
+        String password = m.group(4) == null ? "" : m.group(4);
+        return new CreateTenantQuery(unquoteIdentifier(m.group(1)), m.group(2), m.group(3), password);
+    }
+
+    /** Parses {@code DROP TENANT <name>} (prompt4 #36). */
+    private Query<?> parseDropTenantQuery(String original) {
+        Matcher m = DROP_TENANT_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid DROP TENANT syntax: expected DROP TENANT <name>");
+        }
+        return new DropTenantQuery(unquoteIdentifier(m.group(1)));
     }
 
     /** Parses {@code GRANT <role> TO <user>} (prompt4 #30). */
