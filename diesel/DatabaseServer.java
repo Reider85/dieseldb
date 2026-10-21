@@ -55,6 +55,15 @@ public class DatabaseServer {
     private final Database database;
     private ServerSocket serverSocket;
     private ServerSocket legacyServerSocket;
+    /**
+     * Pre-bound listening socket (test harness race fix): when set, {@link #start()}
+     * adopts it instead of binding a fresh one, so the ephemeral port a test
+     * discovered via {@code new ServerSocket(0)} cannot be stolen in the window
+     * between freePort() and the real bind.
+     */
+    private volatile ServerSocket preBoundSocket;
+    /** First fatal startup error (bind / TLS init); null while healthy. */
+    private volatile IOException startupError;
     private volatile boolean running;
     private final ThreadPoolExecutor executor;
     private final int socketTimeout;
@@ -127,6 +136,26 @@ public class DatabaseServer {
                 poolSize, poolSize, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(queueCapacity),
                 new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    /**
+     * Hands the server an already-bound listening socket. The socket's local
+     * port becomes the effective listen port. Used by tests that reserve an
+     * ephemeral port with {@code new ServerSocket(0)} to avoid a check-then-use
+     * race between port discovery and {@link #start()}.
+     *
+     * @param socket a bound (not yet accepting) ServerSocket; not closed by this call
+     */
+    public void setPreBoundServerSocket(ServerSocket socket) {
+        this.preBoundSocket = socket;
+    }
+
+    /**
+     * Returns the first fatal error that aborted {@link #start()} (bind failure,
+     * TLS init failure), or null if the server started cleanly.
+     */
+    public IOException getStartupError() {
+        return startupError;
     }
 
     // Load configuration and return Properties object
@@ -221,11 +250,23 @@ public class DatabaseServer {
         } catch (IOException | GeneralSecurityException e) {
             LOGGER.log(Level.SEVERE,
                     "TLS is enabled but cannot be initialised, aborting startup: {0}", e.getMessage());
+            startupError = (e instanceof IOException) ? (IOException) e
+                    : new IOException("TLS init failed: " + e.getMessage(), e);
             return;
         }
         try {
-            serverSocket = new ServerSocket(port, backlog);
-            LOGGER.log(Level.INFO, "Database server started on port {0}", port);
+            if (preBoundSocket != null) {
+                serverSocket = preBoundSocket;
+            } else {
+                // SO_REUSEADDR: on Windows this allows rebinding a port that is
+                // still in TIME_WAIT from a previous listener, shrinking the
+                // window where a freshly-discovered ephemeral port is stolen.
+                ServerSocket ss = new ServerSocket();
+                ss.setReuseAddress(true);
+                ss.bind(new java.net.InetSocketAddress(port), backlog);
+                serverSocket = ss;
+            }
+            LOGGER.log(Level.INFO, "Database server started on port {0}", serverSocket.getLocalPort());
 
             // Start legacy server if enabled
             if (legacyPort > 0) {
@@ -249,6 +290,7 @@ public class DatabaseServer {
                 }
             }
         } catch (IOException e) {
+            startupError = e;
             LOGGER.log(Level.SEVERE, "Failed to start server: {0}", e.getMessage());
         }
     }

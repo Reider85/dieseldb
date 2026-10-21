@@ -68,13 +68,18 @@ class TlsConnectionTest {
     @BeforeEach
     void setUp() throws Exception {
         tempDir = Files.createTempDirectory("dieseldb-tls-connection");
-        port = freePort();
+        // Reserve the port and keep the socket open: passing the bound socket
+        // into the server eliminates the freePort() TOCTOU race where the OS
+        // reassigns the ephemeral port before DatabaseServer binds it.
+        ServerSocket preBound = new ServerSocket(0);
+        port = preBound.getLocalPort();
         database = new Database(tempDir.toString());
         Properties tlsProps = new Properties();
         tlsProps.setProperty("tls.enabled", "true");
         tlsProps.setProperty("tls.keystore.path", keystore.path().toString());
         tlsProps.setProperty("tls.keystore.password", keystore.password());
         server = new DatabaseServer(port, 15000, 0, database, tlsProps);
+        server.setPreBoundServerSocket(preBound);
         serverThread = new Thread(server::start, "tls-connection-server");
         serverThread.start();
         waitForServer(port);
@@ -180,8 +185,15 @@ class TlsConnectionTest {
         }
     }
 
-    private static void waitForServer(int port) throws Exception {
+    private void waitForServer(int port) throws Exception {
         TestWaitHelper.waitForCondition(() -> {
+            IOException startupError = server.getStartupError();
+            if (startupError != null) {
+                // Fail fast with the real cause instead of a 15 s mute timeout:
+                // bind / TLS errors are recorded by DatabaseServer.start().
+                throw new IllegalStateException(
+                        "server failed to start: " + startupError.getMessage(), startupError);
+            }
             try (Socket socket = new Socket("localhost", port)) {
                 return true;
             } catch (IOException e) {
