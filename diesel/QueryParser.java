@@ -838,6 +838,17 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.ALTER_TABLE);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseAlterTableAddColumnQuery(o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
                 return n.startsWith(SqlKeywords.SELECT);
             }
             @Override
@@ -1398,6 +1409,30 @@ class QueryParser {
                     "Invalid ALTER USER syntax: expected ALTER USER <name> PASSWORD '<password>'");
         }
         return new AlterUserQuery(unquoteIdentifier(m.group(1)), m.group(2));
+    }
+
+    private Query<?> parseAlterTableAddColumnQuery(String original, Database database) {
+        // Pattern: ALTER TABLE <table> ADD COLUMN <column> <type>
+        // Use possessive quantifiers to avoid catastrophic backtracking (S5998)
+        Pattern pattern = Pattern.compile(
+            "^ALTER\\s+TABLE\\s+(?<table>[^\\s]+)\\s+ADD\\s+COLUMN\\s+(?<column>[^\\s]+)\\s+(?<type>\\S+)",
+            Pattern.CASE_INSENSITIVE
+        );
+        
+        Matcher m = pattern.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException(
+                "Invalid ALTER TABLE ADD COLUMN syntax: expected ALTER TABLE <table> ADD COLUMN <column> <type>");
+        }
+        
+        String tableName = unquoteIdentifier(m.group("table"));
+        String columnName = unquoteIdentifier(m.group("column"));
+        String typeToken = m.group("type").toUpperCase();
+        
+        // Parse type directly (simplified for ALTER TABLE ADD COLUMN)
+        Class<?> columnType = resolveColumnJavaType(typeToken);
+        
+        return new AlterTableAddColumnQuery(tableName, columnName, columnType);
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

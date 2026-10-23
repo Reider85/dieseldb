@@ -279,4 +279,70 @@ class CatalogTest {
             assertEquals(PageType.CATALOG.getPageTypeValue(), page.getPageTypeValue());
         }
     }
+    
+    @Test
+    void schemaVersionPersistsAcrossReopen() throws IOException {
+        // Create a table schema with schema version
+        List<CatalogSchema.ColumnSchema> columns = List.of(
+            new CatalogSchema.ColumnSchema("ID", "Long", false, true),
+            new CatalogSchema.ColumnSchema("NAME", "String", true, false)
+        );
+        
+        catalog.createTableSchema(
+            "USERS",
+            columns,
+            "ID",
+            StorageType.CSV,
+            List.of(),
+            List.of()
+        );
+        
+        // Update schema version to 5
+        catalog.setSchemaVersion("USERS", 5);
+        
+        // Verify the version was set
+        assertEquals(5, catalog.getSchemaVersion("USERS"));
+        
+        // Close and reopen the catalog
+        pageManager.close();
+        pageManager = PageManager.open(tempDir.resolve("test.db"), 100, 8192);
+        catalog = new CatalogTable(pageManager);
+        catalog.loadCatalog();
+        
+        // Verify the schema version persisted
+        assertEquals(5, catalog.getSchemaVersion("USERS"));
+        
+        // Verify other schema data is still there
+        CatalogSchema schema = catalog.getTableSchema("USERS");
+        assertNotNull(schema);
+        assertEquals("USERS", schema.getTableName());
+        assertEquals("ID", schema.getPrimaryKey());
+        assertEquals(2, schema.getColumns().size());
+    }
+    
+    @Test
+    void missingSchemaVersionDefaultsToOne() throws IOException {
+        // Create a table schema (without explicit schema version)
+        List<CatalogSchema.ColumnSchema> columns = List.of(
+            new CatalogSchema.ColumnSchema("ID", "Long", false, true)
+        );
+        
+        catalog.createTableSchema(
+            "PRODUCTS",
+            columns,
+            "ID",
+            StorageType.CSV,
+            List.of(),
+            List.of()
+        );
+        
+        // Close and reopen the catalog (simulating loading old catalog without schemaVersion field)
+        pageManager.close();
+        pageManager = PageManager.open(tempDir.resolve("test.db"), 100, 8192);
+        catalog = new CatalogTable(pageManager);
+        catalog.loadCatalog();
+        
+        // Verify schema version defaults to 1
+        assertEquals(1, catalog.getSchemaVersion("PRODUCTS"));
+    }
 }

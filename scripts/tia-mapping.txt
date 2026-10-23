@@ -50,6 +50,7 @@ diesel/storage/*.java			storage
 diesel/storage/page/*.java		storage
 diesel/storage/json/*.java		storage
 diesel/storage/avro/*.java		storage
+diesel/schema/*.java			query,query-full,storage
 
 # Format-specific storage tests (gated by @StorageType + diesel.storage.type)
 # When these source files change, the corresponding format profile should run
@@ -143,6 +144,7 @@ diesel/GrantRoleQuery.java	smoke,query
 diesel/GrantPrivilegeQuery.java	smoke,query
 diesel/RevokePrivilegeQuery.java	smoke,query
 diesel/AlterUserQuery.java	smoke,query
+diesel/AlterTableAddColumnQuery.java	query,query-full
 diesel/RowVersionMeta.java		concurrency
 diesel/MvccReadContext.java		concurrency
 diesel/TxStatusTracker.java		concurrency

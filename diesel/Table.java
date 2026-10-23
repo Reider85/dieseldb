@@ -41,13 +41,15 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Function;
-import java.util.logging.Logger;
-import java.util.logging.Level;
-import java.util.zip.CRC32;
-import java.util.stream.IntStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
+    import java.util.function.Function;
+    import java.util.logging.Logger;
+    import java.util.logging.Level;
+    import java.util.zip.CRC32;
+    import java.util.stream.IntStream;
+    import java.nio.file.Files;
+    import java.nio.file.Path;
+    import diesel.schema.SchemaVersionRegistry;
+    import diesel.schema.SchemaVersionTimeoutException;
 import diesel.storage.RowStorage;
 import diesel.storage.InMemoryRowStorage;
 import diesel.storage.AbstractRowStorage;
@@ -148,6 +150,7 @@ class Table implements Serializable {
     private final String name;
     private transient List<String> columns;
     private transient Map<String, Class<?>> columnTypes;
+    private transient volatile SchemaVersionRegistry schemaVersions;
     private final String primaryKeyColumn;
     private transient List<Map<String, Object>> rows;
     private transient RowStorage storage;
@@ -342,6 +345,16 @@ class Table implements Serializable {
 
         validateSchema(columns, columnTypes);
 
+        // Initialize schema versions
+        long timeoutMinutes = Long.parseLong(
+            System.getProperty("schema.old.version.timeout.min", "10"));
+        this.schemaVersions = new SchemaVersionRegistry(
+            new ArrayList<>(this.columns),
+            new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }},
+            "CREATE TABLE " + name,
+            timeoutMinutes
+        );
+
         if (primaryKeyColumn != null) {
             if (!this.columnTypes.containsKey(primaryKeyColumn)) {
                 throw new IllegalArgumentException("Primary key column " + primaryKeyColumn + ErrorMessages.DOES_NOT_EXIST);
@@ -397,6 +410,9 @@ class Table implements Serializable {
         this.statsRefreshScheduled = false;
         this.indicesDisabled = false;
         this.deferredIndexOps = null;
+        
+        // Schema versions are initialized in the calling copyForTransaction() method
+        // to ensure transaction-local isolation
         this.persistDirty = false;
         this.pendingPersistCount = 0;
         this.formatVersion = CURRENT_FORMAT_VERSION;
@@ -417,6 +433,17 @@ class Table implements Serializable {
                 new ArrayList<>(this.columns),
                 new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }},
                 this.primaryKeyColumn);
+        
+        // Create fresh schema registry with current schema as version 1
+        // Transaction-local copies don't inherit version history
+        long timeoutMinutes = Long.parseLong(
+            System.getProperty("schema.old.version.timeout.min", "10"));
+        copy.schemaVersions = new SchemaVersionRegistry(
+            new ArrayList<>(copy.columns),
+            new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(copy.columnTypes); }},
+            "Transaction copy of schema " + getSchemaVersions().currentVersion(),
+            timeoutMinutes
+        );
 
         // Deep-copy rows: new list, each row Map shallow-copied.
         for (Map<String, Object> row : this.rows) {
@@ -920,6 +947,85 @@ class Table implements Serializable {
         Map<String, Class<?>> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         copy.putAll(columnTypes);
         return copy;
+    }
+
+    /**
+     * Returns the schema version registry for this table.
+     * Lazily initializes with the current schema as version 1.
+     *
+     * @return schema version registry
+     */
+    public SchemaVersionRegistry getSchemaVersions() {
+        if (schemaVersions == null) {
+            synchronized (this) {
+                if (schemaVersions == null) {
+                    // Load timeout from config with fallback to default
+                    long timeoutMinutes = Long.parseLong(
+                        System.getProperty("schema.old.version.timeout.min", "10"));
+                    
+                    schemaVersions = new SchemaVersionRegistry(
+                        new ArrayList<>(columns),
+                        new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }},
+                        "Initial schema",
+                        timeoutMinutes
+                    );
+                }
+            }
+        }
+        return schemaVersions;
+    }
+
+    /**
+     * Applies a schema change to this table (step 1: ADD COLUMN only).
+     * Must be called under tableLock.writeLock().
+     * 
+     * @param newColumns Updated column list (must be current + exactly one new column)
+     * @param newTypes Updated column type mapping (must be current + exactly one new type)
+     * @param description Description of the change
+     * @throws IllegalArgumentException if validation fails
+     */
+    public void applySchemaChange(List<String> newColumns, Map<String, Class<?>> newTypes, 
+                                 String description) {
+        // Validation for step 1: ADD COLUMN only
+        if (newColumns.size() != columns.size() + 1) {
+            throw new IllegalArgumentException("Step 1 only supports ADD COLUMN: new columns must be current + exactly one new column");
+        }
+        
+        // Validate new column is not a duplicate
+        String newColumn = findNewColumn(newColumns);
+        if (newColumn == null) {
+            throw new IllegalArgumentException("New column list must contain exactly one additional column");
+        }
+        
+        // Validate new column type exists
+        if (!newTypes.containsKey(newColumn)) {
+            throw new IllegalArgumentException("New column type mapping missing for: " + newColumn);
+        }
+        
+        // Validate primary key is not changed
+        if (primaryKeyColumn != null && !primaryKeyColumn.equals(newColumn)) {
+            if (!newColumns.contains(primaryKeyColumn)) {
+                throw new IllegalArgumentException("Primary key column cannot be removed: " + primaryKeyColumn);
+            }
+        }
+        
+        // Replace columns and columnTypes with new immutable references
+        this.columns = Collections.unmodifiableList(new ArrayList<>(newColumns));
+        Map<String, Class<?>> newTypeMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        newTypeMap.putAll(newTypes);
+        this.columnTypes = Collections.unmodifiableMap(newTypeMap);
+        
+        // Create new schema version
+        getSchemaVersions().createNewVersion(newColumns, newTypes, description);
+    }
+    
+    private String findNewColumn(List<String> newColumns) {
+        for (String col : newColumns) {
+            if (!columns.contains(col)) {
+                return col;
+            }
+        }
+        return null;
     }
 
     /**
@@ -2164,6 +2270,16 @@ class Table implements Serializable {
         this.statsLock = new Object();
         this.version = new AtomicLong(0);
         // Restore statistics: old serialized files carry zeroed stats fields.
+        
+        // Initialize schema versions with loaded schema as version 1
+        long timeoutMinutes = Long.parseLong(
+            System.getProperty("schema.old.version.timeout.min", "10"));
+        this.schemaVersions = new SchemaVersionRegistry(
+            new ArrayList<>(this.columns),
+            new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }},
+            "Deserialized schema",
+            timeoutMinutes
+        );
         this.rowCount = rows.size();
         if (this.lastAnalyzedMillis == 0 && this.avgRowSizeBytes == 0) {
             this.avgRowSizeBytes = estimateAverageRowSizeBytes();

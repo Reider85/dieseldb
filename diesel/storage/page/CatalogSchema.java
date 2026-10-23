@@ -24,6 +24,7 @@ public final class CatalogSchema {
     private StorageType storageType;
     private final List<String> sequences = new ArrayList<>();
     private final List<IndexSchema> indices = new ArrayList<>();
+    private long schemaVersion = 1;
 
     public CatalogSchema() {
     }
@@ -79,6 +80,14 @@ public final class CatalogSchema {
     public List<IndexSchema> getIndices() {
         return indices;
     }
+    
+    public long getSchemaVersion() {
+        return schemaVersion;
+    }
+    
+    public void setSchemaVersion(long schemaVersion) {
+        this.schemaVersion = schemaVersion;
+    }
 
     /** Appends an index definition if one with the same name is not present yet. */
     public void addIndex(IndexSchema index) {
@@ -117,6 +126,8 @@ public final class CatalogSchema {
         gen.writeStartObject();
         gen.writeFieldName("tableName");
         gen.writeString(tableName);
+        gen.writeFieldName("schemaVersion");
+        gen.writeNumber(schemaVersion);
         gen.writeFieldName("primaryKey");
         if (primaryKey == null) {
             gen.writeNull();
@@ -161,6 +172,8 @@ public final class CatalogSchema {
             JsonEvent value = parser.nextToken();
             switch (field) {
                 case "tableName" -> schema.tableName = text(parser, value, field);
+                case "schemaVersion" -> schema.schemaVersion = value == JsonEvent.VALUE_NULL
+                        ? 0L : parser.getLongValue();
                 case "primaryKey" -> schema.primaryKey = value == JsonEvent.VALUE_NULL
                         ? null : text(parser, value, field);
                 case "storageType" -> schema.storageType = value == JsonEvent.VALUE_NULL

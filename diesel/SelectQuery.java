@@ -847,13 +847,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     @Override
     public List<Map<String, Object>> execute(Table table) {
-        // Prompt 22 (java:S2259): guard the public parameter and the
-        // documented-nullable owning database before either is dereferenced
-        // (a JOIN would NPE on database.getTable below).
-        Objects.requireNonNull(table, "Main table must not be null");
-        Database database = Objects.requireNonNull(table.getDatabase(),
-                ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
-        return executeSelect(table, database);
+        // Pin schema version for timeout bookkeeping (step 1: minimal protection)
+        diesel.schema.SchemaVersionRegistry.PinnedSchema pin = table.getSchemaVersions().pinCurrent();
+        try {
+            // Prompt 22 (java:S2259): guard the public parameter and the
+            // documented-nullable owning database before either is dereferenced
+            // (a JOIN would NPE on database.getTable below).
+            Objects.requireNonNull(table, "Main table must not be null");
+            Database database = Objects.requireNonNull(table.getDatabase(),
+                    ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
+            return executeSelect(table, database);
+        } finally {
+            pin.close();
+        }
     }
 
     /**

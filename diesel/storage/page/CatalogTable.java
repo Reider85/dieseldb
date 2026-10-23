@@ -160,6 +160,38 @@ public final class CatalogTable implements AutoCloseable {
             return schemas.size();
         }
     }
+    
+    /**
+     * Sets the schema version for a table.
+     * 
+     * @param tableName Table name
+     * @param version New schema version
+     * @throws IllegalArgumentException if table doesn't exist
+     */
+    public void setSchemaVersion(String tableName, long version) {
+        synchronized (lock) {
+            CatalogSchema schema = getTableSchema(tableName);
+            if (schema == null) {
+                throw new IllegalArgumentException("Table does not exist: " + tableName);
+            }
+            schema.setSchemaVersion(version);
+            flush();
+        }
+    }
+    
+    /**
+     * Gets the schema version for a table.
+     * Returns 1 if table exists but has no schemaVersion field (backward compatibility).
+     * 
+     * @param tableName Table name
+     * @return Schema version, or 1 if table doesn't exist or has no version
+     */
+    public long getSchemaVersion(String tableName) {
+        synchronized (lock) {
+            CatalogSchema schema = getTableSchema(tableName);
+            return schema != null ? schema.getSchemaVersion() : 1;
+        }
+    }
 
     /** Serialises the in-memory schemas into page 0 and forces a flush. */
     private void flush() {

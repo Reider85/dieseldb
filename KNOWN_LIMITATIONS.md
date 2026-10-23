@@ -397,5 +397,21 @@ in-memory B-tree индекс на колонке соединения и лог
 (default: data/diesel-keystore.p12), tls.keystore.password (default:
 changeit), tls.keystore.type (default: PKCS12), tls.client.auth (default:
 none), tls.ca.path (server truststore для mTLS), tls.truststore.type
+
+## §17 Online schema changes (Prompt4 #37, шаг 1/3)
+
+**Ограничения текущей реализации (R3-010 step 1/3):**
+
+- **Продакшен-каталог heap-only** — версии схем персистятся только при page-backed каталоге (тестовый режим с `setCatalogPageManager`). В проде `Database` создаёт `CatalogTable(null)` → catalog в памяти, `flush()` no-op. Включение глобального каталога отложено на после multi-page каталога (prompt 10).
+- **История версий** — персистится только счётчик + последняя схема. Полная история версий — in-memory (ограничена 32 версиями + pinned), не восстанавливается при restart.
+- **ALTER TABLE** — поддерживает только `ADD COLUMN <nullable>` (metadata-only, step 1). `NOT NULL`, `DEFAULT`, `DROP COLUMN` — шаги 2/3 + промпты 113/114.
+- **Per-query snapshot** — `SelectQuery.execute` пинает версию на время execute (timeout bookkeeping), но колонки читаются из `current()` (не из пиннутой версии). Строгий per-query schema snapshot (чтение строго из пиннутой версии) — шаги 2/3.
+- **Mid-execute ALTER видимость** — как сегодня (безопасность ссылок гарантируется immutable-списками в Table). MVCC на уровне схем — шаги 2/3.
+
+**Workaround для персистентности в проде:**
+- Использовать тестовый режим с page-backed каталогом (не для production workloads из-за риска PageFullException при ~40+ таблицах);
+- Следить за multi-page каталогом (prompt 10) как точкой включения прод-версий.
+
+**Ключ конфигурации:** `schema.old.version.timeout.min` (default: 10, минуты) — время жизни старых версий.
 (default: AUTO), tls.truststore.password, tls.sni.<hostname>.keystore.path
 (per-tenant SNI keystore).

@@ -25,9 +25,10 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import diesel.recovery.CheckpointRecord;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
+    import java.util.concurrent.CompletableFuture;
+    import java.util.concurrent.ConcurrentHashMap;
+    import java.util.concurrent.ExecutionException;
+    import diesel.AlterTableAddColumnQuery;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -622,6 +623,56 @@ class Database {
     }
 
     /**
+     * Applies a schema change to a table (internal API for ALTER TABLE ADD COLUMN).
+     * 
+     * @param tableName Name of the table to modify
+     * @param columns Updated column list (must be current + exactly one new column)
+     * @param types Updated column type mapping (must be current + exactly one new type)
+     * @param description Description of the change
+     * @throws diesel.TableNotFoundException if the table doesn't exist
+     * @throws IllegalArgumentException if validation fails
+     */
+    public void applySchemaChange(String tableName, List<String> columns, Map<String, Class<?>> types, String description) {
+        // getTable throws TableNotFoundException for unknown tables (engine-wide convention)
+        Table table = getTable(tableName);
+        
+        // Apply schema change under write lock
+        table.getTableLock().writeLock().lock();
+        try {
+            table.applySchemaChange(columns, types, description);
+            
+            // Update catalog
+            List<CatalogSchema.ColumnSchema> columnSchemas = new ArrayList<>();
+            for (Map.Entry<String, Class<?>> entry : types.entrySet()) {
+                columnSchemas.add(new CatalogSchema.ColumnSchema(
+                    entry.getKey(),
+                    entry.getValue().getSimpleName(),
+                    true, // nullable by default for ADD COLUMN
+                    entry.getKey().equals(table.getPrimaryKeyColumn()) // unique if primary key
+                ));
+            }
+            
+            CatalogSchema catalogSchema = new CatalogSchema(
+                tableName,
+                columnSchemas,
+                table.getPrimaryKeyColumn(),
+                table.getStorageType(),
+                new ArrayList<>(table.getSequences().keySet()),
+                new ArrayList<>() // indices not supported in step 1
+            );
+            catalogSchema.setSchemaVersion(table.getSchemaVersions().currentVersion());
+            // Update catalog with the new schema version (full CatalogSchema overload
+            // so the version is preserved — the field-by-field overload resets it)
+            getCatalog().updateTableSchema(catalogSchema);
+            
+            // Invalidate query cache (DDL contract)
+            queryCache.invalidateAll();
+        } finally {
+            table.getTableLock().writeLock().unlock();
+        }
+    }
+
+    /**
      * Parses and executes a query. {@code transactionId} is the caller's active
      * transaction session, or null when the caller is not in a transaction.
      *
@@ -872,6 +923,9 @@ class Database {
             parsedQuery instanceof GrantRoleQuery || parsedQuery instanceof GrantPrivilegeQuery ||
             parsedQuery instanceof RevokePrivilegeQuery || parsedQuery instanceof AlterUserQuery) {
             return Privilege.Action.ADMIN;
+        }
+        if (parsedQuery instanceof AlterTableAddColumnQuery) {
+            return Privilege.Action.ALTER;
         }
         return Privilege.Action.SELECT; // Default for unknown query types
     }
@@ -1163,6 +1217,9 @@ class Database {
         if (parsedQuery instanceof DropTableQuery q) {
             dropTable(q.getTableName());
             return "Table dropped successfully";
+        }
+        if (parsedQuery instanceof AlterTableAddColumnQuery q) {
+            return executeAlterTableAddColumn(q);
         }
         if (parsedQuery instanceof CreateUserQuery q) {
             return executeCreateUser(q);
@@ -1731,6 +1788,64 @@ class Database {
             table.getSequences().put(entry.getKey(), entry.getValue());
         }
         return "Table created successfully";
+    }
+
+    private Object executeAlterTableAddColumn(AlterTableAddColumnQuery alterQuery) {
+        String tableName = alterQuery.getTableName();
+        // getTable throws TableNotFoundException for unknown tables (engine-wide convention)
+        Table table = getTable(tableName);
+        
+        // Get current schema
+        List<String> currentColumns = table.getColumns();
+        Map<String, Class<?>> currentTypes = table.getColumnTypes();
+        
+        // Prepare new schema (step 1: ADD COLUMN only)
+        List<String> newColumns = new ArrayList<>(currentColumns);
+        newColumns.add(alterQuery.getColumnName());
+        
+        Map<String, Class<?>> newTypes = new HashMap<>(currentTypes);
+        newTypes.put(alterQuery.getColumnName(), alterQuery.getColumnType());
+        
+        // Apply schema change under write lock
+        table.getTableLock().writeLock().lock();
+        try {
+            table.applySchemaChange(newColumns, newTypes, 
+                "ADD COLUMN " + alterQuery.getColumnName() + " " + alterQuery.getColumnType().getSimpleName());
+            
+            // Update catalog
+            List<CatalogSchema.ColumnSchema> columnSchemas = new ArrayList<>();
+            for (Map.Entry<String, Class<?>> entry : newTypes.entrySet()) {
+                columnSchemas.add(new CatalogSchema.ColumnSchema(
+                    entry.getKey(),
+                    entry.getValue().getSimpleName(),
+                    true, // nullable by default for ADD COLUMN
+                    entry.getKey().equals(table.getPrimaryKeyColumn()) // unique if primary key
+                ));
+            }
+            
+            // Publish the new schema version to the catalog
+            long newVersion = table.getSchemaVersions().currentVersion();
+            
+            CatalogSchema catalogSchema = new CatalogSchema(
+                tableName,
+                columnSchemas,
+                table.getPrimaryKeyColumn(),
+                table.getStorageType(),
+                new ArrayList<>(table.getSequences().keySet()),
+                new ArrayList<>() // indices not supported in step 1
+            );
+            catalogSchema.setSchemaVersion(newVersion);
+            
+            // Update catalog with the new schema version
+            getCatalog().updateTableSchema(catalogSchema);
+            
+            // Invalidate query cache (DDL contract)
+            queryCache.invalidateAll();
+            
+            return "Table altered successfully: added column " + alterQuery.getColumnName();
+        } finally {
+            table.getTableLock().writeLock().unlock();
+        }
     }
 
     /**
