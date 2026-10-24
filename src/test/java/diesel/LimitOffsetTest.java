@@ -11,7 +11,6 @@ import org.junit.jupiter.api.AfterEach;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.file.Path;
-import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 public class LimitOffsetTest {
 
     private static final int RECORD_COUNT = 30;
-    private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
 
     @TempDir
     static Path tempDir;

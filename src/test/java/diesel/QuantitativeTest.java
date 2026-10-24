@@ -11,8 +11,8 @@ import org.junit.jupiter.api.TestMethodOrder;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.logging.Level;
@@ -30,7 +30,7 @@ import java.util.logging.Logger;
 public class QuantitativeTest {
     private static final Logger LOGGER = Logger.getLogger(QuantitativeTest.class.getName());
     private static final int RECORD_COUNT = 600;
-    private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private final Database database;
     private int passed = 0;
     private int failed = 0;
@@ -60,7 +60,7 @@ public class QuantitativeTest {
         database.executeQuery("CREATE TABLE PROFILES (PROFILE_ID LONG PRIMARY KEY SEQUENCE(profile_seq 1 1), USER_ID LONG, PROFILE_AGE INTEGER, PROFILE_NAME STRING, PROFILE_CODE STRING, NON_INDEXED STRING, PROFILE_DATE DATE)", null);
 
         for (int i = 1; i <= RECORD_COUNT; i++) {
-            String date = DATE_FORMATTER.format(new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)));
+            String date = LocalDate.now().minusDays(i).format(DATE_FORMATTER);
             BigDecimal balance = new BigDecimal(100 + (i % 9000)).setScale(2, RoundingMode.HALF_UP);
 
             database.executeQuery(String.format(Locale.US,

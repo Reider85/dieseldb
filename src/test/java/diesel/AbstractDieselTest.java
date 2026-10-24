@@ -10,8 +10,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.file.Path;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.logging.Level;
@@ -26,7 +26,7 @@ import java.util.logging.Logger;
 public abstract class AbstractDieselTest {
 
     private static final Logger LOGGER = Logger.getLogger(AbstractDieselTest.class.getName());
-    protected static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
+    protected static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     /**
      * Per-test-class data directory. JUnit injects a fresh, distinct directory
@@ -72,7 +72,7 @@ public abstract class AbstractDieselTest {
 
         int n = recordCount();
         for (int i = 1; i <= n; i++) {
-            String date = DATE_FORMATTER.format(new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)));
+            String date = LocalDate.now().minusDays(i).format(DATE_FORMATTER);
             BigDecimal balance = new BigDecimal(100 + (i % 9000)).setScale(2, RoundingMode.HALF_UP);
 
             database.executeQuery(String.format(Locale.US,

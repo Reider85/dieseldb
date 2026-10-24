@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.TestInfo;
 import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.io.IOException;
@@ -29,12 +30,15 @@ public class FlusherTest {
     private String walDir;
 
     @BeforeEach
-    void setUp() throws IOException {
+    void setUp(TestInfo info) throws IOException {
         // Clean up any existing test directory and WAL directory
         cleanupTestDir();
         
         // Create unique WAL directory per test method to avoid cross-test contamination
-        walDir = TEST_DIR + "_wal_" + getTestMethodName();
+        String methodName = info.getTestMethod()
+            .orElseThrow(() -> new IllegalStateException("no test method context"))
+            .getName();
+        walDir = TEST_DIR + "_wal_" + methodName;
         
         // Create database with WAL enabled
         database = new Database(TEST_DIR, createWALConfig());
@@ -44,21 +48,6 @@ public class FlusherTest {
         database.getTable(TABLE_NAME).saveToSerializedFile(TABLE_NAME);
     }
     
-    private String getTestMethodName() {
-        // Get the current test method name for unique WAL directory
-        StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-        // Look for the method in the call stack that's in this class
-        for (StackTraceElement element : stackTrace) {
-            if (element.getClassName().equals(getClass().getName()) && 
-                !element.getMethodName().equals("getTestMethodName") &&
-                !element.getMethodName().startsWith("setUp") &&
-                !element.getMethodName().startsWith("tearDown")) {
-                return element.getMethodName();
-            }
-        }
-        return "unknown";
-    }
-
     @AfterEach
     void tearDown() throws IOException {
         if (database != null) {

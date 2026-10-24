@@ -1,1 +1,1 @@
-3.3.36 CI: cache maven-build-cache directory across runs — saves 10-30s per CI job on hot commits
+3.3.37 Tests: replace SimpleDateFormat (thread-unsafe) with DateTimeFormatter; replace stack-walk with TestInfo - unblocks parallel classes

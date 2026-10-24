@@ -1020,3 +1020,5 @@ chore: test-profiles-audit changelog entry
 3.3.35 Tests: drop 'mvn clean' from dev/CI gates — let build-cache hit, saves 30-90s per run
 
 3.3.36 CI: cache maven-build-cache directory across runs — saves 10-30s per CI job on hot commits
+
+3.3.37 Tests: replace SimpleDateFormat (thread-unsafe) with DateTimeFormatter; replace stack-walk with TestInfo - unblocks parallel classes

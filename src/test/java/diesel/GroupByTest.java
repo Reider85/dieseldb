@@ -11,8 +11,8 @@ import org.junit.jupiter.api.AfterEach;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.file.Path;
-import java.sql.Date;
-import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 public class GroupByTest {
 
     private static final int RECORD_COUNT = 10;
-    private static final SimpleDateFormat DATE_FORMATTER = new SimpleDateFormat("yyyy-MM-dd");
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     @TempDir
     static Path tempDir;
@@ -111,7 +111,7 @@ public class GroupByTest {
                     new BigDecimal(100 + (i % 9000)).setScale(2, RoundingMode.HALF_UP),
                     (byte) (i % 127), (short) (i % 32767), (float) (i % 1000) / 10.0, (double) (i % 1000) / 10.0,
                     (char) ('A' + (i % 26)),
-                    DATE_FORMATTER.format(new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)))
+                    LocalDate.now().minusDays(i).format(DATE_FORMATTER)
             );
             database.executeQuery(query, null);
         }
@@ -125,7 +125,7 @@ public class GroupByTest {
                     "INSERT INTO PROFILES (USER_ID, PROFILE_AGE, PROFILE_NAME, PROFILE_CODE, NON_INDEXED, PROFILE_DATE) " +
                             "VALUES (%d, %d, 'Profile%d', 'PCODE%d', 'Non%d', '%s')",
                     i, 18 + (i % 82), i, i, i,
-                    DATE_FORMATTER.format(new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)))
+                    LocalDate.now().minusDays(i).format(DATE_FORMATTER)
             );
             database.executeQuery(query, null);
         }

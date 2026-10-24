@@ -13,7 +13,9 @@ import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -22,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 public class OrderByTest {
 
     private static final int RECORD_COUNT = 10;
-    private static final SimpleDateFormat TIMESTAMP_MS_FORMATTER = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+    private static final DateTimeFormatter TIMESTAMP_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     @TempDir
     static Path tempDir;
@@ -112,8 +114,8 @@ public class OrderByTest {
                     (byte) (i % 127), (short) (i % 32767), (float) (i % 1000) / 10.0, (double) (i % 1000) / 10.0,
                     (char) ('A' + (i % 26)),
                     new Date(System.currentTimeMillis() - (i * 24L * 60 * 60 * 1000)),
-                    TIMESTAMP_MS_FORMATTER.format(datetime),
-                    TIMESTAMP_MS_FORMATTER.format(datetimeMillis)
+                    TIMESTAMP_MS_FORMATTER.format(LocalDateTime.ofInstant(datetime.toInstant(), ZoneId.systemDefault())),
+                    TIMESTAMP_MS_FORMATTER.format(LocalDateTime.ofInstant(datetimeMillis.toInstant(), ZoneId.systemDefault()))
             );
             database.executeQuery(query, null);
         }
