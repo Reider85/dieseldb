@@ -1018,3 +1018,5 @@ chore: test-profiles-audit changelog entry
 3.3.34 Prompt4 #38: online ALTER TABLE ALGORITHM=COPY (R3-010 step 2/3) - DualWriteCoordinator journal barrier (mutations atomic vs swap), background copy + journal replay + lock-only atomic swap, catalog/data persist outside write lock, ALTER STATUS progress with BARRIER_WAIT_MS, Database.cancelAlter rollback, DROP/batch guards during copy; UpdateQuery read-lock + replacement-mode rows during copy; fixes Table.readObject unmodifiable columnTypes reload (ALTERed tables failed to load from .table) and FLOAT ALTER validation typo; new tests CopyAlgorithmTest/AlterDualWriteTest/AlterRollbackTest/AlterProgressTest; gates fast 609, core 2496 (2 known flakes isolated-green), concurrency 155, network 122; timing skipped (schema plumbing, precedent #37)
 
 3.3.35 Tests: drop 'mvn clean' from dev/CI gates — let build-cache hit, saves 30-90s per run
+
+3.3.36 CI: cache maven-build-cache directory across runs — saves 10-30s per CI job on hot commits
