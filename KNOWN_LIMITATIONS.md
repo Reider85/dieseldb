@@ -415,3 +415,66 @@ none), tls.ca.path (server truststore для mTLS), tls.truststore.type
 **Ключ конфигурации:** `schema.old.version.timeout.min` (default: 10, минуты) — время жизни старых версий.
 (default: AUTO), tls.truststore.password, tls.sni.<hostname>.keystore.path
 (per-tenant SNI keystore).
+
+## §18 Online ALTER TABLE ALGORITHM=COPY (Prompt4 #38, шаг 2/3)
+
+**Ограничения текущей реализации (R3-010 step 2/3):**
+
+- **Новая колонка видна только после завершения copy** — во время фонового
+  копирования действует старая схема: DML не может ссылаться на добавляемую
+  колонку (INSERT с новой колонкой отклоняется как unknown column до swap).
+  После COMPLETED колонка видна всем; INSERT может её опускать (значение
+  null — пометка хранится в памяти через `alterAddedColumns`, после restart
+  пометка теряется и правило снова строгое).
+- **Dual-write — deferred journal, а не синхронное дублирование** — записи
+  во время копирования идут в старую таблицу + журнал
+  (`DualWriteCoordinator`); журнал применяется к shadow-таблице один раз при
+  finalize. Барьер (active-counter + seal) гарантирует, что каждая мутация
+  атомарна относительно swap; цена — окно finalize, когда DML ждёт
+  установку (см. `BARRIER_WAIT_MS` в `ALTER STATUS`; критерий «writers не
+  блокированы > 100 ms» меряется именно им, а не суммарной стоимостью
+  insert'ов, которые всегда включают pre-existing persist-путь CSV).
+- **Compaction/reload откладываются на время copy** — `Table.compact()` и
+  `reloadFromStorage()` пропускаются, пока журнал прикреплён (сдвиг индексов
+  сломал бы replay); VACUUM повторит попытку после завершения. Физическое
+  `removeRow` во время copy поддерживается (событие REMOVE), но его
+  конкурентность с другими removeRow не синхронизирована — pre-existing
+  отсутствие блокировок в `removeRow`.
+- **Batch-DML и DROP TABLE заблокированы во время copy** — `END BATCH`
+  (copy-on-write публикация заменила бы таблицу под журнал) и `DROP TABLE`
+  на таблице с активным copy отклоняются с ошибкой; дождитесь завершения
+  или отмените copy.
+- **Отмена доступна только через API** — `Database.cancelAlter(table)`;
+  SQL `ALTER ROLLBACK` не реализован. Отмена во время финализации может
+  прийти слишком поздно (copy успеет завершиться — это не ошибка, статус
+  COMPLETED). Rollback до finalize гарантирует: схема, версии, данные не
+  изменены, shadow отбрасывается.
+- **Индексы не перестраиваются при swap** — layout shadow-таблицы
+  позиционно-идентичен боевой (baseline + те же мутации), поэтому записи
+  индексов остаются валидными; это верно, пока во время copy не происходят
+  операции, смещающие индексы иным способом (сам CREATE INDEX во время copy
+  допустим — его результат обслуживается обычным путём).
+- **Crash-семантика** — swap (in-memory) и запись каталога/данных
+  разделены: crash между install и persist означает «ALTER не произошёл»
+  при старте (каталог + файлы данных не тронуты); промежуточного состояния
+  «новый каталог + старые данные» не бывает: данные пишутся первыми,
+  каталог последним.
+- **Масштаб тестов** — acceptance-критерий «10M строк» отмасштабирован до
+  20k строк (бюджет fast-сьюта; проверяются блокировка писателей и
+  целостность swap, не абсолютный размер — precedent: prompt4 #37).
+- **`ALGORITHM=INPLACE` отклоняется** — синтаксис парсится, выполнение
+  отложено на R3-010 step 3 (prompt4 #39); неизвестные токены ALGORITHM →
+  syntax error.
+
+**Workaround:**
+- прогресс: `ALTER STATUS` (TABLE_NAME, STATE, PROGRESS_PERCENT,
+  ROWS_COPIED/ROWS_TOTAL, BARRIER_WAIT_MS, MESSAGE);
+- отмена: `Database.cancelAlter(<table>)` до состояния COMPLETED;
+- тестовые настройки скорости copy: `-Dalter.copy.batch.size=1000
+  -Dalter.copy.batch.sleep.ms=1`, таймаут барьера:
+  `-Dalter.copy.gate.timeout.ms=10000`.
+
+**Ключи конфигурации (system properties):** `alter.copy.batch.size`
+(default: 2048), `alter.copy.batch.sleep.ms` (default: 0),
+`alter.copy.gate.timeout.ms` (default: 10000); `schema.old.version.timeout.min`
+(default: 10, наследуется из шага 1).

@@ -18,9 +18,10 @@ public final class AlterTableAddColumnQuery implements Query<String> {
     private final String tableName;
     private final String columnName;
     private final Class<?> columnType;
+    private final diesel.schema.AlterAlgorithm algorithm;
     
     /**
-     * Creates a new ALTER TABLE ADD COLUMN query.
+     * Creates a metadata-only ALTER TABLE ADD COLUMN query (R3-010 step 1).
      * 
      * @param tableName    Name of the table to modify
      * @param columnName   Name of the new column (must not exist)
@@ -28,9 +29,24 @@ public final class AlterTableAddColumnQuery implements Query<String> {
      * @throws IllegalArgumentException if any argument is null
      */
     public AlterTableAddColumnQuery(String tableName, String columnName, Class<?> columnType) {
+        this(tableName, columnName, columnType, diesel.schema.AlterAlgorithm.DEFAULT);
+    }
+    
+    /**
+     * Creates an ALTER TABLE ADD COLUMN query with an explicit algorithm hint.
+     * 
+     * @param tableName    Name of the table to modify
+     * @param columnName   Name of the new column (must not exist)
+     * @param columnType   Type of the new column (nullable)
+     * @param algorithm    DEFAULT (instant) or COPY (background rewrite, prompt4 #38)
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public AlterTableAddColumnQuery(String tableName, String columnName, Class<?> columnType,
+                                    diesel.schema.AlterAlgorithm algorithm) {
         this.tableName = Objects.requireNonNull(tableName, "Table name cannot be null");
         this.columnName = Objects.requireNonNull(columnName, "Column name cannot be null");
         this.columnType = Objects.requireNonNull(columnType, "Column type cannot be null");
+        this.algorithm = Objects.requireNonNull(algorithm, "Algorithm cannot be null");
         
         if (tableName.trim().isEmpty()) {
             throw new IllegalArgumentException("Table name cannot be empty");
@@ -55,6 +71,11 @@ public final class AlterTableAddColumnQuery implements Query<String> {
         return columnType;
     }
     
+    /** DEFAULT (instant) or COPY (background rewrite). */
+    public diesel.schema.AlterAlgorithm getAlgorithm() {
+        return algorithm;
+    }
+    
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -62,12 +83,13 @@ public final class AlterTableAddColumnQuery implements Query<String> {
         AlterTableAddColumnQuery that = (AlterTableAddColumnQuery) o;
         return tableName.equals(that.tableName) &&
                columnName.equals(that.columnName) &&
-               columnType.equals(that.columnType);
+               columnType.equals(that.columnType) &&
+               algorithm == that.algorithm;
     }
     
     @Override
     public int hashCode() {
-        return Objects.hash(tableName, columnName, columnType);
+        return Objects.hash(tableName, columnName, columnType, algorithm);
     }
     
     @Override
@@ -100,7 +122,7 @@ public final class AlterTableAddColumnQuery implements Query<String> {
             type != Integer.class &&
             type != Long.class &&
             type != Double.class &&
-            type == Float.class &&
+            type != Float.class && 
             type != Boolean.class &&
             type != BigDecimal.class &&
             type != LocalDate.class &&

@@ -838,6 +838,17 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.ALTER_STATUS);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseAlterStatusQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
                 return n.startsWith(SqlKeywords.ALTER_TABLE);
             }
             @Override
@@ -1411,18 +1422,30 @@ class QueryParser {
         return new AlterUserQuery(unquoteIdentifier(m.group(1)), m.group(2));
     }
 
+    /** Parses {@code ALTER STATUS} (prompt4 #38): copy progress of online ALTERs. */
+    private Query<?> parseAlterStatusQuery(String original) {
+        String cleaned = original.trim().replaceAll(";\\s*$", "");
+        if (!cleaned.matches("(?i)ALTER\\s+STATUS")) {
+            throw new SyntaxErrorException(
+                    "Invalid ALTER STATUS syntax: expected ALTER STATUS");
+        }
+        return new AlterStatusQuery();
+    }
+
     private Query<?> parseAlterTableAddColumnQuery(String original, Database database) {
-        // Pattern: ALTER TABLE <table> ADD COLUMN <column> <type>
+        // Pattern: ALTER TABLE <table> ADD COLUMN <column> <type> [ALGORITHM=COPY]
         // Use possessive quantifiers to avoid catastrophic backtracking (S5998)
+        String cleaned = original.trim().replaceAll(";\\s*$", "");
         Pattern pattern = Pattern.compile(
-            "^ALTER\\s+TABLE\\s+(?<table>[^\\s]+)\\s+ADD\\s+COLUMN\\s+(?<column>[^\\s]+)\\s+(?<type>\\S+)",
+            "^ALTER\\s+TABLE\\s+(?<table>[^\\s]+)\\s+ADD\\s+COLUMN\\s+(?<column>[^\\s]+)\\s+(?<type>\\S+)"
+            + "(?:\\s*,?\\s*ALGORITHM\\s*=\\s*(?<algo>[A-Za-z_]+)\\s*)?$",
             Pattern.CASE_INSENSITIVE
         );
         
-        Matcher m = pattern.matcher(original.trim());
+        Matcher m = pattern.matcher(cleaned);
         if (!m.matches()) {
             throw new SyntaxErrorException(
-                "Invalid ALTER TABLE ADD COLUMN syntax: expected ALTER TABLE <table> ADD COLUMN <column> <type>");
+                "Invalid ALTER TABLE ADD COLUMN syntax: expected ALTER TABLE <table> ADD COLUMN <column> <type> [ALGORITHM=COPY]");
         }
         
         String tableName = unquoteIdentifier(m.group("table"));
@@ -1431,8 +1454,22 @@ class QueryParser {
         
         // Parse type directly (simplified for ALTER TABLE ADD COLUMN)
         Class<?> columnType = resolveColumnJavaType(typeToken);
+
+        diesel.schema.AlterAlgorithm algorithm = diesel.schema.AlterAlgorithm.DEFAULT;
+        String algoToken = m.group("algo");
+        if (algoToken != null) {
+            if (algoToken.equalsIgnoreCase("COPY")) {
+                algorithm = diesel.schema.AlterAlgorithm.COPY;
+            } else if (algoToken.equalsIgnoreCase("INPLACE")) {
+                throw new SyntaxErrorException(
+                        "ALGORITHM=INPLACE is not supported yet (R3-010 step 3, prompt4 #39)");
+            } else {
+                throw new SyntaxErrorException(
+                        "Unsupported ALGORITHM: " + algoToken + " (supported: COPY)");
+            }
+        }
         
-        return new AlterTableAddColumnQuery(tableName, columnName, columnType);
+        return new AlterTableAddColumnQuery(tableName, columnName, columnType, algorithm);
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

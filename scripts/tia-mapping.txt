@@ -174,3 +174,6 @@ diesel/ReleaseSavepointQuery.java		concurrency
 diesel/wal/*.java	smoke,storage
 diesel/wal/SavepointPayload.java	concurrency
 diesel/recovery/*.java	smoke,storage
+diesel/AlterTableCopyAlgorithm.java	query,query-full,concurrency
+diesel/DualWriteCoordinator.java	query,query-full,concurrency
+diesel/AlterStatusQuery.java	smoke,query,query-full

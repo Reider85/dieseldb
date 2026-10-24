@@ -151,6 +151,17 @@ class Table implements Serializable {
     private transient List<String> columns;
     private transient Map<String, Class<?>> columnTypes;
     private transient volatile SchemaVersionRegistry schemaVersions;
+    /**
+     * Write journal attached while an online ALTER TABLE ... ALGORITHM=COPY
+     * runs (prompt4 #38). Null outside a copy - the hot path is one volatile read.
+     */
+    private transient volatile DualWriteCoordinator dualWrite;
+    /**
+     * Columns added by ALTER TABLE ... ADD COLUMN. An INSERT may omit them
+     * (they default to null); null after deserialization means "unknown" and
+     * the strict missing-value rule applies (documented in KNOWN_LIMITATIONS 18).
+     */
+    private transient volatile java.util.Set<String> alterAddedColumns;
     private final String primaryKeyColumn;
     private transient List<Map<String, Object>> rows;
     private transient RowStorage storage;
@@ -986,13 +997,44 @@ class Table implements Serializable {
      */
     public void applySchemaChange(List<String> newColumns, Map<String, Class<?>> newTypes, 
                                  String description) {
-        // Validation for step 1: ADD COLUMN only
-        if (newColumns.size() != columns.size() + 1) {
+        // Validation for step 1: ADD COLUMN only (shared with ALGORITHM=COPY pre-check)
+        String newColumn = validateSchemaChange(columns, primaryKeyColumn, newColumns, newTypes);
+        
+        // Replace columns and columnTypes with new immutable references
+        this.columns = Collections.unmodifiableList(new ArrayList<>(newColumns));
+        Map<String, Class<?>> newTypeMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        newTypeMap.putAll(newTypes);
+        this.columnTypes = Collections.unmodifiableMap(newTypeMap);
+        
+        // INSERT statements may omit the added column (fills null)
+        markAlterAddedColumn(newColumn);
+        
+        // Create new schema version
+        getSchemaVersions().createNewVersion(newColumns, newTypes, description);
+    }
+
+    /**
+     * Validates an ADD COLUMN schema change (current + exactly one new column,
+     * type mapping present, primary key preserved). Shared by the
+     * metadata-only path, the ALGORITHM=COPY pre-check and the COPY finalize.
+     *
+     * @return the name of the added column
+     * @throws IllegalArgumentException if validation fails
+     */
+    static String validateSchemaChange(List<String> currentColumns, String primaryKeyColumn,
+                                       List<String> newColumns, Map<String, Class<?>> newTypes) {
+        if (newColumns.size() != currentColumns.size() + 1) {
             throw new IllegalArgumentException("Step 1 only supports ADD COLUMN: new columns must be current + exactly one new column");
         }
         
         // Validate new column is not a duplicate
-        String newColumn = findNewColumn(newColumns);
+        String newColumn = null;
+        for (String col : newColumns) {
+            if (!currentColumns.contains(col)) {
+                newColumn = col;
+                break;
+            }
+        }
         if (newColumn == null) {
             throw new IllegalArgumentException("New column list must contain exactly one additional column");
         }
@@ -1008,26 +1050,145 @@ class Table implements Serializable {
                 throw new IllegalArgumentException("Primary key column cannot be removed: " + primaryKeyColumn);
             }
         }
-        
-        // Replace columns and columnTypes with new immutable references
-        this.columns = Collections.unmodifiableList(new ArrayList<>(newColumns));
-        Map<String, Class<?>> newTypeMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        newTypeMap.putAll(newTypes);
-        this.columnTypes = Collections.unmodifiableMap(newTypeMap);
-        
-        // Create new schema version
-        getSchemaVersions().createNewVersion(newColumns, newTypes, description);
-    }
-    
-    private String findNewColumn(List<String> newColumns) {
-        for (String col : newColumns) {
-            if (!columns.contains(col)) {
-                return col;
-            }
-        }
-        return null;
+        return newColumn;
     }
 
+    // ─── Online ALTER COPY support (prompt4 #38) ───────────────────────
+
+    /**
+     * Registers a column added by ALTER TABLE so INSERT may omit it.
+     * Lazy init: null after deserialization (strict mode), re-armed on the
+     * next ALTER.
+     */
+    void markAlterAddedColumn(String column) {
+        if (alterAddedColumns == null) {
+            synchronized (this) {
+                if (alterAddedColumns == null) {
+                    alterAddedColumns = ConcurrentHashMap.newKeySet();
+                }
+            }
+        }
+        alterAddedColumns.add(column);
+    }
+
+    /** True when the column was added by ALTER TABLE (nullable, may be omitted on INSERT). */
+    boolean isAlterAddedColumn(String column) {
+        java.util.Set<String> added = alterAddedColumns;
+        return added != null && added.contains(column);
+    }
+
+    /** True while an ALGORITHM=COPY journal is attached to this table. */
+    boolean dualWriteActive() {
+        return dualWrite != null;
+    }
+
+    void attachDualWrite(DualWriteCoordinator coordinator) {
+        this.dualWrite = coordinator;
+    }
+
+    void detachDualWrite() {
+        this.dualWrite = null;
+    }
+
+    /**
+     * Creates the in-memory shadow table for an ALGORITHM=COPY rewrite: new
+     * schema, no storage backend (the shadow never reads or persists through
+     * storage - its structures are installed into the live table at finalize).
+     */
+    static Table forAlterShadow(Database database, String name, List<String> columns,
+                                Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
+        Table shadow = new Table(database, name, new ArrayList<>(columns),
+                new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(columnTypes); }},
+                primaryKeyColumn);
+        shadow.storage = null;
+        return shadow;
+    }
+
+    /**
+     * Captures the baseline for an ALTER COPY (caller holds the table write
+     * lock with writers quiesced): shallow row references plus copies of the
+     * MVCC/tombstone structures. Row maps are deep-copied by the background
+     * thread afterwards.
+     */
+    void adoptBaselineFrom(Table source) {
+        this.rows = new ArrayList<>(source.rows);
+        this.rowVersions = source.rowVersions == null
+                ? null : new ConcurrentHashMap<>(source.rowVersions);
+        this.deletedRows = source.deletedRows == null
+                ? new BitSet() : (BitSet) source.deletedRows.clone();
+        this.uncommittedMvccRows = new HashSet<>(source.uncommittedMvccRows);
+        this.rowCount = source.rowCount;
+    }
+
+    /** Baseline row count of the shadow (progress denominator). */
+    int alterBaselineSize() {
+        return rows.size();
+    }
+
+    /** Deep-copies one baseline row into its own map (background copy loop). */
+    void alterDeepCopyRowAt(int index) {
+        rows.set(index, new HashMap<>(rows.get(index)));
+    }
+
+    /** Appends a journaled INSERT position into the shadow row list. */
+    void alterInsertRaw(int index, Map<String, Object> row) {
+        rows.add(index, row);
+        rowCount++;
+    }
+
+    /**
+     * Replays one journal event onto the shadow table. The shadow has no
+     * coordinator attached, so every called mutation runs its ungated path.
+     */
+    void applyAlterEvent(DualWriteCoordinator.Event event) {
+        if (event instanceof DualWriteCoordinator.InsertEvent e) {
+            alterInsertRaw(e.index(), e.row());
+            if (e.meta() != null) {
+                setRowVersionMeta(e.index(), e.meta());
+                if (e.meta().hasUncommittedChanges()) {
+                    uncommittedMvccRows.add(e.index());
+                }
+            }
+        } else if (event instanceof DualWriteCoordinator.UpdateEvent e) {
+            rows.set(e.index(), e.row());
+        } else if (event instanceof DualWriteCoordinator.DeleteEvent e) {
+            markDelete(e.index(), e.txid(), e.preImage());
+        } else if (event instanceof DualWriteCoordinator.TombstoneEvent e) {
+            markDeleted(e.index());
+        } else if (event instanceof DualWriteCoordinator.MetaPutEvent e) {
+            setRowVersionMeta(e.index(), e.meta());
+        } else if (event instanceof DualWriteCoordinator.MetaRemoveEvent e) {
+            removeRowVersionMeta(e.index());
+        } else if (event instanceof DualWriteCoordinator.UncommittedStateEvent e) {
+            if (e.present()) {
+                uncommittedMvccRows.add(e.index());
+            } else {
+                uncommittedMvccRows.remove(e.index());
+            }
+        } else if (event instanceof DualWriteCoordinator.RemoveEvent e) {
+            removeRow(e.index());
+        }
+    }
+
+    /**
+     * Installs the shadow's row/MVCC structures into the live table (caller
+     * holds the table write lock). The live table keeps its own schema
+     * registry (bumped by {@link #applySchemaChange} right after), sequences,
+     * row locks and storage backend - the storage file is rewritten by
+     * {@code saveToFile} immediately afterwards.
+     */
+    void adoptAlterState(Table shadow) {
+        this.rows = shadow.rows;
+        this.rowVersions = shadow.rowVersions;
+        this.deletedRows = shadow.deletedRows != null ? shadow.deletedRows : new BitSet();
+        this.uncommittedMvccRows = shadow.uncommittedMvccRows != null
+                ? shadow.uncommittedMvccRows : ConcurrentHashMap.newKeySet();
+        this.rowCount = shadow.rowCount;
+        this.persistDirty = true;
+        version.incrementAndGet();
+        markStatsDirty();
+    }
+    
     /**
      * Returns the primary key column name, or null when the table has none.
      *
@@ -1132,16 +1293,28 @@ class Table implements Serializable {
      *                 applied the mutations)
      */
     public void updateRowInPlace(int rowIndex, Map<String, Object> row) {
-        tableLock.writeLock().lock();
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
         try {
-            // Use enhanced RowStorage interface to reduce null check duplication
-            RowStorage.callWith(storage,s -> s.update(rowIndex, row));
-            // The internal mirror must stay in sync so that reads keep using
-            // the shared-map fast path (getLiveRows iterates {@code rows})
-            // instead of re-materializing every row from the storage backend.
-            rows.set(rowIndex, row);
+            tableLock.writeLock().lock();
+            try {
+                // Use enhanced RowStorage interface to reduce null check duplication
+                RowStorage.callWith(storage,s -> s.update(rowIndex, row));
+                // The internal mirror must stay in sync so that reads keep using
+                // the shared-map fast path (getLiveRows iterates {@code rows})
+                // instead of re-materializing every row from the storage backend.
+                rows.set(rowIndex, row);
+            } finally {
+                tableLock.writeLock().unlock();
+            }
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.UpdateEvent(rowIndex, row);
+            }
         } finally {
-            tableLock.writeLock().unlock();
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
     }
 
@@ -1580,16 +1753,28 @@ class Table implements Serializable {
         if (rowIndex < 0 || rowIndex >= rows.size()) {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
-        // Use enhanced RowStorage interface to reduce null check duplication
-        RowStorage.callWith(storage,s -> s.delete(rowIndex));
-        rows.remove(rowIndex);
-        // Row indexes shift down by one, so the locks of this and all following rows are stale.
-        for (int i = rowIndex; i <= rows.size(); i++) {
-            rowLocks.remove(i);
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(true) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            // Use enhanced RowStorage interface to reduce null check duplication
+            RowStorage.callWith(storage,s -> s.delete(rowIndex));
+            rows.remove(rowIndex);
+            // Row indexes shift down by one, so the locks of this and all following rows are stale.
+            for (int i = rowIndex; i <= rows.size(); i++) {
+                rowLocks.remove(i);
+            }
+            rowCount--;
+            version.incrementAndGet();
+            markStatsDirty();
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.RemoveEvent(rowIndex);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
-        rowCount--;
-        version.incrementAndGet();
-        markStatsDirty();
     }
 
     // ─── Tombstone / lazy-deletion support ────────────────────────────
@@ -1603,9 +1788,21 @@ class Table implements Serializable {
         if (rowIndex < 0 || rowIndex >= rows.size()) {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
-        deletedRows.set(rowIndex);
-        version.incrementAndGet();
-        markStatsDirty();
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            deletedRows.set(rowIndex);
+            version.incrementAndGet();
+            markStatsDirty();
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.TombstoneEvent(rowIndex);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
+        }
     }
 
     /** Returns whether the row at the given raw position is tombstoned. */
@@ -1650,6 +1847,13 @@ class Table implements Serializable {
         List<Map<String, Object>> loaded = new ArrayList<>(storage.scan());
         tableLock.writeLock().lock();
         try {
+            if (dualWrite != null) {
+                // Wholesale mirror replacement would desynchronize the ALTER
+                // COPY journal (prompt4 #38); the bulk load is deferred.
+                LOGGER.log(Level.FINE,
+                        "Skipping reloadFromStorage for table {0}: ALTER COPY in progress", name);
+                return;
+            }
             rows.clear();
             rows.addAll(loaded);
             deletedRows = new BitSet();
@@ -1673,6 +1877,13 @@ class Table implements Serializable {
     public void compact() {
         tableLock.writeLock().lock();
         try {
+            if (dualWrite != null) {
+                // Index-shifting rewrite: defer it while an online ALTER COPY
+                // journals position-based events (prompt4 #38). Vacuum retries.
+                LOGGER.log(Level.FINE,
+                        "Skipping compaction of table {0}: ALTER COPY in progress", name);
+                return;
+            }
             if (hasUncommittedMvccChanges()) {
                 // Undo records hold raw row indexes; compacting now would
                 // invalidate every pending record. Defer until the open
@@ -1764,18 +1975,42 @@ class Table implements Serializable {
      * Sets MVCC metadata for the row at the given index.
      */
     public void setRowVersionMeta(int rowIndex, RowVersionMeta meta) {
-        if (rowVersions == null) {
-            rowVersions = new ConcurrentHashMap<>();
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            if (rowVersions == null) {
+                rowVersions = new ConcurrentHashMap<>();
+            }
+            rowVersions.put(rowIndex, meta);
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.MetaPutEvent(rowIndex, meta);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
-        rowVersions.put(rowIndex, meta);
     }
 
     /**
      * Removes MVCC metadata for the row at the given index.
      */
     public void removeRowVersionMeta(int rowIndex) {
-        if (rowVersions != null) {
-            rowVersions.remove(rowIndex);
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            if (rowVersions != null) {
+                rowVersions.remove(rowIndex);
+            }
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.MetaRemoveEvent(rowIndex);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
     }
 
@@ -1812,25 +2047,37 @@ class Table implements Serializable {
      *                 caller while it still holds the row lock)
      */
     public void markDelete(int rowIndex, long txid, Map<String, Object> preImage) {
-        RowVersionMeta meta = getRowVersionMeta(rowIndex);
-        if (meta == null) {
-            // Bootstrap row being deleted
-            meta = new RowVersionMeta(0, 0, 0, preImage, false, false, false, txid, 0);
-            setRowVersionMeta(rowIndex, meta);
-        } else if (preImage != null) {
-            // Refresh the retained image with the pre-delete physical values:
-            // a delete does not alter data, so readers falling back to the
-            // image (pending delete or old snapshot after the delete commits)
-            // must see exactly what the row held before it. Undo records keep
-            // their own pre-change copies, so chained own-changes are unaffected.
-            meta.setCommittedValues(preImage);
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            RowVersionMeta meta = getRowVersionMeta(rowIndex);
+            if (meta == null) {
+                // Bootstrap row being deleted
+                meta = new RowVersionMeta(0, 0, 0, preImage, false, false, false, txid, 0);
+                setRowVersionMeta(rowIndex, meta);
+            } else if (preImage != null) {
+                // Refresh the retained image with the pre-delete physical values:
+                // a delete does not alter data, so readers falling back to the
+                // image (pending delete or old snapshot after the delete commits)
+                // must see exactly what the row held before it. Undo records keep
+                // their own pre-change copies, so chained own-changes are unaffected.
+                meta.setCommittedValues(preImage);
+            }
+            meta.setXmax(txid);
+            meta.setUncommittedDelete(true);
+            meta.setOwnerTxid(txid);
+            uncommittedMvccRows.add(rowIndex);
+            // Mark MVCC-dirty so pushdown will bypass until clean persist
+            mvccDirtySincePersist = true;
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.DeleteEvent(rowIndex, txid, preImage);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
-        meta.setXmax(txid);
-        meta.setUncommittedDelete(true);
-        meta.setOwnerTxid(txid);
-        uncommittedMvccRows.add(rowIndex);
-        // Mark MVCC-dirty so pushdown will bypass until clean persist
-        mvccDirtySincePersist = true;
     }
 
     /**
@@ -1839,23 +2086,35 @@ class Table implements Serializable {
      * physical row is mutated in place; other readers see the pre-image).
      */
     public void markUpdate(int rowIndex, long txid, Map<String, Object> oldValues) {
-        RowVersionMeta meta = getRowVersionMeta(rowIndex);
-        if (meta == null) {
-            // Bootstrap row being updated
-            meta = new RowVersionMeta(0, 0, 0, oldValues, false, false, false, txid, 0);
-            setRowVersionMeta(rowIndex, meta);
-        } else if (!(meta.isUncommittedInsert()
-                || (meta.hasUncommittedChanges() && meta.getOwnerTxid() == txid))) {
-            // First pending change by another state: capture this pre-image.
-            // Own pending changes keep the original pre-image (first wins), so
-            // a rollback of several chained undos restores the oldest values.
-            meta.setCommittedValues(oldValues);
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            RowVersionMeta meta = getRowVersionMeta(rowIndex);
+            if (meta == null) {
+                // Bootstrap row being updated
+                meta = new RowVersionMeta(0, 0, 0, oldValues, false, false, false, txid, 0);
+                setRowVersionMeta(rowIndex, meta);
+            } else if (!(meta.isUncommittedInsert()
+                    || (meta.hasUncommittedChanges() && meta.getOwnerTxid() == txid))) {
+                // First pending change by another state: capture this pre-image.
+                // Own pending changes keep the original pre-image (first wins), so
+                // a rollback of several chained undos restores the oldest values.
+                meta.setCommittedValues(oldValues);
+            }
+            meta.setUncommittedUpdate(true);
+            meta.setOwnerTxid(txid);
+            uncommittedMvccRows.add(rowIndex);
+            // Mark MVCC-dirty so pushdown will bypass until clean persist
+            mvccDirtySincePersist = true;
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.UncommittedStateEvent(rowIndex, true);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
-        meta.setUncommittedUpdate(true);
-        meta.setOwnerTxid(txid);
-        uncommittedMvccRows.add(rowIndex);
-        // Mark MVCC-dirty so pushdown will bypass until clean persist
-        mvccDirtySincePersist = true;
     }
 
     /**
@@ -1944,13 +2203,25 @@ class Table implements Serializable {
      * @param rowIndex the raw row index
      */
     public void markRowRolledBack(int rowIndex) {
-        RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
-        if (meta != null) {
-            meta.markAborted();
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            RowVersionMeta meta = rowVersions == null ? null : rowVersions.get(rowIndex);
+            if (meta != null) {
+                meta.markAborted();
+            }
+            uncommittedMvccRows.remove(rowIndex);
+            // Mark MVCC-dirty so pushdown will bypass until clean persist
+            mvccDirtySincePersist = true;
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.UncommittedStateEvent(rowIndex, false);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
-        uncommittedMvccRows.remove(rowIndex);
-        // Mark MVCC-dirty so pushdown will bypass until clean persist
-        mvccDirtySincePersist = true;
     }
 
     /**
@@ -1960,16 +2231,34 @@ class Table implements Serializable {
      * @param oldMeta  the meta to restore, or null to drop the meta entirely
      */
     public void restoreMetaAfterUndo(int rowIndex, RowVersionMeta oldMeta) {
-        if (oldMeta == null) {
-            removeRowVersionMeta(rowIndex);
-        } else {
-            setRowVersionMeta(rowIndex, oldMeta);
-            if (oldMeta.hasUncommittedChanges()) {
-                uncommittedMvccRows.add(rowIndex);
-                return;
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            boolean present;
+            if (oldMeta == null) {
+                removeRowVersionMeta(rowIndex);
+                present = false;
+            } else {
+                setRowVersionMeta(rowIndex, oldMeta);
+                present = oldMeta.hasUncommittedChanges();
+                if (present) {
+                    uncommittedMvccRows.add(rowIndex);
+                    if (token != null && token.tracking) {
+                        event = new DualWriteCoordinator.UncommittedStateEvent(rowIndex, true);
+                    }
+                    return;
+                }
+            }
+            uncommittedMvccRows.remove(rowIndex);
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.UncommittedStateEvent(rowIndex, false);
+            }
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
             }
         }
-        uncommittedMvccRows.remove(rowIndex);
     }
 
     /**
@@ -2192,10 +2481,11 @@ class Table implements Serializable {
         this.coverColumnDefinitions = readCoverColumnDefinitions;
         
         // Rebuild the case-insensitive type map so lookups stay case-insensitive after load.
+        // Replace the reference instead of clear()+putAll(): after a schema change
+        // (prompt4 #37) columnTypes is an unmodifiableMap, whose clear() throws.
         Map<String, Class<?>> tempColumnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         tempColumnTypes.putAll(columnTypes);
-        this.columnTypes.clear();
-        this.columnTypes.putAll(tempColumnTypes);
+        this.columnTypes = tempColumnTypes;
         this.rowLocks = new ConcurrentHashMap<>();
         this.uncommittedMvccRows = ConcurrentHashMap.newKeySet();
         this.indexes = new ConcurrentHashMap<>();
@@ -2299,57 +2589,73 @@ class Table implements Serializable {
      * @throws IllegalStateException    if a unique/clustered key is duplicated
      */
     public void addRow(Map<String, Object> row) {
-        Map<String, Object> validatedRow = new HashMap<>();
-        columns.forEach(col -> {
-            Object value;
-            Sequence sequence = sequences.get(col);
-            if (sequence != null) {
-                if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
-                    throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(true) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            Map<String, Object> validatedRow = new HashMap<>();
+            columns.forEach(col -> {
+                Object value;
+                Sequence sequence = sequences.get(col);
+                if (sequence != null) {
+                    if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
+                        throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
+                    }
+                    value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
+                } else if (!row.containsKey(col)) {
+                    if (!isAlterAddedColumn(col)) {
+                        throw new IllegalArgumentException("Missing value for column: " + col);
+                    }
+                    value = null;
+                } else {
+                    value = row.get(col);
                 }
-                value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
-            } else if (!row.containsKey(col)) {
-                throw new IllegalArgumentException("Missing value for column: " + col);
+
+                if (deferredIndexOps == null) {
+                    checkUniqueConstraint(col, value);
+                }
+
+                Class<?> expectedType = columnTypes.get(col);
+                if (expectedType == null) {
+                    throw new IllegalArgumentException("Invalid value or type for column: " + col);
+                }
+                if (value == null) {
+                    validatedRow.put(col, null);
+                } else {
+                    validateColumnValueType(col, expectedType, value);
+                    validatedRow.put(col, value);
+                }
+            });
+
+            int rowIndex;
+            if (hasClusteredIndex) {
+                Object key = validatedRow.get(clusteredIndexColumn);
+                if (key == null) {
+                    throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
+                }
+                if (clusteredKeyBlocked(key)) {
+                    LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
+                    throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
+                }
+                if (getDeletedCount() > 0) {
+                    compact();
+                }
+                rowIndex = insertIntoClusteredPosition(validatedRow, key);
             } else {
-                value = row.get(col);
+                rowIndex = insertAtEnd(validatedRow);
             }
-
-            if (deferredIndexOps == null) {
-                checkUniqueConstraint(col, value);
+            rowCount++;
+            version.incrementAndGet();
+            markStatsDirty();
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.InsertEvent(rowIndex, validatedRow, null);
             }
-
-            Class<?> expectedType = columnTypes.get(col);
-            if (expectedType == null) {
-                throw new IllegalArgumentException("Invalid value or type for column: " + col);
+            LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
             }
-            if (value == null) {
-                validatedRow.put(col, null);
-            } else {
-                validateColumnValueType(col, expectedType, value);
-                validatedRow.put(col, value);
-            }
-        });
-
-        if (hasClusteredIndex) {
-            Object key = validatedRow.get(clusteredIndexColumn);
-            if (key == null) {
-                throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
-            }
-            if (clusteredKeyBlocked(key)) {
-                LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
-                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
-            }
-            if (getDeletedCount() > 0) {
-                compact();
-            }
-            insertIntoClusteredPosition(validatedRow, key);
-        } else {
-            insertAtEnd(validatedRow);
         }
-        rowCount++;
-        version.incrementAndGet();
-        markStatsDirty();
-        LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
     }
 
     /**
@@ -2361,64 +2667,81 @@ class Table implements Serializable {
      * @throws IllegalStateException if a unique constraint is violated
      */
     public int addRowWithMVCC(Map<String, Object> row, long txid) {
-        Map<String, Object> validatedRow = new HashMap<>();
-        columns.forEach(col -> {
-            Object value;
-            Sequence sequence = sequences.get(col);
-            if (sequence != null) {
-                if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
-                    throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(true) : null;
+        DualWriteCoordinator.Event event = null;
+        int resultIndex;
+        try {
+            Map<String, Object> validatedRow = new HashMap<>();
+            columns.forEach(col -> {
+                Object value;
+                Sequence sequence = sequences.get(col);
+                if (sequence != null) {
+                    if (col.equals(primaryKeyColumn) && row.containsKey(col)) {
+                        throw new IllegalArgumentException("Cannot manually specify value for sequence-based primary key column: " + col);
+                    }
+                    value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
+                } else if (!row.containsKey(col)) {
+                    if (!isAlterAddedColumn(col)) {
+                        throw new IllegalArgumentException("Missing value for column: " + col);
+                    }
+                    value = null;
+                } else {
+                    value = row.get(col);
                 }
-                value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
-            } else if (!row.containsKey(col)) {
-                throw new IllegalArgumentException("Missing value for column: " + col);
+
+                if (deferredIndexOps == null) {
+                    checkUniqueConstraint(col, value);
+                }
+
+                Class<?> expectedType = columnTypes.get(col);
+                if (expectedType == null) {
+                    throw new IllegalArgumentException("Invalid value or type for column: " + col);
+                }
+                if (value == null) {
+                    validatedRow.put(col, null);
+                } else {
+                    validateColumnValueType(col, expectedType, value);
+                    validatedRow.put(col, value);
+                }
+            });
+
+            int rowIndex;
+            if (hasClusteredIndex) {
+                Object key = validatedRow.get(clusteredIndexColumn);
+                if (key == null) {
+                    throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
+                }
+                if (clusteredKeyBlocked(key)) {
+                    LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
+                    throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
+                }
+                if (getDeletedCount() > 0) {
+                    compact();
+                }
+                rowIndex = insertIntoClusteredPosition(validatedRow, key);
             } else {
-                value = row.get(col);
+                rowIndex = insertAtEnd(validatedRow);
             }
+            rowCount++;
+            version.incrementAndGet();
+            markStatsDirty();
 
-            if (deferredIndexOps == null) {
-                checkUniqueConstraint(col, value);
-            }
+            // Mark as insert in MVCC metadata (no committed values: the row is
+            // invisible to every other reader until this transaction commits).
+            markInsert(rowIndex, txid, null);
 
-            Class<?> expectedType = columnTypes.get(col);
-            if (expectedType == null) {
-                throw new IllegalArgumentException("Invalid value or type for column: " + col);
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.InsertEvent(rowIndex, validatedRow, getRowVersionMeta(rowIndex));
             }
-            if (value == null) {
-                validatedRow.put(col, null);
-            } else {
-                validateColumnValueType(col, expectedType, value);
-                validatedRow.put(col, value);
+            LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
+            resultIndex = rowIndex;
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
             }
-        });
-
-        int rowIndex;
-        if (hasClusteredIndex) {
-            Object key = validatedRow.get(clusteredIndexColumn);
-            if (key == null) {
-                throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
-            }
-            if (clusteredKeyBlocked(key)) {
-                LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
-                throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
-            }
-            if (getDeletedCount() > 0) {
-                compact();
-            }
-            rowIndex = insertIntoClusteredPosition(validatedRow, key);
-        } else {
-            rowIndex = insertAtEnd(validatedRow);
         }
-        rowCount++;
-        version.incrementAndGet();
-        markStatsDirty();
-        
-        // Mark as insert in MVCC metadata (no committed values: the row is
-        // invisible to every other reader until this transaction commits).
-        markInsert(rowIndex, txid, null);
-        
-        LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
-        return rowIndex;
+        return resultIndex;
     }
 
     void checkUniqueConstraint(String column, Object value) {
@@ -2944,7 +3267,7 @@ class Table implements Serializable {
      * data. Used by bulk insert, bulk-load rebuild, deferred flush and
      * deserialization.
      */
-    private void rebuildAllIndexes() {
+    void rebuildAllIndexes() {
         rebuildClusteredIndexFromRows();
         rebuildSecondaryIndexes();
     }

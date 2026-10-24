@@ -115,6 +115,12 @@ class Database {
     private volatile AuditLogger auditLogger;                                   // SQL audit logger (prompt4 #33), lazy
     private volatile TenantStore tenantStore;                                   // SNI tenant store (prompt4 #36), lazy
     private volatile boolean auditInitDone;                                     // audit config resolved at most once
+    // Online ALTER TABLE ... ALGORITHM=COPY (prompt4 #38): running copies by
+    // table name + bounded history of finished ones for ALTER STATUS.
+    private final Map<String, AlterTableCopyAlgorithm> activeAlters = new ConcurrentHashMap<>();
+    private final java.util.ArrayDeque<Map<String, Object>> alterHistory = new java.util.ArrayDeque<>();
+    private static final int ALTER_HISTORY_LIMIT = 32;
+    private volatile java.util.concurrent.ExecutorService alterCopyExecutor;     // single daemon thread for background copies
     /** True while an audited top-level statement runs on this thread; subquery/batch re-entries skip their own audit record. */
     private static final ThreadLocal<Boolean> AUDIT_INNER = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private final ScheduledExecutorService walScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -924,7 +930,7 @@ class Database {
             parsedQuery instanceof RevokePrivilegeQuery || parsedQuery instanceof AlterUserQuery) {
             return Privilege.Action.ADMIN;
         }
-        if (parsedQuery instanceof AlterTableAddColumnQuery) {
+        if (parsedQuery instanceof AlterTableAddColumnQuery || parsedQuery instanceof AlterStatusQuery) {
             return Privilege.Action.ALTER;
         }
         return Privilege.Action.SELECT; // Default for unknown query types
@@ -1220,6 +1226,9 @@ class Database {
         }
         if (parsedQuery instanceof AlterTableAddColumnQuery q) {
             return executeAlterTableAddColumn(q);
+        }
+        if (parsedQuery instanceof AlterStatusQuery) {
+            return executeAlterStatus();
         }
         if (parsedQuery instanceof CreateUserQuery q) {
             return executeCreateUser(q);
@@ -1794,7 +1803,14 @@ class Database {
         String tableName = alterQuery.getTableName();
         // getTable throws TableNotFoundException for unknown tables (engine-wide convention)
         Table table = getTable(tableName);
-        
+        if (activeAlters.containsKey(tableName)) {
+            throw new DieselException("ALTER COPY already in progress on table " + tableName);
+        }
+
+        if (alterQuery.getAlgorithm() == diesel.schema.AlterAlgorithm.COPY) {
+            return executeAlterTableCopy(alterQuery, table);
+        }
+
         // Get current schema
         List<String> currentColumns = table.getColumns();
         Map<String, Class<?>> currentTypes = table.getColumnTypes();
@@ -1812,32 +1828,8 @@ class Database {
             table.applySchemaChange(newColumns, newTypes, 
                 "ADD COLUMN " + alterQuery.getColumnName() + " " + alterQuery.getColumnType().getSimpleName());
             
-            // Update catalog
-            List<CatalogSchema.ColumnSchema> columnSchemas = new ArrayList<>();
-            for (Map.Entry<String, Class<?>> entry : newTypes.entrySet()) {
-                columnSchemas.add(new CatalogSchema.ColumnSchema(
-                    entry.getKey(),
-                    entry.getValue().getSimpleName(),
-                    true, // nullable by default for ADD COLUMN
-                    entry.getKey().equals(table.getPrimaryKeyColumn()) // unique if primary key
-                ));
-            }
-            
             // Publish the new schema version to the catalog
-            long newVersion = table.getSchemaVersions().currentVersion();
-            
-            CatalogSchema catalogSchema = new CatalogSchema(
-                tableName,
-                columnSchemas,
-                table.getPrimaryKeyColumn(),
-                table.getStorageType(),
-                new ArrayList<>(table.getSequences().keySet()),
-                new ArrayList<>() // indices not supported in step 1
-            );
-            catalogSchema.setSchemaVersion(newVersion);
-            
-            // Update catalog with the new schema version
-            getCatalog().updateTableSchema(catalogSchema);
+            publishAlterCatalog(tableName, table);
             
             // Invalidate query cache (DDL contract)
             queryCache.invalidateAll();
@@ -1846,6 +1838,130 @@ class Database {
         } finally {
             table.getTableLock().writeLock().unlock();
         }
+    }
+
+    /**
+     * Starts a background ALGORITHM=COPY rewrite of the table (prompt4 #38).
+     * The statement returns as soon as the journal is attached and the
+     * baseline captured; poll {@code ALTER STATUS} for completion.
+     */
+    private Object executeAlterTableCopy(AlterTableAddColumnQuery alterQuery, Table table) {
+        String tableName = alterQuery.getTableName();
+        List<String> newColumns = new ArrayList<>(table.getColumns());
+        newColumns.add(alterQuery.getColumnName());
+        Map<String, Class<?>> newTypes = new HashMap<>(table.getColumnTypes());
+        newTypes.put(alterQuery.getColumnName(), alterQuery.getColumnType());
+
+        AlterTableCopyAlgorithm algorithm = new AlterTableCopyAlgorithm(this, table, newColumns, newTypes,
+                "ADD COLUMN " + alterQuery.getColumnName() + " " + alterQuery.getColumnType().getSimpleName());
+        activeAlters.put(tableName, algorithm);
+        try {
+            algorithm.start(getAlterCopyExecutor());
+        } catch (RuntimeException e) {
+            activeAlters.remove(tableName, algorithm);
+            throw e;
+        }
+        return "Table alter (ALGORITHM=COPY) started: adding column "
+                + alterQuery.getColumnName() + " to " + tableName;
+    }
+
+    /** Single daemon worker for background online-ALTER copies. */
+    private java.util.concurrent.ExecutorService getAlterCopyExecutor() {
+        java.util.concurrent.ExecutorService executor = alterCopyExecutor;
+        if (executor == null) {
+            synchronized (this) {
+                executor = alterCopyExecutor;
+                if (executor == null) {
+                    executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                        Thread t = new Thread(r, "diesel-alter-copy");
+                        t.setDaemon(true);
+                        return t;
+                    });
+                    alterCopyExecutor = executor;
+                }
+            }
+        }
+        return executor;
+    }
+
+    /**
+     * Publishes the table's current schema version to the system catalog
+     * (shared by the step-1 metadata-only path and the ALGORITHM=COPY
+     * finalize). Caller must hold the table write lock.
+     */
+    void publishAlterCatalog(String tableName, Table table) {
+        List<CatalogSchema.ColumnSchema> columnSchemas = new ArrayList<>();
+        for (Map.Entry<String, Class<?>> entry : table.getColumnTypes().entrySet()) {
+            columnSchemas.add(new CatalogSchema.ColumnSchema(
+                    entry.getKey(),
+                    entry.getValue().getSimpleName(),
+                    true, // nullable by default for ADD COLUMN
+                    entry.getKey().equals(table.getPrimaryKeyColumn()) // unique if primary key
+            ));
+        }
+
+        CatalogSchema catalogSchema = new CatalogSchema(
+                tableName,
+                columnSchemas,
+                table.getPrimaryKeyColumn(),
+                table.getStorageType(),
+                new ArrayList<>(table.getSequences().keySet()),
+                new ArrayList<>() // indices not supported in step 1
+        );
+        catalogSchema.setSchemaVersion(table.getSchemaVersions().currentVersion());
+        getCatalog().updateTableSchema(catalogSchema);
+        // DDL contract: cached plans against the old schema are stale
+        queryCache.invalidateAll();
+    }
+
+    /**
+     * Bookkeeping when a background ALTER COPY reaches a terminal state:
+     * removes the entry from the active map and pushes its final
+     * {@code ALTER STATUS} row onto the bounded history.
+     */
+    void onAlterFinished(AlterTableCopyAlgorithm algorithm) {
+        activeAlters.remove(algorithm.getTableName(), algorithm);
+        Map<String, Object> row = algorithm.statusRow();
+        synchronized (alterHistory) {
+            alterHistory.addFirst(row);
+            while (alterHistory.size() > ALTER_HISTORY_LIMIT) {
+                alterHistory.removeLast();
+            }
+        }
+    }
+
+    /** True while an ALGORITHM=COPY rewrite is running (or finalizing) on the table. */
+    boolean isAlterCopyActive(String tableName) {
+        return activeAlters.containsKey(tableName);
+    }
+
+    /**
+     * {@code ALTER STATUS}: one row per online ALTER - active copies first,
+     * then the recent history (newest first).
+     */
+    List<Map<String, Object>> executeAlterStatus() {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (AlterTableCopyAlgorithm algorithm : activeAlters.values()) {
+            rows.add(algorithm.statusRow());
+        }
+        synchronized (alterHistory) {
+            rows.addAll(alterHistory);
+        }
+        return rows;
+    }
+
+    /**
+     * Requests cancellation of a running ALTER COPY (rollback semantics: the
+     * old schema and data stay authoritative). Returns false when no copy is
+     * active for the table.
+     */
+    public boolean cancelAlter(String tableName) {
+        AlterTableCopyAlgorithm algorithm = activeAlters.get(tableName);
+        if (algorithm == null) {
+            return false;
+        }
+        algorithm.requestCancel();
+        return true;
     }
 
     /**
@@ -2290,7 +2406,13 @@ class Database {
     private Object executeTransactionDml(Query<?> parsedQuery, Table table, String tableName, Transaction currentTransaction) {
         if (currentTransaction.isBatchMode()) {
             // Batch keeps copy-on-write: the DML runs against the transaction's
-            // private copy, published wholesale at END BATCH.
+            // private copy, published wholesale at END BATCH. An online ALTER
+            // COPY would swap the shared table underneath that publish, so the
+            // batch is rejected until the copy finishes.
+            if (activeAlters.containsKey(tableName)) {
+                throw new DieselException("ALTER COPY is in progress on table " + tableName
+                        + ": batch operations are blocked until the copy finishes");
+            }
             if (!currentTransaction.getModifiedTables().containsKey(tableName)) {
                 currentTransaction.updateTable(tableName, table);
             }
@@ -2744,6 +2866,10 @@ class Database {
             throw new IllegalArgumentException(
                     "Cannot drop system table " + tableName + ": the diesel_ prefix is reserved");
         }
+        if (activeAlters.containsKey(tableName)) {
+            throw new DieselException(
+                    "Cannot drop table " + tableName + ": ALTER COPY is in progress (cancel it first)");
+        }
         if (tables.remove(tableName) == null) {
             throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
         }
@@ -2924,6 +3050,25 @@ class Database {
      * daemon and unregisters its JMX MBean.
      */
     public void close() {
+        // Cancel any online ALTER COPY first (prompt4 #38): rollback semantics
+        // leave the tables in their pre-ALTER state, so the final persist below
+        // writes the old schema/data.
+        java.util.concurrent.ExecutorService alters = alterCopyExecutor;
+        if (alters != null) {
+            for (AlterTableCopyAlgorithm algorithm : activeAlters.values()) {
+                algorithm.requestCancel();
+            }
+            alters.shutdownNow();
+            try {
+                if (!alters.awaitTermination(5, TimeUnit.SECONDS)) {
+                    LOGGER.log(Level.WARNING, "ALTER COPY workers did not terminate within 5s");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            activeAlters.clear();
+        }
+
         // Stop the SQL audit consumer first (prompt4 #33): its final drain
         // appends any queued records to DIESEL_AUDIT_LOG before the tables
         // themselves are persisted below.

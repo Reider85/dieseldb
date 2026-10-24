@@ -245,17 +245,7 @@ class UpdateQuery implements Query<Void> {
         table.disableIndices();
         try {
             for (int rowIndex : rowsToUpdate) {
-                Map<String, Object> row = rows.get(rowIndex);
-                for (Map.Entry<String, Object> update : updates.entrySet()) {
-                    String column = update.getKey();
-                    Object newValue = update.getValue();
-                    Class<?> columnType = columnTypes.get(column);
-                    Object convertedValue = EVAL.convertConditionValue(newValue, column, columnType);
-                    Object oldValue = row.get(column);
-                    if (!Objects.equals(oldValue, convertedValue)) {
-                        row.put(column, convertedValue);
-                    }
-                }
+                Map<String, Object> row = mutateRowUnderReadLock(table, rows, rowIndex, columnTypes, false);
                 table.updateRowInPlace(rowIndex, row);
             }
         } finally {
@@ -266,7 +256,32 @@ class UpdateQuery implements Query<Void> {
     private void applyPerRowUpdate(List<Map<String, Object>> rows, List<Integer> rowsToUpdate,
                                    Map<String, Class<?>> columnTypes, Table table) {
         for (int rowIndex : rowsToUpdate) {
+            Map<String, Object> row = mutateRowUnderReadLock(table, rows, rowIndex, columnTypes, true);
+            table.updateRowInPlace(rowIndex, row);
+        }
+    }
+
+    /**
+     * Applies the SET assignments to one target row while holding the table
+     * <b>read</b> lock: the lock excludes the baseline capture of a running
+     * ALTER COPY (which holds the write lock) so the check-then-mutate is
+     * atomic against it. While a copy is active the row is copied first
+     * (replacement mode) - the journal replay at finalize owns the update -
+     * so the background copy never sees a map mutated in place
+     * (prompt4 #38).
+     *
+     * @param manageIndexes false on the bulk path (indexes are rebuilt at the end)
+     * @return the map to store via {@code updateRowInPlace}
+     */
+    private Map<String, Object> mutateRowUnderReadLock(Table table, List<Map<String, Object>> rows,
+                                                       int rowIndex, Map<String, Class<?>> columnTypes,
+                                                       boolean manageIndexes) {
+        table.getTableLock().readLock().lock();
+        try {
             Map<String, Object> row = rows.get(rowIndex);
+            if (table.dualWriteActive()) {
+                row = new HashMap<>(row);
+            }
             for (Map.Entry<String, Object> update : updates.entrySet()) {
                 String column = update.getKey();
                 Object newValue = update.getValue();
@@ -275,20 +290,24 @@ class UpdateQuery implements Query<Void> {
                 Object oldValue = row.get(column);
 
                 if (!Objects.equals(oldValue, convertedValue)) {
-                    Index index = table.getIndex(column);
-                    if (index != null) {
-                        if (oldValue != null) {
-                            index.remove(oldValue, rowIndex);
-                        }
-                        if (convertedValue != null) {
-                            table.evictDeadUniqueEntries(column, convertedValue);
-                            index.insert(convertedValue, rowIndex);
+                    if (manageIndexes) {
+                        Index index = table.getIndex(column);
+                        if (index != null) {
+                            if (oldValue != null) {
+                                index.remove(oldValue, rowIndex);
+                            }
+                            if (convertedValue != null) {
+                                table.evictDeadUniqueEntries(column, convertedValue);
+                                index.insert(convertedValue, rowIndex);
+                            }
                         }
                     }
                     row.put(column, convertedValue);
                 }
             }
-            table.updateRowInPlace(rowIndex, row);
+            return row;
+        } finally {
+            table.getTableLock().readLock().unlock();
         }
     }
 

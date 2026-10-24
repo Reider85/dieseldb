@@ -65,6 +65,7 @@ public final class SqlKeywords {
     public static final String REVOKE = "REVOKE";
     public static final String ALTER_USER = "ALTER USER";
     public static final String ALTER_TABLE = "ALTER TABLE";
+    public static final String ALTER_STATUS = "ALTER STATUS";
     public static final String PASSWORD = "PASSWORD";
     public static final String COVERING = "COVERING";
 
