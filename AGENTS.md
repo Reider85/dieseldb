@@ -59,7 +59,7 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
 For Sonar fixes, renames, constant extraction, comment-only changes:
 
 1. `make compile` — verify syntax (3-5s)
-2. `make test-incr` — fast suite without clean (~15s faster than `make test`)
+2. `make test-incr` — fast profile, incremental (6-13 min on this machine; same suite as `make test` since TESTS-1)
 3. Update `PROMPT_STATUS.md` → mark as DONE (same rule: no `Committed as ...` line).
 4. `make release DESC="..."` — changelog + commit + push
 
@@ -72,9 +72,75 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 3. Re-run isolated: `make test-one T=TestClassName#methodName`
 4. Full gate (only after isolated passes): `make test`
 
+**Batch before you full-gate:** a full `make test` costs 6-13 min. If the run
+surfaced 2+ independent failures (typical for parallel-race work), fix ALL of
+them first, verify each with `test-one` (parallel bash calls), and only then
+spend ONE full-gate run. TESTS-3 re-ran the full suite after every single fix
+→ 9 red runs before first green; batching the same fixes would have been ~3 runs.
+
 **Isolation cost notes:**
 - `@Tag("large")` classes (e.g. VacuumTest): isolation = full `-P large` run with 1M-row tests (~10 min). Before re-running, read `target/surefire-reports/TEST-*.xml` suppressed-exceptions + stack trace — the root cause is usually visible without a re-run.
 - If you need to verify **2+ independent** isolated tests, run them as **parallel bash tool calls** in one message (they are independent Maven invocations).
+- **Do not read a full `make test` stdout** — it is 50-150 KB of per-INSERT INFO
+  logs. The summary you need is always in the last ~30 lines: `Tests run: N,
+  Failures: X, Errors: Y`, the `EXIT_CODE`/`WALL_SEC` tail, and
+  `target/surefire-reports/TEST-*.xml` for stack traces. Grep the saved
+  tool-output file instead of scrolling (`Select-String -Path <tool-output>
+  -Pattern "FAILURE|ERROR|Tests run:"`).
+
+### Parallel-race pre-flight sweep (MANDATORY before first `make test` after touching JUnit parallelism)
+
+The TESTS-3 session cost **9 red full-suite runs (~55 min)** because shared-state
+races surfaced one-per-run: each fix required a full re-run to discover the next
+race. Do the sweep ONCE upfront instead — it takes ~2 minutes and finds every
+pattern below:
+
+```powershell
+# 1. System-property keys mutated by 2+ classes (race: one class clears in
+#    @AfterEach what another still needs) -> @ResourceLock per key
+Select-String -Path "src\test\java\**\*.java" -Pattern "System\.(set|clear)Property" -List |
+  ForEach-Object { Split-Path $_.Path -Leaf }
+
+# 2. Shared static @TempDir in a base class (race: parallel subclasses overwrite
+#    each other's injected path -> NoSuchFileException on *.tmp in @AfterAll).
+#    Fix = @ResourceLock on EVERY subclass. Do NOT make it non-static: with
+#    @TestInstance(PER_CLASS) an instance @TempDir is still null in a non-static
+#    @BeforeAll (NPE in setupCommonTables - verified empirically TESTS-3).
+Select-String -Path "src\test\java\**\*.java" -Pattern "static\s+Path\s+tempDir"
+
+# 3. Wall-clock / microsecond / throughput assertions (starve under 4-way class
+#    parallelism on this 4-core box) -> @Isolated BEFORE the first run:
+Select-String -Path "src\test\java\**\*.java" -Pattern `
+  "ms, expected|took .*ms|expected < 100|< 200 ms|< 500 ms|p99|at some point"
+# Known set (all already @Isolated since TESTS-3): PasswordHasherTest,
+# WALRecoverLsnIsOLogNTest, WALFindSegmentIsLogNTest, PersistFlusherTest,
+# CopyAlgorithmTest, WALBackpressureTest, FindNewIndexAfterCompactIsO1Test,
+# GroupCommitThroughputTest
+
+# 4. Handlers on GLOBAL java.util.Logger loggers (race: capture foreign threads'
+#    records). Fix = filter by logRecord.getThreadID() == owner thread.
+Select-String -Path "src\test\java\**\*.java" -Pattern "addHandler"
+
+# 5. Fixed Thread.sleep + assert timing (race: scheduler delayed under load).
+#    Fix = Awaitility (org.awaitility is already a dependency):
+#    await().atMost(2, SECONDS).until(() -> condition)
+Select-String -Path "src\test\java\**\*.java" -Pattern "Thread\.sleep\(\d+\);\s*$" -Context 0,3
+```
+
+**Acceptance for the sweep:** every hit above either (a) carries
+`@ResourceLock`/`@Isolated`, (b) filters by thread, or (c) uses Awaitility —
+BEFORE the first `make test`. A missed pattern costs one full 7-13 min red run.
+
+**junit-platform.properties gotchas (TESTS-3):**
+- `junit.jupiter.execution.parallel.mode.default=same` is **invalid** in JUnit
+  5.10 — it logs `Invalid parallel execution mode 'SAME'` and silently falls
+  back. Use `same_thread` (lowercase enum name).
+- The file applies to ALL profiles. `concurrency`/`network`/`perf`/`large` are
+  safe from cross-class parallelism because they use `reuseForks=false`
+  (one class per fork), but `fast`/`core`/`all`/`ci` get real parallelism.
+- Instance `@TempDir` + `@TestInstance(PER_CLASS)` + non-static `@BeforeAll`
+  = null field (injection happens after `@BeforeAll`) — keep `static` and
+  serialize subclasses with `@ResourceLock`.
 
 ---
 
@@ -163,11 +229,18 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 | Goal | Command | Time |
 |------|---------|------|
 | Check it compiles | `make compile` | 3-5s |
-| Run one test | `make test-one T=QueryParserTest#testSelect` | 5-10s |
-| Fast suite (incremental) | `make test-incr` | ~15s |
-| Fast suite (clean) | `make test` | ~30s |
-| Core suite | `make test-core` | 2-4 min |
+| Run one test (fast profile only) | `make test-one T=QueryParserTest#testSelect` | 1-2 min (includes Maven startup + test-compile) |
+| Fast suite (incremental) | `make test-incr` | 6-13 min |
+| Fast suite | `make test` | 6-13 min (no clean since TESTS-1) |
+| Core suite | `make test-core` | 6-8 min |
 | Full acceptance | `make timing` | 10-30 min |
+
+**Measured 2026-10-24 (TESTS-3 session, 4-core machine):** fast = 546s baseline / 389-407s after JUnit parallelism, core = 381-407s. The fast floor is dominated by `OldVersionTimeoutTest` (~280s reaper waits) + `AutoJoinIndexTest` benchmark (~75-180s) + `WALRecoverLsnIsOLogNTest` (10-170s) — these run in every fast pass, so **any estimate below ~6 min for `make test` is wrong**. Old table values (~15-30s) were from a different machine/era and caused agents to set 10-min timeouts that killed healthy runs.
+
+**`make test-one` is fast-profile only** (`-Dtest=... -P fast`). For a test tagged `storage`/`query-full` (core profile) it runs **0 tests** and `assert-tests-ran` fails the build. Use instead:
+```powershell
+.\scripts\mvn.ps1 -B test -P core -Dtest="GroupCommitThroughputTest#testAcceptanceThroughputAndP99"
+```
 
 ### Guard: "no tests ran" fails the build
 
@@ -191,7 +264,7 @@ with `ValueFromRemainingArguments` silently drops `-P <profile>` and every `-D`
 property, which is exactly the failure this guard exists to catch. The wrapper
 relies on the automatic `$args` variable, which preserves them.
 
-- **Fast profile** – `make test` (= `mvn -B clean test -P fast`, tags: smoke, query, index) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate.
+- **Fast profile** – `make test` (= `mvn -B test -P fast`, tags: smoke, query, index; **no clean** since TESTS-1) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate.
 - **Other profiles:** `make test-core` (query-full, storage), `make test-concurrency` (concurrency), `make test-network` (network), `make test-perf` (perf), `make large-test` (large, 4GB heap).
 - **Format-specific storage profiles:** When `storage.type` is set in `config.properties` (or via `-Ddiesel.storage.type=`), only tests matching that format run. The `@StorageType` annotation gates format-specific test classes.
 
@@ -356,8 +429,10 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
   | Command class | `timeout` (ms) | Notes |
   |---|---|---|
   | `make compile` / single tiny test | 120_000 (2 min) | normally 5–10s |
-  | `make test-one T=...` / `test-incr` / `test` | 600_000 (10 min) | kill on timeout; check for @TempDir/flusher hangs |
-  | `make test-core` / `test-concurrency` / `test-network` | 600_000 (10 min) | |
+  | `make test-one T=...` | 300_000 (5 min) | includes Maven startup + test-compile; 0 tests executed = profile lost (see guard) |
+  | `make test-incr` / `test` | 1_200_000 (20 min) | fast suite runs 6–13 min on this machine (see Quick Test Reference) — the old 10-min cap killed healthy TESTS-3/TESTS-4 runs |
+  | `make test-core` | 1_200_000 (20 min) | core suite runs 6–8 min; with parallel-race triage up to ~10 min |
+  | `make test-concurrency` / `test-network` | 600_000 (10 min) | |
   | `make test-perf` / `large-test` | 900_000 (15 min) | |
   | `make timing` | 1_800_000 (30 min) | absolute cap |
   | `make all-tests` | 2_400_000 (40 min) | absolute cap |
@@ -399,7 +474,8 @@ Failures below are **pre-existing / environmental** on this machine. When one ap
 | `FlusherTest#testMixedCommittedUncommitted` O(N²)/slow or flaky | storage/page flusher | pre-existing insert path; thread-dump proven unrelated to MVCC work |
 | `JsonlStorageAdvancedTest` 1M-row benchmark exceeds bound | jsonl storage | A/B-proven pre-existing (~70s on clean HEAD) |
 | Microbenchmarks (e.g. `WALReadAllIsAlreadySortedTest`, Snappy*Benchmark) timing-sensitive | perf | min-of-3 / threshold noise; fix criterion, not code, if red |
-| `GroupCommitThroughputTest#testAcceptanceThroughputAndP99` p99 > 20ms under full-suite load | WAL group commit | load-sensitive timing; passes in isolation p99≈5ms (observed 2026-10-20) |
+| `GroupCommitThroughputTest#testAcceptanceThroughputAndP99` p99 > 20ms under full-suite load | WAL group commit | load-sensitive timing; passes in isolation p99≈5ms (observed 2026-10-20). **@Isolated since 3.3.38** — if red again, check the annotation wasn't lost |
+| Wall-clock/microsecond proof tests red under full-suite load | PasswordHasherTest, WALRecoverLsnIsOLogNTest, WALFindSegmentIsLogNTest, PersistFlusherTest, CopyAlgorithmTest, WALBackpressureTest, FindNewIndexAfterCompactIsO1Test, GroupCommitThroughputTest | all **@Isolated since 3.3.38** (TESTS-3): their hard thresholds starve under 4-way class parallelism on this 4-core box. Isolated re-run is green → note and move on; do NOT relax the assertion |
 | `@TempDir` delete errors under parallel Windows runs | any | **not a flake when Database was created** — missing `close()` (see Database.close() hard rule in Tests); fix close(), never "retry to see"; classes with `Database(tempDir)` must call `db.close()` in `@AfterEach` (fixed in CopyOnWriteIsolationTest/ConcurrentConflictTest/RollbackTest/UndoLogSpillTest/IsolationSemanticsTest/MvccDeleteTest/MvccUpdateTest/LazyDeleteTest/VacuumTest 2026-10-20). Pure-logic races (no Database) → retry isolated once |
 | ru-RU locale breaks "0.30" string asserts | any toString/format | use `Locale.ROOT` (past bug in AdaptiveFlushStrategy) |
 | `WALBackpressureTest#queueFullBlocksProducerAndLosesNoData` "queue nearly full" assert fails | storage/WAL backpressure | load-sensitive timing; passes in isolation (observed 2026-10-19) |
@@ -446,4 +522,14 @@ This project runs on Windows. Do NOT use Unix commands — use PowerShell equiva
 | `sort file` | `Get-Content file \| Sort-Object` | Sort lines |
 | `uniq` | `Select-Object -Unique` | Deduplicate |
 | `diff a b` | `Compare-Object (Get-Content a) (Get-Content b)` | Compare files |
+
+**BOM trap (cost a compile cycle in TESTS-3):** PowerShell 5.1
+`Set-Content -Encoding UTF8` / `Out-File -Encoding UTF8` write a UTF-8 **BOM**
+(`\ufeff`) — javac then fails with `illegal character: '\ufeff'` at line 1.
+When batch-editing `.java` via PowerShell, write without BOM:
+```powershell
+[System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
+# strip BOM already written to a file:
+$c=[System.IO.File]::ReadAllText($path); [System.IO.File]::WriteAllText($path,$c,(New-Object System.Text.UTF8Encoding($false)))
+```
 ```

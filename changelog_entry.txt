@@ -1,1 +1,1 @@
-3.3.38 Tests: enable JUnit 5 parallel classes via junit-platform.properties - 27-29% faster fast profile, @ResourceLock/@Isolated for shared statics and wall-clock asserts
+3.3.39 AGENTS.md: eliminate TESTS-3 session slowdown causes - parallel-race pre-flight sweep, batch-before-full-gate rule, corrected suite time estimates (fast 6-13min not 30s), 20min anti-hang caps, test-one profile trap, junit-platform.properties gotchas, BOM warning
