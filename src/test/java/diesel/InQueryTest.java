@@ -1,5 +1,7 @@
 package diesel;
 
+import org.junit.jupiter.api.parallel.ResourceLock;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -11,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Tag("query-full")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@ResourceLock("diesel.AbstractDieselTest.tempDir")
 public class InQueryTest extends AbstractDieselTest {
 
     @BeforeEach

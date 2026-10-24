@@ -5,6 +5,7 @@ import diesel.wal.WALManager;
 import diesel.wal.WALEntry;
 import diesel.wal.WALOpcode;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Tag("storage")
 @Tag("smoke")
+@Isolated  // wall-clock timing assertions - starve under parallel-class CPU contention
 class WALRecoverLsnIsOLogNTest {
 
     @TempDir

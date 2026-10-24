@@ -1,6 +1,7 @@
 package diesel;
 
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Uses reflection to test the private method with large datasets.
  */
 @Tag("query")
+@Isolated  // wall-clock timing assertions starve under parallel-class CPU contention
 class FindNewIndexAfterCompactIsO1Test {
 
     @Test

@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.io.TempDir;
 import diesel.wal.WALConfig;
 import diesel.wal.WALEntry;
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @org.junit.jupiter.api.Tag("storage")
 @org.junit.jupiter.api.Tag("smoke")
+@Isolated  // wall-clock timing assertions starve under parallel-class CPU contention
 class WALBackpressureTest {
 
     @TempDir

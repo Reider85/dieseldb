@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * synchronous path, and close flushes pending writes.
  */
 @Tag("smoke")
+@Isolated  // wall-clock timing assertions - starve under parallel-class CPU contention
 class PersistFlusherTest {
 
     @TempDir

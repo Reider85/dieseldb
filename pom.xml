@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-    <version>3.3.37</version>
+    <version>3.3.38</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -204,7 +204,7 @@
                             <forkCount>2</forkCount>
                             <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
-                            <threadCountClasses>2</threadCountClasses>
+                            <threadCountClasses>4</threadCountClasses>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
                         </configuration>
                     </plugin>

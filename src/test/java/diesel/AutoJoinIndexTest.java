@@ -25,6 +25,7 @@ public class AutoJoinIndexTest {
     private Database database;
     private List<LogRecord> captured;
     private Handler handler;
+    private long ownerThreadId;
 
     @BeforeEach
     void setUp() {
@@ -32,10 +33,16 @@ public class AutoJoinIndexTest {
         dropTables();
         Logger logger = Logger.getLogger("diesel.SelectQuery");
         captured = new ArrayList<>();
+        ownerThreadId = Thread.currentThread().getId();
         handler = new Handler() {
             @Override
             public void publish(LogRecord logRecord) {
-                captured.add(logRecord);
+                // The diesel.SelectQuery logger is global: under parallel
+                // classes other tests' join warnings land here too. Keep
+                // only records logged from this test's thread.
+                if (logRecord.getThreadID() == ownerThreadId) {
+                    captured.add(logRecord);
+                }
             }
 
             @Override

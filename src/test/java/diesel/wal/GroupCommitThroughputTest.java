@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.parallel.Isolated;
 import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,6 +23,7 @@ import java.util.concurrent.ExecutorService;
  */
 @Tag("perf")
 @Tag("storage")
+@Isolated  // p99 latency assertion (< 20ms) starves under parallel-class CPU contention
 public class GroupCommitThroughputTest {
 
     private WALWriter writer;

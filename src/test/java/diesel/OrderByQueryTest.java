@@ -1,5 +1,7 @@
 package diesel;
 
+import org.junit.jupiter.api.parallel.ResourceLock;
+
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Order;
@@ -10,6 +12,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @Tag("query")
+@ResourceLock("diesel.AbstractDieselTest.tempDir")
 public class OrderByQueryTest extends AbstractDieselTest {
 
     @Test

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * statement issued after it runs against the active copy by construction.
  */
 @Tag("smoke")
+@ResourceLock("diesel.alter.copy.config")
 public class AlterDualWriteTest {
 
     private static final String TABLE = "ALTER_DW_T";

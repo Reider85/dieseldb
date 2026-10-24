@@ -1,5 +1,7 @@
 package diesel;
 
+import org.junit.jupiter.api.parallel.ResourceLock;
+
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,7 @@ import java.util.logging.Logger;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @Tag("perf")
+@ResourceLock("diesel.AbstractDieselTest.tempDir")
 public class PerformanceRegressionTest extends AbstractDieselTest {
     private static final Logger LOGGER = Logger.getLogger(PerformanceRegressionTest.class.getName());
 

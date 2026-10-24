@@ -4,6 +4,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +29,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * same as prompt4 #37).
  */
 @Tag("smoke")
+@Isolated  // wall-clock barrier assert (writers blocked < 100ms) starves under parallel CPU contention
+@ResourceLock("diesel.alter.copy.config")
 public class CopyAlgorithmTest {
 
     private static final String TABLE = "COPY_ALG_T";

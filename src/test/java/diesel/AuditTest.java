@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 /**
  * Acceptance test for the SQL audit log (prompt4 #33): 100 executed
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.io.TempDir;
  * injected as a system property before the logger is first resolved.
  */
 @Tag("smoke")
+@ResourceLock("diesel.audit.enabled")  // shares JVM-global AuditLogger.ENABLED_KEY system property
 public class AuditTest {
 
     @TempDir

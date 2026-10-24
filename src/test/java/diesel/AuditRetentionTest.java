@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 /**
  * Engine-level retention acceptance (prompt4 #33): DIESEL_AUDIT_LOG rows
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code AuditLoggerTest#retentionArchivesAndDeletesExpiredRows}.
  */
 @Tag("smoke")
+@ResourceLock("diesel.audit.enabled")  // shares JVM-global AuditLogger.ENABLED_KEY system property
 public class AuditRetentionTest {
 
     @TempDir

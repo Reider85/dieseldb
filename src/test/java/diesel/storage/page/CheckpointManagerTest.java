@@ -195,13 +195,12 @@ public class CheckpointManagerTest {
         enabledManager.start();
         
         try {
-            // Wait for checkpoint to trigger
+            // Wait for checkpoint to trigger. Await instead of a fixed
+            // sleep: under parallel-class load the scheduler thread can be
+            // delayed well past the 100ms window.
             long initialCount = enabledManager.getCheckpointCount();
-            Thread.sleep(100); // Wait longer than interval
-            
-            // Verify checkpoint was triggered
-            assertTrue(enabledManager.getCheckpointCount() > initialCount, 
-                      "Checkpoint should be triggered by interval");
+            org.awaitility.Awaitility.await().atMost(3, java.util.concurrent.TimeUnit.SECONDS)
+                    .until(() -> enabledManager.getCheckpointCount() > initialCount);
         } finally {
             enabledManager.stopWithoutCheckpoint();
         }

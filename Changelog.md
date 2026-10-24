@@ -1022,3 +1022,5 @@ chore: test-profiles-audit changelog entry
 3.3.36 CI: cache maven-build-cache directory across runs — saves 10-30s per CI job on hot commits
 
 3.3.37 Tests: replace SimpleDateFormat (thread-unsafe) with DateTimeFormatter; replace stack-walk with TestInfo - unblocks parallel classes
+
+3.3.38 Tests: enable JUnit 5 parallel classes via junit-platform.properties - 27-29% faster fast profile, @ResourceLock/@Isolated for shared statics and wall-clock asserts

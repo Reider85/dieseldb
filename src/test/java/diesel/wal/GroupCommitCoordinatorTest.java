@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.awaitility.Awaitility.await;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -181,10 +182,11 @@ public class GroupCommitCoordinatorTest {
         assertEquals(2, coordinator.getPendingCommits());
         assertEquals(2, coordinator.getTotalCommits());
         
-        // Wait for flush
-        Thread.sleep(50);
+        // Wait for flush — fixed sleep is not enough under parallel-class
+        // load (scheduler thread can be delayed past 50ms).
+        await().atMost(2, TimeUnit.SECONDS)
+               .until(() -> coordinator.getPendingCommits() == 0);
         
-        assertEquals(0, coordinator.getPendingCommits());
         assertTrue(coordinator.getGroupThroughput() > 0);
     }
 

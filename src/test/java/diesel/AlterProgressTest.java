@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.util.HashMap;
 import java.util.List;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * itself (ALGORITHM=INPLACE belongs to step 3 and is rejected).
  */
 @Tag("smoke")
+@ResourceLock("diesel.alter.copy.config")
 public class AlterProgressTest {
 
     private static final String TABLE = "ALTER_PROG_T";

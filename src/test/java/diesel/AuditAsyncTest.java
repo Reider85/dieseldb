@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 /**
  * Async acceptance for the SQL audit log (prompt4 #33): enabling the audit
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
  * capacity and the backend can be controlled directly.
  */
 @Tag("smoke")
+@ResourceLock("diesel.audit.enabled")  // shares JVM-global AuditLogger.ENABLED_KEY system property
 public class AuditAsyncTest {
 
     @TempDir

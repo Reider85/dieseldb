@@ -32,11 +32,23 @@ public abstract class AbstractDieselTest {
      * Per-test-class data directory. JUnit injects a fresh, distinct directory
      * into a {@code static @TempDir} field for every test class, so the eleven
      * subclasses that share the USERS/PROFILES/TRANSACTIONS/USER_DETAILS table
-     * names cannot see each other's files while surefire runs
-     * {@code parallel=classes}. A JVM-wide {@code Files.createTempDirectory}
-     * let concurrent classes stomp on the same {@code USERS.avro}, inflating it
-     * well past {@link #recordCount()} rows and making the scan-heavy
-     * {@code PerformanceRegressionTest} queries report 2-6x regressions.
+     * names cannot see each other's files. A JVM-wide
+     * {@code Files.createTempDirectory} let concurrent classes stomp on the
+     * same {@code USERS.avro}, inflating it well past {@link #recordCount()}
+     * rows and making the scan-heavy {@code PerformanceRegressionTest} queries
+     * report 2-6x regressions.
+     *
+     * <p>The field is STATIC, i.e. one storage location shared by all eleven
+     * subclasses — with JUnit 5 class-level parallelism
+     * (junit-platform.properties) a second class could overwrite the injected
+     * path while the first class was still running, and the first class's
+     * cleanup of the other class's directory caused
+     * {@code NoSuchFileException} on {@code *.table.tmp}. Every subclass
+     * therefore declares {@code @ResourceLock("diesel.AbstractDieselTest.tempDir")}
+     * so only one of them runs at a time (see AbstractDieselTestSubclass locking
+     * note in TESTS-3). A non-static @TempDir field is NOT an option here:
+     * with {@code @TestInstance(PER_CLASS)} the field is not yet injected when
+     * the non-static {@code @BeforeAll} runs (null in setupCommonTables).
      */
     @TempDir
     protected static Path tempDir;
