@@ -47,11 +47,11 @@ function Invoke-ProfileTests {
 
         [string[]]$ExtraArgs = @(),
 
-        [switch]$NoClean
+        [switch]$Clean
     )
 
     $mvnArgs = @("-B")
-    if (-not $NoClean) {
+    if ($Clean) {
         $mvnArgs += "clean"
     }
     $mvnArgs += @("test", "-P", $Profile)
@@ -63,7 +63,9 @@ function Invoke-ProfileTests {
     if ($ExtraArgs.Count -gt 0) {
         $label += " $($ExtraArgs -join ' ')"
     }
-    if ($NoClean) {
+    if ($Clean) {
+        $label += " (clean)"
+    } else {
         $label += " (no clean)"
     }
     Write-Host "Running $label..."
@@ -146,14 +148,14 @@ switch ($Target) {
         Invoke-ProfileTests -Profile "fast"
     }
     "test-incr" {
-        Invoke-ProfileTests -Profile "fast" -NoClean
+        Invoke-ProfileTests -Profile "fast"
     }
     "test-one" {
         if (-not $T) {
             Write-Error "Usage: .\scripts\make.ps1 test-one -T ""ClassName#methodName"""
             exit 1
         }
-        Invoke-ProfileTests -Profile "fast" -ExtraArgs @("-Dtest=$T") -NoClean
+        Invoke-ProfileTests -Profile "fast" -ExtraArgs @("-Dtest=$T")
     }
     "test-core" {
         Invoke-ProfileTests -Profile "core"
@@ -176,9 +178,9 @@ switch ($Target) {
         for ($i = 0; $i -lt $profiles.Count; $i++) {
             Write-Host ""
             if ($i -eq 0) {
-                Invoke-ProfileTests -Profile $profiles[$i]
+                Invoke-ProfileTests -Profile $profiles[$i] -Clean
             } else {
-                Invoke-ProfileTests -Profile $profiles[$i] -NoClean
+                Invoke-ProfileTests -Profile $profiles[$i]
             }
         }
         Write-Host ""
@@ -297,7 +299,8 @@ switch ($Target) {
         Write-Host ""
         Write-Host "Quick workflow (simple changes):"
         Write-Host "  .\scripts\make.ps1 compile             - Compile only, no tests (3-5s)"
-        Write-Host "  .\scripts\make.ps1 test-incr           - Fast profile without clean"
+        Write-Host "  .\scripts\make.ps1 test                - Fast profile (incremental, no clean)"
+        Write-Host "  .\scripts\make.ps1 test-incr           - Fast profile (same as test now)"
         Write-Host "  .\scripts\make.ps1 test-one -T X#m     - Run a single test method (quote it: -T ""X#m"")"
         Write-Host "  .\scripts\make.ps1 release -Desc '...' - Changelog + commit + push"
         Write-Host "    (update PROMPT_STATUS.md FIRST so its DONE entry joins the commit)"
@@ -310,6 +313,9 @@ switch ($Target) {
         Write-Host "  clean, clean-test-cache, clean-cache"
         Write-Host "  test-storage-csv, test-storage-tsv, test-storage-jsonl, test-storage-avro"
         Write-Host "  setup, help"
+        Write-Host ""
+        Write-Host "Note: Most test targets now run incrementally (no clean). Use"
+        Write-Host "clean-test-cache or clean to reset if needed."
         Write-Host ""
         Write-Host "Parameters:"
         Write-Host "  -T ClassName#method    for test-one (quote in PowerShell, escape as \# in make)"

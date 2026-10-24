@@ -58,6 +58,13 @@ ASSERT_TESTS = ./scripts/assert-tests-ran.sh
 define run-tests
 	@stamp=$$(mktemp); \
 	echo "Running profile '$(1)'..."; \
+	$(MVN) -B test -P $(1) $(2) || exit 1; \
+	$(ASSERT_TESTS) "$$stamp"
+endef
+
+define run-tests-clean   # release-gate only
+	@stamp=$$(mktemp); \
+	echo "Running profile '$(1)' (clean)..."; \
 	$(MVN) -B clean test -P $(1) $(2) || exit 1; \
 	$(ASSERT_TESTS) "$$stamp"
 endef
@@ -188,7 +195,7 @@ all-tests:
 		echo ""; \
 		echo "--- $$p ---"; \
 		if [ $$first -eq 1 ]; then \
-			$(call run-tests,$$p) || exit 1; \
+			$(call run-tests-clean,$$p) || exit 1; \
 			first=0; \
 		else \
 			$(call run-tests-incr,$$p) || exit 1; \

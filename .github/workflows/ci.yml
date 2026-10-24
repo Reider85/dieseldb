@@ -45,12 +45,21 @@ jobs:
           echo "profiles=$PROFILES" >> "$GITHUB_OUTPUT"
           echo "Impacted profiles: $PROFILES"
 
+      - name: Detect orphaned test classes
+        run: |
+          src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
+          cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
+          if [ "$$cls_count" -gt "$$src_count" ]; then
+            echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
+          fi
+          echo "No orphaned .class files found."
+
       - name: Run impacted profiles
         if: steps.tia.outputs.profiles != ''
         run: |
           for p in ${{ steps.tia.outputs.profiles }}; do
             echo "--- $p ---"
-            mvn -B clean test -P "$p" || exit 1
+            mvn -B test -P "$p" || exit 1
           done
 
       - name: Nothing to run
@@ -83,8 +92,17 @@ jobs:
           java-version: 21
           cache: maven
 
+      - name: Detect orphaned test classes
+        run: |
+          src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
+          cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
+          if [ "$$cls_count" -gt "$$src_count" ]; then
+            echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
+          fi
+          echo "No orphaned .class files found."
+
       - name: Build and run tests
-        run: mvn -B clean test -P ${{ matrix.profile }}
+        run: mvn -B test -P ${{ matrix.profile }}
 
       - name: Upload test reports
         if: always()
@@ -112,8 +130,17 @@ jobs:
           java-version: 21
           cache: maven
 
+      - name: Detect orphaned test classes
+        run: |
+          src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
+          cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
+          if [ "$$cls_count" -gt "$$src_count" ]; then
+            echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
+          fi
+          echo "No orphaned .class files found."
+
       - name: Run ${{ matrix.profile }} tests
-        run: mvn -B clean test -P ${{ matrix.profile }}
+        run: mvn -B test -P ${{ matrix.profile }}
 
       - name: Upload performance history
         if: always()
@@ -141,8 +168,17 @@ jobs:
           java-version: 21
           cache: maven
 
+      - name: Detect orphaned test classes
+        run: |
+          src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
+          cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
+          if [ "$$cls_count" -gt "$$src_count" ]; then
+            echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
+          fi
+          echo "No orphaned .class files found."
+
       - name: Run ${{ inputs.profile }} profile
-        run: mvn -B clean test -P ${{ inputs.profile }}
+        run: mvn -B test -P ${{ inputs.profile }}
 
       - uses: actions/upload-artifact@v4
         if: always()
