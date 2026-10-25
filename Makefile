@@ -76,7 +76,7 @@ define run-tests-incr
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
-.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests timing profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests timing timing-quick timing-full profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
 
 # Default target
 all: build
@@ -242,8 +242,30 @@ all-tests:
 	@echo ""
 	@echo "All profiles passed."
 
-## Full acceptance gate: large profile (4GB heap) + timing compare vs baseline
-timing:
+## Fast timing gate (TESTS-6): only @Tag("timing") tests (~3-5 min).
+## Default for query-path prompts (JOIN / hash join / GROUP BY / ORDER BY /
+## index / planner / SELECT hot-path). Covers the timing/timing.md baseline
+## rows EXCEPT DelimitedIoPerfTest (326s+324s) - those gate only via timing-full.
+## Both timing targets wipe target/surefire-reports first: collect-timing.py
+## sweeps the WHOLE reports directory and surefire does not delete stale
+## reports from earlier profiles (previously leaked 0.000-time skips and
+## Avro/Jsonl rows into timingN.md).
+timing-quick:
+	@rm -rf target/surefire-reports
+	$(call run-tests,timing-quick)
+	$(PY) scripts/collect-timing.py
+	@if [ -f timing/timing.md ]; then \
+		./compare-timing.sh timing/timing.md timing/timingN.md; \
+	else \
+		echo "Baseline timing/timing.md not found - creating it from this run."; \
+		cp timing/timingN.md timing/timing.md; \
+		echo "Baseline created. Re-run 'make timing-quick' to compare against it."; \
+	fi
+
+## Full timing gate (TESTS-6): entire large profile (10-30 min, 4GB heap) -
+## unchanged behavior, for schema change / hash-join refactor / large-profile work.
+timing-full:
+	@rm -rf target/surefire-reports
 	$(call run-tests,large)
 	$(PY) scripts/collect-timing.py
 	@if [ -f timing/timing.md ]; then \
@@ -251,8 +273,11 @@ timing:
 	else \
 		echo "Baseline timing/timing.md not found - creating it from this run."; \
 		cp timing/timingN.md timing/timing.md; \
-		echo "Baseline created. Re-run 'make timing' to compare against it."; \
+		echo "Baseline created. Re-run 'make timing-full' to compare against it."; \
 	fi
+
+## Backward-compat alias - defaults to quick (TESTS-6)
+timing: timing-quick
 
 ## Compare timing results (usage: make compare-timing BASE=timing/timing.md NEW=timing/timingN.md)
 compare-timing:
@@ -380,7 +405,9 @@ help:
 	@echo "  make all-tests          - Run ALL profiles sequentially (release gate)"
 	@echo "  make tia                - Test-impact analysis: recommend profiles"
 	@echo "  make tia-run            - TIA + run recommended profiles"
-	@echo "  make timing             - Run timing tests + compare"
+	@echo "  make timing-quick       - Timing gate, only @Tag('timing') tests (3-5 min)"
+	@echo "  make timing-full        - Timing gate, full large profile (10-30 min)"
+	@echo "  make timing             - Alias -> timing-quick"
 	@echo "  make check-timing       - Check for regressions (>20% fail)"
 	@echo "  make profile            - Run profiler"
 	@echo "  make clean              - Remove build artifacts"

@@ -1,6 +1,6 @@
 # compare-timing.ps1 - PowerShell port of compare-timing.sh
 # Compares timing/timingN.md against baseline timing/timing.md
-# Fails if any test with baseline >= 11ms shows >20% degradation
+# Fails if any test with baseline >= 2.0s shows >20% degradation
 #
 # Usage:
 #   .\scripts\compare-timing.ps1
@@ -11,7 +11,11 @@ param(
     [string]$Base = "timing\timing.md",
     [string]$New = "timing\timingN.md",
     [double]$Threshold = 1.2,
-    [double]$MinBaseline = 0.011
+    # TESTS-6: 2.0s, not the old 11ms. Measured on this machine: sub-2s test
+    # methods jitter +-2x run-to-run (VPN/Defender/CPU load) - a +-20% band
+    # below 2s can never hold. Sub-2s query latency stays gated by
+    # PerformanceRegressionTest (perf profile, its own 11ms floor).
+    [double]$MinBaseline = 2.0
 )
 
 # Invariant culture: python writes "296.164" with a dot; under ru-RU and other

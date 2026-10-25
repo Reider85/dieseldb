@@ -256,6 +256,7 @@ class StorageArrayRepresentationTest {
     private static final int BIG_ROWS = 150_000;
 
     @LargeTest
+    @Tag("timing")
     void arrayRepresentationReducesRetainedHeap() {
         usedDelta(this::buildMapRows);
         usedDelta(this::buildArrayRows);
@@ -276,6 +277,7 @@ class StorageArrayRepresentationTest {
      * payload, which cancels out of the comparison anyway.
      */
     @LargeTest
+    @Tag("timing")
     void perRowContainerOverheadIsAtLeast3xSmaller() {
         usedDelta(this::buildCheapMapRows);
         usedDelta(this::buildCheapArrayRows);
@@ -291,6 +293,7 @@ class StorageArrayRepresentationTest {
     }
 
     @LargeTest
+    @Tag("timing")
     void arrayLoadPathIsNotSlowerThanMapLoadPath() throws Exception {
         Path csv = tempDir.resolve("LOAD_A.csv");
         try (BufferedWriter bw = Files.newBufferedWriter(csv, StandardCharsets.UTF_8);

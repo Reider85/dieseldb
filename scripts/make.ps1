@@ -95,6 +95,37 @@ function Invoke-ProfileTests {
     Assert-TestsRan -StartedAt $startedAt -Target $label
 }
 
+# Shared timing-gate body (TESTS-6): wipe target/surefire-reports first
+# (collect-timing sweeps the WHOLE reports directory and surefire never
+# deletes stale reports from earlier profiles - previously leaked 0.000-time
+# skips and Avro/Jsonl rows into timingN.md), run the profile, collect
+# per-test times, compare against the tracked baseline. Shared by
+# timing-quick / timing-full / timing (alias).
+function Invoke-TimingGate {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Profile
+    )
+
+    if (Test-Path "target\surefire-reports") {
+        Remove-Item -Recurse -Force "target\surefire-reports"
+    }
+    Invoke-ProfileTests -Profile $Profile
+
+    Write-Host "Collecting timing data..."
+    Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $collectTiming)
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    if (Test-Path "timing\timing.md") {
+        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $compareTiming, "-Base", "timing/timing.md", "-New", "timing/timingN.md")
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } else {
+        Write-Host "Baseline timing/timing.md not found - creating it from this run."
+        Copy-Item "timing\timingN.md" "timing\timing.md"
+        Write-Host "Baseline created. Re-run to compare against it."
+    }
+}
+
 # Creates the changelog entry, then commits it. Shared by release/release-local.
 #
 # PROMPT_STATUS.md must be updated BEFORE this runs (AGENTS.md workflow step 7)
@@ -276,19 +307,18 @@ switch ($Target) {
         }
         Invoke-ChangelogCommit -Description $Desc
     }
+    "timing-quick" {
+        # TESTS-6 fast timing gate - only @Tag("timing") tests (~3-5 min).
+        Invoke-TimingGate -Profile "timing-quick"
+    }
+    "timing-full" {
+        # TESTS-6 full timing gate - entire large profile (10-30 min),
+        # the pre-TESTS-6 timing behavior, for schema/hash-join/large work.
+        Invoke-TimingGate -Profile "large"
+    }
     "timing" {
-        Invoke-ProfileTests -Profile "large"
-        Write-Host "Collecting timing data..."
-        Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $collectTiming)
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        if (Test-Path "timing\timing.md") {
-            Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $compareTiming, "-Base", "timing/timing.md", "-New", "timing/timingN.md")
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        } else {
-            Write-Host "Baseline timing/timing.md not found - creating it from this run."
-            Copy-Item "timing\timingN.md" "timing\timing.md"
-            Write-Host "Baseline created. Re-run to compare against it."
-        }
+        # Backward-compat alias - defaults to quick (TESTS-6)
+        Invoke-TimingGate -Profile "timing-quick"
     }
     "compare-timing" {
         if (-not $BASE -or -not $NEW) {
@@ -348,7 +378,8 @@ switch ($Target) {
         Write-Host "  build, compile, test, test-incr, test-one, test-core"
         Write-Host "  test-network, test-concurrency, test-perf, large-test"
         Write-Host "  test-flaky (quarantined flakes, opt-in)"
-        Write-Host "  all-tests, timing, compare-timing, tia, tia-run"
+        Write-Host "  all-tests, timing-quick (3-5min), timing-full (10-30min),"
+        Write-Host "  timing (alias -> quick), compare-timing, tia, tia-run"
         Write-Host "  changelog, release, release-local, sync-version"
         Write-Host "  clean, clean-test-cache, clean-cache"
         Write-Host "  test-storage-csv, test-storage-tsv, test-storage-jsonl, test-storage-avro"

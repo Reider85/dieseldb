@@ -28,12 +28,12 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
    | Change type | Step 4 (fast gate) | Step 5 (acceptance) |
    |-------------|--------------------|---------------------|
    | Sonar fix, rename, constant extract, comment-only | `make compile` → `make test-incr` | Skip → go to step 7 |
-   | New feature, query logic, bugfix | `make test` | `make timing` |
-   | JOIN, hash join, performance, schema change | `make test` | `make timing` + `make check-profile` |
-   | WAL / MVCC / recovery / checkpoint / storage-format | `make test` (+ targeted profile) | **SKIP `make timing`** — not on query path (see Timing Policy) |
-   | Test infrastructure, build target, quarantine (TESTS-*) | `make compile` → `make test-incr` | the prompt's own acceptance checks (report counts, opt-in target); **SKIP `make timing`** |
+   | New feature, query logic, bugfix | `make test` | `make timing-quick` |
+   | JOIN, hash join, performance, schema change | `make test` | `make timing-quick` + `make check-profile` |
+   | WAL / MVCC / recovery / checkpoint / storage-format | `make test` (+ targeted profile) | **SKIP `make timing-quick`** — not on query path (see Timing Policy) |
+   | Test infrastructure, build target, quarantine (TESTS-*) | `make compile` → `make test-incr` | the prompt's own acceptance checks (report counts, opt-in target); **SKIP `make timing-quick`** |
 
-5. Run full acceptance gate with `make timing` **only if step 4 requires it** (see Timing Policy below — WAL/MVCC/recovery work skips it by default).
+5. Run full acceptance gate with `make timing-quick` (alias: `make timing`) **only if step 4 requires it** (see Timing Policy below — WAL/MVCC/recovery work skips it by default). Use `make timing-full` (full `large` profile, 10-30 min) only for schema change / hash-join refactor / `large` profile work.
 6. **Profile check (Strict Condition):** Look at the current task description in `prompt2.md`. If the description does **NOT** contain the words "JOIN", "hash join", or "performance" — **SKIP this step entirely**. Otherwise, run:
    ```bash
    make check-profile
@@ -235,7 +235,8 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 | Fast suite | `make test` | 6-13 min (no clean since TESTS-1) |
 | Core suite | `make test-core` | 6-8 min |
 | Quarantined flakes (opt-in, 4 tests) | `make test-flaky` | ~6-8 min (3 invocations, no clean, +1 isolated retry on red: GroupCommit → 1M-бенчмарк → FlusherTest) |
-| Full acceptance | `make timing` | 10-30 min |
+| Timing gate (query-path default) | `make timing-quick` (alias `make timing`) | 3-5 min |
+| Timing gate (full large profile) | `make timing-full` | 10-30 min |
 
 **Measured 2026-10-24 (TESTS-3 session, 4-core machine):** fast = 546s baseline / 389-407s after JUnit parallelism, core = 381-407s. The fast floor is dominated by `OldVersionTimeoutTest` (~280s reaper waits) + `AutoJoinIndexTest` benchmark (~75-180s) + `WALRecoverLsnIsOLogNTest` (10-170s) — these run in every fast pass, so **any estimate below ~6 min for `make test` is wrong**. Old table values (~15-30s) were from a different machine/era and caused agents to set 10-min timeouts that killed healthy runs.
 
@@ -308,7 +309,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
   ```
   Re-run `make timing` **ONLY AFTER** the isolated test passes. This saves minutes on heavy workloads.
 - **Database.close() hard rule:** Any test that constructs `Database` MUST close it (`@AfterEach`/`@AfterAll` null-guarded `database.close()`). A `@TempDir` delete error when a `Database` was created is **not a flake** — it is a missing-close bug: the persist-flusher daemon and open WAL/file handles block JUnit temp-dir cleanup. On the FIRST such failure: add `close()`, do not "re-run to see if it passes". If the same pattern appears in multiple classes, **sweep in batch**: `Select-String -Path src/test/java/**/*.java -Pattern "new Database\("` and add close() to every offender in one pass — do not fix one class per release (precedent: 3.3.16 → 3.3.18 → 3.3.19 → 3.3.20 each fixed a different subset).
-- The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` will automatically ignore sub-11ms micro-queries and only treat degradation >20% on **heavy (>100ms)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
+- The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` / `scripts/compare-timing.ps1` will automatically ignore rows with baseline **< 2.0s** (machine noise — TESTS-6 measured ±2× run-to-run jitter on sub-2s methods on this machine, so the old 11ms floor could never hold a ±20% band) and only treat degradation >20% on **heavy (≥2s)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
 - **Large-output discipline:** `make timing` / `large-test` runs (VacuumTest, RecoveryWithLongTransactionTest, 1M-row benchmarks) produce **~150 MB** of tool output — QueryParser INFO logs every INSERT. The problem is NOT limited to the large profile: a single `make test-core` produced **30.7 MB** and `make test-incr` **2.7 MB** (FlusherTest alone emits ~100k INFO lines for its 50k inserts). When output is truncated, do **not** re-run blindly: grep the saved tool-output file for `EXIT_|Tests run:|BUILD|FAILURE`. For diagnosis of failures prefer `target/surefire-reports/TEST-*.xml` (suppressed exceptions + stack traces) over scrolling stdout. Candidate follow-up: TESTS-12-style logback WARN config extended to the `core`/`flaky` profiles.
 
 ### Test Cache Cleaning
@@ -368,14 +369,15 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 Read the **Timing Policy** section above first — most storage-engine prompts skip this gate.
 
-- `make timing`:
-  1. Runs the large profile (including two 600x600 ORDER BY joins).
+- `make timing` (alias — routes to `timing-quick` since TESTS-6) / `make timing-quick`:
+  1. Wipes `target/surefire-reports/` (the collector sweeps the WHOLE directory and surefire never deletes stale reports from earlier profiles), then runs **only `@Tag("timing")` tests** via the `timing-quick` profile (sequential, 4GB heap) — ~3-5 min. Covers the `timing/timing.md` baseline rows **except `DelimitedIoPerfTest`** (326s+324s), which only `timing-full` re-measures.
   2. Collector builds `timing/timingN.md` from surefire reports: `scripts/collect-timing.py` (Makefile) or `scripts/collect-timing.ps1` (make.ps1 — `python` on Windows may be a dead WindowsApps stub, exit 9009).
   3. Executes `compare-timing.sh timing/timing.md timing/timingN.md` – this script:
   - Compares each query’s time.
-  - **Ignores** any query whose baseline is <11 ms (machine noise).
-  - Flags a regression only if a query with baseline ≥11 ms degrades by >20%.
+  - **Ignores** any query whose baseline is <2.0 s (machine noise) — `MinBaseline=2.0` in both `scripts/compare-timing.ps1` and `compare-timing.sh` (TESTS-6 raised the old 11ms floor: sub-2s methods jitter ±2× run-to-run on this machine, so a ±20% band below 2s can never hold; sub-2s query latency stays gated by `PerformanceRegressionTest` in the `perf` profile with its own 11ms floor).
+  - Flags a regression only if a query with baseline ≥2.0 s degrades by >20%.
   - Exits with code `1` if any such regression exists, otherwise `0`.
+- `make timing-full`: the pre-TESTS-6 behavior — entire `large` profile (10-30 min) + the same collect/compare. Reserve for schema change / hash-join refactor / `large`-profile work.
 - You never need to interpret the output manually – just check the exit code. Follow the red-gate steps in **Timing Policy** (re-run once, then commit-with-noise-note if unrelated — never A/B git-stash without user request).
 - Manual compare (PowerShell): `.\scripts\compare-timing.ps1 -Base timing\timing.md -New timing\timingN.md`
 - `timing/timing.md` is the tracked baseline – never delete it.
@@ -442,7 +444,8 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
   | `make test-flaky` | 1_800_000 (30 min) | THREE mvn invocations (NO clean): group-commit p99 + ONE isolated retry on red (~15s each) + JSONL 1M benchmark (~3–5 min) + FlusherTest 50k-insert (~3.5 min). Continue-on-error — a red flake never stops the remaining invocations. TESTS-5's first attempt ran under the 900s `large-test` cap with `clean` and burned 14.8 min (recompile blast contaminated the very p99 it measured) |
   | `make test-concurrency` / `test-network` | 600_000 (10 min) | |
   | `make test-perf` / `large-test` | 900_000 (15 min) | |
-  | `make timing` | 1_800_000 (30 min) | absolute cap |
+  | `make timing-quick` / `make timing` (alias) | 1_200_000 (20 min) | expected 3–5 min + up to ~2.5 min recompile after a pom/profile edit (TESTS-6) |
+  | `make timing-full` | 1_800_000 (30 min) | absolute cap (full `large` profile) |
   | `make all-tests` | 2_400_000 (40 min) | absolute cap |
   | ProfileMain / `check-profile` | 900_000 (15 min) | |
 
@@ -463,12 +466,12 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
 
 ## Timing Policy (skip by default for storage-engine work)
 
-`make timing` is 10–30 min and **flaky on this Windows machine** (background services, CPU drift). It measures the *query* path only. Skip it unless the change can actually move query latency:
+`make timing` (alias for `make timing-quick` since TESTS-6) is **3–5 min**: only `@Tag("timing")` tests, sequential, covering the `timing/timing.md` baseline rows except `DelimitedIoPerfTest` (326s×2, gated by `make timing-full` alone). `make timing-full` is the pre-TESTS-6 behavior — entire `large` profile, 10–30 min. Both are **flaky on this Windows machine** (background services, CPU drift). Skip unless the change can actually move query latency:
 
-- **SKIP `make timing` when the prompt touches:** WAL, MVCC, recovery/ARIES, checkpoint, buffer-pool flusher, page storage internals, row-storage plumbing, config/JMX — anything not on the SELECT/JOIN execution path. Precedent: WAL-4/6/8/9, MVCC-3, Prompt 4 #21 all skipped timing with zero regressions.
-- **RUN `make timing` when:** JOIN / hash join / GROUP BY / ORDER BY / index / planner / SELECT hot-path code, or the prompt text says "performance".
+- **SKIP `make timing-quick` when the prompt touches:** WAL, MVCC, recovery/ARIES, checkpoint, buffer-pool flusher, page storage internals, row-storage plumbing, config/JMX — anything not on the SELECT/JOIN execution path. Precedent: WAL-4/6/8/9, MVCC-3, Prompt 4 #21 all skipped timing with zero regressions.
+- **RUN `make timing-quick` when:** JOIN / hash join / GROUP BY / ORDER BY / index / planner / SELECT hot-path code, or the prompt text says "performance". Use `make timing-full` instead for schema change / hash-join refactor / `large` profile changes (it re-measures `DelimitedIoPerfTest` and the M-`large` tests `timing-quick` skips).
 - **On a red timing gate (compare exit 1):**
-  1. Re-run `make timing` **once** only (noise filter).
+  1. Re-run `make timing-quick` **once** only (noise filter).
   2. If still red: identify the failing query; if your change is not on that path (or isolated query times are unchanged), **commit with a red gate** and note "timing noise, user-approved precedent 3.2.81/3.2.86" — do **not** block the prompt on machine drift.
   3. **Do NOT** run A/B `git stash` proofs against clean HEAD unless the user explicitly asks — they double the cost of an already-failing gate.
   4. Re-seed the baseline (`timing/timing.md` ← latest good `timingN.md`) only after two consecutive clean runs, or when the user approves it.

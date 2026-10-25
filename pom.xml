@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-    <version>3.3.40</version>
+    <version>3.3.41</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -417,6 +417,49 @@
                                 <diesel.largeTests>true</diesel.largeTests>
                                 <diesel.runFlaky>true</diesel.runFlaky>
                                 <diesel.storage.type>jsonl</diesel.storage.type>
+                                <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- ============ TIMING-QUICK: fast timing gate (TESTS-6) ============
+             Runs ONLY the tests tagged @Tag("timing") (~3-5 min instead of the
+             full large profile's 10-30 min). Self-contained like the 'flaky'
+             profile - hardcoded <groups>, no CLI -D flags (profile config
+             overrides user properties, and -DexcludedGroups=large would
+             exclude exactly the @LargeTest/@Tag("large") baseline rows we
+             need). NO <excludedGroups> at all: with it absent, JUnit's
+             exclude-tags filter is empty, so methods carrying both
+             @Tag("timing") and @Tag("large") (VacuumTest, the 600x600 joins)
+             still run.
+             Conditions mirror the 'large' profile (4g heap, one fork per
+             class) so overlap rows stay comparable with timing-full, plus
+             class-parallelism OFF for stable per-testcase measurements
+             (the timing/timing.md baseline era predated TESTS-3 parallelism).
+             diesel.largeTests opens the @LargeTest gate,
+             diesel.runAllTestsSample opens AllTestsSampleTest's class gate. -->
+        <profile>
+            <id>timing-quick</id>
+            <properties>
+                <diesel.largeTests>true</diesel.largeTests>
+                <test.heap>4g</test.heap>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                            <groups>timing</groups>
+                            <forkCount>1</forkCount>
+                            <reuseForks>false</reuseForks>
+                            <argLine>-Xmx4g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.largeTests>true</diesel.largeTests>
+                                <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
                                 <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
                             </systemPropertyVariables>
                         </configuration>

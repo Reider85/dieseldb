@@ -140,6 +140,7 @@ public class AllTestsSampleTest {
     }
 
     @LargeTest
+    @Tag("timing")
     @Order(8)
     public void heavyOrderByJoinsGroup() {
         runGroupAsTest("OrderByHeavyTest", this::runHeavyOrderByJoins);

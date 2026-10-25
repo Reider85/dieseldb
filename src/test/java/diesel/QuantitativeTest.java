@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 
@@ -75,6 +76,7 @@ public class QuantitativeTest {
     }
 
     @LargeTest
+    @Tag("timing")
     @Order(1)
     void heavyOrderByJoinPrimaryKey() {
         runSelectCount("OrderByHeavyTest", "complex join order by primary key",
@@ -82,6 +84,7 @@ public class QuantitativeTest {
     }
 
     @LargeTest
+    @Tag("timing")
     @Order(2)
     void heavyOrderByJoinNonIndexed() {
         runSelectCount("OrderByHeavyTest", "complex join order by non indexed",

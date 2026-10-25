@@ -2,12 +2,17 @@
 
 # Timing Regression Check Script
 # Compares timing/timingN.md against baseline timing/timing.md
-# Fails if any test shows >20% degradation
+# Fails if any test with baseline >= 2.0s shows >20% degradation
 # Usage: ./compare-timing.sh [baseline.md] [new.md]
 
 BASELINE="${1:-timing/timing.md}"
 NEW="${2:-timing/timingN.md}"
 THRESHOLD=1.2  # 20% degradation threshold
+# TESTS-6: 2.0s, not the old 11ms. Measured on this machine: sub-2s test
+# methods jitter +-2x run-to-run (VPN/Defender/CPU load) - a +-20% band below
+# 2s can never hold. Sub-2s query latency stays gated by
+# PerformanceRegressionTest (perf profile, its own 11ms floor).
+MIN_BASELINE=2.0
 
 if [ ! -f "$BASELINE" ]; then
     echo "Error: Baseline file '$BASELINE' not found"
@@ -42,6 +47,12 @@ while IFS=' ' read -r test_name time rest; do
     
     if [[ -v BASE_TIMES["$test_name"] ]]; then
         base_time="${BASE_TIMES[$test_name]}"
+        
+        # Ignore rows below the 2.0s noise floor (TESTS-6), and a 0.000
+        # baseline would divide by zero
+        if awk "BEGIN {exit !($base_time < $MIN_BASELINE)}"; then
+            continue
+        fi
         
         # Calculate ratio using awk for floating point
         ratio=$(awk "BEGIN {printf \"%.3f\", $time / $base_time}")

@@ -112,6 +112,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithInnerJoinOnHashIndex");
     }
@@ -137,6 +138,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithLeftInnerJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS LEFT INNER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithLeftInnerJoinOnHashIndex");
     }
@@ -162,6 +164,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithRightInnerJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS RIGHT INNER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithRightInnerJoinOnHashIndex");
     }
@@ -187,6 +190,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithLeftOuterJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS LEFT OUTER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithLeftOuterJoinOnHashIndex");
     }
@@ -212,6 +216,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithRightOuterJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS RIGHT OUTER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithRightOuterJoinOnHashIndex");
     }
@@ -237,6 +242,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithLeftJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS LEFT JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithLeftJoinOnHashIndex");
     }
@@ -262,6 +268,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithRightJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS RIGHT JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithRightJoinOnHashIndex");
     }
@@ -287,6 +294,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithFullJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS FULL JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithFullJoinOnHashIndex");
     }
@@ -312,6 +320,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithFullOuterJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS FULL OUTER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithFullOuterJoinOnHashIndex");
     }
@@ -337,6 +346,7 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithCrossJoinOnHashIndex() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS CROSS JOIN USER_DETAILS WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithCrossJoinOnHashIndex");
     }
@@ -352,76 +362,91 @@ public class JoinTest {
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnPrimaryKeyWithAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.ID = USER_DETAILS.USER_ID AND USERS.NAME = USER_DETAILS.NAME OR USERS.USER_CODE = USER_DETAILS.USER_CODE WHERE USERS.ID IN (500, 501, 502)", null), "selectWithInnerJoinOnPrimaryKeyWithAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnBTreeIndexWithAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.AGE = USER_DETAILS.AGE AND USERS.NAME = USER_DETAILS.NAME OR USERS.USER_CODE = USER_DETAILS.USER_CODE WHERE USERS.AGE IN (50, 51, 52)", null), "selectWithInnerJoinOnBTreeIndexWithAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnHashIndexWithAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.NAME = USER_DETAILS.NAME AND USERS.AGE = USER_DETAILS.AGE OR USERS.USER_CODE = USER_DETAILS.USER_CODE WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithInnerJoinOnHashIndexWithAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnUniqueIndexWithAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.USER_CODE = USER_DETAILS.USER_CODE AND USERS.AGE = USER_DETAILS.AGE OR USERS.NAME = USER_DETAILS.NAME WHERE USERS.USER_CODE IN ('CODE500', 'CODE501', 'CODE502')", null), "selectWithInnerJoinOnUniqueIndexWithAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnNonIndexedFieldWithAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON USERS.BALANCE = USER_DETAILS.BALANCE AND USERS.AGE = USER_DETAILS.AGE OR USERS.NAME = USER_DETAILS.NAME WHERE USERS.BALANCE = 5100.00", null), "selectWithInnerJoinOnNonIndexedFieldWithAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnPrimaryKeyWithAndOrInParentheses() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON (USERS.ID = USER_DETAILS.USER_ID AND USERS.NAME = USER_DETAILS.NAME) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) WHERE USERS.ID IN (500, 501, 502)", null), "selectWithInnerJoinOnPrimaryKeyWithAndOrInParentheses");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnBTreeIndexWithAndOrInParentheses() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON (USERS.AGE = USER_DETAILS.AGE AND USERS.NAME = USER_DETAILS.NAME) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) WHERE USERS.AGE IN (50, 51, 52)", null), "selectWithInnerJoinOnBTreeIndexWithAndOrInParentheses");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnHashIndexWithAndOrInParentheses() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON (USERS.NAME = USER_DETAILS.NAME AND USERS.AGE = USER_DETAILS.AGE) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithInnerJoinOnHashIndexWithAndOrInParentheses");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnUniqueIndexWithAndOrInParentheses() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON (USERS.USER_CODE = USER_DETAILS.USER_CODE AND USERS.AGE = USER_DETAILS.AGE) OR (USERS.NAME = USER_DETAILS.NAME) WHERE USERS.USER_CODE IN ('CODE500', 'CODE501', 'CODE502')", null), "selectWithInnerJoinOnUniqueIndexWithAndOrInParentheses");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnNonIndexedFieldWithAndOrInParentheses() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON (USERS.BALANCE = USER_DETAILS.BALANCE AND USERS.AGE = USER_DETAILS.AGE) OR (USERS.NAME = USER_DETAILS.NAME) WHERE USERS.BALANCE = 5100.00", null), "selectWithInnerJoinOnNonIndexedFieldWithAndOrInParentheses");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnPrimaryKeyWithNestedAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON ((USERS.ID = USER_DETAILS.USER_ID AND USERS.NAME = USER_DETAILS.NAME)) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) WHERE USERS.ID IN (500, 501, 502)", null), "selectWithInnerJoinOnPrimaryKeyWithNestedAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnBTreeIndexWithNestedAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON ((USERS.AGE = USER_DETAILS.AGE AND USERS.NAME = USER_DETAILS.NAME)) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) WHERE USERS.AGE IN (50, 51, 52)", null), "selectWithInnerJoinOnBTreeIndexWithNestedAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnHashIndexWithNestedAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON ((USERS.NAME = USER_DETAILS.NAME AND USERS.AGE = USER_DETAILS.AGE)) OR (USERS.USER_CODE = USER_DETAILS.USER_CODE) WHERE USERS.NAME IN ('User500', 'User501', 'User502')", null), "selectWithInnerJoinOnHashIndexWithNestedAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnUniqueIndexWithNestedAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON ((USERS.USER_CODE = USER_DETAILS.USER_CODE AND USERS.AGE = USER_DETAILS.AGE)) OR (USERS.NAME = USER_DETAILS.NAME) WHERE USERS.USER_CODE IN ('CODE500', 'CODE501', 'CODE502')", null), "selectWithInnerJoinOnUniqueIndexWithNestedAndOr");
     }
 
     @Test
+    @Tag("timing")
     void selectWithInnerJoinOnNonIndexedFieldWithNestedAndOr() {
         assertDoesNotThrow(() -> database.executeQuery("SELECT USERS.ID, USERS.NAME, USER_DETAILS.INFO FROM USERS INNER JOIN USER_DETAILS ON ((USERS.BALANCE = USER_DETAILS.BALANCE AND USERS.AGE = USER_DETAILS.AGE)) OR (USERS.NAME = USER_DETAILS.NAME) WHERE USERS.BALANCE = 5100.00", null), "selectWithInnerJoinOnNonIndexedFieldWithNestedAndOr");
     }

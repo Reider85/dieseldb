@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Tag("query-full")
+@Tag("timing")
 public class GroupByTest {
 
     private static final int RECORD_COUNT = 10;

@@ -21,6 +21,7 @@ import java.util.Locale;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 @Tag("query-full")
+@Tag("timing")
 public class OrderByTest {
 
     private static final int RECORD_COUNT = 10;

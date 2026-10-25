@@ -44,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * database — proving the vacuum holds no database-wide lock while it scans.
  */
 @Tag("large")
+@Tag("timing")
 class VacuumTest {
 
     private static final Logger LOGGER = Logger.getLogger(VacuumTest.class.getName());
