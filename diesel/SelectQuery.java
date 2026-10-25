@@ -847,6 +847,12 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     @Override
     public List<Map<String, Object>> execute(Table table) {
+        // LOCK=EXCLUSIVE ALTERs block readers for their (microsecond) window
+        // (prompt4 #39); fast path is one volatile read when no gate is armed.
+        table.awaitAlterReadersUnblocked();
+        // Capture the main table's hidden dropped-column keys so SELECT * can
+        // filter them (prompt4 #39); null fast path when nothing was dropped.
+        this.droppedColumnFilter = table.getDroppedColumns();
         // Pin schema version for timeout bookkeeping (step 1: minimal protection)
         diesel.schema.SchemaVersionRegistry.PinnedSchema pin = table.getSchemaVersions().pinCurrent();
         try {
@@ -861,6 +867,13 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             pin.close();
         }
     }
+
+    /**
+     * Hidden dropped-column keys of the main table (prompt4 #39): row maps may
+     * still carry these keys until physical strip; SELECT * must not expose
+     * them. Captured per execute() - null on the fast path.
+     */
+    private transient volatile java.util.Set<String> droppedColumnFilter;
 
     /**
      * Executes this SELECT and returns its result rows as an iterator, so a
@@ -893,6 +906,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private Iterator<Map<String, Object>> executeStreaming(Table table) {
         // Similar setup to executeSelect but working with iterators
         Objects.requireNonNull(table, "Main table must not be null");
+        table.awaitAlterReadersUnblocked();
+        this.droppedColumnFilter = table.getDroppedColumns();
         Database database = Objects.requireNonNull(table.getDatabase(),
                 ErrorMessages.TABLE_PREFIX + mainTableName + ErrorMessages.NOT_ATTACHED_TO_DB);
         
@@ -3891,13 +3906,18 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         Map<String, Object> filtered = new HashMap<>();
         for (int ci = 0; ci < columns.size(); ci++) {
             ColumnProjection proj = plan.get(ci);
-            if (proj.normalized != null && row.containsKey(proj.normalized)) {
+            if (proj.normalized != null && row.containsKey(proj.normalized)
+                    && !isHiddenDroppedColumn(proj.normalized)) {
                 filtered.put(proj.alias, row.get(proj.normalized));
             } else if (proj.normalized == null) {
                 extractAllColumns(row, filtered);
             } else {
+                // Hidden dropped keys fall through here (prompt4 #39): the
+                // projection resolves exactly as it would once the background
+                // strip removed the key - typically to nothing.
                 Object value = findFallbackValue(row, proj.fallbackKeys);
-                if (value == null && proj.normalized != null && proj.normalized.contains(".")) {
+                if (value == null && proj.normalized != null && proj.normalized.contains(".")
+                        && !isHiddenDroppedColumn(proj.normalized)) {
                     value = resolveRowValue(row, proj.normalized);
                 }
                 if (value != null) {
@@ -3912,12 +3932,54 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         for (Map.Entry<String, Object> entry : row.entrySet()) {
             String key = entry.getKey();
             String unqualifiedKey = key.contains(".") ? key.split("\\.", 2)[1].trim() : key.trim();
+            if (isHiddenDroppedColumn(key, unqualifiedKey)) {
+                // Prompt4 #39: column dropped by INPLACE ALTER - the key is
+                // still in the row map until physical strip, but the schema no
+                // longer has it, so SELECT * must not expose it.
+                continue;
+            }
             filtered.put(unqualifiedKey, entry.getValue());
         }
     }
 
+    /** Unqualifies the key first, then applies {@link #isHiddenDroppedColumn(String, String)}. */
+    private boolean isHiddenDroppedColumn(String rawKey) {
+        String unqualified = rawKey.contains(".") ? rawKey.split("\\.", 2)[1].trim() : rawKey.trim();
+        return isHiddenDroppedColumn(rawKey, unqualified);
+    }
+
+    /**
+     * True when the row key belongs to a column hidden by an INPLACE
+     * DROP COLUMN (prompt4 #39). Unqualified keys are main-table content;
+     * qualified keys are matched only when the qualifier resolves to the main
+     * table (so a join table's same-named column stays visible).
+     */
+    private boolean isHiddenDroppedColumn(String rawKey, String unqualifiedKey) {
+        java.util.Set<String> dropped = droppedColumnFilter;
+        if (dropped == null || dropped.isEmpty()) {
+            return false;
+        }
+        if (!dropped.contains(unqualifiedKey)) {
+            return false;
+        }
+        int dot = rawKey.indexOf('.');
+        if (dot < 0) {
+            return true;
+        }
+        String qualifier = rawKey.substring(0, dot).trim();
+        if (mainTableName.equalsIgnoreCase(qualifier)) {
+            return true;
+        }
+        String resolved = tableAliases.getOrDefault(qualifier, qualifier);
+        return mainTableName.equalsIgnoreCase(resolved);
+    }
+
     private Object findFallbackValue(Map<String, Object> row, List<String> fallbackKeys) {
         for (String candidate : fallbackKeys) {
+            if (isHiddenDroppedColumn(candidate)) {
+                // Prompt4 #39: same-named key of a just-dropped main column
+                continue;
+            }
             if (row.containsKey(candidate)) {
                 return row.get(candidate);
             }

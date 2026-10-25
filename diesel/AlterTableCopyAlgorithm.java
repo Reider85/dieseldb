@@ -56,6 +56,8 @@ final class AlterTableCopyAlgorithm implements Runnable {
     private final Table shadow;
     private final int batchSize;
     private final long batchSleepMs;
+    /** Column whose indexes are removed at swap time (DROP COLUMN copies, prompt4 #39); null otherwise. */
+    private final String stripIndexColumn;
 
     private volatile Future<?> future;
     /** Terminal state (COMPLETED/ROLLED_BACK/FAILED) or null while running. */
@@ -66,19 +68,43 @@ final class AlterTableCopyAlgorithm implements Runnable {
 
     AlterTableCopyAlgorithm(Database database, Table table, List<String> newColumns,
                             Map<String, Class<?>> newTypes, String description) {
+        this(database, table, newColumns, newTypes, description, null);
+    }
+
+    /**
+     * @param stripIndexColumn for DROP COLUMN copies (prompt4 #39): every index
+     *        keyed on this column is removed inside the finalize write-lock
+     *        window (so a rollback leaves the indexes untouched); null for ADD
+     *        COLUMN copies.
+     */
+    AlterTableCopyAlgorithm(Database database, Table table, List<String> newColumns,
+                            Map<String, Class<?>> newTypes, String description,
+                            String stripIndexColumn) {
         this.database = database;
         this.table = table;
         this.tableName = table.getName();
         this.newColumns = newColumns;
         this.newTypes = newTypes;
         this.description = description;
+        this.stripIndexColumn = stripIndexColumn;
         this.coordinator = new DualWriteCoordinator(tableName);
         this.batchSize = Math.max(1, Integer.getInteger("alter.copy.batch.size", 2048));
         this.batchSleepMs = Math.max(0, Long.getLong("alter.copy.batch.sleep.ms", 0L));
         // Fails fast (before anything is journaled) on an invalid schema change.
         Table.validateSchemaChange(table.getColumns(), table.getPrimaryKeyColumn(), newColumns, newTypes);
-        this.shadow = Table.forAlterShadow(database, tableName + "$copy",
-                newColumns, newTypes, table.getPrimaryKeyColumn());
+        // Prompt4 #39: a DROP COLUMN copy must strip the removed column's keys
+        // from baseline copies and replayed journal rows - the shadow never
+        // sees them, so the installed state is physically clean.
+        java.util.Set<String> stripColumns = null;
+        if (newColumns.size() < table.getColumns().size()) {
+            stripColumns = new java.util.HashSet<>(table.getColumns());
+            stripColumns.removeAll(newColumns);
+        }
+        this.shadow = stripColumns == null
+                ? Table.forAlterShadow(database, tableName + "$copy",
+                        newColumns, newTypes, table.getPrimaryKeyColumn())
+                : Table.forAlterShadow(database, tableName + "$copy",
+                        newColumns, newTypes, table.getPrimaryKeyColumn(), stripColumns);
     }
 
     /**
@@ -188,6 +214,12 @@ final class AlterTableCopyAlgorithm implements Runnable {
             table.adoptAlterState(shadow);
             installed = true;
             table.applySchemaChange(newColumns, newTypes, description);
+            if (stripIndexColumn != null) {
+                // DROP COLUMN (prompt4 #39): the column's indexes are removed
+                // inside the swap window - rollback (installed == false) never
+                // reaches here, so a cancelled copy keeps every index intact.
+                table.dropIndexesForColumn(stripIndexColumn);
+            }
             coordinator.markDone();
             table.detachDualWrite();
             long t4 = System.nanoTime();

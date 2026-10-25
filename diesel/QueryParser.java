@@ -854,7 +854,7 @@ class QueryParser {
             @Override
             @SuppressWarnings("unused")
             public Query<?> parse(String n, String o, Database d) {
-                return parseAlterTableAddColumnQuery(o, d);
+                return parseAlterTableStatement(o);
             }
         });
         strategies.add(new QueryParseStrategy() {
@@ -1432,44 +1432,133 @@ class QueryParser {
         return new AlterStatusQuery();
     }
 
-    private Query<?> parseAlterTableAddColumnQuery(String original, Database database) {
-        // Pattern: ALTER TABLE <table> ADD COLUMN <column> <type> [ALGORITHM=COPY]
-        // Use possessive quantifiers to avoid catastrophic backtracking (S5998)
+    /**
+     * Dispatcher for {@code ALTER TABLE} (prompt4 #39): routes to the ADD COLUMN
+     * or DROP COLUMN parser based on the action keyword.
+     */
+    private Query<?> parseAlterTableStatement(String original) {
         String cleaned = original.trim().replaceAll(";\\s*$", "");
-        Pattern pattern = Pattern.compile(
-            "^ALTER\\s+TABLE\\s+(?<table>[^\\s]+)\\s+ADD\\s+COLUMN\\s+(?<column>[^\\s]+)\\s+(?<type>\\S+)"
-            + "(?:\\s*,?\\s*ALGORITHM\\s*=\\s*(?<algo>[A-Za-z_]+)\\s*)?$",
-            Pattern.CASE_INSENSITIVE
-        );
-        
-        Matcher m = pattern.matcher(cleaned);
-        if (!m.matches()) {
-            throw new SyntaxErrorException(
-                "Invalid ALTER TABLE ADD COLUMN syntax: expected ALTER TABLE <table> ADD COLUMN <column> <type> [ALGORITHM=COPY]");
+        java.util.regex.Matcher drop = ALTER_DROP_PATTERN.matcher(cleaned);
+        if (drop.matches()) {
+            return buildAlterDropColumnQuery(drop);
         }
-        
+        java.util.regex.Matcher add = ALTER_ADD_PATTERN.matcher(cleaned);
+        if (add.matches()) {
+            return buildAlterAddColumnQuery(add);
+        }
+        throw new SyntaxErrorException(
+                "Invalid ALTER TABLE syntax: expected ALTER TABLE <t> ADD COLUMN <c> <type>"
+                + " [ALGORITHM=COPY|INPLACE] [, LOCK=NONE|SHARED|EXCLUSIVE]"
+                + " or ALTER TABLE <t> DROP COLUMN <c>"
+                + " [ALGORITHM=COPY|INPLACE] [, LOCK=NONE|SHARED|EXCLUSIVE]");
+    }
+
+    /**
+     * ADD COLUMN grammar (prompt4 #39): action clause plus an optional tail of
+     * {@code KEY=VALUE} options (ALGORITHM=, LOCK=) separated by commas and/or
+     * spaces in any order. Possessive quantifiers avoid catastrophic
+     * backtracking (S5998).
+     */
+    private static final java.util.regex.Pattern ALTER_ADD_PATTERN = java.util.regex.Pattern.compile(
+            "^ALTER\\s+TABLE\\s+(?<table>[^\\s,]+)\\s+ADD\\s+COLUMN\\s+(?<column>[^\\s,]+)"
+            + "\\s+(?<type>[A-Za-z_]+)(?<opts>.*)$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** DROP COLUMN grammar (prompt4 #39): action clause plus optional KEY=VALUE options. */
+    private static final java.util.regex.Pattern ALTER_DROP_PATTERN = java.util.regex.Pattern.compile(
+            "^ALTER\\s+TABLE\\s+(?<table>[^\\s,]+)\\s+DROP\\s+COLUMN\\s+(?<column>[^\\s,]+)(?<opts>.*)$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** One {@code KEY=VALUE} ALTER option token. */
+    private static final java.util.regex.Pattern ALTER_OPTION_PATTERN = java.util.regex.Pattern.compile(
+            "^(?<key>[A-Za-z_]+)\\s*=\\s*(?<val>[A-Za-z_]+)$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** Parsed ALTER option tokens (null when the clause was absent). */
+    private record AlterOptions(String algoToken, String lockToken) {}
+
+    /**
+     * Parses the trailing option tokens of an ALTER TABLE statement: each token
+     * must be {@code ALGORITHM=value} or {@code LOCK=value}; duplicates and
+     * unknown keys are rejected.
+     */
+    private static AlterOptions parseAlterOptions(String opts) {
+        String algo = null;
+        String lock = null;
+        String stripped = opts.replaceAll("[\\s,]+", " ").trim();
+        if (!stripped.isEmpty()) {
+            for (String part : stripped.split(" ")) {
+                java.util.regex.Matcher m = ALTER_OPTION_PATTERN.matcher(part);
+                if (!m.matches()) {
+                    throw new SyntaxErrorException(
+                            "Invalid ALTER option: " + part
+                            + " (expected ALGORITHM=<name> or LOCK=<mode>)");
+                }
+                if (m.group("key").equalsIgnoreCase("ALGORITHM")) {
+                    if (algo != null) {
+                        throw new SyntaxErrorException("Duplicate ALGORITHM option");
+                    }
+                    algo = m.group("val");
+                } else if (m.group("key").equalsIgnoreCase("LOCK")) {
+                    if (lock != null) {
+                        throw new SyntaxErrorException("Duplicate LOCK option");
+                    }
+                    lock = m.group("val");
+                } else {
+                    throw new SyntaxErrorException(
+                            "Unknown ALTER option: " + m.group("key")
+                            + " (supported: ALGORITHM, LOCK)");
+                }
+            }
+        }
+        return new AlterOptions(algo, lock);
+    }
+
+    /**
+     * Resolves the ALGORITHM token: null keeps the statement default, COPY and
+     * INPLACE are accepted (prompt4 #39), anything else is a syntax error.
+     */
+    private static diesel.schema.AlterAlgorithm resolveAlterAlgorithm(String algoToken,
+                                                                      diesel.schema.AlterAlgorithm defaultAlgorithm) {
+        if (algoToken == null) {
+            return defaultAlgorithm;
+        }
+        if (algoToken.equalsIgnoreCase("COPY")) {
+            return diesel.schema.AlterAlgorithm.COPY;
+        }
+        if (algoToken.equalsIgnoreCase("INPLACE")) {
+            return diesel.schema.AlterAlgorithm.INPLACE;
+        }
+        throw new SyntaxErrorException(
+                "Unsupported ALGORITHM: " + algoToken + " (supported: COPY, INPLACE)");
+    }
+
+    private Query<?> buildAlterAddColumnQuery(java.util.regex.Matcher m) {
         String tableName = unquoteIdentifier(m.group("table"));
         String columnName = unquoteIdentifier(m.group("column"));
         String typeToken = m.group("type").toUpperCase();
-        
-        // Parse type directly (simplified for ALTER TABLE ADD COLUMN)
-        Class<?> columnType = resolveColumnJavaType(typeToken);
 
-        diesel.schema.AlterAlgorithm algorithm = diesel.schema.AlterAlgorithm.DEFAULT;
-        String algoToken = m.group("algo");
-        if (algoToken != null) {
-            if (algoToken.equalsIgnoreCase("COPY")) {
-                algorithm = diesel.schema.AlterAlgorithm.COPY;
-            } else if (algoToken.equalsIgnoreCase("INPLACE")) {
-                throw new SyntaxErrorException(
-                        "ALGORITHM=INPLACE is not supported yet (R3-010 step 3, prompt4 #39)");
-            } else {
-                throw new SyntaxErrorException(
-                        "Unsupported ALGORITHM: " + algoToken + " (supported: COPY)");
-            }
-        }
-        
-        return new AlterTableAddColumnQuery(tableName, columnName, columnType, algorithm);
+        Class<?> columnType = resolveColumnJavaType(typeToken);
+        AlterOptions options = parseAlterOptions(m.group("opts"));
+        diesel.schema.AlterAlgorithm algorithm =
+                resolveAlterAlgorithm(options.algoToken(), diesel.schema.AlterAlgorithm.DEFAULT);
+        diesel.schema.AlterLockMode lockMode =
+                diesel.schema.AlterLockMode.fromToken(options.lockToken());
+
+        return new AlterTableAddColumnQuery(tableName, columnName, columnType, algorithm, lockMode);
+    }
+
+    private Query<?> buildAlterDropColumnQuery(java.util.regex.Matcher m) {
+        String tableName = unquoteIdentifier(m.group("table"));
+        String columnName = unquoteIdentifier(m.group("column"));
+        AlterOptions options = parseAlterOptions(m.group("opts"));
+        // DROP defaults to INPLACE (the online path, MySQL 8 semantics).
+        diesel.schema.AlterAlgorithm algorithm =
+                resolveAlterAlgorithm(options.algoToken(), diesel.schema.AlterAlgorithm.INPLACE);
+        diesel.schema.AlterLockMode lockMode =
+                diesel.schema.AlterLockMode.fromToken(options.lockToken());
+
+        return new AlterTableDropColumnQuery(tableName, columnName, algorithm, lockMode);
     }
 
     private Query<Void> parseCreateIndexQuery(String normalized) {

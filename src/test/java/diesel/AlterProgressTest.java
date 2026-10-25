@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * ALTER STATUS progress acceptance for online ALTER COPY (prompt4 #38):
  * a percentage between 0 and 100 is observable while the background copy
  * runs, 100 when it completes, plus the parser contract for the statement
- * itself (ALGORITHM=INPLACE belongs to step 3 and is rejected).
+ * itself (ALGORITHM=INPLACE became executable in prompt4 #39).
  */
 @Tag("smoke")
 @ResourceLock("diesel.alter.copy.config")
@@ -103,21 +103,27 @@ public class AlterProgressTest {
         // ALTER STATUS is a statement of its own.
         assertThrows(RuntimeException.class, () -> database.executeQuery("ALTER STATUS NOW", null));
 
-        // INPLACE belongs to R3-010 step 3 (prompt4 #39) - rejected until then.
+        // INPLACE is executable since prompt4 #39 (R3-010 step 3): metadata-only
+        // path, no background job, so it registers no ALTER STATUS row.
         database.createTable(TABLE,
                 List.of("ID"), Map.of("ID", Integer.class), "ID");
-        RuntimeException inplace = assertThrows(RuntimeException.class, () ->
-                database.executeQuery(
-                        "ALTER TABLE " + TABLE + " ADD COLUMN C1 INTEGER ALGORITHM=INPLACE", null));
-        assertTrue(String.valueOf(inplace.getMessage()).contains("step 3"),
-                "unexpected message: " + inplace.getMessage());
+        database.executeQuery(
+                "ALTER TABLE " + TABLE + " ADD COLUMN C1 INTEGER ALGORITHM=INPLACE", null);
+        assertTrue(database.getTable(TABLE).getColumns().contains("C1"));
 
         // Unknown algorithm tokens are rejected outright.
         RuntimeException bogus = assertThrows(RuntimeException.class, () ->
                 database.executeQuery(
-                        "ALTER TABLE " + TABLE + " ADD COLUMN C1 INTEGER ALGORITHM=BOGUS", null));
+                        "ALTER TABLE " + TABLE + " ADD COLUMN C3 INTEGER ALGORITHM=BOGUS", null));
         assertTrue(String.valueOf(bogus.getMessage()).contains("Unsupported ALGORITHM"),
                 "unexpected message: " + bogus.getMessage());
+
+        // Unknown LOCK tokens are rejected too (prompt4 #39).
+        RuntimeException badLock = assertThrows(RuntimeException.class, () ->
+                database.executeQuery(
+                        "ALTER TABLE " + TABLE + " ADD COLUMN C4 INTEGER LOCK=WORLD", null));
+        assertTrue(String.valueOf(badLock.getMessage()).contains("Unsupported LOCK mode"),
+                "unexpected message: " + badLock.getMessage());
 
         // The default (no clause) stays the instant metadata-only path - it has
         // no background job, so ALTER STATUS registers nothing for it.

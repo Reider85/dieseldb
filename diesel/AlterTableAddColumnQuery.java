@@ -19,6 +19,7 @@ public final class AlterTableAddColumnQuery implements Query<String> {
     private final String columnName;
     private final Class<?> columnType;
     private final diesel.schema.AlterAlgorithm algorithm;
+    private final diesel.schema.AlterLockMode lockMode;
     
     /**
      * Creates a metadata-only ALTER TABLE ADD COLUMN query (R3-010 step 1).
@@ -29,7 +30,8 @@ public final class AlterTableAddColumnQuery implements Query<String> {
      * @throws IllegalArgumentException if any argument is null
      */
     public AlterTableAddColumnQuery(String tableName, String columnName, Class<?> columnType) {
-        this(tableName, columnName, columnType, diesel.schema.AlterAlgorithm.DEFAULT);
+        this(tableName, columnName, columnType, diesel.schema.AlterAlgorithm.DEFAULT,
+                diesel.schema.AlterLockMode.NONE);
     }
     
     /**
@@ -38,15 +40,34 @@ public final class AlterTableAddColumnQuery implements Query<String> {
      * @param tableName    Name of the table to modify
      * @param columnName   Name of the new column (must not exist)
      * @param columnType   Type of the new column (nullable)
-     * @param algorithm    DEFAULT (instant) or COPY (background rewrite, prompt4 #38)
+     * @param algorithm    DEFAULT (instant), COPY (background rewrite, prompt4 #38)
+     *                     or INPLACE (metadata-only, prompt4 #39)
      * @throws IllegalArgumentException if any argument is null
      */
     public AlterTableAddColumnQuery(String tableName, String columnName, Class<?> columnType,
                                     diesel.schema.AlterAlgorithm algorithm) {
+        this(tableName, columnName, columnType, algorithm, diesel.schema.AlterLockMode.NONE);
+    }
+    
+    /**
+     * Creates an ALTER TABLE ADD COLUMN query with explicit algorithm and lock mode
+     * (prompt4 #39).
+     * 
+     * @param tableName    Name of the table to modify
+     * @param columnName   Name of the new column (must not exist)
+     * @param columnType   Type of the new column (nullable)
+     * @param algorithm    DEFAULT (instant), COPY (background rewrite) or INPLACE (metadata-only)
+     * @param lockMode     NONE (default), SHARED (writers blocked) or EXCLUSIVE (all blocked)
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public AlterTableAddColumnQuery(String tableName, String columnName, Class<?> columnType,
+                                    diesel.schema.AlterAlgorithm algorithm,
+                                    diesel.schema.AlterLockMode lockMode) {
         this.tableName = Objects.requireNonNull(tableName, "Table name cannot be null");
         this.columnName = Objects.requireNonNull(columnName, "Column name cannot be null");
         this.columnType = Objects.requireNonNull(columnType, "Column type cannot be null");
         this.algorithm = Objects.requireNonNull(algorithm, "Algorithm cannot be null");
+        this.lockMode = Objects.requireNonNull(lockMode, "Lock mode cannot be null");
         
         if (tableName.trim().isEmpty()) {
             throw new IllegalArgumentException("Table name cannot be empty");
@@ -71,9 +92,14 @@ public final class AlterTableAddColumnQuery implements Query<String> {
         return columnType;
     }
     
-    /** DEFAULT (instant) or COPY (background rewrite). */
+    /** DEFAULT (instant), COPY (background rewrite) or INPLACE (metadata-only). */
     public diesel.schema.AlterAlgorithm getAlgorithm() {
         return algorithm;
+    }
+    
+    /** NONE (default), SHARED (writers blocked) or EXCLUSIVE (all blocked). */
+    public diesel.schema.AlterLockMode getLockMode() {
+        return lockMode;
     }
     
     @Override
@@ -84,12 +110,13 @@ public final class AlterTableAddColumnQuery implements Query<String> {
         return tableName.equals(that.tableName) &&
                columnName.equals(that.columnName) &&
                columnType.equals(that.columnType) &&
-               algorithm == that.algorithm;
+               algorithm == that.algorithm &&
+               lockMode == that.lockMode;
     }
     
     @Override
     public int hashCode() {
-        return Objects.hash(tableName, columnName, columnType, algorithm);
+        return Objects.hash(tableName, columnName, columnType, algorithm, lockMode);
     }
     
     @Override
@@ -105,6 +132,8 @@ public final class AlterTableAddColumnQuery implements Query<String> {
                "tableName='" + tableName + '\'' +
                ", columnName='" + columnName + '\'' +
                ", columnType=" + columnType.getSimpleName() +
+               ", algorithm=" + algorithm +
+               ", lockMode=" + lockMode +
                '}';
     }
     

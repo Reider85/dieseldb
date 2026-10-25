@@ -177,3 +177,4 @@ diesel/recovery/*.java	smoke,storage
 diesel/AlterTableCopyAlgorithm.java	query,query-full,concurrency
 diesel/DualWriteCoordinator.java	query,query-full,concurrency
 diesel/AlterStatusQuery.java	smoke,query,query-full
+diesel/AlterTableDropColumnQuery.java	query,query-full

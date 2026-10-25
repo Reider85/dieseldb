@@ -404,7 +404,9 @@ none), tls.ca.path (server truststore для mTLS), tls.truststore.type
 
 - **Продакшен-каталог heap-only** — версии схем персистятся только при page-backed каталоге (тестовый режим с `setCatalogPageManager`). В проде `Database` создаёт `CatalogTable(null)` → catalog в памяти, `flush()` no-op. Включение глобального каталога отложено на после multi-page каталога (prompt 10).
 - **История версий** — персистится только счётчик + последняя схема. Полная история версий — in-memory (ограничена 32 версиями + pinned), не восстанавливается при restart.
-- **ALTER TABLE** — поддерживает только `ADD COLUMN <nullable>` (metadata-only, step 1). `NOT NULL`, `DEFAULT`, `DROP COLUMN` — шаги 2/3 + промпты 113/114.
+- **ALTER TABLE** — поддерживает `ADD COLUMN <nullable>` (metadata-only, step 1)
+  и `DROP COLUMN` (INPLACE-tombstone, step 3 — см. §19). `NOT NULL`, `DEFAULT`
+  — отложены до промптов 113/114.
 - **Per-query snapshot** — `SelectQuery.execute` пинает версию на время execute (timeout bookkeeping), но колонки читаются из `current()` (не из пиннутой версии). Строгий per-query schema snapshot (чтение строго из пиннутой версии) — шаги 2/3.
 - **Mid-execute ALTER видимость** — как сегодня (безопасность ссылок гарантируется immutable-списками в Table). MVCC на уровне схем — шаги 2/3.
 
@@ -462,9 +464,10 @@ none), tls.ca.path (server truststore для mTLS), tls.truststore.type
 - **Масштаб тестов** — acceptance-критерий «10M строк» отмасштабирован до
   20k строк (бюджет fast-сьюта; проверяются блокировка писателей и
   целостность swap, не абсолютный размер — precedent: prompt4 #37).
-- **`ALGORITHM=INPLACE` отклоняется** — синтаксис парсится, выполнение
-  отложено на R3-010 step 3 (prompt4 #39); неизвестные токены ALGORITHM →
-  syntax error.
+- **`ALGORITHM=INPLACE` выполняется** — с шага 3 (prompt4 #39) INPLACE
+  исполняется (metadata-only для ADD, tombstone для DROP); неизвестные токены
+  ALGORITHM → syntax error. Для COPY-пути токен LOCK принимается, но
+  ограничения LOCK действуют только на INPLACE-выполнение (см. §19).
 
 **Workaround:**
 - прогресс: `ALTER STATUS` (TABLE_NAME, STATE, PROGRESS_PERCENT,
@@ -478,3 +481,59 @@ none), tls.ca.path (server truststore для mTLS), tls.truststore.type
 (default: 2048), `alter.copy.batch.sleep.ms` (default: 0),
 `alter.copy.gate.timeout.ms` (default: 10000); `schema.old.version.timeout.min`
 (default: 10, наследуется из шага 1).
+## §19 Online ALTER TABLE ALGORITHM=INPLACE + LOCK (Prompt4 #39, шаг 3/3)
+
+**Ограничения текущей реализации (R3-010 step 3/3):**
+
+- **LOCK — advisory-гейты на окно statement** — `LOCK=SHARED` блокирует DML
+  (`awaitAlterWritersUnblocked` в addRow/updateRowInPlace/removeRow/markDeleted/
+  markDelete/addRowWithMVCC), `LOCK=EXCLUSIVE` дополнительно блокирует SELECT
+  (`awaitAlterReadersUnblocked` в execute/executeStreaming). Окно гейта =
+  время самой metadata-операции (микросекунды) + тестовый хук
+  `alter.inplace.hold.ms`; таймаут ожидания — `alter.copy.gate.timeout.ms`
+  (10s, по истечении `DieselException`, а не вечный hang). Писатель, уже
+  прошедший проверку до выставления гейта, завершит свою мутацию — гейт не
+  является мьютексом вокруг отдельных DML. Для `ALGORITHM=COPY` токен LOCK
+  парсится и принимается, но не влияет на исполнение (барьер шага #38 —
+  единственный регулятор).
+- **Физические ключи dropped-колонки живут до strip** — после INPLACE DROP
+  row-мапы ещё содержат ключ; `SELECT *` скрывает его через hidden-set
+  (`Table.droppedColumns`), явные проекции ведут себя как отсутствующая
+  колонка, WHERE отклоняется на парсе («Unknown column» — валидация по
+  схеме). Физический strip выполняется фоновым `compact()` (submit на
+  alter-executor после statement; vacuum/saveToFile — резерв). Strip
+  заменяет ссылки на row-мапы (не мутирует их), поэтому снапшоты читателей
+  не ломаются. Hidden-set при этом **не очищается** компактом: MVCC
+  pre-images и релоад из устаревшего файла могут ре-материализовать ключ —
+  набор защищает до пере-`ADD COLUMN` того же имени (его и очищает) или
+  закрытия таблицы; цена — один set-lookup на ключ в `SELECT *`.
+- **Формат `.table` v4** — dropped-set сериализуется последним полем; файлы
+  v1–v3 читаются (поле отсутствует → пусто), а новые v4-файлы **нечитаемы
+  старыми версиями движка** (forward compat отсутствует). Прочие файлы
+  (CSV) переписываются штатным persist-путём (`markAlterPersistDirty` +
+  flusher).
+- **DROP COLUMN с индексом** — INPLACE не поддерживается (колонка не
+  переписывается, индекс не перестроить) → fallback на `ALGORITHM=COPY` с
+  warning в ответе и в логе (WARNING); индекс снимается в finalize-окне
+  копии. Откат копии (`cancelAlter`) индекс не трогает — полный rollback.
+- **DROP запрещён для PK и clustered-колонки** — `DieselException`; ALTER
+  DROP неизвестной колонки → `ColumnNotFoundException`.
+- **INPLACE не регистрируется в ALTER STATUS** — операции инстантны и не
+  создают фоновых job'ов (как DEFAULT-ADD из шага 1); `ALTER STATUS`
+  отражает только COPY-пути.
+- **Пере-ADD колонки после DROP** — снимает пометку скрытия; новые значения
+  записываются, но старые row-мапы, ещё не stripнутые к моменту пере-ADD,
+  сохраняют прежние ключи (strip-задание, прочитавшее пустой set, пропускает
+  вырезание — семантически верно: колонка снова легальна).
+- **Масштаб тестов** — «10M строк» отмасштабирован до 20k (бюджет fast-сьюта
+  и 512m heap; проверяются metadata-стоимость и консистентность, не абсолютный
+  размер — precedent: prompt4 #37/#38). OnlineAlterTest: 2k строк + пейсинг
+  readers/writer (tight-loop вариант OOMил 512m heap на 4-ядерной машине).
+
+**Workaround / тестовые ключи:**
+- расширение окна гейта для наблюдаемости: `-Dalter.inplace.hold.ms=600`;
+- таймаут гейта: `-Dalter.copy.gate.timeout.ms` (наследуется из §18).
+
+**Ключи конфигурации (system properties):** `alter.inplace.hold.ms`
+(default: 0 — без задержки), `alter.copy.gate.timeout.ms` (default: 10000,
+общий с §18).

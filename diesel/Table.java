@@ -145,7 +145,7 @@ interface Index {
  */
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
-    private static final int CURRENT_FORMAT_VERSION = 3;
+    private static final int CURRENT_FORMAT_VERSION = 4;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final String name;
     private transient List<String> columns;
@@ -162,6 +162,37 @@ class Table implements Serializable {
      * the strict missing-value rule applies (documented in KNOWN_LIMITATIONS 18).
      */
     private transient volatile java.util.Set<String> alterAddedColumns;
+    /**
+     * Marks the table persist-dirty after an online ALTER schema swap
+     * (prompt4 #39): the data file header/schema is stale until the flusher
+     * rewrites it. Mirrors the tail of {@link #compact()}.
+     */
+    void markAlterPersistDirty() {
+        if (isPersistFileBacked()) {
+            persistDirty = true;
+            registerPendingPersist(this);
+        }
+    }
+
+    /**
+     * Marks a column dropped by ALTER TABLE ... DROP COLUMN (prompt4 #39, INPLACE
+     * tombstone). The key is still present in row maps until compact()/saveToFile
+     * physically strips it; SELECT * filters these keys via this set (the
+     * authoritative schema list {@link #columns} no longer contains them).
+     * Empty when nothing was dropped - the hot path is one volatile read.
+     */
+    private transient volatile java.util.Set<String> droppedColumns;
+    /**
+     * LOCK=SHARED/EXCLUSIVE gates (prompt4 #39): counts of active ALTER lock
+     * acquisitions. Writers wait while {@link #alterWriterGates} &gt; 0, readers
+     * while {@link #alterReaderGates} &gt; 0. Zero outside an ALTER - the hot
+     * path is one volatile read of a zero counter. Re-created in readObject
+     * like {@link #version} (transient non-final pattern).
+     */
+    private transient java.util.concurrent.atomic.AtomicInteger alterWriterGates =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private transient java.util.concurrent.atomic.AtomicInteger alterReaderGates =
+            new java.util.concurrent.atomic.AtomicInteger();
     private final String primaryKeyColumn;
     private transient List<Map<String, Object>> rows;
     private transient RowStorage storage;
@@ -536,6 +567,89 @@ class Table implements Serializable {
      */
     public Map<String, Index> getIndexes() {
         return indexes;
+    }
+
+    /**
+     * True when any index (single-column, composite member, or covering index
+     * storing the column) is keyed on the given column (prompt4 #39: an
+     * indexed column cannot be dropped INPLACE - it needs the COPY fallback).
+     */
+    boolean hasIndexOnColumn(String column) {
+        if (column == null) {
+            return false;
+        }
+        for (String key : indexes.keySet()) {
+            if (indexKeyTouchesColumn(key, column)) {
+                return true;
+            }
+        }
+        for (Map.Entry<String, List<String>> entry : coverColumnDefinitions.entrySet()) {
+            if (entry.getValue() != null) {
+                for (String cover : entry.getValue()) {
+                    if (cover.equalsIgnoreCase(column)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Removes every index keyed on (or covering) the given column and returns
+     * the removed index keys (prompt4 #39: DROP COLUMN). Caller must hold the
+     * table write lock. The keys are also cleared from the definition maps, so
+     * persistence and rebuilds skip them.
+     */
+    List<String> dropIndexesForColumn(String column) {
+        List<String> removed = new ArrayList<>();
+        java.util.Iterator<String> it = indexes.keySet().iterator();
+        while (it.hasNext()) {
+            String key = it.next();
+            if (indexKeyTouchesColumn(key, column) || indexCoversColumn(key, column)) {
+                it.remove();
+                indexDefinitions.remove(key);
+                coverColumnDefinitions.remove(key);
+                removed.add(key);
+            }
+        }
+        // Defensive: definitions without a live index entry must not resurrect.
+        indexDefinitions.keySet().removeIf(key ->
+                indexKeyTouchesColumn(key, column) || indexCoversColumn(key, column));
+        if (!removed.isEmpty()) {
+            LOGGER.log(Level.INFO, "Dropped index(es) {0} on column {1} of table {2} (DROP COLUMN)",
+                    new Object[]{removed, column, name});
+        }
+        return removed;
+    }
+
+    /** True when the index key names the column outright or as a composite member. */
+    private static boolean indexKeyTouchesColumn(String indexKey, String column) {
+        if (indexKey.equalsIgnoreCase(column)) {
+            return true;
+        }
+        if (indexKey.indexOf('+') >= 0) {
+            for (String part : indexKey.split("\\+")) {
+                if (part.trim().equalsIgnoreCase(column)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** True when a covering index stores the column's values. */
+    private boolean indexCoversColumn(String indexKey, String column) {
+        List<String> covers = coverColumnDefinitions.get(indexKey);
+        if (covers == null) {
+            return false;
+        }
+        for (String cover : covers) {
+            if (cover.equalsIgnoreCase(column)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -986,19 +1100,23 @@ class Table implements Serializable {
         return schemaVersions;
     }
 
-    /**
-     * Applies a schema change to this table (step 1: ADD COLUMN only).
-     * Must be called under tableLock.writeLock().
+/**
+     * Applies a schema change to this table: ADD COLUMN (steps 1-2) or
+     * DROP COLUMN (step 3, prompt4 #39). The direction is inferred from the
+     * column-count delta (+1 add, -1 drop). Must be called under
+     * tableLock.writeLock().
      * 
-     * @param newColumns Updated column list (must be current + exactly one new column)
-     * @param newTypes Updated column type mapping (must be current + exactly one new type)
+     * @param newColumns Updated column list (current + exactly one column, or current - one)
+     * @param newTypes Updated type mapping (must cover every column in newColumns)
      * @param description Description of the change
      * @throws IllegalArgumentException if validation fails
      */
     public void applySchemaChange(List<String> newColumns, Map<String, Class<?>> newTypes, 
                                  String description) {
-        // Validation for step 1: ADD COLUMN only (shared with ALGORITHM=COPY pre-check)
-        String newColumn = validateSchemaChange(columns, primaryKeyColumn, newColumns, newTypes);
+        boolean isDrop = newColumns.size() < columns.size();
+        // Validation: ADD = current + exactly one new column; DROP = current - exactly one
+        // (shared with ALGORITHM=COPY pre-check and finalize).
+        String changedColumn = validateSchemaChange(columns, primaryKeyColumn, newColumns, newTypes);
         
         // Replace columns and columnTypes with new immutable references
         this.columns = Collections.unmodifiableList(new ArrayList<>(newColumns));
@@ -1006,27 +1124,44 @@ class Table implements Serializable {
         newTypeMap.putAll(newTypes);
         this.columnTypes = Collections.unmodifiableMap(newTypeMap);
         
-        // INSERT statements may omit the added column (fills null)
-        markAlterAddedColumn(newColumn);
+        if (isDrop) {
+            // Row maps keep the key until compact()/saveToFile strips it; the
+            // hidden set keeps SELECT * from exposing it (prompt4 #39).
+            markDroppedColumn(changedColumn);
+        } else {
+            // INSERT statements may omit the added column (fills null)
+            markAlterAddedColumn(changedColumn);
+        }
         
         // Create new schema version
         getSchemaVersions().createNewVersion(newColumns, newTypes, description);
     }
-
+    
     /**
-     * Validates an ADD COLUMN schema change (current + exactly one new column,
-     * type mapping present, primary key preserved). Shared by the
-     * metadata-only path, the ALGORITHM=COPY pre-check and the COPY finalize.
+     * Validates an ALTER TABLE schema change: ADD COLUMN (current + exactly one
+     * new column) or DROP COLUMN (current - exactly one column, prompt4 #39).
+     * Type mapping must cover every remaining/added column and the primary key
+     * must be preserved. Shared by the metadata-only paths, the
+     * ALGORITHM=COPY pre-check and the COPY finalize.
      *
-     * @return the name of the added column
+     * @return the name of the added (add path) or dropped (drop path) column
      * @throws IllegalArgumentException if validation fails
      */
     static String validateSchemaChange(List<String> currentColumns, String primaryKeyColumn,
                                        List<String> newColumns, Map<String, Class<?>> newTypes) {
-        if (newColumns.size() != currentColumns.size() + 1) {
-            throw new IllegalArgumentException("Step 1 only supports ADD COLUMN: new columns must be current + exactly one new column");
+        if (newColumns.size() == currentColumns.size() + 1) {
+            return validateAddColumnChange(currentColumns, primaryKeyColumn, newColumns, newTypes);
         }
-        
+        if (newColumns.size() == currentColumns.size() - 1) {
+            return validateDropColumnChange(currentColumns, primaryKeyColumn, newColumns, newTypes);
+        }
+        throw new IllegalArgumentException(
+                "Schema change must add or drop exactly one column: current="
+                + currentColumns.size() + " new=" + newColumns.size());
+    }
+
+    private static String validateAddColumnChange(List<String> currentColumns, String primaryKeyColumn,
+                                                  List<String> newColumns, Map<String, Class<?>> newTypes) {
         // Validate new column is not a duplicate
         String newColumn = null;
         for (String col : newColumns) {
@@ -1053,6 +1188,35 @@ class Table implements Serializable {
         return newColumn;
     }
 
+    private static String validateDropColumnChange(List<String> currentColumns, String primaryKeyColumn,
+                                                   List<String> newColumns, Map<String, Class<?>> newTypes) {
+        // Exactly one column must be missing from the new list.
+        String dropped = null;
+        for (String col : currentColumns) {
+            if (!newColumns.contains(col)) {
+                if (dropped != null) {
+                    throw new IllegalArgumentException(
+                            "DROP COLUMN must remove exactly one column: " + dropped + ", " + col);
+                }
+                dropped = col;
+            }
+        }
+        if (dropped == null) {
+            throw new IllegalArgumentException(
+                    "New column list must be missing exactly one column of the current schema");
+        }
+        if (dropped.equalsIgnoreCase(primaryKeyColumn)) {
+            throw new IllegalArgumentException("Primary key column cannot be removed: " + dropped);
+        }
+        // Every remaining column must keep its type mapping.
+        for (String col : newColumns) {
+            if (!newTypes.containsKey(col)) {
+                throw new IllegalArgumentException("Column type mapping missing for: " + col);
+            }
+        }
+        return dropped;
+    }
+
     // ─── Online ALTER COPY support (prompt4 #38) ───────────────────────
 
     /**
@@ -1069,12 +1233,132 @@ class Table implements Serializable {
             }
         }
         alterAddedColumns.add(column);
+        // Re-adding a previously dropped column unhides it immediately
+        // (prompt4 #39): the name may now appear in row maps again.
+        clearDroppedColumn(column);
     }
 
     /** True when the column was added by ALTER TABLE (nullable, may be omitted on INSERT). */
     boolean isAlterAddedColumn(String column) {
         java.util.Set<String> added = alterAddedColumns;
         return added != null && added.contains(column);
+    }
+
+    /**
+     * Registers a column dropped by ALTER TABLE ... DROP COLUMN (prompt4 #39):
+     * the key stays in row maps until physical strip, but is hidden from
+     * SELECT * via {@link #isDroppedColumn}. Lazy init like
+     * {@link #markAlterAddedColumn} (null = nothing dropped).
+     */
+    void markDroppedColumn(String column) {
+        if (droppedColumns == null) {
+            synchronized (this) {
+                if (droppedColumns == null) {
+                    droppedColumns = ConcurrentHashMap.newKeySet();
+                }
+            }
+        }
+        droppedColumns.add(column);
+    }
+
+    /** True when the column key is still present in row maps but hidden from SELECT *. */
+    boolean isDroppedColumn(String column) {
+        java.util.Set<String> dropped = droppedColumns;
+        return dropped != null && dropped.contains(column);
+    }
+
+    /** The hidden-but-still-materialized column keys, or null when none (SELECT * fast path). */
+    java.util.Set<String> getDroppedColumns() {
+        return droppedColumns;
+    }
+
+    /** Removes a column from the hidden set after its keys were physically stripped. */
+    void clearDroppedColumn(String column) {
+        java.util.Set<String> dropped = droppedColumns;
+        if (dropped != null) {
+            dropped.remove(column);
+        }
+    }
+
+    // ─── ALTER LOCK gates (prompt4 #39) ────────────────────────────────
+
+    /**
+     * Arms the LOCK gates for an online ALTER on this table: SHARED blocks
+     * writers, EXCLUSIVE blocks writers and readers while the ALTER holds the
+     * gates. NONE is a no-op (the swap's intrinsic write lock is enough).
+     * The window is typically microseconds (metadata-only operations).
+     */
+    void beginAlterGate(diesel.schema.AlterLockMode mode) {
+        if (mode == null || mode == diesel.schema.AlterLockMode.NONE) {
+            return;
+        }
+        alterWriterGates.incrementAndGet();
+        if (mode == diesel.schema.AlterLockMode.EXCLUSIVE) {
+            alterReaderGates.incrementAndGet();
+        }
+    }
+
+    /** Releases the gates armed by {@link #beginAlterGate}. */
+    void endAlterGate(diesel.schema.AlterLockMode mode) {
+        if (mode == null || mode == diesel.schema.AlterLockMode.NONE) {
+            return;
+        }
+        if (mode == diesel.schema.AlterLockMode.EXCLUSIVE) {
+            alterReaderGates.decrementAndGet();
+        }
+        alterWriterGates.decrementAndGet();
+    }
+
+    /** True while any LOCK gate is armed (test observability, prompt4 #39). */
+    boolean isAlterGateArmed() {
+        return alterWriterGates.get() > 0 || alterReaderGates.get() > 0;
+    }
+
+    /**
+     * Waits while an active LOCK=SHARED/EXCLUSIVE ALTER holds the writer gate
+     * (called at DML entry points). Fast path: one volatile read when no gate
+     * is armed. Times out after alter.copy.gate.timeout.ms (default 10s) so a
+     * wedged ALTER can never hang writers forever.
+     *
+     * @throws DieselException on timeout
+     */
+    void awaitAlterWritersUnblocked() {
+        if (alterWriterGates.get() == 0) {
+            return;
+        }
+        long deadline = System.nanoTime() + alterGateTimeoutNanos();
+        while (alterWriterGates.get() > 0) {
+            if (System.nanoTime() - deadline > 0) {
+                throw new DieselException(
+                        "Timed out waiting for ALTER LOCK=SHARED/EXCLUSIVE to release on table " + name);
+            }
+            java.util.concurrent.locks.LockSupport.parkNanos(50_000L);
+        }
+    }
+
+    /**
+     * Waits while an active LOCK=EXCLUSIVE ALTER holds the reader gate (called
+     * at SELECT entry). Same fast path and timeout as
+     * {@link #awaitAlterWritersUnblocked}.
+     *
+     * @throws DieselException on timeout
+     */
+    void awaitAlterReadersUnblocked() {
+        if (alterReaderGates.get() == 0) {
+            return;
+        }
+        long deadline = System.nanoTime() + alterGateTimeoutNanos();
+        while (alterReaderGates.get() > 0) {
+            if (System.nanoTime() - deadline > 0) {
+                throw new DieselException(
+                        "Timed out waiting for ALTER LOCK=EXCLUSIVE to release on table " + name);
+            }
+            java.util.concurrent.locks.LockSupport.parkNanos(50_000L);
+        }
+    }
+
+    private static long alterGateTimeoutNanos() {
+        return Long.getLong("alter.copy.gate.timeout.ms", 10_000L) * 1_000_000L;
     }
 
     /** True while an ALGORITHM=COPY journal is attached to this table. */
@@ -1105,6 +1389,37 @@ class Table implements Serializable {
     }
 
     /**
+     * Variant for an ALGORITHM=COPY DROP COLUMN (prompt4 #39): the shadow also
+     * remembers which keys to strip from baseline copies and replayed journal
+     * rows, so the installed state carries no dropped-column keys.
+     */
+    static Table forAlterShadow(Database database, String name, List<String> columns,
+                                Map<String, Class<?>> columnTypes, String primaryKeyColumn,
+                                java.util.Set<String> stripColumns) {
+        Table shadow = forAlterShadow(database, name, columns, columnTypes, primaryKeyColumn);
+        shadow.alterStripColumns = stripColumns;
+        return shadow;
+    }
+
+    /**
+     * Keys stripped from row maps copied/replayed into this shadow during an
+     * ALGORITHM=COPY DROP COLUMN; null on every other table (hot path).
+     */
+    private transient java.util.Set<String> alterStripColumns;
+
+    /** Strips a copy of the given row from this shadow's dropped-column keys. */
+    private Map<String, Object> alterStripRow(Map<String, Object> row) {
+        Map<String, Object> copy = new HashMap<>(row);
+        java.util.Set<String> strip = alterStripColumns;
+        if (strip != null) {
+            for (String c : strip) {
+                copy.remove(c);
+            }
+        }
+        return copy;
+    }
+
+    /**
      * Captures the baseline for an ALTER COPY (caller holds the table write
      * lock with writers quiesced): shallow row references plus copies of the
      * MVCC/tombstone structures. Row maps are deep-copied by the background
@@ -1125,9 +1440,12 @@ class Table implements Serializable {
         return rows.size();
     }
 
-    /** Deep-copies one baseline row into its own map (background copy loop). */
+    /**
+     * Deep-copies one baseline row into its own map (background copy loop),
+     * stripping dropped-column keys when the shadow was built for a DROP.
+     */
     void alterDeepCopyRowAt(int index) {
-        rows.set(index, new HashMap<>(rows.get(index)));
+        rows.set(index, alterStripRow(rows.get(index)));
     }
 
     /** Appends a journaled INSERT position into the shadow row list. */
@@ -1139,10 +1457,12 @@ class Table implements Serializable {
     /**
      * Replays one journal event onto the shadow table. The shadow has no
      * coordinator attached, so every called mutation runs its ungated path.
+     * Rows carried by events are copied before use: the event references the
+     * live table's maps, which must stay untouched until the swap.
      */
     void applyAlterEvent(DualWriteCoordinator.Event event) {
         if (event instanceof DualWriteCoordinator.InsertEvent e) {
-            alterInsertRaw(e.index(), e.row());
+            alterInsertRaw(e.index(), alterStripRow(e.row()));
             if (e.meta() != null) {
                 setRowVersionMeta(e.index(), e.meta());
                 if (e.meta().hasUncommittedChanges()) {
@@ -1150,8 +1470,13 @@ class Table implements Serializable {
                 }
             }
         } else if (event instanceof DualWriteCoordinator.UpdateEvent e) {
-            rows.set(e.index(), e.row());
+            rows.set(e.index(), alterStripRow(e.row()));
         } else if (event instanceof DualWriteCoordinator.DeleteEvent e) {
+            // Pre-images are deliberately NOT stripped: RowVersionMeta objects
+            // are shared with the live table (shallow rowVersions copy), so a
+            // stripped image would corrupt the old schema if the copy rolls
+            // back. The dropped-column hidden set keeps such images invisible
+            // to SELECT * after the swap instead (prompt4 #39).
             markDelete(e.index(), e.txid(), e.preImage());
         } else if (event instanceof DualWriteCoordinator.TombstoneEvent e) {
             markDeleted(e.index());
@@ -1293,6 +1618,7 @@ class Table implements Serializable {
      *                 applied the mutations)
      */
     public void updateRowInPlace(int rowIndex, Map<String, Object> row) {
+        awaitAlterWritersUnblocked();
         DualWriteCoordinator coordinator = dualWrite;
         DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
         DualWriteCoordinator.Event event = null;
@@ -1753,6 +2079,7 @@ class Table implements Serializable {
         if (rowIndex < 0 || rowIndex >= rows.size()) {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
+        awaitAlterWritersUnblocked();
         DualWriteCoordinator coordinator = dualWrite;
         DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(true) : null;
         DualWriteCoordinator.Event event = null;
@@ -1788,6 +2115,7 @@ class Table implements Serializable {
         if (rowIndex < 0 || rowIndex >= rows.size()) {
             throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds for table " + name);
         }
+        awaitAlterWritersUnblocked();
         DualWriteCoordinator coordinator = dualWrite;
         DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
         DualWriteCoordinator.Event event = null;
@@ -1902,15 +2230,35 @@ class Table implements Serializable {
                 return;
             }
             int deleted = getDeletedCount();
-            if (deleted == 0) {
+            // Prompt4 #39: strip physically dropped (tombstoned) column keys even
+            // when no row tombstones exist - DROP COLUMN INPLACE defers the
+            // physical removal to this method (vacuum/saveToFile call sites).
+            java.util.Set<String> dropped = droppedColumns;
+            boolean stripDropped = dropped != null && !dropped.isEmpty();
+            if (deleted == 0 && !stripDropped) {
                 return;
             }
 
             List<Map<String, Object>> source = (storage != null) ? storage.scan() : rows;
             List<Map<String, Object>> newRows = new ArrayList<>(source.size() - deleted);
             for (int i = 0; i < source.size(); i++) {
-                if (!isDeleted(i)) {
-                    newRows.add(source.get(i));
+                if (isDeleted(i)) {
+                    continue;
+                }
+                Map<String, Object> row = source.get(i);
+                if (stripDropped) {
+                    // Replace the map reference instead of mutating in place:
+                    // concurrent readers hold snapshots of the OLD references
+                    // (getLiveRows), and mutating a map they iterate would CME.
+                    // Old-reference readers keep their consistent old view
+                    // (their dropped-filter hides it anyway post-swap).
+                    Map<String, Object> stripped = new HashMap<>(row);
+                    for (String c : dropped) {
+                        stripped.remove(c);
+                    }
+                    newRows.add(stripped);
+                } else {
+                    newRows.add(row);
                 }
             }
 
@@ -1953,6 +2301,11 @@ class Table implements Serializable {
                 persistDirty = true;
                 registerPendingPersist(this);
             }
+            // Note (prompt4 #39): the dropped-column hidden set is deliberately
+            // NOT cleared here - MVCC pre-images and stale-storage reloads can
+            // re-materialize stripped keys later; the set keeps SELECT * honest
+            // until the column name is re-ADDed (which clears it) or the table
+            // closes. Cost: one small set lookup per SELECT * key.
 
             LOGGER.log(Level.INFO, "Compacted table {0}: removed {1} tombstones, {2} live rows remain",
                     new Object[]{name, deleted, rows.size()});
@@ -2047,6 +2400,7 @@ class Table implements Serializable {
      *                 caller while it still holds the row lock)
      */
     public void markDelete(int rowIndex, long txid, Map<String, Object> preImage) {
+        awaitAlterWritersUnblocked();
         DualWriteCoordinator coordinator = dualWrite;
         DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(false) : null;
         DualWriteCoordinator.Event event = null;
@@ -2457,6 +2811,12 @@ class Table implements Serializable {
             oos.writeObject(clusterBytes);
             oos.writeLong(computeChecksum(clusteredIndex));
         }
+        // Format v4: columns dropped by ALTER TABLE ... DROP COLUMN (prompt4 #39).
+        // Always written last; readers of older files (formatVersion < 4) skip it.
+        java.util.Set<String> dropped = droppedColumns;
+        oos.writeObject(dropped == null || dropped.isEmpty()
+                ? java.util.Collections.emptySet()
+                : new java.util.HashSet<>(dropped));
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
@@ -2556,9 +2916,22 @@ class Table implements Serializable {
                     "No secondary index definitions found for table {0} during deserialization",
                     name);
         }
+        // Format v4+: hidden dropped-column keys still materialized in row maps
+        // (prompt4 #39). Older files carry no such keys (set stays null).
+        if (formatVersion >= 4) {
+            @SuppressWarnings("unchecked")
+            java.util.Set<String> readDropped = (java.util.Set<String>) ois.readObject();
+            if (readDropped != null && !readDropped.isEmpty()) {
+                java.util.Set<String> active = ConcurrentHashMap.newKeySet();
+                active.addAll(readDropped);
+                this.droppedColumns = active;
+            }
+        }
         this.database = null;
         this.statsLock = new Object();
         this.version = new AtomicLong(0);
+        this.alterWriterGates = new java.util.concurrent.atomic.AtomicInteger();
+        this.alterReaderGates = new java.util.concurrent.atomic.AtomicInteger();
         // Restore statistics: old serialized files carry zeroed stats fields.
         
         // Initialize schema versions with loaded schema as version 1
@@ -2589,6 +2962,7 @@ class Table implements Serializable {
      * @throws IllegalStateException    if a unique/clustered key is duplicated
      */
     public void addRow(Map<String, Object> row) {
+        awaitAlterWritersUnblocked();
         DualWriteCoordinator coordinator = dualWrite;
         DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(true) : null;
         DualWriteCoordinator.Event event = null;
@@ -2667,6 +3041,7 @@ class Table implements Serializable {
      * @throws IllegalStateException if a unique constraint is violated
      */
     public int addRowWithMVCC(Map<String, Object> row, long txid) {
+        awaitAlterWritersUnblocked();
         DualWriteCoordinator coordinator = dualWrite;
         DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(true) : null;
         DualWriteCoordinator.Event event = null;
@@ -3809,7 +4184,10 @@ class Table implements Serializable {
         flushPendingPersist(tableName);
         tableLock.writeLock().lock();
         try {
-            if (getDeletedCount() > 0) {
+            // Compaction also physically strips dropped-column keys (prompt4 #39),
+            // so a .table written after an INPLACE DROP carries clean row maps.
+            java.util.Set<String> dropped = droppedColumns;
+            if (getDeletedCount() > 0 || (dropped != null && !dropped.isEmpty())) {
                 compact();
             }
             String fileName = resolveFilePath(tableName, ErrorMessages.TABLE_EXTENSION);

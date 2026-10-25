@@ -264,10 +264,16 @@ public class SchemaVersionTest {
             database.executeQuery("ALTER TABLE " + TEST_TABLE + " ADD COLUMN AGE INTEGER NOT NULL", null);
         });
         
-        // Error: DROP COLUMN (not supported yet)
-        assertThrows(diesel.SyntaxErrorException.class, () -> {
-            database.executeQuery("ALTER TABLE " + TEST_TABLE + " DROP COLUMN NAME", null);
+        // Error: DROP COLUMN is supported since prompt4 #39 (INPLACE tombstone),
+        // so the error paths are the schema guards: unknown column, PK column.
+        assertThrows(diesel.ColumnNotFoundException.class, () -> {
+            database.executeQuery("ALTER TABLE " + TEST_TABLE + " DROP COLUMN NOPE", null);
         });
+        assertThrows(DieselException.class, () -> {
+            database.executeQuery("ALTER TABLE " + TEST_TABLE + " DROP COLUMN ID", null);
+        });
+        // The real column still exists after the failed attempts
+        assertTrue(database.getTable(TEST_TABLE).getColumns().contains("NAME"));
         
         // Verify ALTER USER still routes to the user path (regression test):
         // parse succeeds and execution reaches UserStore -> unknown user error

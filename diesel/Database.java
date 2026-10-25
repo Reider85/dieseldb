@@ -930,7 +930,9 @@ class Database {
             parsedQuery instanceof RevokePrivilegeQuery || parsedQuery instanceof AlterUserQuery) {
             return Privilege.Action.ADMIN;
         }
-        if (parsedQuery instanceof AlterTableAddColumnQuery || parsedQuery instanceof AlterStatusQuery) {
+        if (parsedQuery instanceof AlterTableAddColumnQuery
+                || parsedQuery instanceof AlterTableDropColumnQuery
+                || parsedQuery instanceof AlterStatusQuery) {
             return Privilege.Action.ALTER;
         }
         return Privilege.Action.SELECT; // Default for unknown query types
@@ -1226,6 +1228,9 @@ class Database {
         }
         if (parsedQuery instanceof AlterTableAddColumnQuery q) {
             return executeAlterTableAddColumn(q);
+        }
+        if (parsedQuery instanceof AlterTableDropColumnQuery q) {
+            return executeAlterTableDropColumn(q);
         }
         if (parsedQuery instanceof AlterStatusQuery) {
             return executeAlterStatus();
@@ -1822,21 +1827,49 @@ class Database {
         Map<String, Class<?>> newTypes = new HashMap<>(currentTypes);
         newTypes.put(alterQuery.getColumnName(), alterQuery.getColumnType());
         
-        // Apply schema change under write lock
-        table.getTableLock().writeLock().lock();
+        // LOCK gates (prompt4 #39): SHARED blocks writers, EXCLUSIVE also blocks
+        // readers for the duration of the metadata swap (microseconds; the
+        // alter.inplace.hold.ms test hook widens the window for observability).
+        diesel.schema.AlterLockMode lockMode = alterQuery.getLockMode();
+        table.beginAlterGate(lockMode);
         try {
-            table.applySchemaChange(newColumns, newTypes, 
-                "ADD COLUMN " + alterQuery.getColumnName() + " " + alterQuery.getColumnType().getSimpleName());
-            
-            // Publish the new schema version to the catalog
-            publishAlterCatalog(tableName, table);
-            
-            // Invalidate query cache (DDL contract)
-            queryCache.invalidateAll();
-            
-            return "Table altered successfully: added column " + alterQuery.getColumnName();
+            holdInplaceGateWindow();
+            // Apply schema change under write lock
+            table.getTableLock().writeLock().lock();
+            try {
+                table.applySchemaChange(newColumns, newTypes, 
+                    "ADD COLUMN " + alterQuery.getColumnName() + " " + alterQuery.getColumnType().getSimpleName());
+                
+                // Publish the new schema version to the catalog
+                publishAlterCatalog(tableName, table);
+                
+                // Invalidate query cache (DDL contract)
+                queryCache.invalidateAll();
+                
+                return "Table altered successfully: added column " + alterQuery.getColumnName();
+            } finally {
+                table.getTableLock().writeLock().unlock();
+            }
         } finally {
-            table.getTableLock().writeLock().unlock();
+            table.endAlterGate(lockMode);
+        }
+    }
+
+    /**
+     * Test hook (prompt4 #39): when the {@code alter.inplace.hold.ms} system
+     * property is set, an INPLACE ALTER holds its LOCK gates that long before
+     * the swap - tests observe writer/reader blocking deterministically.
+     * Default 0 (no delay).
+     */
+    private static void holdInplaceGateWindow() {
+        int holdMs = Integer.getInteger("alter.inplace.hold.ms", 0);
+        if (holdMs > 0) {
+            try {
+                Thread.sleep(holdMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new DieselException("ALTER interrupted while holding LOCK gates");
+            }
         }
     }
 
@@ -1863,6 +1896,132 @@ class Database {
         }
         return "Table alter (ALGORITHM=COPY) started: adding column "
                 + alterQuery.getColumnName() + " to " + tableName;
+    }
+
+    /**
+     * Executes {@code ALTER TABLE ... DROP COLUMN} (prompt4 #39, R3-010 step 3).
+     *
+     * <p>INPLACE (the default for DROP): metadata swap under LOCK gates - the
+     * column leaves the schema immediately, its keys stay in row maps until a
+     * background strip (compact). COPY: background rewrite via
+     * {@link AlterTableCopyAlgorithm} with key stripping and index removal at
+     * swap time. Requested INPLACE for an indexed column falls back to COPY
+     * with a warning (task 5 of the prompt).
+     */
+    private Object executeAlterTableDropColumn(AlterTableDropColumnQuery query) {
+        String tableName = query.getTableName();
+        // getTable throws TableNotFoundException for unknown tables (engine-wide convention)
+        Table table = getTable(tableName);
+        if (activeAlters.containsKey(tableName)) {
+            throw new DieselException("ALTER COPY already in progress on table " + tableName);
+        }
+
+        List<String> currentColumns = table.getColumns();
+        String column = currentColumns.stream()
+                .filter(c -> c.equalsIgnoreCase(query.getColumnName()))
+                .findFirst()
+                .orElseThrow(() -> new ColumnNotFoundException(
+                        ErrorMessages.COLUMN_PREFIX + query.getColumnName() + ErrorMessages.DOES_NOT_EXIST));
+        String pk = table.getPrimaryKeyColumn();
+        if (pk != null && pk.equalsIgnoreCase(column)) {
+            throw new DieselException("Primary key column cannot be dropped: " + column);
+        }
+        if (table.hasClusteredIndex() && table.getClusteredIndexColumn() != null
+                && table.getClusteredIndexColumn().equalsIgnoreCase(column)) {
+            throw new DieselException("Clustered index column cannot be dropped: " + column);
+        }
+
+        List<String> newColumns = new ArrayList<>(currentColumns);
+        newColumns.removeIf(c -> c.equalsIgnoreCase(column));
+        Map<String, Class<?>> newTypes = new HashMap<>(table.getColumnTypes());
+        newTypes.remove(column);
+
+        boolean fallback = false;
+        if (query.getAlgorithm() == diesel.schema.AlterAlgorithm.INPLACE
+                && table.hasIndexOnColumn(column)) {
+            // INPLACE never rewrites rows, so an index on the removed column
+            // could not be rebuilt or kept valid - fall back to COPY (task 5).
+            fallback = true;
+            LOGGER.log(Level.WARNING,
+                    "ALGORITHM=INPLACE not supported for indexed column {0} on {1};"
+                    + " falling back to ALGORITHM=COPY",
+                    new Object[]{column, tableName});
+        }
+
+        if (query.getAlgorithm() == diesel.schema.AlterAlgorithm.COPY || fallback) {
+            Object started = executeAlterTableCopyDrop(table, query, column, newColumns, newTypes);
+            if (fallback) {
+                return "Warning: ALGORITHM=INPLACE is not supported for indexed column "
+                        + column + "; fell back to ALGORITHM=COPY. " + started;
+            }
+            return started;
+        }
+
+        // INPLACE path: metadata swap under LOCK gates (microsecond window),
+        // then the physical strip runs on the background alter executor.
+        diesel.schema.AlterLockMode lockMode = query.getLockMode();
+        table.beginAlterGate(lockMode);
+        try {
+            holdInplaceGateWindow();
+            table.getTableLock().writeLock().lock();
+            try {
+                table.applySchemaChange(newColumns, newTypes, "DROP COLUMN " + column);
+                publishAlterCatalog(tableName, table);
+                queryCache.invalidateAll();
+                table.markAlterPersistDirty();
+            } finally {
+                table.getTableLock().writeLock().unlock();
+            }
+        } finally {
+            table.endAlterGate(lockMode);
+        }
+        scheduleDropColumnStrip(table);
+        return "Table altered successfully: dropped column " + column;
+    }
+
+    /**
+     * Starts the background ALGORITHM=COPY rewrite for a DROP COLUMN
+     * (prompt4 #39): the shadow strips the column's keys, the column's indexes
+     * are removed at swap time (so a rollback restores everything untouched).
+     */
+    private Object executeAlterTableCopyDrop(Table table, AlterTableDropColumnQuery query,
+                                             String column, List<String> newColumns,
+                                             Map<String, Class<?>> newTypes) {
+        String tableName = query.getTableName();
+        AlterTableCopyAlgorithm algorithm = new AlterTableCopyAlgorithm(this, table, newColumns, newTypes,
+                "DROP COLUMN " + column, column);
+        activeAlters.put(tableName, algorithm);
+        try {
+            algorithm.start(getAlterCopyExecutor());
+        } catch (RuntimeException e) {
+            activeAlters.remove(tableName, algorithm);
+            throw e;
+        }
+        return "Table alter (ALGORITHM=COPY) started: dropping column "
+                + column + " from " + tableName;
+    }
+
+    /**
+     * Schedules the physical strip of dropped-column keys after an INPLACE
+     * DROP COLUMN (prompt4 #39). compact() skips (deferring to vacuum) while
+     * MVCC/tombstones are in flight; a shutdown executor just leaves the strip
+     * to the next vacuum pass or saveToFile compaction.
+     */
+    private void scheduleDropColumnStrip(Table table) {
+        try {
+            getAlterCopyExecutor().submit(() -> {
+                try {
+                    table.compact();
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.WARNING,
+                            "Background DROP COLUMN strip failed for table {0}; vacuum will retry",
+                            new Object[]{table.getName(), e});
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            LOGGER.log(Level.FINE,
+                    "DROP COLUMN strip not scheduled (executor shut down): {0}", table.getName());
+        }
     }
 
     /** Single daemon worker for background online-ALTER copies. */
