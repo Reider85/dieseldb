@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import diesel.TestWaitHelper;
 
 import java.io.BufferedOutputStream;
@@ -532,6 +533,8 @@ class JsonlStorageAdvancedTest {
     }
 
     @LargeTest
+    @Tag("flaky")
+    @EnabledIfSystemProperty(named = "diesel.runFlaky", matches = "true")
     @Timeout(value = 8, unit = TimeUnit.MINUTES)
     void benchmarkOneMillionRowsCsvVsJsonlVsJsonlZstd() throws Exception {
         long ceiling = ceilingMs();

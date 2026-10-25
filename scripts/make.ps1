@@ -47,7 +47,13 @@ function Invoke-ProfileTests {
 
         [string[]]$ExtraArgs = @(),
 
-        [switch]$Clean
+        [switch]$Clean,
+
+        # Continue on a red run instead of exiting: record the failure in
+        # $script:ProfileTestFailures so the caller can run the remaining
+        # invocations and aggregate (used by test-flaky  - a red quarantined
+        # flake must not prevent the other quarantined tests from running).
+        [switch]$ContinueOnError
     )
 
     $mvnArgs = @("-B")
@@ -75,8 +81,15 @@ function Invoke-ProfileTests {
 
     Invoke-Native -FilePath $mvnPs -Arguments $mvnArgs
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Test run failed: $label (exit $LASTEXITCODE)."
-        exit 1
+        if ($ContinueOnError) {
+            # NB: Write-Warning, not Write-Error  - $ErrorActionPreference is
+            # "Stop" here, so Write-Error would abort the whole script.
+            Write-Warning "Test run failed (continuing): $label (exit $LASTEXITCODE)."
+            $script:ProfileTestFailures += $label
+        } else {
+            Write-Error "Test run failed: $label (exit $LASTEXITCODE)."
+            exit 1
+        }
     }
 
     Assert-TestsRan -StartedAt $startedAt -Target $label
@@ -171,6 +184,32 @@ switch ($Target) {
     }
     "large-test" {
         Invoke-ProfileTests -Profile "large"
+    }
+    "test-flaky" {
+        # TESTS-5 quarantine opt-in: three invocations, together all 4 tests,
+        # ordered so the load-sensitive assertions run first on a settled machine
+        # (NO clean  - a full recompile right before the p99 test measured 42ms;
+        # after FlusherTest's 50k-row writes in the same fork it was 105ms).
+        # Continue-on-error: a red quarantined flake does NOT stop the remaining
+        # invocations; the exit code aggregates at the end (red = the signal).
+        $script:ProfileTestFailures = @()
+        Invoke-ProfileTests -Profile "flaky" -ExtraArgs @("-Dtest=GroupCommitThroughputTest") -ContinueOnError
+        if ($script:ProfileTestFailures.Count -gt 0) {
+            # ONE isolated retry with cooldown  - AGENTS.md Known-Flakes protocol.
+            # The retry replaces the first attempt's record (same label).
+            Write-Host "1/3 red  - one isolated retry after 10s cooldown (Known-Flakes protocol)..."
+            Start-Sleep -Seconds 10
+            $script:ProfileTestFailures = @()
+            Invoke-ProfileTests -Profile "flaky" -ExtraArgs @("-Dtest=GroupCommitThroughputTest") -ContinueOnError
+        }
+        Invoke-ProfileTests -Profile "flaky-jsonl" -ContinueOnError
+        Invoke-ProfileTests -Profile "flaky" -ExtraArgs @("-Dtest=FlusherTest") -ContinueOnError
+        if ($script:ProfileTestFailures.Count -gt 0) {
+            $failed = ($script:ProfileTestFailures | Select-Object -Unique) -join "; "
+            Write-Error ("test-flaky: RED  - {0} invocation(s) failed in opt-in mode. A red quarantined flake is the signal (investigate, do NOT re-run until green); gates stay green either way. Failed: {1}" -f $script:ProfileTestFailures.Count, $failed)
+            exit 1
+        }
+        Write-Host "test-flaky: all 4 quarantined tests ran, all green." -ForegroundColor Green
     }
     "all-tests" {
         Write-Host "Running ALL profiles sequentially (release gate)..."
@@ -308,6 +347,7 @@ switch ($Target) {
         Write-Host "Targets:"
         Write-Host "  build, compile, test, test-incr, test-one, test-core"
         Write-Host "  test-network, test-concurrency, test-perf, large-test"
+        Write-Host "  test-flaky (quarantined flakes, opt-in)"
         Write-Host "  all-tests, timing, compare-timing, tia, tia-run"
         Write-Host "  changelog, release, release-local, sync-version"
         Write-Host "  clean, clean-test-cache, clean-cache"

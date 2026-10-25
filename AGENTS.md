@@ -31,6 +31,7 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
    | New feature, query logic, bugfix | `make test` | `make timing` |
    | JOIN, hash join, performance, schema change | `make test` | `make timing` + `make check-profile` |
    | WAL / MVCC / recovery / checkpoint / storage-format | `make test` (+ targeted profile) | **SKIP `make timing`** — not on query path (see Timing Policy) |
+   | Test infrastructure, build target, quarantine (TESTS-*) | `make compile` → `make test-incr` | the prompt's own acceptance checks (report counts, opt-in target); **SKIP `make timing`** |
 
 5. Run full acceptance gate with `make timing` **only if step 4 requires it** (see Timing Policy below — WAL/MVCC/recovery work skips it by default).
 6. **Profile check (Strict Condition):** Look at the current task description in `prompt2.md`. If the description does **NOT** contain the words "JOIN", "hash join", or "performance" — **SKIP this step entirely**. Otherwise, run:
@@ -233,14 +234,18 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 | Fast suite (incremental) | `make test-incr` | 6-13 min |
 | Fast suite | `make test` | 6-13 min (no clean since TESTS-1) |
 | Core suite | `make test-core` | 6-8 min |
+| Quarantined flakes (opt-in, 4 tests) | `make test-flaky` | ~6-8 min (3 invocations, no clean, +1 isolated retry on red: GroupCommit → 1M-бенчмарк → FlusherTest) |
 | Full acceptance | `make timing` | 10-30 min |
 
 **Measured 2026-10-24 (TESTS-3 session, 4-core machine):** fast = 546s baseline / 389-407s after JUnit parallelism, core = 381-407s. The fast floor is dominated by `OldVersionTimeoutTest` (~280s reaper waits) + `AutoJoinIndexTest` benchmark (~75-180s) + `WALRecoverLsnIsOLogNTest` (10-170s) — these run in every fast pass, so **any estimate below ~6 min for `make test` is wrong**. Old table values (~15-30s) were from a different machine/era and caused agents to set 10-min timeouts that killed healthy runs.
 
 **`make test-one` is fast-profile only** (`-Dtest=... -P fast`). For a test tagged `storage`/`query-full` (core profile) it runs **0 tests** and `assert-tests-ran` fails the build. Use instead:
 ```powershell
-.\scripts\mvn.ps1 -B test -P core -Dtest="GroupCommitThroughputTest#testAcceptanceThroughputAndP99"
+.\scripts\mvn.ps1 -B test -P core -Dtest="SomeCoreTest#someMethod"
 ```
+**Quarantined `@Tag("flaky")` tests run through neither command** — every gate excludes
+them (`surefire.excludedGroups` ends in `,flaky`). Run them only via `make test-flaky`
+(profile `flaky` sets `diesel.runFlaky=true`), see Known Flakes.
 
 ### Guard: "no tests ran" fails the build
 
@@ -304,7 +309,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
   Re-run `make timing` **ONLY AFTER** the isolated test passes. This saves minutes on heavy workloads.
 - **Database.close() hard rule:** Any test that constructs `Database` MUST close it (`@AfterEach`/`@AfterAll` null-guarded `database.close()`). A `@TempDir` delete error when a `Database` was created is **not a flake** — it is a missing-close bug: the persist-flusher daemon and open WAL/file handles block JUnit temp-dir cleanup. On the FIRST such failure: add `close()`, do not "re-run to see if it passes". If the same pattern appears in multiple classes, **sweep in batch**: `Select-String -Path src/test/java/**/*.java -Pattern "new Database\("` and add close() to every offender in one pass — do not fix one class per release (precedent: 3.3.16 → 3.3.18 → 3.3.19 → 3.3.20 each fixed a different subset).
 - The gate expects `Failures: 0, Errors: 0`. The script `compare-timing.sh` will automatically ignore sub-11ms micro-queries and only treat degradation >20% on **heavy (>100ms)** queries as a failure. If heavy queries are stable, the script returns exit code 0.
-- **Large-output discipline:** `make timing` / `large-test` runs (VacuumTest, RecoveryWithLongTransactionTest, 1M-row benchmarks) produce **~150 MB** of tool output — QueryParser INFO logs every INSERT. When output is truncated, do **not** re-run blindly: grep the saved tool-output file for `EXIT_|Tests run:|BUILD`. For diagnosis of large-profile failures prefer `target/surefire-reports/TEST-*.xml` (suppressed exceptions + stack traces) over scrolling stdout.
+- **Large-output discipline:** `make timing` / `large-test` runs (VacuumTest, RecoveryWithLongTransactionTest, 1M-row benchmarks) produce **~150 MB** of tool output — QueryParser INFO logs every INSERT. The problem is NOT limited to the large profile: a single `make test-core` produced **30.7 MB** and `make test-incr` **2.7 MB** (FlusherTest alone emits ~100k INFO lines for its 50k inserts). When output is truncated, do **not** re-run blindly: grep the saved tool-output file for `EXIT_|Tests run:|BUILD|FAILURE`. For diagnosis of failures prefer `target/surefire-reports/TEST-*.xml` (suppressed exceptions + stack traces) over scrolling stdout. Candidate follow-up: TESTS-12-style logback WARN config extended to the `core`/`flaky` profiles.
 
 ### Test Cache Cleaning
 
@@ -315,6 +320,8 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 | `make clean` | Everything above + `target/` + `data/*.csv` + `data/*.table` + logs + build cache | Full rebuild, before release |
 
 **Note:** `mvn clean` also automatically cleans the build cache for this project via `maven-clean-plugin` fileset configuration in `pom.xml`.
+
+**Cost of a clean run (TESTS-5):** every `run-tests-clean` invocation (the first profile of `make all-tests`, any `-clean` target) wipes `~/.m2/build-cache/v1/com.dieseldb/dieseldb/`, so the *next* build pays a **full recompile ≈ 1.5–2.5 min** on top of the run itself — and that javac blast ALSO contaminates any load-sensitive test that runs immediately afterwards (it pushed the group-commit p99 from ~5–13ms to 42ms). Budget this; do NOT add `clean` to routine dev targets (that was exactly TESTS-1's point), and never lead a p99/timing assertion with a clean run.
 
 **Tip:** Use `make clean-test-cache` before `make test` if you suspect stale test cache is causing false passes/failures. It's ~10x faster than `make clean`.
 
@@ -428,15 +435,22 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
 
   | Command class | `timeout` (ms) | Notes |
   |---|---|---|
-  | `make compile` / single tiny test | 120_000 (2 min) | normally 5–10s |
-  | `make test-one T=...` | 300_000 (5 min) | includes Maven startup + test-compile; 0 tests executed = profile lost (see guard) |
+  | `make compile` / single tiny test | 300_000 (5 min) | normally 5–10s, **BUT a `pom.xml`/profile edit invalidates the maven build-cache → full recompile of 374 main + 279 test sources ≈ 1.5–2.5 min** (TESTS-5 killed a healthy compile at the old 120s cap and paid a wasted re-run) |
+  | `make test-one T=...` | 300_000 (5 min) | includes Maven startup + test-compile; on a build-cache miss it recompiles everything and lands at ~2–3 min — 300s is the floor, not 120s. 0 tests executed = profile lost (see guard) |
   | `make test-incr` / `test` | 1_200_000 (20 min) | fast suite runs 6–13 min on this machine (see Quick Test Reference) — the old 10-min cap killed healthy TESTS-3/TESTS-4 runs |
   | `make test-core` | 1_200_000 (20 min) | core suite runs 6–8 min; with parallel-race triage up to ~10 min |
+  | `make test-flaky` | 1_800_000 (30 min) | THREE mvn invocations (NO clean): group-commit p99 + ONE isolated retry on red (~15s each) + JSONL 1M benchmark (~3–5 min) + FlusherTest 50k-insert (~3.5 min). Continue-on-error — a red flake never stops the remaining invocations. TESTS-5's first attempt ran under the 900s `large-test` cap with `clean` and burned 14.8 min (recompile blast contaminated the very p99 it measured) |
   | `make test-concurrency` / `test-network` | 600_000 (10 min) | |
   | `make test-perf` / `large-test` | 900_000 (15 min) | |
   | `make timing` | 1_800_000 (30 min) | absolute cap |
   | `make all-tests` | 2_400_000 (40 min) | absolute cap |
   | ProfileMain / `check-profile` | 900_000 (15 min) | |
+
+  **Gate-time budget (TESTS-5 measured, 2026-10-25):** a test-infrastructure prompt costs
+  **40–60 min of wall time** on this machine — fast 9:40 (+2:07 for the known-flake isolated
+  re-run), core 7:13, compile-after-pom-edit 1.5–2.5 min *each time*, `test-flaky` 6–8 min,
+  plus one wasted 14.8-min run for every design/timeout mistake. Plan the anti-hang caps from
+  these numbers, not from the "compile 3-5s" folklore.
 
   If a command exceeds its timeout: kill it, run `make clean-test-cache`, retry **once**; if it hangs again, isolate the test class and check the Known-Flakes list below before debugging.
 
@@ -468,13 +482,22 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
 
 Failures below are **pre-existing / environmental** on this machine. When one appears: re-run the isolated test once (`make test-one`); if it fails again and your change is unrelated, note it in the changelog and move on. Do **not** spend a session A/B-proving pre-existence.
 
+**Quarantined (TESTS-5):** four documented flakes are out of every gate — they carry `@Tag("flaky")` + `@EnabledIfSystemProperty(named = "diesel.runFlaky", matches = "true")` and every profile's `surefire.excludedGroups` ends in `,flaky`:
+
+- `FlusherTest#testMixedCommittedUncommitted`
+- `JsonlStorageAdvancedTest#benchmarkOneMillionRowsCsvVsJsonlVsJsonlZstd`
+- `GroupCommitThroughputTest#testAcceptanceThroughputAndP99`
+- `GroupCommitThroughputTest#testAcceptanceNonePolicyP99`
+
+Gates never execute them (no false-red core/perf/timing from these four). Run them on demand with **`make test-flaky`** — it runs **three separate Maven invocations, in this order, with NO `clean`**: (1) `-P flaky -Dtest=GroupCommitThroughputTest` first, with **ONE isolated retry on red** (the p99 assertion is load-sensitive; a clean+full-recompile right before it measured 42ms), (2) `-P flaky-jsonl` (the 1M-row benchmark alone — it needs `diesel.storage.type=jsonl` to pass its `@StorageType` gate; a jsonl engine makes FlusherTest's 50k-insert loop take hours, hence the split), (3) `-P flaky -Dtest=FlusherTest` (the 3.5-min timing-insensitive test, last). The target is **continue-on-error**: all three always run, the exit code aggregates at the end. Profile `flaky` sets `diesel.runFlaky=true`, `diesel.largeTests=true` and turns class-parallelism off. CI runs all three nightly in the `nightly-flaky` job. A red `make test-flaky`/nightly = the flake got worse — that is the signal, investigate, do not "re-run until green". If a future fix removes a flake, delete its two annotations and the test rejoins the gate automatically.
+
 | Symptom | Class / area | Notes |
 |---|---|---|
 | Timing compare flags a heavy query, isolated times unchanged | `make timing` overall | CPU/background-service drift; see Timing Policy |
-| `FlusherTest#testMixedCommittedUncommitted` O(N²)/slow or flaky | storage/page flusher | pre-existing insert path; thread-dump proven unrelated to MVCC work |
-| `JsonlStorageAdvancedTest` 1M-row benchmark exceeds bound | jsonl storage | A/B-proven pre-existing (~70s on clean HEAD) |
+| `FlusherTest#testMixedCommittedUncommitted` O(N²)/slow or flaky | storage/page flusher | pre-existing insert path; thread-dump proven unrelated to MVCC work. **Quarantined (TESTS-5)** — run via `make test-flaky` |
+| `JsonlStorageAdvancedTest` 1M-row benchmark exceeds bound | jsonl storage | A/B-proven pre-existing (~70s on clean HEAD). **Quarantined (TESTS-5)** — run via `make test-flaky` |
 | Microbenchmarks (e.g. `WALReadAllIsAlreadySortedTest`, Snappy*Benchmark) timing-sensitive | perf | min-of-3 / threshold noise; fix criterion, not code, if red |
-| `GroupCommitThroughputTest#testAcceptanceThroughputAndP99` p99 > 20ms under full-suite load | WAL group commit | load-sensitive timing; passes in isolation p99≈5ms (observed 2026-10-20). **@Isolated since 3.3.38** — if red again, check the annotation wasn't lost |
+| `GroupCommitThroughputTest#testAcceptanceThroughputAndP99` p99 > 20ms under full-suite load | WAL group commit | load-sensitive timing; passes in isolation p99≈5ms (observed 2026-10-20). **Quarantined (TESTS-5)** together with `#testAcceptanceNonePolicyP99` — run via `make test-flaky` (class stays `@Isolated` for its remaining methods). A p99 measured right after another heavy class in the SAME fork is load contamination, not a regression (TESTS-5 saw 105ms 0.5s after FlusherTest's 50k-row disk writes) — that is why `test-flaky` runs it first, in its own invocation |
 | Wall-clock/microsecond proof tests red under full-suite load | PasswordHasherTest, WALRecoverLsnIsOLogNTest, WALFindSegmentIsLogNTest, PersistFlusherTest, CopyAlgorithmTest, WALBackpressureTest, FindNewIndexAfterCompactIsO1Test, GroupCommitThroughputTest | all **@Isolated since 3.3.38** (TESTS-3): their hard thresholds starve under 4-way class parallelism on this 4-core box. Isolated re-run is green → note and move on; do NOT relax the assertion |
 | `@TempDir` delete errors under parallel Windows runs | any | **not a flake when Database was created** — missing `close()` (see Database.close() hard rule in Tests); fix close(), never "retry to see"; classes with `Database(tempDir)` must call `db.close()` in `@AfterEach` (fixed in CopyOnWriteIsolationTest/ConcurrentConflictTest/RollbackTest/UndoLogSpillTest/IsolationSemanticsTest/MvccDeleteTest/MvccUpdateTest/LazyDeleteTest/VacuumTest 2026-10-20). Pure-logic races (no Database) → retry isolated once |
 | ru-RU locale breaks "0.30" string asserts | any toString/format | use `Locale.ROOT` (past bug in AdaptiveFlushStrategy) |
@@ -532,4 +555,10 @@ When batch-editing `.java` via PowerShell, write without BOM:
 # strip BOM already written to a file:
 $c=[System.IO.File]::ReadAllText($path); [System.IO.File]::WriteAllText($path,$c,(New-Object System.Text.UTF8Encoding($false)))
 ```
+
+**Inverse trap — non-ASCII in BOM-less `.ps1` (cost a test-flaky run in TESTS-5):**
+PowerShell 5.1 *reads* a UTF-8 file **without BOM** using the ANSI codepage, so a
+single em-dash (`U+2014`) inside `scripts/*.ps1` breaks the parser with a cascade of
+`UnexpectedToken` / `Expected final ')'` errors. Keep `.ps1` files **ASCII-only**
+(dash `-` instead of `—`); if you must use non-ASCII, add a UTF-8 BOM first.
 ```

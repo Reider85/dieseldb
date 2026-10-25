@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-    <version>3.3.39</version>
+    <version>3.3.40</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -16,7 +16,7 @@
         <test.heap>512m</test.heap>
         <diesel.largeTests>false</diesel.largeTests>
         <surefire.groups></surefire.groups>
-        <surefire.excludedGroups>large</surefire.excludedGroups>
+        <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
     </properties>
 
     <dependencies>
@@ -164,7 +164,7 @@
             <properties>
                 <test.heap>512m</test.heap>
                 <surefire.groups>smoke, query, index</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -191,7 +191,7 @@
             <properties>
                 <test.heap>1g</test.heap>
                 <surefire.groups>query-full, storage</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -218,7 +218,7 @@
             <properties>
                 <test.heap>1g</test.heap>
                 <surefire.groups>concurrency</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -243,7 +243,7 @@
             <properties>
                 <test.heap>1g</test.heap>
                 <surefire.groups>network</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -272,7 +272,7 @@
             <properties>
                 <test.heap>2g</test.heap>
                 <surefire.groups>perf</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -298,7 +298,7 @@
                 <diesel.largeTests>true</diesel.largeTests>
                 <test.heap>4g</test.heap>
                 <surefire.groups>large</surefire.groups>
-                <surefire.excludedGroups></surefire.excludedGroups>
+                <surefire.excludedGroups>flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -326,7 +326,7 @@
             <id>all</id>
             <properties>
                 <surefire.groups>smoke, query, index, query-full, storage, concurrency, network</surefire.groups>
-                <surefire.excludedGroups>large,perf</surefire.excludedGroups>
+                <surefire.excludedGroups>large,perf,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -347,13 +347,91 @@
             </build>
         </profile>
 
+        <!-- ============ FLAKY: quarantine opt-in (TESTS-5) ============
+             Runs ONLY the tests tagged @Tag("flaky") — the documented
+             pre-existing/environmental flakes quarantined from every gate
+             (surefire.excludedGroups now ends in ",flaky" everywhere).
+             The systemPropertyVariables below are what makes the quarantined
+             methods actually enabled in this profile:
+               diesel.runFlaky=true     -> @EnabledIfSystemProperty gate opens
+               diesel.largeTests=true   -> @LargeTest (1M-row benchmark) gate opens
+               junit.jupiter...parallel.enabled=false -> the heavy tests run one
+                   after another instead of competing for CPU.
+             Engine storage stays at the config.properties default (csv) —
+             FlusherTest's 50k-insert loop is O(n²) on full-file rewrites and
+             takes hours under jsonl (observed: 14 min for the first 5k rows).
+             The JSONL-quarantined benchmark has its own profile below. -->
+        <profile>
+            <id>flaky</id>
+            <properties>
+                <test.heap>1g</test.heap>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                            <groups>flaky</groups>
+                            <forkCount>1</forkCount>
+                            <reuseForks>true</reuseForks>
+                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.largeTests>true</diesel.largeTests>
+                                <diesel.runFlaky>true</diesel.runFlaky>
+                                <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- ============ FLAKY-JSONL: the quarantined 1M-row benchmark ============
+             JsonlStorageAdvancedTest carries @StorageType("jsonl"), and
+             StorageTypeCondition resolves diesel.storage.type -> config.properties
+             (csv) -> the class is disabled in EVERY other profile (this is also
+             why it no longer runs in gates at all). This profile enables it via
+             diesel.storage.type=jsonl; the two engine-level quarantined tests are
+             excluded here (they would be flaky-tagged and slow under jsonl) —
+             they belong to the 'flaky' profile above. -->
+        <profile>
+            <id>flaky-jsonl</id>
+            <properties>
+                <test.heap>1g</test.heap>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override">
+                                <exclude>diesel/FlusherTest.java</exclude>
+                                <exclude>diesel/wal/GroupCommitThroughputTest.java</exclude>
+                            </excludes>
+                            <groups>flaky</groups>
+                            <forkCount>1</forkCount>
+                            <reuseForks>true</reuseForks>
+                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <diesel.largeTests>true</diesel.largeTests>
+                                <diesel.runFlaky>true</diesel.runFlaky>
+                                <diesel.storage.type>jsonl</diesel.storage.type>
+                                <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <!-- Backward-compatible aliases for old profiles -->
         <profile>
             <id>test</id>
             <properties>
                 <test.heap>512m</test.heap>
                 <surefire.groups>smoke, query, index</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -379,7 +457,7 @@
             <properties>
                 <test.heap>1g</test.heap>
                 <surefire.groups>smoke, query, index, query-full, storage, concurrency, network</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -414,7 +492,7 @@
             <id>storage-csv</id>
             <properties>
                 <surefire.groups>storage</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -442,7 +520,7 @@
             <id>storage-tsv</id>
             <properties>
                 <surefire.groups>storage</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -470,7 +548,7 @@
             <id>storage-jsonl</id>
             <properties>
                 <surefire.groups>storage</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>
@@ -498,7 +576,7 @@
             <id>storage-avro</id>
             <properties>
                 <surefire.groups>storage</surefire.groups>
-                <surefire.excludedGroups>large</surefire.excludedGroups>
+                <surefire.excludedGroups>large,flaky</surefire.excludedGroups>
             </properties>
             <build>
                 <plugins>

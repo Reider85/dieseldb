@@ -76,7 +76,7 @@ define run-tests-incr
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
-.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test all-tests timing profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests timing profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
 
 # Default target
 all: build
@@ -173,6 +173,44 @@ test-perf:
 ## Run large profile: @LargeTest (4GB heap)
 large-test:
 	$(call run-tests,large)
+
+## Run quarantined flaky tests (TESTS-5) — three separate Maven invocations,
+## together all 4 quarantined tests, ordered so the load-sensitive assertions
+## run first on a settled machine:
+##   1) group-commit p99 acceptance — FIRST, with ONE isolated retry on red
+##      (AGENTS.md Known-Flakes protocol). NO clean: a clean+full recompile
+##      right before this test measured p99=42ms (javac blast contamination),
+##      and running it 0.5s after FlusherTest's 50k-row writes gave 105ms.
+##   2) the quarantined JSONL 1M-row benchmark (60s ceiling; own profile —
+##      it needs diesel.storage.type=jsonl to pass its @StorageType gate)
+##   3) FlusherTest 50k-insert slow test last (timing-insensitive, ~3.5 min)
+## Continue-on-error: ALL three always run; a red exit at the end = the signal
+## (a quarantined flake got worse — investigate, do NOT re-run until green).
+test-flaky:
+	@rc=0; \
+	stamp=$$(mktemp); \
+	echo "1/3 quarantined WAL group-commit acceptance (profile 'flaky')..."; \
+	if ! $(MVN) -B test -P flaky -Dtest=GroupCommitThroughputTest; then \
+		echo "1/3 red — known load-sensitive flake, ONE isolated retry after 10s cooldown..."; \
+		sleep 10; \
+		stamp=$$(mktemp); \
+		$(MVN) -B test -P flaky -Dtest=GroupCommitThroughputTest || rc=1; \
+	fi; \
+	$(ASSERT_TESTS) "$$stamp" || rc=1; \
+	stamp=$$(mktemp); \
+	echo "2/3 quarantined JSONL 1M-row benchmark (profile 'flaky-jsonl')..."; \
+	$(MVN) -B test -P flaky-jsonl || rc=1; \
+	$(ASSERT_TESTS) "$$stamp" || rc=1; \
+	stamp=$$(mktemp); \
+	echo "3/3 quarantined FlusherTest 50k-insert test (profile 'flaky')..."; \
+	$(MVN) -B test -P flaky -Dtest=FlusherTest || rc=1; \
+	$(ASSERT_TESTS) "$$stamp" || rc=1; \
+	if [ $$rc -ne 0 ]; then \
+		echo ""; \
+		echo "test-flaky: RED — a quarantined flake failed in opt-in mode. That is the signal:"; \
+		echo "investigate (do NOT re-run until green). Gates stay green either way."; \
+	fi; \
+	exit $$rc
 
 ## Run format-specific storage tests (only tests matching diesel.storage.type run)
 test-storage-csv:
@@ -338,6 +376,7 @@ help:
 	@echo "  make test-concurrency   - Concurrency profile: txn + threads (<30s)"
 	@echo "  make test-perf          - Performance profile: benchmarks (2-3 min)"
 	@echo "  make large-test         - Large profile: @LargeTest tests (3-8 min, 4GB heap)"
+	@echo "  make test-flaky         - Quarantined flaky tests (opt-in, 4 tests, profile 'flaky')"
 	@echo "  make all-tests          - Run ALL profiles sequentially (release gate)"
 	@echo "  make tia                - Test-impact analysis: recommend profiles"
 	@echo "  make tia-run            - TIA + run recommended profiles"

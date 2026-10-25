@@ -1026,3 +1026,5 @@ chore: test-profiles-audit changelog entry
 3.3.38 Tests: enable JUnit 5 parallel classes via junit-platform.properties - 27-29% faster fast profile, @ResourceLock/@Isolated for shared statics and wall-clock asserts
 
 3.3.39 AGENTS.md: eliminate TESTS-3 session slowdown causes - parallel-race pre-flight sweep, batch-before-full-gate rule, corrected suite time estimates (fast 6-13min not 30s), 20min anti-hang caps, test-one profile trap, junit-platform.properties gotchas, BOM warning
+
+3.3.40 Tests: quarantine 4 known flakes via @Tag('flaky')+@EnabledIfSystemProperty(diesel.runFlaky) - new flaky/flaky-jsonl profiles, make test-flaky (3 invocations, continue-on-error + isolated retry), nightly-flaky CI job; AGENTS.md slow-gate guardrails (timeout caps, output size, build-cache clean cost, BOM-inverse trap)
