@@ -187,3 +187,15 @@ diesel/backup/BackupManifest.java		smoke,query,storage
 diesel/backup/PhysicalRestore.java		smoke,query,storage
 diesel/backup/DieselBackup.java		smoke,query,storage
 diesel/backup/DieselRestore.java		smoke,query,storage
+
+# TESTS-10 drift sweep - previously unmapped sources found by
+# scripts/check-tia-mapping.sh (CI job 'lint-tia-mapping')
+diesel/CreateAvroIndexQuery.java	index,query-full,storage-avro
+diesel/DatabaseRecoverySink.java	smoke,storage
+diesel/DropTableQuery.java		query,query-full
+diesel/IsolationLevel.java		concurrency
+diesel/RecoveryManager.java		smoke,storage
+diesel/ShowCreateIndexesQuery.java	query,query-full
+diesel/ShowCreateTableQuery.java	query,query-full
+diesel/ShowTablesQuery.java		query,query-full
+diesel/SubqueryResolver.java		query,query-full

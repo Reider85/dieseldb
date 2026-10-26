@@ -363,6 +363,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 - Tags are the JUnit 5 tags: `smoke, query, index` → `fast`; `query-full, storage` → `core`; `concurrency` → `concurrency`; `network` → `network`; `perf` → `perf`
 - Special values: `pom.xml` → `all` (every profile); tag `none` = no tests
 - **Keep it up to date:** when you add a new source file under `diesel/`, add a mapping line for it, otherwise TIA will report "no tests to run" for changes in that file.
+- **CI-enforced (TESTS-10):** the `lint-tia-mapping` job (name `tia-mapping-drift` in `.github/workflows/ci.yml`) runs `scripts/check-tia-mapping.sh` on **every PR and push to `main`** and fails the build if any `diesel/*.java` is not covered by a mapping line (exact path or glob in column 1; `*/generated/*`, `*Test.java` and `Main.java` are excluded — a class with no tests gets `<TAB>none`). Local check (bash is NOT on PATH on Windows): `& "C:\Program Files\Git\bin\bash.exe" scripts/check-tia-mapping.sh` (exit 0 = covered, exit 1 = lists the missing files).
 
 **Caution:** do NOT run `mvn test -Dgroups="..."` without a profile — the default surefire config excludes all tests, so 0 tests execute. Always use the profile commands the script prints (`mvn -B clean test -P <profile>`) or run via `make tia-run`.
 

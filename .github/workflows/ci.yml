@@ -97,6 +97,21 @@ jobs:
           path: target/surefire-reports/
           retention-days: 7
 
+  # TESTS-10: fail fast when a new diesel/*.java source has no line in
+  # scripts/tia-mapping.txt - TIA would otherwise report "no tests to run"
+  # for that file and PRs/pushes would merge without verification.
+  lint-tia-mapping:
+    name: tia-mapping-drift
+    runs-on: ubuntu-24.04
+    # DEVIATION from prompt TESTS-10 (user-approved): the prompt gated this on
+    # pull_request only, but this repo releases by pushing straight to main -
+    # a PR-only guard would never fire. push covers the real workflow.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tia-mapping.txt covers all diesel sources
+        run: ./scripts/check-tia-mapping.sh
+
   pr-gate:
     name: ${{ matrix.profile }}
     runs-on: ubuntu-24.04
