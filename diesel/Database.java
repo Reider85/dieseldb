@@ -1,7 +1,9 @@
 package diesel;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.io.ByteArrayOutputStream;
@@ -3134,6 +3136,53 @@ class Database {
         // Wait for any in-flight persist to complete (e.g., from PersistFlusher daemon)
         // to prevent @TempDir deletion races
         awaitPersistIdle();
+    }
+
+    /**
+     * Bulk-load rows from a CSV file directly into the table, bypassing the
+     * SQL parser (TESTS-9). Format: header row with column names in schema
+     * case, then one row per line, no quoting. Used by tests for fast fixture
+     * setup.
+     *
+     * <p>Because the CSV carries explicit values for sequence-based primary
+     * key columns, the table's sequences are afterwards seeded to at least
+     * {@code maxLoaded + increment}, so subsequent SQL INSERTs continue past
+     * the loaded rows instead of colliding with them.
+     */
+    void bulkLoadCSV(String tableName, Path csvPath) throws IOException {
+        Table table = getTable(tableName);
+        Map<String, Long> maxBySequenceColumn = new HashMap<>();
+        try (BufferedReader reader = Files.newBufferedReader(csvPath, StandardCharsets.UTF_8)) {
+            String header = reader.readLine();
+            if (header == null) {
+                throw new IOException("Fixture file is empty: " + csvPath);
+            }
+            String[] cols = header.split(",", -1);
+            int rowNum = 0;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] values = line.split(",", -1);
+                table.insertFromCsv(cols, values, rowNum);
+                for (int c = 0; c < cols.length && c < values.length; c++) {
+                    if (table.getSequences().containsKey(cols[c])) {
+                        maxBySequenceColumn.merge(cols[c], Long.parseLong(values[c]), Math::max);
+                    }
+                }
+                rowNum++;
+            }
+        }
+        for (Map.Entry<String, Sequence> e : table.getSequences().entrySet()) {
+            Long max = maxBySequenceColumn.get(e.getKey());
+            if (max != null) {
+                // seedAtLeast(max + increment) leaves the NEXT nextValue() at
+                // max + increment; seeding with the raw max would re-issue it.
+                e.getValue().seedAtLeast(max + e.getValue().getIncrement());
+            }
+        }
+        table.rebuildAllIndexes();
     }
 
     /**

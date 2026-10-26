@@ -1040,3 +1040,5 @@ chore: test-profiles-audit changelog entry
 3.3.45 Tests: switch network/concurrency profiles to reuseForks=true (TESTS-8) - one shared serial JVM per profile instead of fresh-per-class, junit class-parallelism forced off via system property; concurrency 395s -> 104s, network 554s -> 245-324s; new schedule-only CI profile-stability job (3x each profile)
 
 3.3.46 commit-and-changelog.ps1: walk back up to 30 commits to find the newest versioned commit - hardens auto-increment against unversioned commits (merge commits, manual commits) falling back to 0.0.1
+
+3.3.47 Tests: bulk-load fixtures in AbstractDieselTest (TESTS-9) - replaces 4400 single-INSERTs per fast run with 4 CSV loads via Database.bulkLoadCSV + Table.insertFromCsv (sequence seeded past explicit fixture IDs), fast gate 550s -> 411s (-25%); new BulkLoadEquivalenceTest gates INSERT-vs-bulk row equality + sequence continuation

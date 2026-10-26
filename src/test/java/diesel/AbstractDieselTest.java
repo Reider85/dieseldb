@@ -7,13 +7,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
-import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -27,6 +25,9 @@ public abstract class AbstractDieselTest {
 
     private static final Logger LOGGER = Logger.getLogger(AbstractDieselTest.class.getName());
     protected static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+    /** Committed CSV fixtures (TESTS-9), relative to the repo-root CWD. */
+    private static final Path FIXTURES = Path.of("src/test/resources/fixtures");
 
     /**
      * Per-test-class data directory. JUnit injects a fresh, distinct directory
@@ -83,35 +84,28 @@ public abstract class AbstractDieselTest {
         database.executeQuery("CREATE TABLE USER_DETAILS (DETAIL_ID LONG PRIMARY KEY SEQUENCE(detail_seq 1 1), USER_ID LONG, USER_CODE STRING, NAME STRING, AGE INTEGER, INFO STRING, BALANCE BIGDECIMAL)", null);
 
         int n = recordCount();
-        for (int i = 1; i <= n; i++) {
-            String date = LocalDate.now().minusDays(i).format(DATE_FORMATTER);
-            BigDecimal balance = new BigDecimal(100 + (i % 9000)).setScale(2, RoundingMode.HALF_UP);
-
-            database.executeQuery(String.format(Locale.US,
-                    "INSERT INTO USERS (USER_CODE, NAME, AGE, BALANCE, DATE_FIELD, ACTIVE, PRECISION) VALUES ('CODE%d', 'User%d', %d, %s, '%s', %s, %f)",
-                    i, i, 18 + (i % 82), balance, date, (i % 2 == 0) ? "TRUE" : "FALSE", (i % 100) / 10.0), null);
-
-            database.executeQuery(String.format(Locale.US,
-                    "INSERT INTO PROFILES (USER_ID, PROFILE_AGE, PROFILE_NAME, PROFILE_CODE, NON_INDEXED, PROFILE_DATE) VALUES (%d, %d, 'Profile%d', 'PCODE%d', 'Non%d', '%s')",
-                    i, 18 + (i % 82), i, i, i, date), null);
-
-            database.executeQuery(String.format(Locale.US,
-                    "INSERT INTO TRANSACTIONS (USER_ID, TRANS_DATE, AMOUNT) VALUES (%d, '%s', %s)",
-                    i, date, new BigDecimal(50 + (i % 500)).setScale(2, RoundingMode.HALF_UP)), null);
-
-            database.executeQuery(String.format(Locale.US,
-                    "INSERT INTO USER_DETAILS (USER_ID, USER_CODE, NAME, AGE, INFO, BALANCE) VALUES (%d, 'CODE%d', 'User%d', %d, 'Info%d', %s)",
-                    i, i, i, 18 + (i % 82), i, balance), null);
+        // Was: n x 4 INSERT via executeQuery (a full SQL parse per call, 4400
+        // parses per fast run across the eleven subclasses). Now: 4 bulk loads
+        // from committed fixture CSVs (TESTS-9) -- the rows are byte-identical
+        // to what the old loop generated (see scripts/generate-fixtures.py and
+        // BulkLoadEquivalenceTest).
+        try {
+            database.bulkLoadCSV("USERS", FIXTURES.resolve("users.csv"));
+            database.bulkLoadCSV("PROFILES", FIXTURES.resolve("profiles.csv"));
+            database.bulkLoadCSV("TRANSACTIONS", FIXTURES.resolve("transactions.csv"));
+            database.bulkLoadCSV("USER_DETAILS", FIXTURES.resolve("user_details.csv"));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to load test fixtures from " + FIXTURES, e);
         }
-        
+
         // Flush tables to enable Avro pushdown for SELECT queries during measurement
         // This matches GroupByTest/LikeTest pattern and ensures consistent measurement path
         database.getTable("USERS").saveToFile("USERS");
         database.getTable("PROFILES").saveToFile("PROFILES");
         database.getTable("TRANSACTIONS").saveToFile("TRANSACTIONS");
         database.getTable("USER_DETAILS").saveToFile("USER_DETAILS");
-        
-        LOGGER.log(Level.INFO, "Setup completed: {0} records per table", n);
+
+        LOGGER.log(Level.INFO, "Setup completed: {0} records per table (bulk-loaded)", n);
     }
 
     /* ------------------------------------------------------------------ */

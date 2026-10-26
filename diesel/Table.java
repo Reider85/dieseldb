@@ -4419,4 +4419,76 @@ class Table implements Serializable {
             }
         }
     }
+
+    /**
+     * Test-only: insert a row from CSV column names + values, bypassing the
+     * SQL parser (TESTS-9). Values are converted by {@link #parseColumnValue}
+     * and the row is stored via {@link #restoreRow}, which -- unlike
+     * {@link #addRow} -- accepts explicit values for sequence-based primary
+     * key columns. Callers that load explicit PK values must afterwards seed
+     * the table's sequences past the loaded maximum (see
+     * {@code Database.bulkLoadCSV}).
+     *
+     * <p>Empty cells are not supported (they would become null for numeric
+     * columns); fixture CSVs must contain a value for every cell.
+     *
+     * @param colNames column names in schema case (header row of the CSV)
+     * @param values   raw string values, same order as {@code colNames}
+     * @param rowNum   zero-based data-row index, used in error messages only
+     */
+    void insertFromCsv(String[] colNames, String[] values, int rowNum) {
+        if (colNames.length != values.length) {
+            throw new IllegalArgumentException("CSV row " + rowNum + " has " + values.length
+                    + " values but the header declares " + colNames.length + " columns");
+        }
+        Map<String, Object> row = new HashMap<>();
+        for (int i = 0; i < colNames.length; i++) {
+            try {
+                row.put(colNames[i], parseColumnValue(colNames[i], values[i]));
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("Bad CSV value at row " + rowNum
+                        + ", column " + colNames[i] + ": '" + values[i] + "'", e);
+            }
+        }
+        restoreRow(row);
+    }
+
+    /**
+     * Converts one raw CSV cell into the typed value the column schema
+     * expects, mirroring what the SQL parser produces for the equivalent
+     * literal. Empty cells are rejected -- the fixture format has no NULL
+     * representation.
+     */
+    private Object parseColumnValue(String colName, String value) {
+        Class<?> expectedType = columnTypes.get(colName);
+        if (expectedType == null) {
+            throw new IllegalArgumentException("Unknown column: " + colName);
+        }
+        if (value == null || value.isEmpty()) {
+            throw new IllegalArgumentException("Empty CSV cell is not supported (column " + colName + ")");
+        }
+        if (expectedType == Long.class) {
+            return Long.parseLong(value);
+        }
+        if (expectedType == Integer.class) {
+            return Integer.parseInt(value);
+        }
+        if (expectedType == BigDecimal.class) {
+            return new BigDecimal(value);
+        }
+        if (expectedType == Double.class) {
+            return Double.parseDouble(value);
+        }
+        if (expectedType == Boolean.class) {
+            return Boolean.parseBoolean(value);
+        }
+        if (expectedType == LocalDate.class) {
+            return LocalDate.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        }
+        if (expectedType == String.class) {
+            return value;
+        }
+        throw new IllegalArgumentException("Unsupported column type for CSV load: "
+                + colName + " -> " + expectedType.getSimpleName());
+    }
 }
