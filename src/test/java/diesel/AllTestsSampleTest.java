@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -40,10 +41,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+// @Isolated (TESTS-7): prompt69/prompt70 groups spawn DatabaseServer SUBPROCESSES
+// and wait only 15s for readiness (Awaitility) - that wait starves under
+// cross-class parallelism (observed prompt70Group ConditionTimeout in the
+// merged '-P all' run; 18/19 checks passed). Native home was the network
+// profile: sequential classes on a quiet machine.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @EnabledIfSystemProperty(named = "diesel.runAllTestsSample", matches = "true")
 @Tag("network")
+@Isolated
 public class AllTestsSampleTest {
     private static final Logger LOGGER = Logger.getLogger(AllTestsSampleTest.class.getName());
     private static final int RECORD_COUNT = 100;

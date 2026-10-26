@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -26,7 +27,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import diesel.security.Session;
 import diesel.security.SessionToken;
 
+// @ResourceLock (TESTS-7): @AfterEach loadHashJoinConfig() mutates the
+// JVM-global hash-join config - see HashJoinMemoryTest for the race.
 @Tag("network")
+@ResourceLock("diesel.hashjoin.config")
 public class OomHandlingTest {
 
     private Database database;

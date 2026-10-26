@@ -62,13 +62,6 @@ define run-tests
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
-define run-tests-clean   # release-gate only
-	@stamp=$$(mktemp); \
-	echo "Running profile '$(1)' (clean)..."; \
-	$(MVN) -B clean test -P $(1) $(2) || exit 1; \
-	$(ASSERT_TESTS) "$$stamp"
-endef
-
 define run-tests-incr
 	@stamp=$$(mktemp); \
 	echo "Running profile '$(1)' (no clean)..."; \
@@ -76,7 +69,7 @@ define run-tests-incr
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
-.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests timing timing-quick timing-full profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests all-tests-large timing timing-quick timing-full profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
 
 # Default target
 all: build
@@ -225,22 +218,31 @@ test-storage-jsonl:
 test-storage-avro:
 	$(call run-tests,storage-avro)
 
-## Run ALL profiles sequentially (release gate)
+## Run ALL profiles in one Maven invocation (release gate, TESTS-7).
+## The 'all' profile (pom.xml) aggregates the fast+core+concurrency+network
+## tag groups with parallel=classes - one JVM startup instead of four, and
+## the ~30 dual-tag classes (e.g. @Tag("smoke")+@Tag("storage")) that the old
+## 6-invocation loop ran TWICE (once per matching profile) now run once.
+## 'all' excludes perf+large by design (perf needs uncontended CPU, large
+## needs a 4GB heap) - those gate via 'all-tests-large' / 'make test-perf'
+## / 'make large-test'.
 all-tests:
-	@echo "Running ALL profiles sequentially (release gate)..."
-	@first=1; \
-	for p in fast core concurrency network perf large; do \
-		echo ""; \
-		echo "--- $$p ---"; \
-		if [ $$first -eq 1 ]; then \
-			$(call run-tests-clean,$$p) || exit 1; \
-			first=0; \
-		else \
-			$(call run-tests-incr,$$p) || exit 1; \
-		fi; \
-	done
+	@stamp=$$(mktemp); \
+	echo "Running ALL profiles via 'all' profile (single Maven invocation)..."; \
+	$(MVN) -B clean verify -P all || exit 1; \
+	$(ASSERT_TESTS) "$$stamp"
 	@echo ""
 	@echo "All profiles passed."
+
+## Full release gate (TESTS-7) - all-tests + perf + large. Use for tag-pushes.
+## perf runs BEFORE large (same order as the old 6-profile loop): the large
+## profile's 1M-row inserts / VacuumTest disk churn would otherwise contaminate
+## the perf profile's wall-clock assertions (AGENTS.md Known-Flakes: load
+## contamination - a red p99 measured right after heavy disk writes is not a
+## regression).
+all-tests-large: all-tests
+	$(call run-tests-incr,perf)
+	$(call run-tests-incr,large)
 
 ## Fast timing gate (TESTS-6): only @Tag("timing") tests (~3-5 min).
 ## Default for query-path prompts (JOIN / hash join / GROUP BY / ORDER BY /
@@ -402,7 +404,8 @@ help:
 	@echo "  make test-perf          - Performance profile: benchmarks (2-3 min)"
 	@echo "  make large-test         - Large profile: @LargeTest tests (3-8 min, 4GB heap)"
 	@echo "  make test-flaky         - Quarantined flaky tests (opt-in, 4 tests, profile 'flaky')"
-	@echo "  make all-tests          - Run ALL profiles sequentially (release gate)"
+	@echo "  make all-tests          - ALL profiles in ONE mvn invocation (release gate)"
+	@echo "  make all-tests-large    - Full gate: all-tests + perf + large (tag-pushes)"
 	@echo "  make tia                - Test-impact analysis: recommend profiles"
 	@echo "  make tia-run            - TIA + run recommended profiles"
 	@echo "  make timing-quick       - Timing gate, only @Tag('timing') tests (3-5 min)"

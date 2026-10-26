@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
@@ -22,7 +23,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the slow-query threshold behaviour, the JMX MBean exposure and that the
  * ORDER BY sort phase is only charged to queries that actually sort.
  */
+// @Isolated (TESTS-7): asserts EXACT counts on the JVM-global QueryProfiler
+// singleton (resetForTest + getSlowQueryCount) - a single query from any
+// concurrently running class in the same JVM bumps the counter (observed
+// "expected <2> but was: <3>" in the merged '-P all' run).
 @Tag("query-full")
+@Isolated
 public class QueryProfilerTest {
 
     @TempDir

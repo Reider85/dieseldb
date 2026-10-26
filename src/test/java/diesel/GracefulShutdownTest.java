@@ -3,6 +3,8 @@ package diesel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -10,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,9 +23,22 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+// @Isolated (TESTS-7): spawns a server SUBPROCESS and waits only 15s for it to
+// become ready (Awaitility) - that wait starves when 4+ other classes compete
+// for CPU (observed ConditionTimeout under the merged '-P all' run). Native
+// home was the network profile: one class per fork, quiet machine.
 @Tag("network")
+@Isolated
 public class GracefulShutdownTest {
     private static final Logger LOGGER = Logger.getLogger(GracefulShutdownTest.class.getName());
+
+    // Server subprocess runs with cwd = this temp dir, so it never touches the
+    // REPO's shared data/ directory (prompt70 uses the same pattern). In the
+    // merged '-P all' run other tests actively write repo data/, and a
+    // subprocess inheriting that cwd blocked > 15s on startup (ConditionTimeout
+    // at waitForServerReady) - the fresh dir removes the shared-file coupling.
+    @TempDir
+    Path serverWorkDir;
 
     @Test
     @Timeout(value = 120, unit = TimeUnit.SECONDS)
@@ -35,6 +51,7 @@ public class GracefulShutdownTest {
 
         ProcessBuilder pb = new ProcessBuilder(javaBin, "-cp", classpath, "diesel.DatabaseServer", String.valueOf(port));
         pb.redirectErrorStream(true);
+        pb.directory(serverWorkDir.toFile());
         Process process = pb.start();
 
         List<String> outputLines = new ArrayList<>();

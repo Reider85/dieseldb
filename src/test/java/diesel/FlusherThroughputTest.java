@@ -64,6 +64,12 @@ public class FlusherThroughputTest {
     }
 
     private double measureThroughput(boolean withFlusher) throws Exception {
+        // Fresh directory per measurement: the previous Database (closed in its
+        // finally) leaves committed rows on disk, and CREATE TABLE must not meet
+        // a pre-existing table. Was: dir cleaned only in @BeforeEach, so the
+        // second measureThroughput reopened stale state (pre-existing structural
+        // bug, dormant because the perf profile is not part of regular gates).
+        cleanupTestDir();
         // Create fresh database for each measurement
         database = new Database(TEST_DIR, createWALConfig());
         database.executeQuery("CREATE TABLE " + TABLE_NAME + " (ID LONG PRIMARY KEY, NAME STRING, VALUE LONG)", null);
@@ -103,6 +109,13 @@ public class FlusherThroughputTest {
     }
 
     private long performInserts(boolean measure) throws Exception {
+        // Each iteration re-inserts IDs 0..INSERT_COUNT-1 after the previous
+        // iteration COMMITTED them - the clustered unique index (throw on live
+        // duplicate since 3.2.60/3.2.62) made iteration 2 deterministically
+        // fail with "Duplicate key violation: key '0'". Reset outside the timed
+        // window (timing starts after BEGIN below) so every iteration measures
+        // inserts into an empty table, as originally intended.
+        resetTable();
         String txId = (String) database.executeQuery("BEGIN", null);
         UUID transactionId = UUID.fromString(txId.substring("Transaction started: ".length()));
         
@@ -128,6 +141,16 @@ public class FlusherThroughputTest {
         }
         
         return 0;
+    }
+
+    /** Drops and recreates the measured table; runs outside the timed window. */
+    private void resetTable() {
+        try {
+            database.executeQuery("DROP TABLE " + TABLE_NAME, null);
+        } catch (Exception ignored) {
+            // Table may not exist yet (first iteration after CREATE TABLE)
+        }
+        database.executeQuery("CREATE TABLE " + TABLE_NAME + " (ID LONG PRIMARY KEY, NAME STRING, VALUE LONG)", null);
     }
 
     private void cleanupTestDir() {

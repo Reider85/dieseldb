@@ -3,6 +3,7 @@ package diesel;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.util.HashMap;
 import java.util.List;
@@ -32,7 +33,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * constructs a fresh snapshot (matching production usage where Transaction.getSnapshot()
  * creates a new snapshot per call).
  */
+// @Isolated (TESTS-7): wall-clock scaling-ratio proof (t(100k)/t(50k) < 3) -
+// a GC pause or CPU contention on one of the two measurements skews the ratio
+// (observed 8.36 in the merged single-JVM '-P all' run). Concurrency-profile
+// native class (one class per fork).
 @Tag("concurrency")
+@Isolated
 public class SnapshotReadBenchmarkTest {
 
     private static final int N_FULL = 100_000;

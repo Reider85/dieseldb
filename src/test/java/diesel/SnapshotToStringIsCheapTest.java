@@ -3,6 +3,7 @@ package diesel;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.util.HashMap;
 import java.util.List;
@@ -19,7 +20,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * which allocated 10k HashMaps for a 10k-row table. Post-fix: toString() uses
  * the memoized count from countVisibleRows() (no HashMap allocations).
  */
+// @Isolated (TESTS-7): wall-clock assert (< 50ms first toString on 10k rows)
+// starves under cross-class parallelism - concurrency-profile native class
+// (one class per fork); observed exactly 50ms in the merged '-P all' run.
 @Tag("concurrency")
+@Isolated
 class SnapshotToStringIsCheapTest {
 
     private Database database;

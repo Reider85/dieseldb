@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.util.List;
 import java.util.Map;
@@ -18,7 +19,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+// @ResourceLock (TESTS-7): @AfterEach loadHashJoinConfig() mutates the
+// JVM-global hash-join config - see HashJoinMemoryTest for the race.
 @Tag("query-full")
+@ResourceLock("diesel.hashjoin.config")
 public class MaxResultRowsTest {
 
     private static final int LEFT_COUNT = 100;

@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-    <version>3.3.42</version>
+    <version>3.3.43</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -336,11 +336,49 @@
                             <excludes combine.self="override"/>
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
-                            <forkCount>2</forkCount>
-                            <reuseForks>true</reuseForks>
-                            <parallel>classes</parallel>
-                            <threadCountClasses>2</threadCountClasses>
-                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <!-- TESTS-7 (attempt 6 topology): forkCount=1,
+                                 reuseForks=FALSE - fresh JVM PER CLASS and NO
+                                 second hot JVM on the machine.
+                                 History: attempt 1 (2 forks x parallel 4 = 8-way
+                                 oversubscription) - 34.5 min + starvation reds;
+                                 attempt 2 (1 fork x 4, -Xmx1g) - 18.4 min but
+                                 shared-heap/global-state reds (JMX, sysprops,
+                                 GC-polluted µs proofs); attempt 3 (1 fork, 2g)
+                                 - 24.9 min, yet another victim family each run;
+                                 attempt 4 (2 forks, reuseForks=false) - 26 min,
+                                 3106/3107 green, sole red = CopyAlgorithmTest
+                                 barrier microbench (isolated-green); attempt 5 -
+                                 1/3107 again, DeadlockOverheadTest microbench
+                                 (isolated-green family). Root cause of the
+                                 residual: both microbenchmark victims
+                                 historically ran at forkCount=1 under
+                                 ZERO neighbor-JVM contention (old
+                                 concurrency/perf profiles), forkCount=2 always
+                                 gave them a hot second JVM.
+                                 reuseForks=false is the load-bearing fix
+                                 (clean heap, no cross-class JMX/sysprop/static
+                                 state per class - the network/concurrency
+                                 isolation model); forkCount=1 removes the
+                                 neighbor contention. -Xmx2g per short-lived
+                                 fork. <parallel>/<threadCountClasses>
+                                 intentionally dropped: each JVM hosts a single
+                                 class. -->
+                            <forkCount>1</forkCount>
+                            <reuseForks>false</reuseForks>
+                            <argLine>-Xmx2g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <!-- TESTS-7: both keys mirror the network profile.
+                                     diesel.runAllTestsSample opens AllTestsSampleTest's
+                                     class gate - without it the class was silently
+                                     DISABLED in '-P all' (its @Tag("network") matched,
+                                     but @EnabledIfSystemProperty did not).
+                                     diesel.largeTests stays the root-property
+                                     passthrough (false): @LargeTest methods were
+                                     disabled in the old fast/core/concurrency runs
+                                     of the all-tests loop too - parity kept. -->
+                                <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
+                                <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
+                            </systemPropertyVariables>
                         </configuration>
                     </plugin>
                 </plugins>

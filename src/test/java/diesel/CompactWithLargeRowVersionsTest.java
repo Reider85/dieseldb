@@ -1,5 +1,6 @@
 package diesel;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,9 +31,23 @@ class CompactWithLargeRowVersionsTest {
     @TempDir
     static Path tempDir;
 
+    // Database.close() hard rule (AGENTS.md): an unclosed Database keeps the
+    // persist-flusher daemon and file handles alive, so JUnit's @TempDir
+    // cleanup fails with DirectoryNotEmptyException (observed in the TESTS-7
+    // merged '-P all' run).
+    private Database db;
+
+    @AfterEach
+    void closeDatabase() {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
+    }
+
     @Test
     void compactCompletesQuicklyWithLargeRowVersions() throws Exception {
-        Database db = new Database();
+        db = new Database();
         db.setDataDir(tempDir.toString());
         String tableName = "COMPACT_LARGE_TEST";
         db.executeQuery("CREATE TABLE " + tableName

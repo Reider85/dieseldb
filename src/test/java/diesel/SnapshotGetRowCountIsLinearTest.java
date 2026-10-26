@@ -2,6 +2,7 @@ package diesel;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.util.HashMap;
 import java.util.List;
@@ -18,7 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * for a 50k-row table with 50% visibility. Post-fix: countVisibleRows() increments
  * a counter with no HashMap allocations.
  */
+// @Isolated (TESTS-7): the < 50ms wall-clock bound starves under cross-class
+// parallelism - this class native home was the concurrency profile (one class
+// per fork, quiet CPU). Observed 57ms under the merged '-P all' 8-way run.
 @Tag("concurrency")
+@Isolated
 class SnapshotGetRowCountIsLinearTest {
 
     @Test

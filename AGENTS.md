@@ -300,7 +300,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 - `@StorageType({"jsonl","csv"})` — Cross-format tests (2 classes): JsonlLoadModeTest, StorageLoadModeTest
 - `@StorageType({"csv","tsv"})` — Delimited tests (4 classes): CharsetEncodingTest, CompressionTest, AtomicFileWriteTest, CsvTsvHeaderMappingTest
 - `@StorageType({"avro","csv","tsv","jsonl"})` — Codec/cross tests (5 classes): SnappyOptimizedCodecTest, SnappyOptimizationBenchmark, DelimitedByteParserTest, ReaderCorrectnessTest, JsonStreamAbstractionTest
-- **Full release gate** – `make all-tests` runs all 6 profiles sequentially. This is the **required** gate before commit.
+- **Full release gate** – `make all-tests` = ONE `mvn clean verify -P all` invocation (the `all` profile aggregates the fast+core+concurrency+network tag groups; perf and large are excluded by design). `make all-tests-large` = `all-tests` + `perf` + `large` — the complete 6-profile gate, **recommended for tag-pushes**.
 - **Perf test isolation** – Performance tests (`perf` profile) run with `forkCount=1` and no parallel execution to avoid CPU contention. The `all` profile excludes `perf` to prevent interference with other test types. Run performance regression checks with `make test-perf` or `make check-profile` (JOINs only).
 - **TIA** – `make tia` (recommend profiles) / `make tia-run` (recommend + run).
 - **Isolation Rule for Failures:** If `make timing` fails, DO NOT immediately re-run `make timing`. Find the exact failing test name in the log. Fix the code and run ONLY that specific test:
@@ -322,7 +322,7 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 
 **Note:** `mvn clean` also automatically cleans the build cache for this project via `maven-clean-plugin` fileset configuration in `pom.xml`.
 
-**Cost of a clean run (TESTS-5):** every `run-tests-clean` invocation (the first profile of `make all-tests`, any `-clean` target) wipes `~/.m2/build-cache/v1/com.dieseldb/dieseldb/`, so the *next* build pays a **full recompile ≈ 1.5–2.5 min** on top of the run itself — and that javac blast ALSO contaminates any load-sensitive test that runs immediately afterwards (it pushed the group-commit p99 from ~5–13ms to 42ms). Budget this; do NOT add `clean` to routine dev targets (that was exactly TESTS-1's point), and never lead a p99/timing assertion with a clean run.
+**Cost of a clean run (TESTS-5):** every `clean` Maven invocation (`make all-tests` / `make all-tests-large` start with `clean verify -P all`, any `-clean` target) wipes `~/.m2/build-cache/v1/com.dieseldb/dieseldb/`, so the *next* build pays a **full recompile ≈ 1.5–2.5 min** on top of the run itself — and that javac blast ALSO contaminates any load-sensitive test that runs immediately afterwards (it pushed the group-commit p99 from ~5–13ms to 42ms). Budget this; do NOT add `clean` to routine dev targets (that was exactly TESTS-1's point), and never lead a p99/timing assertion with a clean run.
 
 **Tip:** Use `make clean-test-cache` before `make test` if you suspect stale test cache is causing false passes/failures. It's ~10x faster than `make clean`.
 
@@ -447,6 +447,7 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
   | `make timing-quick` / `make timing` (alias) | 1_200_000 (20 min) | expected 3–5 min + up to ~2.5 min recompile after a pom/profile edit (TESTS-6) |
   | `make timing-full` | 1_800_000 (30 min) | absolute cap (full `large` profile) |
   | `make all-tests` | 2_400_000 (40 min) | absolute cap |
+  | `make all-tests-large` | 3_600_000 (60 min) | all-tests + perf + large; tag-push gate |
   | ProfileMain / `check-profile` | 900_000 (15 min) | |
 
   **Gate-time budget (TESTS-5 measured, 2026-10-25):** a test-infrastructure prompt costs

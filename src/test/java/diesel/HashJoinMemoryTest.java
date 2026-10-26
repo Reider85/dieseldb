@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -18,7 +19,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+// @ResourceLock (TESTS-7): the hash-join thresholds are JVM-global static
+// fields on SelectQuery (setHashJoinConfigForTest / loadHashJoinConfig). A
+// neighbouring class's @AfterEach loadHashJoinConfig() resets them MID-TEST
+// here -> partitioning flag flipped (observed 2 failures in the merged '-P
+// all' run). All 5 classes touching the key share this lock; everything else
+// keeps running in parallel.
 @Tag("query-full")
+@ResourceLock("diesel.hashjoin.config")
 public class HashJoinMemoryTest {
 
     private static final int RECORD_COUNT = 200;

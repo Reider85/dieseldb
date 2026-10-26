@@ -49,6 +49,11 @@ function Invoke-ProfileTests {
 
         [switch]$Clean,
 
+        # Maven lifecycle phase - "test" for every profile target, "verify"
+        # for the all-tests release gate (TESTS-7: single 'mvn clean verify
+        # -P all' invocation, matching the CI release-gate job).
+        [string]$Phase = "test",
+
         # Continue on a red run instead of exiting: record the failure in
         # $script:ProfileTestFailures so the caller can run the remaining
         # invocations and aggregate (used by test-flaky  - a red quarantined
@@ -60,7 +65,7 @@ function Invoke-ProfileTests {
     if ($Clean) {
         $mvnArgs += "clean"
     }
-    $mvnArgs += @("test", "-P", $Profile)
+    $mvnArgs += @($Phase, "-P", $Profile)
     if ($ExtraArgs.Count -gt 0) {
         $mvnArgs += $ExtraArgs
     }
@@ -68,6 +73,9 @@ function Invoke-ProfileTests {
     $label = "profile '$Profile'"
     if ($ExtraArgs.Count -gt 0) {
         $label += " $($ExtraArgs -join ' ')"
+    }
+    if ($Phase -ne "test") {
+        $label += " ($Phase)"
     }
     if ($Clean) {
         $label += " (clean)"
@@ -243,18 +251,24 @@ switch ($Target) {
         Write-Host "test-flaky: all 4 quarantined tests ran, all green." -ForegroundColor Green
     }
     "all-tests" {
-        Write-Host "Running ALL profiles sequentially (release gate)..."
-        $profiles = @("fast", "core", "concurrency", "network", "perf", "large")
-        for ($i = 0; $i -lt $profiles.Count; $i++) {
-            Write-Host ""
-            if ($i -eq 0) {
-                Invoke-ProfileTests -Profile $profiles[$i] -Clean
-            } else {
-                Invoke-ProfileTests -Profile $profiles[$i]
-            }
-        }
+        # TESTS-7: ONE 'mvn clean verify -P all' instead of a 6-invocation
+        # loop. The 'all' profile aggregates the fast+core+concurrency+network
+        # tag groups (excludes perf+large by design - those gate via
+        # all-tests-large / test-perf / large-test).
+        Invoke-ProfileTests -Profile "all" -Clean -Phase "verify"
         Write-Host ""
         Write-Host "All profiles passed." -ForegroundColor Green
+    }
+    "all-tests-large" {
+        # Full release gate (TESTS-7): all-tests + perf + large. perf runs
+        # BEFORE large (old loop order) - large's disk churn would contaminate
+        # the perf profile's wall-clock assertions.
+        Invoke-ProfileTests -Profile "all" -Clean -Phase "verify"
+        Write-Host ""
+        Invoke-ProfileTests -Profile "perf"
+        Invoke-ProfileTests -Profile "large"
+        Write-Host ""
+        Write-Host "Full gate (all + perf + large) passed." -ForegroundColor Green
     }
     "build" {
         Write-Host "Building DieselDB..."
@@ -378,7 +392,8 @@ switch ($Target) {
         Write-Host "  build, compile, test, test-incr, test-one, test-core"
         Write-Host "  test-network, test-concurrency, test-perf, large-test"
         Write-Host "  test-flaky (quarantined flakes, opt-in)"
-        Write-Host "  all-tests, timing-quick (3-5min), timing-full (10-30min),"
+        Write-Host "  all-tests (single mvn verify -P all), all-tests-large (+perf,large)"
+        Write-Host "  timing-quick (3-5min), timing-full (10-30min),"
         Write-Host "  timing (alias -> quick), compare-timing, tia, tia-run"
         Write-Host "  changelog, release, release-local, sync-version"
         Write-Host "  clean, clean-test-cache, clean-cache"

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -16,7 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+// @ResourceLock (TESTS-7): @AfterEach loadHashJoinConfig() mutates the
+// JVM-global hash-join config - see HashJoinMemoryTest for the race.
 @Tag("query-full")
+@ResourceLock("diesel.hashjoin.config")
 public class ExplainTest {
 
     private static final int RECORD_COUNT = 200;
