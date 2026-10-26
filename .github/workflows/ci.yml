@@ -299,6 +299,77 @@ jobs:
           path: target/surefire-reports/
           retention-days: 30
 
+  # TESTS-8: the network/concurrency profiles run all classes in ONE reused
+  # JVM (reuseForks=true) - a leaked server socket, unstopped daemon or
+  # JVM-global mutation in any class can only show up as an order-dependent
+  # flake across repeated runs. Run each profile 3x on a schedule to catch
+  # such regressions; a red here is the signal (add @Isolated to the
+  # offending class), gates stay green. No clean per TESTS-1 policy.
+  profile-stability:
+    name: stability-${{ matrix.profile }}
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [network, concurrency]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Maven build-cache
+        id: cache-buildcache-stability
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
+          key: buildcache-${{ runner.os }}-stability-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'diesel/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
+          restore-keys: |
+            buildcache-${{ runner.os }}-stability-${{ matrix.profile }}-
+            buildcache-${{ runner.os }}-
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Detect orphaned test classes
+        run: |
+          src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
+          cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
+          if [ "$cls_count" -gt "$src_count" ]; then
+            echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
+          fi
+          echo "No orphaned .class files found."
+
+      - name: Run ${{ matrix.profile }} 3x (stability)
+        run: |
+          for i in 1 2 3; do
+            echo "--- ${{ matrix.profile }} run $i ---"
+            mvn -B test -P ${{ matrix.profile }} || exit 1
+          done
+
+      - name: Cache hit summary
+        if: always()
+        run: |
+          HIT="${{ steps.cache-buildcache-stability.outputs.cache-hit }}"
+          if [ "$HIT" = "true" ]; then
+            echo "Build-cache HIT (exact key)"
+          elif [ -n "$HIT" ]; then
+            echo "Build-cache PARTIAL HIT (restore-keys fallback)"
+          else
+            echo "Build-cache MISS - first run for this key"
+          fi
+
+      - name: Upload stability test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stability-${{ matrix.profile }}-reports
+          path: target/surefire-reports/
+          retention-days: 30
+
   manual:
     name: manual-${{ inputs.profile }}
     runs-on: ubuntu-24.04

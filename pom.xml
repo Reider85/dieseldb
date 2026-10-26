@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-    <version>3.3.44</version>
+    <version>3.3.45</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -212,7 +212,19 @@
             </build>
         </profile>
 
-        <!-- ============ CONCURRENCY: threads + txn isolation ============ -->
+        <!-- ============ CONCURRENCY: threads + txn isolation ============
+             TESTS-8: reuseForks=true - ONE JVM reuses across all ~29 classes
+             instead of a fresh JVM per class (~1-3s startup x 29 pure
+             overhead). Class parallelism is FORCED OFF via
+             junit.jupiter.execution.parallel.enabled=false (system property
+             beats the junit-platform.properties file): these profiles were
+             always serial (one class per fork) - parallel classes would
+             introduce port-binding races and CPU contention on wall-clock
+             asserts. Serial execution also makes @Isolated/@ResourceLock
+             mutual exclusion a no-op; they remain as documentation and
+             become active again if parallelism is ever re-enabled. Engine
+             threads are all daemon, so a leaked thread cannot wedge the
+             reused JVM. -->
         <profile>
             <id>concurrency</id>
             <properties>
@@ -229,15 +241,24 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
+                            </systemPropertyVariables>
                         </configuration>
                     </plugin>
                 </plugins>
             </build>
         </profile>
 
-        <!-- ============ NETWORK: server + sockets (flaky) ============ -->
+        <!-- ============ NETWORK: server + sockets (flaky) ============
+             TESTS-8: reuseForks=true - ONE JVM reuses across all ~21 classes
+             instead of a fresh JVM per class. Class parallelism is FORCED
+             OFF (system property beats junit-platform.properties): parallel
+             network classes would race on server-socket binds. Subprocess /
+             JVM-global classes (GracefulShutdownTest, AllTestsSampleTest)
+             already carry @Isolated from TESTS-7. -->
         <profile>
             <id>network</id>
             <properties>
@@ -254,11 +275,12 @@
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
-                            <reuseForks>false</reuseForks>
+                            <reuseForks>true</reuseForks>
                             <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
                             <systemPropertyVariables>
                                 <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
                                 <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
+                                <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>

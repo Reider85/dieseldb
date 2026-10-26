@@ -136,7 +136,12 @@ BEFORE the first `make test`. A missed pattern costs one full 7-13 min red run.
 - `junit.jupiter.execution.parallel.mode.default=same` is **invalid** in JUnit
   5.10 — it logs `Invalid parallel execution mode 'SAME'` and silently falls
   back. Use `same_thread` (lowercase enum name).
-- The file applies to ALL profiles. `concurrency`/`network`/`perf`/`large` are
+- The file applies to ALL profiles. `concurrency`/`network` force
+  class-parallelism OFF via `junit.jupiter.execution.parallel.enabled=false`
+  in their surefire `systemPropertyVariables` (TESTS-8: `reuseForks=true`,
+  ONE shared serial JVM per profile — the system property beats the
+  properties file; @Isolated/@ResourceLock are mutual-exclusion no-ops there
+  and only become active if parallelism is re-enabled). `perf`/`large` are
   safe from cross-class parallelism because they use `reuseForks=false`
   (one class per fork), but `fast`/`core`/`all`/`ci` get real parallelism.
 - Instance `@TempDir` + `@TestInstance(PER_CLASS)` + non-static `@BeforeAll`

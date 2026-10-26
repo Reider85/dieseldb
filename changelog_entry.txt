@@ -1,1 +1,1 @@
-3.3.44 Prompt4 #41: Implement physical backup functionality with diesel_backup CLI tool
+3.3.45 Tests: switch network/concurrency profiles to reuseForks=true (TESTS-8) - one shared serial JVM per profile instead of fresh-per-class, junit class-parallelism forced off via system property; concurrency 395s -> 104s, network 554s -> 245-324s; new schedule-only CI profile-stability job (3x each profile)
