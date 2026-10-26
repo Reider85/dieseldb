@@ -18,14 +18,16 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Acceptance test for BufferPoolFlusher (prompt4.md #20, R3-005 step 1/3):
- * 100k inserts без COMMIT, kill, restart → все inserts либо committed, либо откачены (по WAL).
+ * ROW_COUNT inserts без COMMIT, kill, restart → все inserts либо committed, либо откачены (по WAL).
  */
 @Tag("storage")
 public class FlusherTest {
 
     private static final String TEST_DIR = "data_flusher_test";
     private static final String TABLE_NAME = "TEST_TABLE";
-    private static final int ROW_COUNT = 50000; // 50k for efficiency, test runs faster
+    // 5k is enough to dirty pages and exercise WAL recovery; override with
+    // -Ddiesel.flusher.rowCount=50000 to stress the old 50k volume manually.
+    private static final int ROW_COUNT = Integer.getInteger("diesel.flusher.rowCount", 5000);
 
     private Database database;
     private String walDir;
@@ -62,7 +64,7 @@ public class FlusherTest {
         // Start the flusher
         database.startPageFlusher();
         
-        // Insert 50k rows in a single uncommitted transaction
+        // Insert ROW_COUNT rows in a single uncommitted transaction
         UUID txId = beginTransaction();
         
         for (int i = 0; i < ROW_COUNT; i++) {
@@ -71,7 +73,7 @@ public class FlusherTest {
             database.executeQuery(sql, txId);
             
             // Progress indicator for long-running test
-            if (i % 10000 == 0) {
+            if (i % Math.max(1, ROW_COUNT / 5) == 0) {
                 System.out.println("Inserted " + i + " rows...");
             }
         }
@@ -103,7 +105,7 @@ public class FlusherTest {
             assertEquals(1, countRows.size(), "COUNT(*) must collapse into a single aggregate row");
             int count = ((Number) ((Map<?, ?>) countRows.get(0)).get("COUNT(*)")).intValue();
             
-            // The 50k uncommitted inserts should be rolled back
+            // The uncommitted inserts should be rolled back
             // So we should see 0 rows (no committed transactions)
             assertEquals(0, count, 
                 "Uncommitted inserts should be rolled back by WAL recovery");
@@ -128,7 +130,7 @@ public class FlusherTest {
         // Start the flusher
         database.startPageFlusher();
         
-        // Insert 25k committed rows
+        // Insert ROW_COUNT/2 committed rows
         for (int i = 0; i < ROW_COUNT / 2; i++) {
             String sql = String.format("INSERT INTO %s (ID, NAME) VALUES (%d, 'committed_%d')", 
                 TABLE_NAME, i, i);
@@ -140,7 +142,7 @@ public class FlusherTest {
         database.getTable(TABLE_NAME).saveToFile(TABLE_NAME);
         database.getTable(TABLE_NAME).saveToSerializedFile(TABLE_NAME);
         
-        // Begin transaction and insert 25k uncommitted rows
+        // Begin transaction and insert ROW_COUNT/2 uncommitted rows
         UUID txId = beginTransaction();
         for (int i = ROW_COUNT / 2; i < ROW_COUNT; i++) {
             String sql = String.format("INSERT INTO %s (ID, NAME) VALUES (%d, 'uncommitted_%d')", 

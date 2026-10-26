@@ -1044,3 +1044,5 @@ chore: test-profiles-audit changelog entry
 3.3.47 Tests: bulk-load fixtures in AbstractDieselTest (TESTS-9) - replaces 4400 single-INSERTs per fast run with 4 CSV loads via Database.bulkLoadCSV + Table.insertFromCsv (sequence seeded past explicit fixture IDs), fast gate 550s -> 411s (-25%); new BulkLoadEquivalenceTest gates INSERT-vs-bulk row equality + sequence continuation
 
 3.3.48 Tests: CI guard for tia-mapping.txt drift - fails PR/push if a diesel/*.java is not mapped
+
+3.3.49 Tests: reduce FlusherTest.ROW_COUNT from 50k to 5k (overridable via -Ddiesel.flusher.rowCount) - FlusherTest 65.6s -> 20.3s (-69%)
