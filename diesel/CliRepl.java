@@ -4,6 +4,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.security.UserStore;
+import diesel.backup.DumpFormat;
+import diesel.backup.LogicalDump;
+import diesel.backup.LogicalRestore;
+import diesel.backup.PhysicalBackup;
+import diesel.backup.PhysicalRestore;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -433,6 +438,14 @@ public class CliRepl {
             }
             if (query.equalsIgnoreCase("HELP")) {
                 printHelp();
+            } else if (query.toUpperCase().startsWith("DUMP ")) {
+                executeDump(query.substring(5).trim());
+            } else if (query.toUpperCase().startsWith("BACKUP ")) {
+                executeBackup(query.substring(7).trim());
+            } else if (query.toUpperCase().startsWith("PHYSICAL-RESTORE ")) {
+                executePhysicalRestore(query.substring(16).trim());
+            } else if (query.toUpperCase().startsWith("RESTORE ")) {
+                executeRestore(query.substring(9).trim());
             } else {
                 execute(query);
             }
@@ -557,11 +570,220 @@ public class CliRepl {
         out.println(sb);
     }
 
+    private void executeDump(String args) {
+        try {
+            // Parse arguments
+            String[] parts = args.split("\\s+");
+            if (parts.length == 0 || parts[0].isEmpty()) {
+                out.println("Error: Path is required");
+                out.println("Usage: DUMP <path> [FORMAT sql|csv|jsonl|avro] [SCHEMA] [INDEXES] [BATCH-SIZE N]");
+                return;
+            }
+            
+            Path outputPath = Path.of(parts[0]);
+            DumpFormat format = DumpFormat.SQL; // default
+            boolean includeSchema = false;
+            boolean includeIndexes = false;
+            int batchSize = 1000; // default
+            
+            // Parse options
+            for (int i = 1; i < parts.length; i++) {
+                String part = parts[i].toUpperCase();
+                if (part.equals("FORMAT") && i + 1 < parts.length) {
+                    String formatStr = parts[i + 1].toUpperCase();
+                    try {
+                        format = DumpFormat.valueOf(formatStr);
+                        i++; // skip next token
+                    } catch (IllegalArgumentException e) {
+                        out.println("Error: Invalid format '" + parts[i + 1] + "'. Valid formats: sql, csv, jsonl, avro");
+                        return;
+                    }
+                } else if (part.equals("SCHEMA")) {
+                    includeSchema = true;
+                } else if (part.equals("INDEXES")) {
+                    includeIndexes = true;
+                } else if (part.equals("BATCH-SIZE") && i + 1 < parts.length) {
+                    try {
+                        batchSize = Integer.parseInt(parts[i + 1]);
+                        if (batchSize <= 0) {
+                            out.println("Error: Batch size must be positive");
+                            return;
+                        }
+                        i++; // skip next token
+                    } catch (NumberFormatException e) {
+                        out.println("Error: Invalid batch size '" + parts[i + 1] + "'");
+                        return;
+                    }
+                } else {
+                    out.println("Error: Unknown option '" + parts[i] + "'");
+                    out.println("Usage: DUMP <path> [FORMAT sql|csv|jsonl|avro] [SCHEMA] [INDEXES] [BATCH-SIZE N]");
+                    return;
+                }
+            }
+            
+            // Get database instance
+            Database db = database;
+            if (db == null) {
+                out.println("Error: No database connection available");
+                return;
+            }
+            
+            // Execute dump
+            LogicalDump dump = new LogicalDump(db, format, outputPath, includeSchema, includeIndexes, batchSize);
+            dump.execute();
+            out.println("Dump completed successfully to: " + outputPath);
+            
+        } catch (Exception e) {
+            out.println("Error: " + e.getMessage());
+        }
+    }
+
+    private void executeBackup(String args) {
+        try {
+            // Parse arguments
+            String[] parts = args.split("\\s+");
+            if (parts.length == 0 || parts[0].isEmpty()) {
+                out.println("Error: Backup directory path is required");
+                out.println("Usage: BACKUP <backup-dir>");
+                return;
+            }
+            
+            Path backupDir = Path.of(parts[0]);
+            
+            // Get database instance
+            Database db = database;
+            if (db == null) {
+                out.println("Error: No database connection available");
+                return;
+            }
+            
+            // Execute physical backup
+            PhysicalBackup backup = new PhysicalBackup(Path.of(db.getDataDir()), backupDir);
+            backup.backup();
+            out.println("Physical backup completed successfully to: " + backupDir);
+            
+        } catch (Exception e) {
+            out.println("Error: " + e.getMessage());
+        }
+    }
+
+    private void executePhysicalRestore(String args) {
+        try {
+            // Parse arguments
+            String[] parts = args.split("\\s+");
+            if (parts.length < 2) {
+                out.println("Error: Backup directory and target directory are required");
+                out.println("Usage: PHYSICAL-RESTORE <backup-dir> <target-dir>");
+                return;
+            }
+            
+            Path backupDir = Path.of(parts[0]);
+            Path targetDir = Path.of(parts[1]);
+            
+            // Get database instance (for data dir reference)
+            Database db = database;
+            if (db == null) {
+                out.println("Error: No database connection available");
+                return;
+            }
+            
+            // Execute physical restore
+            PhysicalRestore restore = new PhysicalRestore(backupDir, targetDir);
+            restore.restore();
+            out.println("Physical restore completed successfully from: " + backupDir + " to: " + targetDir);
+            
+        } catch (Exception e) {
+            out.println("Error: " + e.getMessage());
+        }
+    }
+
+    private void executeRestore(String args) {
+        try {
+            // Parse arguments
+            String[] parts = args.split("\\s+");
+            if (parts.length == 0 || parts[0].isEmpty()) {
+                out.println("Error: Path is required");
+                out.println("Usage: RESTORE <path> [FORMAT sql|csv|jsonl|avro] [ON-CONFLICT error|replace|skip] [CREATE-TABLES] [BATCH-SIZE N] [VALIDATE]");
+                return;
+            }
+            
+            Path inputPath = Path.of(parts[0]);
+            DumpFormat format = DumpFormat.SQL; // default
+            LogicalRestore.OnConflictStrategy conflictStrategy = LogicalRestore.OnConflictStrategy.ERROR; // default
+            boolean createTables = false;
+            int batchSize = 1000; // default
+            boolean validateData = false;
+            
+            // Parse options
+            for (int i = 1; i < parts.length; i++) {
+                String part = parts[i].toUpperCase();
+                if (part.equals("FORMAT") && i + 1 < parts.length) {
+                    String formatStr = parts[i + 1].toUpperCase();
+                    try {
+                        format = DumpFormat.valueOf(formatStr);
+                        i++; // skip next token
+                    } catch (IllegalArgumentException e) {
+                        out.println("Error: Invalid format '" + parts[i + 1] + "'. Valid formats: sql, csv, jsonl, avro");
+                        return;
+                    }
+                } else if (part.equals("ON-CONFLICT") && i + 1 < parts.length) {
+                    String strategyStr = parts[i + 1].toUpperCase();
+                    try {
+                        conflictStrategy = LogicalRestore.OnConflictStrategy.valueOf(strategyStr);
+                        i++; // skip next token
+                    } catch (IllegalArgumentException e) {
+                        out.println("Error: Invalid conflict strategy '" + parts[i + 1] + "'. Valid strategies: error, replace, skip");
+                        return;
+                    }
+                } else if (part.equals("CREATE-TABLES")) {
+                    createTables = true;
+                } else if (part.equals("BATCH-SIZE") && i + 1 < parts.length) {
+                    try {
+                        batchSize = Integer.parseInt(parts[i + 1]);
+                        if (batchSize <= 0) {
+                            out.println("Error: Batch size must be positive");
+                            return;
+                        }
+                        i++; // skip next token
+                    } catch (NumberFormatException e) {
+                        out.println("Error: Invalid batch size '" + parts[i + 1] + "'");
+                        return;
+                    }
+                } else if (part.equals("VALIDATE")) {
+                    validateData = true;
+                } else {
+                    out.println("Error: Unknown option '" + parts[i] + "'");
+                    out.println("Usage: RESTORE <path> [FORMAT sql|csv|jsonl|avro] [ON-CONFLICT error|replace|skip] [CREATE-TABLES] [BATCH-SIZE N] [VALIDATE]");
+                    return;
+                }
+            }
+            
+            // Get database instance
+            Database db = database;
+            if (db == null) {
+                out.println("Error: No database connection available");
+                return;
+            }
+            
+            // Execute restore
+            LogicalRestore restore = new LogicalRestore(db, inputPath, format, conflictStrategy, createTables, batchSize, validateData);
+            restore.execute();
+            out.println("Restore completed successfully from: " + inputPath);
+            
+        } catch (Exception e) {
+            out.println("Error: " + e.getMessage());
+        }
+    }
+
     private void printHelp() {
         out.println("DieselDB CLI REPL");
         out.println("Type SQL queries and press Enter to execute them.");
         out.println("Commands:");
         out.println("  HELP                    show this help");
+        out.println("  DUMP <path> [options]  dump database to file (see diesel_dump tool for full options)");
+        out.println("  BACKUP <dir>           create physical backup of database (see diesel_backup tool for full options)");
+        out.println("  PHYSICAL-RESTORE <backup-dir> <target-dir>  restore database from physical backup (see diesel_restore tool for full options)");
+        out.println("  RESTORE <path> [opt]   restore database from file (see diesel_restore tool for full options)");
         out.println("  EXIT or QUIT            exit the REPL");
         out.println("Usage:");
         out.println("  CliRepl [host] [port]                  connect to a running server (default localhost:3306)");

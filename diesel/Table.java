@@ -200,6 +200,16 @@ class Table implements Serializable {
     private transient Map<String, Index> indexes;
     private transient Map<String, Sequence> sequences;
     private transient Map<String, String> indexDefinitions = new ConcurrentHashMap<>();
+
+    /**
+     * Returns the index definitions for this table. Package-private for
+     * backup/restore access.
+     *
+     * @return map of index name to index type (INDEX_BTREE, INDEX_COVERING_BTREE, etc.)
+     */
+    Map<String, String> getIndexDefinitions() {
+        return indexDefinitions;
+    }
     private transient Map<String, List<String>> coverColumnDefinitions = new ConcurrentHashMap<>();
     private boolean isFileInitialized;
     private boolean hasClusteredIndex;
@@ -4330,6 +4340,83 @@ class Table implements Serializable {
             LOGGER.log(Level.WARNING,
                     "Failed to deserialize clustered index for table {0}: {1}",
                     new Object[]{tableName, e.getMessage()});
+        }
+    }
+
+    /**
+     * Inserts a row without sequence-based primary key restrictions.
+     * Package-private for backup/restore access; allows explicit sequence PK values.
+     *
+     * @param row the column-to-value map
+     * @throws IllegalArgumentException if a value is missing, has the wrong type
+     * @throws IllegalStateException if a unique/clustered key is duplicated
+     */
+    void restoreRow(Map<String, Object> row) {
+        awaitAlterWritersUnblocked();
+        DualWriteCoordinator coordinator = dualWrite;
+        DualWriteCoordinator.Token token = coordinator != null ? coordinator.beginMutation(true) : null;
+        DualWriteCoordinator.Event event = null;
+        try {
+            Map<String, Object> validatedRow = new HashMap<>();
+            columns.forEach(col -> {
+                Object value;
+                Sequence sequence = sequences.get(col);
+                if (sequence != null) {
+                    // Allow explicit sequence PK values for restore
+                    value = row.containsKey(col) ? row.get(col) : sequence.nextValue();
+                } else if (!row.containsKey(col)) {
+                    if (!isAlterAddedColumn(col)) {
+                        throw new IllegalArgumentException("Missing value for column: " + col);
+                    }
+                    value = null;
+                } else {
+                    value = row.get(col);
+                }
+
+                if (deferredIndexOps == null) {
+                    checkUniqueConstraint(col, value);
+                }
+
+                Class<?> expectedType = columnTypes.get(col);
+                if (expectedType == null) {
+                    throw new IllegalArgumentException("Invalid value or type for column: " + col);
+                }
+                if (value == null) {
+                    validatedRow.put(col, null);
+                } else {
+                    validateColumnValueType(col, expectedType, value);
+                    validatedRow.put(col, value);
+                }
+            });
+
+            int rowIndex;
+            if (hasClusteredIndex) {
+                Object key = validatedRow.get(clusteredIndexColumn);
+                if (key == null) {
+                    throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
+                }
+                if (clusteredKeyBlocked(key)) {
+                    LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
+                    throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
+                }
+                if (getDeletedCount() > 0) {
+                    compact();
+                }
+                rowIndex = insertIntoClusteredPosition(validatedRow, key);
+            } else {
+                rowIndex = insertAtEnd(validatedRow);
+            }
+            rowCount++;
+            version.incrementAndGet();
+            markStatsDirty();
+            if (token != null && token.tracking) {
+                event = new DualWriteCoordinator.InsertEvent(rowIndex, validatedRow, null);
+            }
+            LOGGER.log(Level.FINE, "Restored row into table {0}: {1}", new Object[]{name, validatedRow});
+        } finally {
+            if (token != null) {
+                coordinator.endMutation(token, event);
+            }
         }
     }
 }

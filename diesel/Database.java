@@ -1238,6 +1238,15 @@ class Database {
         if (parsedQuery instanceof CreateUserQuery q) {
             return executeCreateUser(q);
         }
+        if (parsedQuery instanceof ShowTablesQuery q) {
+            return executeShowTables(q);
+        }
+        if (parsedQuery instanceof ShowCreateTableQuery q) {
+            return executeShowCreateTable(q);
+        }
+        if (parsedQuery instanceof ShowCreateIndexesQuery q) {
+            return executeShowCreateIndexes(q);
+        }
         if (parsedQuery instanceof CreateRoleQuery q) {
             return executeCreateRole(q);
         }
@@ -2511,6 +2520,27 @@ class Database {
     }
 
     /**
+     * Executes a SHOW TABLES statement and returns the list of table names.
+     */
+    private Object executeShowTables(ShowTablesQuery showTablesQuery) {
+        return showTablesQuery.execute(this, -1);
+    }
+
+    /**
+     * Executes a SHOW CREATE TABLE statement and returns the DDL.
+     */
+    private Object executeShowCreateTable(ShowCreateTableQuery showCreateTableQuery) {
+        return showCreateTableQuery.execute(this, -1);
+    }
+
+    /**
+     * Executes a SHOW CREATE INDEXES statement and returns the index DDL.
+     */
+    private Object executeShowCreateIndexes(ShowCreateIndexesQuery showCreateIndexesQuery) {
+        return showCreateIndexesQuery.execute(this, -1);
+    }
+
+    /**
      * Executes queries that operate on table data (INSERT/UPDATE/DELETE/SELECT),
      * applying the transaction view, auto-commit DML and persistence rules.
      */
@@ -2676,7 +2706,33 @@ class Database {
             // GRANT doesn't operate on a regular table, it's a system operation
             return "DIESEL_PRIVILEGES";
         }
+        if (normalized.startsWith(SqlKeywords.SHOW_TABLES)) {
+            // SHOW TABLES doesn't operate on a specific table, it's a system operation
+            return "DIESEL_TABLES";
+        }
+        if (normalized.startsWith(SqlKeywords.SHOW_CREATE_TABLE)) {
+            return extractTableFromShowCreateTable(normalized);
+        }
+        if (normalized.startsWith(SqlKeywords.SHOW_CREATE_INDEXES)) {
+            return extractTableFromShowCreateIndexes(normalized);
+        }
         throw new IllegalArgumentException("Cannot extract table name from query: unsupported query type");
+    }
+
+    private String extractTableFromShowCreateTable(String normalized) {
+        String rest = normalized.substring(SqlKeywords.SHOW_CREATE_TABLE.length()).trim();
+        if (rest.endsWith(";")) {
+            rest = rest.substring(0, rest.length() - 1).trim();
+        }
+        return firstIdentifier(rest.split("\\s+")[0]);
+    }
+
+    private String extractTableFromShowCreateIndexes(String normalized) {
+        String rest = normalized.substring(SqlKeywords.SHOW_CREATE_INDEXES.length()).trim();
+        if (rest.endsWith(";")) {
+            rest = rest.substring(0, rest.length() - 1).trim();
+        }
+        return firstIdentifier(rest.split("\\s+")[0]);
     }
 
     private String extractTableFromSelect(String normalized) {

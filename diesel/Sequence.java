@@ -74,4 +74,40 @@ public class Sequence implements Serializable {
     public synchronized long getCurrentValue() {
         return currentValue.get();
     }
+
+    /**
+     * Returns the start value of the sequence.
+     *
+     * @return the start value
+     */
+    public long getStartValue() {
+        return currentValue.get() + increment;
+    }
+
+    /**
+     * Returns the increment value of the sequence.
+     *
+     * @return the increment value
+     */
+    public long getIncrement() {
+        return increment;
+    }
+
+    /**
+     * Seeds the sequence to at least the specified value. If the current
+     * value is less than the specified value, advances the sequence to
+     * the next value that is >= the specified value.
+     *
+     * @param minValue the minimum value to seed to
+     */
+    public synchronized void seedAtLeast(long minValue) {
+        long current = currentValue.get();
+        if (current < minValue) {
+            long next = minValue - (minValue % increment);
+            if (next <= current) {
+                next += increment;
+            }
+            currentValue.set(next - increment);
+        }
+    }
 }

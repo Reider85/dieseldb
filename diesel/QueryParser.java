@@ -1076,6 +1076,39 @@ class QueryParser {
                 return parseDropTableQuery(n);
             }
         });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.SHOW_TABLES);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return new ShowTablesQuery();
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.SHOW_CREATE_TABLE);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseShowCreateTableQuery(n, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.SHOW_CREATE_INDEXES);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseShowCreateIndexesQuery(n, d);
+            }
+        });
         return strategies;
     }
 
@@ -1283,6 +1316,46 @@ class QueryParser {
             throw new IllegalArgumentException("Invalid ANALYZE TABLE syntax: expected 'ANALYZE TABLE <table name>'");
         }
         return new AnalyzeTableQuery(tableName.toUpperCase());
+    }
+
+    /**
+     * Parses a {@code SHOW TABLES} statement and returns a {@link ShowTablesQuery}.
+     */
+    private Query<?> parseShowTablesQuery(String normalized) {
+        if (!normalized.equals(SqlKeywords.SHOW_TABLES)) {
+            throw new IllegalArgumentException("Invalid SHOW TABLES syntax");
+        }
+        return new ShowTablesQuery();
+    }
+
+    /**
+     * Parses a {@code SHOW CREATE TABLE <table>} statement and returns a {@link ShowCreateTableQuery}.
+     */
+    private Query<?> parseShowCreateTableQuery(String normalized, Database database) {
+        String rest = normalized.substring(SqlKeywords.SHOW_CREATE_TABLE.length()).trim();
+        if (rest.endsWith(";")) {
+            rest = rest.substring(0, rest.length() - 1).trim();
+        }
+        if (rest.isEmpty()) {
+            throw new IllegalArgumentException("SHOW CREATE TABLE requires a table name");
+        }
+        String tableName = rest.split("\\s+")[0];
+        return new ShowCreateTableQuery(unquoteIdentifier(tableName));
+    }
+
+    /**
+     * Parses a {@code SHOW CREATE INDEXES <table>} statement and returns a {@link ShowCreateIndexesQuery}.
+     */
+    private Query<?> parseShowCreateIndexesQuery(String normalized, Database database) {
+        String rest = normalized.substring(SqlKeywords.SHOW_CREATE_INDEXES.length()).trim();
+        if (rest.endsWith(";")) {
+            rest = rest.substring(0, rest.length() - 1).trim();
+        }
+        if (rest.isEmpty()) {
+            throw new IllegalArgumentException("SHOW CREATE INDEXES requires a table name");
+        }
+        String tableName = rest.split("\\s+")[0];
+        return new ShowCreateIndexesQuery(unquoteIdentifier(tableName));
     }
 
     /**

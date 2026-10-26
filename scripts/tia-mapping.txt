@@ -178,3 +178,12 @@ diesel/AlterTableCopyAlgorithm.java	query,query-full,concurrency
 diesel/DualWriteCoordinator.java	query,query-full,concurrency
 diesel/AlterStatusQuery.java	smoke,query,query-full
 diesel/AlterTableDropColumnQuery.java	query,query-full
+
+# Backup/Restore functionality
+diesel/backup/*.java			smoke,query,storage
+diesel/DumpAccess.java			smoke,query
+diesel/backup/PhysicalBackup.java		smoke,query,storage
+diesel/backup/BackupManifest.java		smoke,query,storage
+diesel/backup/PhysicalRestore.java		smoke,query,storage
+diesel/backup/DieselBackup.java		smoke,query,storage
+diesel/backup/DieselRestore.java		smoke,query,storage

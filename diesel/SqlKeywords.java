@@ -160,4 +160,10 @@ public final class SqlKeywords {
     public static final String BATCH = "BATCH";
     public static final String BEGIN_BATCH = "BEGIN BATCH";
     public static final String END_BATCH = "END BATCH";
+
+    // SHOW commands (backup/restore)
+    public static final String SHOW = "SHOW";
+    public static final String SHOW_TABLES = "SHOW TABLES";
+    public static final String SHOW_CREATE_TABLE = "SHOW CREATE TABLE";
+    public static final String SHOW_CREATE_INDEXES = "SHOW CREATE INDEXES";
 }
