@@ -1046,3 +1046,5 @@ chore: test-profiles-audit changelog entry
 3.3.48 Tests: CI guard for tia-mapping.txt drift - fails PR/push if a diesel/*.java is not mapped
 
 3.3.49 Tests: reduce FlusherTest.ROW_COUNT from 50k to 5k (overridable via -Ddiesel.flusher.rowCount) - FlusherTest 65.6s -> 20.3s (-69%)
+
+3.3.50 Tests: de-flake 2 timing asserts - CheckpointDurationTest outer-vs-inner bound 10->100ms (structural archiver/log tail), quarantine WALReadAll microbenchmark via @Tag(flaky) + test-flaky/nightly step (two strikes)

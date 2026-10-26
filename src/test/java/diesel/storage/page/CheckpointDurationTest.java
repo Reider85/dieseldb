@@ -94,7 +94,11 @@ public class CheckpointDurationTest {
             long recorded = enabledManager.getLastCheckpointDurationMs();
             assertTrue(recorded >= 0, "Checkpoint duration should be non-negative");
             assertTrue(duration >= recorded, "Recorded duration (" + recorded + "ms) should not exceed measured duration (" + duration + "ms)");
-            assertTrue(duration - recorded <= 10, "Recorded duration should be within a few ms of measured duration, diff=" + (duration - recorded) + "ms");
+            // Bound is 100ms (not 10ms): the outer timer wraps ALL of checkpointNow(),
+            // while the inner recorded duration stops before the WAL-archiver runOnce(),
+            // the completion INFO log write, and the write-gate unlock. That structural
+            // tail routinely costs >10ms on loaded Windows (14ms observed under -P all).
+            assertTrue(duration - recorded <= 100, "Recorded duration should be within ~100ms of measured duration (structural archiver/log tail), diff=" + (duration - recorded) + "ms");
             
         } finally {
             enabledManager.stopWithoutCheckpoint();

@@ -167,8 +167,8 @@ test-perf:
 large-test:
 	$(call run-tests,large)
 
-## Run quarantined flaky tests (TESTS-5) — three separate Maven invocations,
-## together all 4 quarantined tests, ordered so the load-sensitive assertions
+## Run quarantined flaky tests (TESTS-5) — four separate Maven invocations,
+## together all 5 quarantined tests, ordered so the load-sensitive assertions
 ## run first on a settled machine:
 ##   1) group-commit p99 acceptance — FIRST, with ONE isolated retry on red
 ##      (AGENTS.md Known-Flakes protocol). NO clean: a clean+full recompile
@@ -176,27 +176,33 @@ large-test:
 ##      and running it 0.5s after FlusherTest's 50k-row writes gave 105ms.
 ##   2) the quarantined JSONL 1M-row benchmark (60s ceiling; own profile —
 ##      it needs diesel.storage.type=jsonl to pass its @StorageType gate)
-##   3) FlusherTest 50k-insert slow test last (timing-insensitive, ~3.5 min)
-## Continue-on-error: ALL three always run; a red exit at the end = the signal
+##   3) FlusherTest slow test (timing-insensitive; 5k inserts since 3.3.49)
+##   4) WALReadAll readAll-vs-sort microbenchmark (~seconds; sub-ms medians
+##      cannot survive 4-way class parallelism — two strikes, see Known Flakes)
+## Continue-on-error: ALL four always run; a red exit at the end = the signal
 ## (a quarantined flake got worse — investigate, do NOT re-run until green).
 test-flaky:
 	@rc=0; \
 	stamp=$$(mktemp); \
-	echo "1/3 quarantined WAL group-commit acceptance (profile 'flaky')..."; \
+	echo "1/4 quarantined WAL group-commit acceptance (profile 'flaky')..."; \
 	if ! $(MVN) -B test -P flaky -Dtest=GroupCommitThroughputTest; then \
-		echo "1/3 red — known load-sensitive flake, ONE isolated retry after 10s cooldown..."; \
+		echo "1/4 red — known load-sensitive flake, ONE isolated retry after 10s cooldown..."; \
 		sleep 10; \
 		stamp=$$(mktemp); \
 		$(MVN) -B test -P flaky -Dtest=GroupCommitThroughputTest || rc=1; \
 	fi; \
 	$(ASSERT_TESTS) "$$stamp" || rc=1; \
 	stamp=$$(mktemp); \
-	echo "2/3 quarantined JSONL 1M-row benchmark (profile 'flaky-jsonl')..."; \
+	echo "2/4 quarantined JSONL 1M-row benchmark (profile 'flaky-jsonl')..."; \
 	$(MVN) -B test -P flaky-jsonl || rc=1; \
 	$(ASSERT_TESTS) "$$stamp" || rc=1; \
 	stamp=$$(mktemp); \
-	echo "3/3 quarantined FlusherTest 50k-insert test (profile 'flaky')..."; \
+	echo "3/4 quarantined FlusherTest slow test (profile 'flaky')..."; \
 	$(MVN) -B test -P flaky -Dtest=FlusherTest || rc=1; \
+	$(ASSERT_TESTS) "$$stamp" || rc=1; \
+	stamp=$$(mktemp); \
+	echo "4/4 quarantined WALReadAll readAll-vs-sort microbenchmark (profile 'flaky')..."; \
+	$(MVN) -B test -P flaky -Dtest=WALReadAllIsAlreadySortedTest || rc=1; \
 	$(ASSERT_TESTS) "$$stamp" || rc=1; \
 	if [ $$rc -ne 0 ]; then \
 		echo ""; \

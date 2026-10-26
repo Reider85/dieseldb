@@ -272,16 +272,16 @@ jobs:
           fi
           echo "No orphaned .class files found."
 
-      # TESTS-5: three invocations, together all 4 quarantined @Tag("flaky") tests,
+      # TESTS-5: four invocations, together all 5 quarantined @Tag("flaky") tests,
       # ordered so the load-sensitive assertions run first on a settled runner
       # (NO clean: a full recompile right before the p99 test measured 42ms).
       # Step 1 gets ONE isolated retry (AGENTS.md Known-Flakes protocol); steps
-      # 2-3 use if:always() so a red flake never hides the other results.
+      # 2-4 use if:always() so a red flake never hides the other results.
       # Red = the signal that a quarantined flake got worse; gates stay green.
       - name: Run quarantined WAL group-commit acceptance (idle runner)
         run: |
           if ! mvn -B test -P flaky -Dtest=GroupCommitThroughputTest; then
-            echo "1/3 red - one isolated retry after 10s cooldown (Known-Flakes protocol)"
+            echo "1/4 red - one isolated retry after 10s cooldown (Known-Flakes protocol)"
             sleep 10
             mvn -B test -P flaky -Dtest=GroupCommitThroughputTest
           fi
@@ -290,9 +290,13 @@ jobs:
         if: always()
         run: mvn -B test -P flaky-jsonl
 
-      - name: Run quarantined FlusherTest (slow, last)
+      - name: Run quarantined FlusherTest (slow)
         if: always()
         run: mvn -B test -P flaky -Dtest=FlusherTest
+
+      - name: Run quarantined WALReadAll readAll-vs-sort microbenchmark
+        if: always()
+        run: mvn -B test -P flaky -Dtest=WALReadAllIsAlreadySortedTest
 
       - name: Cache hit summary
         if: always()
