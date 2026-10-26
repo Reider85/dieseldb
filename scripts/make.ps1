@@ -32,6 +32,12 @@ $commitChangelog = Join-Path $PSScriptRoot "commit-and-changelog.ps1"
 $tiaScript = Join-Path $PSScriptRoot "tia.ps1"
 $gitCmd = Get-NativeTool -Name "git"
 
+# TESTS-14: timing retry marker. A red timing run drops this file; the next
+# timing invocation is blocked until the agent fixes the cause and runs
+# clean-test-cache (which removes it). Shared by timing-quick/timing-full/
+# timing - AGENTS.md Timing Policy "retry once".
+$timingRetryMarker = "target\.timing-retry-done"
+
 # THE ONLY WAY TO RUN TESTS.
 #
 # Every test target in this script routes through here so that a single place
@@ -58,7 +64,13 @@ function Invoke-ProfileTests {
         # $script:ProfileTestFailures so the caller can run the remaining
         # invocations and aggregate (used by test-flaky  - a red quarantined
         # flake must not prevent the other quarantined tests from running).
-        [switch]$ContinueOnError
+        [switch]$ContinueOnError,
+
+        # Run this scriptblock right before the non-ContinueOnError failure
+        # branch aborts the script (TESTS-14: the timing gates drop the retry
+        # marker there - Write-Error below is terminating under EAP=Stop, so
+        # the hook MUST run first).
+        [scriptblock]$OnFail
     )
 
     $mvnArgs = @("-B")
@@ -95,6 +107,7 @@ function Invoke-ProfileTests {
             Write-Warning "Test run failed (continuing): $label (exit $LASTEXITCODE)."
             $script:ProfileTestFailures += $label
         } else {
+            if ($OnFail) { & $OnFail }
             Write-Error "Test run failed: $label (exit $LASTEXITCODE)."
             exit 1
         }
@@ -115,10 +128,24 @@ function Invoke-TimingGate {
         [string]$Profile
     )
 
+    # TESTS-14: a previous red run left the retry marker - block the re-run
+    # until the cause is fixed and 'clean-test-cache' reset it.
+    if (Test-Path $timingRetryMarker) {
+        Write-Error "ERROR: timing already retried (marker $timingRetryMarker). Fix the cause. Then run '.\scripts\make.ps1 clean-test-cache' to reset the marker."
+        exit 1
+    }
+
     if (Test-Path "target\surefire-reports") {
         Remove-Item -Recurse -Force "target\surefire-reports"
     }
-    Invoke-ProfileTests -Profile $Profile
+    $onTimingFail = {
+        # Write-Host, not Write-Error: the caller aborts right after and
+        # Write-Error is terminating under $ErrorActionPreference = "Stop".
+        Write-Host "TIMING RED - one retry permitted. Fix the cause. Then run '.\scripts\make.ps1 clean-test-cache' and re-run the timing gate." -ForegroundColor Yellow
+        if (-not (Test-Path "target")) { New-Item -ItemType Directory -Path "target" -Force | Out-Null }
+        New-Item -ItemType File -Path $timingRetryMarker -Force | Out-Null
+    }
+    Invoke-ProfileTests -Profile $Profile -OnFail $onTimingFail
 
     Write-Host "Collecting timing data..."
     Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $collectTiming)
@@ -126,12 +153,18 @@ function Invoke-TimingGate {
 
     if (Test-Path "timing\timing.md") {
         Invoke-Native -FilePath "powershell" -Arguments @("-ExecutionPolicy", "Bypass", "-File", $compareTiming, "-Base", "timing/timing.md", "-New", "timing/timingN.md")
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if ($LASTEXITCODE -ne 0) {
+            & $onTimingFail
+            exit $LASTEXITCODE
+        }
     } else {
         Write-Host "Baseline timing/timing.md not found - creating it from this run."
         Copy-Item "timing\timingN.md" "timing\timing.md"
         Write-Host "Baseline created. Re-run to compare against it."
     }
+
+    # TESTS-14: green gate - clear a stale retry marker (no-op when absent).
+    if (Test-Path $timingRetryMarker) { Remove-Item -Force $timingRetryMarker }
 }
 
 # Creates the changelog entry, then commits it. Shared by release/release-local.
@@ -361,7 +394,7 @@ switch ($Target) {
     }
     "clean-test-cache" {
         Write-Host "Cleaning test cache..."
-        @("target\.cache", "target\surefire-reports", "target\test-classes") | ForEach-Object {
+        @("target\.cache", "target\surefire-reports", "target\test-classes", $timingRetryMarker) | ForEach-Object {
             if (Test-Path $_) { Remove-Item -Recurse -Force $_ }
         }
     }

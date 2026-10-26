@@ -47,6 +47,7 @@ ASSERT_TESTS = ./scripts/assert-tests-ran.sh
 #
 # Usage: $(call run-tests,fast)
 #        $(call run-tests-incr,fast,-Dtest=JoinTest#joinKeys)
+#        $(call run-tests,timing-quick,,$(TIMING_RETRY_MSG))   # optional 3rd arg
 #
 # Every test target routes through these macros on purpose. Each target used to
 # spell out its own "$(MVN) -B clean test -P <profile>" line, and a broken
@@ -55,10 +56,14 @@ ASSERT_TESTS = ./scripts/assert-tests-ran.sh
 # "-P <profile>" argument has exactly one owner, and the post-run assertion that
 # tests actually executed is never forgotten.
 # ---------------------------------------------------------------------------
+# Optional 3rd arg: shell commands executed when the test run fails, before the
+# recipe aborts (TESTS-14: the timing gates drop the retry marker there). It is
+# a $(call) argument - NEVER put a comma in its text (call splits on commas).
+# Empty 3rd arg expands to the original plain "|| exit 1;".
 define run-tests
 	@stamp=$$(mktemp); \
 	echo "Running profile '$(1)'..."; \
-	$(MVN) -B test -P $(1) $(2) || exit 1; \
+	$(MVN) -B test -P $(1) $(2) || $(if $(3),{ $(3); exit 1; },exit 1); \
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
@@ -250,6 +255,12 @@ all-tests-large: all-tests
 	$(call run-tests-incr,perf)
 	$(call run-tests-incr,large)
 
+## TESTS-14: dropped by a red timing gate; the next timing invocation is
+## blocked until 'make clean-test-cache' resets it (AGENTS.md Timing Policy,
+## "retry once"). Shared by timing-quick and timing-full. Single-line text
+## without commas - it travels through $(call) into run-tests' 3rd argument.
+TIMING_RETRY_MSG = echo "TIMING RED - one retry permitted. Fix the cause. Then run 'make clean-test-cache' and re-run the timing gate."; mkdir -p target; touch target/.timing-retry-done
+
 ## Fast timing gate (TESTS-6): only @Tag("timing") tests (~3-5 min).
 ## Default for query-path prompts (JOIN / hash join / GROUP BY / ORDER BY /
 ## index / planner / SELECT hot-path). Covers the timing/timing.md baseline
@@ -259,30 +270,43 @@ all-tests-large: all-tests
 ## reports from earlier profiles (previously leaked 0.000-time skips and
 ## Avro/Jsonl rows into timingN.md).
 timing-quick:
+	@if [ -f target/.timing-retry-done ]; then \
+		echo "ERROR: timing already retried (marker target/.timing-retry-done)."; \
+		echo "Fix the cause. Then run 'make clean-test-cache' to reset the marker."; \
+		exit 1; \
+	fi
 	@rm -rf target/surefire-reports
-	$(call run-tests,timing-quick)
+	$(call run-tests,timing-quick,,$(TIMING_RETRY_MSG))
 	$(PY) scripts/collect-timing.py
 	@if [ -f timing/timing.md ]; then \
-		./compare-timing.sh timing/timing.md timing/timingN.md; \
+		./compare-timing.sh timing/timing.md timing/timingN.md || { $(TIMING_RETRY_MSG); exit 1; }; \
 	else \
 		echo "Baseline timing/timing.md not found - creating it from this run."; \
 		cp timing/timingN.md timing/timing.md; \
 		echo "Baseline created. Re-run 'make timing-quick' to compare against it."; \
 	fi
+	@rm -f target/.timing-retry-done
 
 ## Full timing gate (TESTS-6): entire large profile (10-30 min, 4GB heap) -
 ## unchanged behavior, for schema change / hash-join refactor / large-profile work.
+## TESTS-14 retry marker applies here too (same file, same reset).
 timing-full:
+	@if [ -f target/.timing-retry-done ]; then \
+		echo "ERROR: timing already retried (marker target/.timing-retry-done)."; \
+		echo "Fix the cause. Then run 'make clean-test-cache' to reset the marker."; \
+		exit 1; \
+	fi
 	@rm -rf target/surefire-reports
-	$(call run-tests,large)
+	$(call run-tests,large,,$(TIMING_RETRY_MSG))
 	$(PY) scripts/collect-timing.py
 	@if [ -f timing/timing.md ]; then \
-		./compare-timing.sh timing/timing.md timing/timingN.md; \
+		./compare-timing.sh timing/timing.md timing/timingN.md || { $(TIMING_RETRY_MSG); exit 1; }; \
 	else \
 		echo "Baseline timing/timing.md not found - creating it from this run."; \
 		cp timing/timingN.md timing/timing.md; \
 		echo "Baseline created. Re-run 'make timing-full' to compare against it."; \
 	fi
+	@rm -f target/.timing-retry-done
 
 ## Backward-compat alias - defaults to quick (TESTS-6)
 timing: timing-quick
@@ -303,9 +327,11 @@ profile:
 	java -Xmx4g -cp target/classes:. ProfileMain
 
 ## Clean test cache only (surefire reports, build cache, test classes)
+## Also resets the TESTS-14 timing retry marker.
 clean-test-cache:
 	@echo "Cleaning test cache..."
 	rm -rf target/.cache target/surefire-reports target/test-classes
+	rm -f target/.timing-retry-done
 
 ## Clean Maven build cache
 clean-cache:

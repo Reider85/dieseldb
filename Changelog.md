@@ -1050,3 +1050,5 @@ chore: test-profiles-audit changelog entry
 3.3.50 Tests: de-flake 2 timing asserts - CheckpointDurationTest outer-vs-inner bound 10->100ms (structural archiver/log tail), quarantine WALReadAll microbenchmark via @Tag(flaky) + test-flaky/nightly step (two strikes)
 
 3.3.51 Tests: suppress INFO log in large/perf/timing-quick profiles (TESTS-12) - large-test stdout 140.9MB -> 0.01MB, wall 19:38 -> 5:39 (-71%); logback root-WARN + JUL .level=WARNING + QueryParser logging.level.diesel sysprop override (SQL layer is JUL with its own ConsoleHandler in a static block - logback config alone cannot reach it)
+
+3.3.52 Tests: enforce timing retry once via target/.timing-retry-done marker (TESTS-14) - a red timing gate (mvn failure or compare-red) blocks the next timing-quick/timing-full invocation until clean-test-cache reset; green run clears the marker
