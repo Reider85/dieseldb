@@ -1038,3 +1038,5 @@ chore: test-profiles-audit changelog entry
 3.3.44 Prompt4 #41: Implement physical backup functionality with diesel_backup CLI tool
 
 3.3.45 Tests: switch network/concurrency profiles to reuseForks=true (TESTS-8) - one shared serial JVM per profile instead of fresh-per-class, junit class-parallelism forced off via system property; concurrency 395s -> 104s, network 554s -> 245-324s; new schedule-only CI profile-stability job (3x each profile)
+
+3.3.46 commit-and-changelog.ps1: walk back up to 30 commits to find the newest versioned commit - hardens auto-increment against unversioned commits (merge commits, manual commits) falling back to 0.0.1
