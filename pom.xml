@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-    <version>3.3.50</version>
+    <version>3.3.51</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -307,6 +307,14 @@
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx2g --add-modules=jdk.incubator.vector</argLine>
+                            <systemPropertyVariables>
+                                <!-- TESTS-12: quiet logging - 1M-row benchmarks used
+                                     to emit ~140MB of INFO lines per large/perf run.
+                                     See the large profile below for the rationale. -->
+                                <logback.configurationFile>src/test/resources/logback-large.xml</logback.configurationFile>
+                                <java.util.logging.config.file>src/test/resources/jul-large.properties</java.util.logging.config.file>
+                                <logging.level.diesel>WARNING</logging.level.diesel>
+                            </systemPropertyVariables>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -336,6 +344,30 @@
                             <systemPropertyVariables>
                                 <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
                                 <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
+                                <!-- TESTS-12: quiet logging - these profiles run
+                                     1M-row INSERT loops and used to produce ~140MB
+                                     of INFO output per run (QueryParser logs every
+                                     INSERT). Three levers, one per logging backend:
+                                       logback.configurationFile  - slf4j side
+                                         (WAL, buffer pool, storage readers).
+                                       java.util.logging.config.file - JUL side
+                                         (.level=WARNING covers Table/Database/
+                                         SelectQuery and the test loggers).
+                                       logging.level.diesel       - diesel.QueryParser
+                                         force-sets its OWN JUL logger + ConsoleHandler
+                                         in its static block from config.properties
+                                         (default INFO), which the two files above
+                                         cannot reach; it now honors this system
+                                         property with priority over config.properties.
+                                     Surefire reports (assertion failures, stack
+                                     traces) are unaffected: they are written to
+                                     target/surefire-reports/TEST-*.xml, not stdout.
+                                     NB: raw System.out.println in benchmark tests
+                                     (TESTS-13 territory) is intentionally NOT
+                                     silenced here. -->
+                                <logback.configurationFile>src/test/resources/logback-large.xml</logback.configurationFile>
+                                <java.util.logging.config.file>src/test/resources/jul-large.properties</java.util.logging.config.file>
+                                <logging.level.diesel>WARNING</logging.level.diesel>
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>
@@ -521,6 +553,14 @@
                                 <diesel.largeTests>true</diesel.largeTests>
                                 <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
                                 <junit.jupiter.execution.parallel.enabled>false</junit.jupiter.execution.parallel.enabled>
+                                <!-- TESTS-12: quiet logging - 'make timing' routes
+                                     here since TESTS-6 and VacuumTest still runs
+                                     its 1M-row INSERT loop (same ~140MB INFO spam
+                                     as the large profile). Same three levers; see
+                                     the large profile for the full rationale. -->
+                                <logback.configurationFile>src/test/resources/logback-large.xml</logback.configurationFile>
+                                <java.util.logging.config.file>src/test/resources/jul-large.properties</java.util.logging.config.file>
+                                <logging.level.diesel>WARNING</logging.level.diesel>
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>

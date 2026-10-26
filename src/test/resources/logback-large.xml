@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TESTS-12: quiet logback config for the large / perf / timing-quick profiles.
+  Activated ONLY via the logback.configurationFile system property set in those
+  profiles' surefire <systemPropertyVariables> (pom.xml); without it every other
+  profile keeps using src/main/resources/logback.xml (root INFO) unchanged.
+  The file appender is intentionally omitted: nothing in these profiles reads
+  logs/diesel.log, and skipping the rolling writes is part of the I/O saving.
+-->
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%-5level %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

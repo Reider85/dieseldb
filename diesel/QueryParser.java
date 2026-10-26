@@ -51,23 +51,30 @@ class QueryParser {
         handler.setLevel(Level.ALL); // Устанавливаем минимальный уровень для обработчика
         LOGGER.addHandler(handler);
 
-        // Загрузка уровня логирования из config.properties
+        // Загрузка уровня логирования. Системное свойство "logging.level.diesel"
+        // имеет приоритет над config.properties: тестовые профили large/perf/
+        // timing-quick передают -Dlogging.level.diesel=WARNING, чтобы подавить
+        // ~140MB INFO-вывода на каждый INSERT (TESTS-12). Без системного
+        // свойства источник и поведение не меняются.
         Properties props = ConfigLoader.load();
-        if (props.isEmpty()) {
-            LOGGER.warning("config.properties not found, using default logging level INFO");
-            LOGGER.setLevel(Level.INFO);
-        } else {
-            String logLevelStr = props.getProperty("logging.level.diesel", "INFO").toUpperCase();
-            try {
-                Level logLevel = Level.parse(logLevelStr);
-                LOGGER.setLevel(logLevel);
-                handler.setLevel(logLevel);
-                LOGGER.info("Logging level set to " + logLevelStr + " from config.properties");
-            } catch (IllegalArgumentException e) {
-                LOGGER.warning("Invalid logging level '" + logLevelStr + "' in config.properties, defaulting to INFO");
-                LOGGER.setLevel(Level.INFO);
-                handler.setLevel(Level.INFO);
+        String syspropLevel = System.getProperty("logging.level.diesel");
+        String logLevelStr = (syspropLevel != null ? syspropLevel
+                : props.isEmpty() ? "INFO" : props.getProperty("logging.level.diesel", "INFO"))
+                .toUpperCase();
+        try {
+            Level logLevel = Level.parse(logLevelStr);
+            LOGGER.setLevel(logLevel);
+            handler.setLevel(logLevel);
+            if (syspropLevel == null && props.isEmpty()) {
+                LOGGER.warning("config.properties not found, using default logging level INFO");
+            } else {
+                LOGGER.info("Logging level set to " + logLevelStr
+                        + (syspropLevel != null ? " from system property" : " from config.properties"));
             }
+        } catch (IllegalArgumentException e) {
+            LOGGER.warning("Invalid logging level '" + logLevelStr + "', defaulting to INFO");
+            LOGGER.setLevel(Level.INFO);
+            handler.setLevel(Level.INFO);
         }
     }
     static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");

@@ -1048,3 +1048,5 @@ chore: test-profiles-audit changelog entry
 3.3.49 Tests: reduce FlusherTest.ROW_COUNT from 50k to 5k (overridable via -Ddiesel.flusher.rowCount) - FlusherTest 65.6s -> 20.3s (-69%)
 
 3.3.50 Tests: de-flake 2 timing asserts - CheckpointDurationTest outer-vs-inner bound 10->100ms (structural archiver/log tail), quarantine WALReadAll microbenchmark via @Tag(flaky) + test-flaky/nightly step (two strikes)
+
+3.3.51 Tests: suppress INFO log in large/perf/timing-quick profiles (TESTS-12) - large-test stdout 140.9MB -> 0.01MB, wall 19:38 -> 5:39 (-71%); logback root-WARN + JUL .level=WARNING + QueryParser logging.level.diesel sysprop override (SQL layer is JUL with its own ConsoleHandler in a static block - logback config alone cannot reach it)
