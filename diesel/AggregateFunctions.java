@@ -14,18 +14,37 @@ import jdk.incubator.vector.VectorSpecies;
  * The implementation uses Java Vector API (jdk.incubator.vector) for SIMD operations.
  * 
  * For non-numeric types or edge cases, fallback to scalar implementations is provided.
+ * When jdk.incubator.vector is not resolved (TESTS-15: profiles without
+ * --add-modules=jdk.incubator.vector), every kernel falls back to a scalar loop.
  */
 public class AggregateFunctions {
     
     private static final Logger LOGGER = Logger.getLogger(AggregateFunctions.class.getName());
-    private static final VectorSpecies<Integer> INT_SPECIES = IntVector.SPECIES_PREFERRED;
-    private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
-    private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
-    
-    private static final int VECTOR_WIDTH = INT_SPECIES.length();
-    
+    /**
+     * TESTS-15: SIMD kernels are only usable when jdk.incubator.vector is part of
+     * the boot module layer (surefire argLine passes --add-modules in the
+     * perf, large, timing-quick, storage and flaky profiles). When the flag is absent
+     * the class must still initialize, so no species field may live here - they
+     * are all inside {@link VectorKernels}, which is linked lazily.
+     */
+    private static final boolean MODULE_VECTOR =
+        ModuleLayer.boot().findModule("jdk.incubator.vector").isPresent();
+
+    /** Test-only escape hatch: forces the scalar path even when the module is present. */
+    static final String VECTOR_DISABLED_PROP = "diesel.aggregate.vector.disabled";
+
     private AggregateFunctions() {
         // Utility class
+    }
+
+    /**
+     * Whether the SIMD fast path runs for the current call: the module must be
+     * resolved AND the test override must not force the scalar path. Read per
+     * call (cheap - only aggregate evaluation hits it, never per row) so a test
+     * can toggle the property after class initialization.
+     */
+    static boolean useVector() {
+        return MODULE_VECTOR && !Boolean.getBoolean(VECTOR_DISABLED_PROP);
     }
     
     /**
@@ -253,104 +272,35 @@ public class AggregateFunctions {
     }
     
     /**
-     * Vectorized sum implementation for int array using SIMD.
+     * TESTS-15 dispatch: SIMD kernel when jdk.incubator.vector is available,
+     * scalar loop otherwise (profiles without --add-modules).
      */
     private static long vectorSumInt(int[] array) {
-        int n = array.length;
-        if (n == 0) {
-            return 0L;
-        }
-        
-        long sum = 0;
-        int i = 0;
-        
-        // SIMD loop using Vector API
-        int upperBound = INT_SPECIES.loopBound(n);
-        for (; i < upperBound; i += VECTOR_WIDTH) {
-            IntVector v = IntVector.fromArray(INT_SPECIES, array, i);
-            sum += v.reduceLanes(jdk.incubator.vector.VectorOperators.ADD);
-        }
-        
-        // Scalar cleanup for remaining elements
-        for (; i < n; i++) {
-            sum += array[i];
-        }
-        
-        return sum;
+        return useVector() ? VectorKernels.vectorSumInt(array) : scalarSumInt(array);
     }
     
     /**
-     * Vectorized sum implementation for long array using SIMD.
+     * TESTS-15 dispatch: SIMD kernel when jdk.incubator.vector is available,
+     * scalar loop otherwise (profiles without --add-modules).
      */
     private static long vectorSumLong(long[] array) {
-        int n = array.length;
-        if (n == 0) {
-            return 0L;
-        }
-        
-        long sum = 0;
-        int i = 0;
-        
-        // SIMD loop using Vector API
-        int upperBound = LONG_SPECIES.loopBound(n);
-        for (; i < upperBound; i += VECTOR_WIDTH) {
-            LongVector v = LongVector.fromArray(LONG_SPECIES, array, i);
-            sum += v.reduceLanes(jdk.incubator.vector.VectorOperators.ADD);
-        }
-        
-        // Scalar cleanup for remaining elements
-        for (; i < n; i++) {
-            sum += array[i];
-        }
-        
-        return sum;
+        return useVector() ? VectorKernels.vectorSumLong(array) : scalarSumLong(array);
     }
     
     /**
-     * Vectorized sum implementation for float array using SIMD.
-     * Converts to double for precision during summation.
+     * TESTS-15 dispatch: SIMD kernel when jdk.incubator.vector is available,
+     * scalar loop otherwise (profiles without --add-modules).
      */
     private static double vectorSumFloat(float[] array) {
-        int n = array.length;
-        if (n == 0) {
-            return 0.0;
-        }
-        
-        // For float, we'll use double vector for better precision
-        // Convert float array to double array
-        double[] doubleArray = new double[n];
-        for (int i = 0; i < n; i++) {
-            doubleArray[i] = array[i];
-        }
-        
-        return vectorSumDouble(doubleArray);
+        return useVector() ? VectorKernels.vectorSumFloat(array) : scalarSumFloat(array);
     }
     
     /**
-     * Vectorized sum implementation for double array using SIMD.
+     * TESTS-15 dispatch: SIMD kernel when jdk.incubator.vector is available,
+     * scalar loop otherwise (profiles without --add-modules).
      */
     private static double vectorSumDouble(double[] array) {
-        int n = array.length;
-        if (n == 0) {
-            return 0.0;
-        }
-        
-        double sum = 0.0;
-        int i = 0;
-        
-        // SIMD loop using Vector API
-        int upperBound = DOUBLE_SPECIES.loopBound(n);
-        for (; i < upperBound; i += VECTOR_WIDTH) {
-            DoubleVector v = DoubleVector.fromArray(DOUBLE_SPECIES, array, i);
-            sum += v.reduceLanes(jdk.incubator.vector.VectorOperators.ADD);
-        }
-        
-        // Scalar cleanup for remaining elements
-        for (; i < n; i++) {
-            sum += array[i];
-        }
-        
-        return sum;
+        return useVector() ? VectorKernels.vectorSumDouble(array) : scalarSumDouble(array);
     }
     
     /**
@@ -378,6 +328,10 @@ public class AggregateFunctions {
      * @param iterations number of iterations
      */
     public static void benchmark(int arraySize, int iterations) {
+        if (!useVector()) {
+            LOGGER.info("=== Aggregate Functions Benchmark skipped: jdk.incubator.vector unavailable ===");
+            return;
+        }
         LOGGER.info("=== Aggregate Functions Benchmark ===");
         LOGGER.info(String.format("Array size: %d, Iterations: %d", arraySize, iterations));
         
@@ -471,5 +425,134 @@ public class AggregateFunctions {
             sum += value;
         }
         return sum;
+    }
+
+    private static double scalarSumFloat(float[] array) {
+        double sum = 0.0;
+        for (float value : array) {
+            sum += value;
+        }
+        return sum;
+    }
+
+    /**
+     * TESTS-15: SIMD kernels, isolated so that this nested class - and with it
+     * every constant-pool reference to jdk.incubator.vector - is only loaded and
+     * linked when {@link #useVector()} is true, i.e. when the module was resolved
+     * via --add-modules at JVM startup. Without the flag the outer class links
+     * and initializes normally and every aggregate takes the scalar branch.
+     */
+    private static final class VectorKernels {
+
+        private static final VectorSpecies<Integer> INT_SPECIES = IntVector.SPECIES_PREFERRED;
+        private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
+        private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
+
+        private static final int VECTOR_WIDTH = INT_SPECIES.length();
+
+        private VectorKernels() {
+            // Nested kernel holder
+        }
+
+        /**
+         * Vectorized sum implementation for int array using SIMD.
+         */
+        private static long vectorSumInt(int[] array) {
+            int n = array.length;
+            if (n == 0) {
+                return 0L;
+            }
+
+            long sum = 0;
+            int i = 0;
+
+            // SIMD loop using Vector API
+            int upperBound = INT_SPECIES.loopBound(n);
+            for (; i < upperBound; i += VECTOR_WIDTH) {
+                IntVector v = IntVector.fromArray(INT_SPECIES, array, i);
+                sum += v.reduceLanes(jdk.incubator.vector.VectorOperators.ADD);
+            }
+
+            // Scalar cleanup for remaining elements
+            for (; i < n; i++) {
+                sum += array[i];
+            }
+
+            return sum;
+        }
+
+        /**
+         * Vectorized sum implementation for long array using SIMD.
+         */
+        private static long vectorSumLong(long[] array) {
+            int n = array.length;
+            if (n == 0) {
+                return 0L;
+            }
+
+            long sum = 0;
+            int i = 0;
+
+            // SIMD loop using Vector API
+            int upperBound = LONG_SPECIES.loopBound(n);
+            for (; i < upperBound; i += VECTOR_WIDTH) {
+                LongVector v = LongVector.fromArray(LONG_SPECIES, array, i);
+                sum += v.reduceLanes(jdk.incubator.vector.VectorOperators.ADD);
+            }
+
+            // Scalar cleanup for remaining elements
+            for (; i < n; i++) {
+                sum += array[i];
+            }
+
+            return sum;
+        }
+
+        /**
+         * Vectorized sum implementation for float array using SIMD.
+         * Converts to double for precision during summation.
+         */
+        private static double vectorSumFloat(float[] array) {
+            int n = array.length;
+            if (n == 0) {
+                return 0.0;
+            }
+
+            // For float, we'll use double vector for better precision
+            // Convert float array to double array
+            double[] doubleArray = new double[n];
+            for (int i = 0; i < n; i++) {
+                doubleArray[i] = array[i];
+            }
+
+            return vectorSumDouble(doubleArray);
+        }
+
+        /**
+         * Vectorized sum implementation for double array using SIMD.
+         */
+        private static double vectorSumDouble(double[] array) {
+            int n = array.length;
+            if (n == 0) {
+                return 0.0;
+            }
+
+            double sum = 0.0;
+            int i = 0;
+
+            // SIMD loop using Vector API
+            int upperBound = DOUBLE_SPECIES.loopBound(n);
+            for (; i < upperBound; i += VECTOR_WIDTH) {
+                DoubleVector v = DoubleVector.fromArray(DOUBLE_SPECIES, array, i);
+                sum += v.reduceLanes(jdk.incubator.vector.VectorOperators.ADD);
+            }
+
+            // Scalar cleanup for remaining elements
+            for (; i < n; i++) {
+                sum += array[i];
+            }
+
+            return sum;
+        }
     }
 }
