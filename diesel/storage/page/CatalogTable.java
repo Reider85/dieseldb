@@ -10,6 +10,7 @@ import java.io.StringReader;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -39,7 +40,17 @@ public final class CatalogTable implements AutoCloseable {
     static final PageId CATALOG_PAGE_ID = new PageId(0, 1, 0);
 
     private final PageManager pageManager;
-    private final List<CatalogSchema> schemas = new ArrayList<>();
+
+    /**
+     * Name index of the catalog (O2 Buffer-1/2/3): every schema is keyed by its
+     * table name so lookup/replace/drop are O(1) instead of an O(N) list scan.
+     * LinkedHashMap preserves insertion order for serialisation and
+     * getAllSchemas(); replace does remove+put so an updated table moves to the
+     * end exactly like the old removeIf+add. Invariant: the key must equal
+     * {@code schema.getTableName()} at insert time — {@link CatalogSchema} names
+     * are never renamed after insertion ({@code setTableName} has no callers).
+     */
+    private final LinkedHashMap<String, CatalogSchema> schemasByName = new LinkedHashMap<>();
     private final Object lock = new Object();
 
     /**
@@ -61,7 +72,7 @@ public final class CatalogTable implements AutoCloseable {
             return;
         }
         synchronized (lock) {
-            schemas.clear();
+            schemasByName.clear();
             byte[] json;
             try {
                 json = readCatalogBytes();
@@ -73,11 +84,14 @@ public final class CatalogTable implements AutoCloseable {
             }
             String text = new String(json, StandardCharsets.UTF_8);
             try (JsonStreamParser parser = JsonStreams.createParser(new StringReader(text), config())) {
-                schemas.addAll(CatalogSchema.readArray(parser));
+                // putIfAbsent keeps first-wins lookup semantics of the old list scan
+                for (CatalogSchema schema : CatalogSchema.readArray(parser)) {
+                    schemasByName.putIfAbsent(schema.getTableName(), schema);
+                }
             } catch (IOException | RuntimeException e) {
                 throw new CatalogCorruptedException(e.getMessage(), e);
             }
-            LOGGER.log(Level.INFO, "Loaded {0} table schema(s) from catalog page 0", schemas.size());
+            LOGGER.log(Level.INFO, "Loaded {0} table schema(s) from catalog page 0", schemasByName.size());
         }
     }
 
@@ -87,8 +101,9 @@ public final class CatalogTable implements AutoCloseable {
             throw new IllegalArgumentException("catalog schema requires a table name");
         }
         synchronized (lock) {
-            schemas.removeIf(existing -> schema.getTableName().equals(existing.getTableName()));
-            schemas.add(schema);
+            // remove+put: moves the entry to the end, same as the old removeIf+add
+            schemasByName.remove(schema.getTableName());
+            schemasByName.put(schema.getTableName(), schema);
             flush();
         }
     }
@@ -113,7 +128,7 @@ public final class CatalogTable implements AutoCloseable {
     /** Removes a table schema and flushes the catalog page. */
     public void dropTableSchema(String tableName) {
         synchronized (lock) {
-            if (schemas.removeIf(existing -> tableName.equals(existing.getTableName()))) {
+            if (schemasByName.remove(tableName) != null) {
                 flush();
             }
         }
@@ -138,16 +153,13 @@ public final class CatalogTable implements AutoCloseable {
 
     public CatalogSchema getTableSchema(String tableName) {
         synchronized (lock) {
-            return schemas.stream()
-                    .filter(schema -> schema.getTableName().equals(tableName))
-                    .findFirst()
-                    .orElse(null);
+            return schemasByName.get(tableName);
         }
     }
 
     public List<CatalogSchema> getAllSchemas() {
         synchronized (lock) {
-            return new ArrayList<>(schemas);
+            return new ArrayList<>(schemasByName.values());
         }
     }
 
@@ -157,7 +169,7 @@ public final class CatalogTable implements AutoCloseable {
 
     public int getTableCount() {
         synchronized (lock) {
-            return schemas.size();
+            return schemasByName.size();
         }
     }
     
@@ -207,7 +219,7 @@ public final class CatalogTable implements AutoCloseable {
             pageManager.writePage(page);
             pageManager.flush();
         } catch (PageFullException e) {
-            throw new PageFullException("Catalog page 0 is full after " + schemas.size()
+            throw new PageFullException("Catalog page 0 is full after " + schemasByName.size()
                     + " table schema(s); split the catalog across pages (prompt 10)", e);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to persist catalog page 0: " + e.getMessage(), e);
@@ -246,7 +258,7 @@ public final class CatalogTable implements AutoCloseable {
     private byte[] serialize() {
         StringWriter writer = new StringWriter();
         try (JsonStreamGenerator generator = JsonStreams.createGenerator(writer, config())) {
-            CatalogSchema.writeArray(generator, schemas);
+            CatalogSchema.writeArray(generator, new ArrayList<>(schemasByName.values()));
         } catch (IOException e) {
             throw new IllegalStateException("Failed to serialise catalog: " + e.getMessage(), e);
         }

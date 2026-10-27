@@ -50,6 +50,9 @@ public final class CatalogSchema {
     }
 
     public void setTableName(String tableName) {
+        // O2 Buffer-1 invariant: renaming a schema that is already registered in
+        // CatalogTable would desynchronise its schemasByName name index. No caller
+        // renames after insert (parse paths set the field before publication).
         this.tableName = tableName;
     }
 
