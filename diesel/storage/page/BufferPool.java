@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -72,6 +73,22 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
     private final ReentrantLock lock = new ReentrantLock();
     private final HashMap<PageId, BufferFrame> frames = new HashMap<>();
     private final LruEvictionPolicy lru = new LruEvictionPolicy();
+
+    /**
+     * Guards {@link #dirtyPageIds} only. Deliberately separate from
+     * {@link #lock} so dirty transitions reported from pinning threads never
+     * contend with frame-structure updates. Lock order: {@code lock} then
+     * {@code dirtyLock}, never the reverse; the dirty-transition callback
+     * takes {@code dirtyLock} alone.
+     */
+    private final Object dirtyLock = new Object();
+    /**
+     * Insertion-ordered index of pages whose dirty flag is set (o2 Buffer-4).
+     * Maintained via {@link Page}'s dirty listener on frame creation and on
+     * every dirty-flag transition; {@code LinkedHashSet} keeps flush order
+     * deterministic (FIFO by first-dirty time).
+     */
+    private final LinkedHashSet<PageId> dirtyPageIds = new LinkedHashSet<>();
 
     private final AtomicLong hits = new AtomicLong();
     private final AtomicLong misses = new AtomicLong();
@@ -193,6 +210,7 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
             validateLoadedPage(pageId, page);
             frame = new BufferFrame(page);
             frames.put(pageId, frame);
+            attachPageLocked(pageId, page);
             lru.add(pageId);
             pinFrameLocked(pageId, frame);
             return new PinnedPage(this, pageId, page);
@@ -224,6 +242,7 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
                 evictForRoomLocked();
                 frame = new BufferFrame(page);
                 frames.put(pageId, frame);
+                attachPageLocked(pageId, page);
                 lru.add(pageId);
             }
             pinFrameLocked(pageId, frame);
@@ -312,9 +331,7 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
         } finally {
             lock.lock();
             try {
-                frames.clear();
-                lru.clear();
-                pinnedPages = 0;
+                releaseAllFramesLocked();
             } finally {
                 lock.unlock();
             }
@@ -337,9 +354,7 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
                 return;
             }
             closed = true;
-            frames.clear();
-            lru.clear();
-            pinnedPages = 0;
+            releaseAllFramesLocked();
         } finally {
             lock.unlock();
         }
@@ -414,30 +429,24 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
     }
 
     /**
-     * Returns the current number of dirty pages in the pool.
-     * This count is volatile and may change between calls.
+     * Returns the current number of dirty pages in the pool (o2 Buffer-4).
+     * Backed by the dirty-page index, so the cost is O(1) regardless of how
+     * many clean frames are resident.
      *
      * @return number of dirty pages
      */
     public int getDirtyPageCount() {
-        lock.lock();
-        try {
-            int count = 0;
-            for (BufferFrame frame : frames.values()) {
-                if (frame.page.isDirty()) {
-                    count++;
-                }
-            }
-            return count;
-        } finally {
-            lock.unlock();
+        synchronized (dirtyLock) {
+            return dirtyPageIds.size();
         }
     }
 
     /**
-     * Flushes dirty pages matching the given predicate.
-     * Snapshots matching dirty unpinned pages under the lock, then flushes
-     * them outside the lock. Returns the count of pages that were flushed.
+     * Flushes dirty pages matching the given predicate (o2 Buffer-4).
+     * Iterates the dirty-page index — O(D) where D is the number of dirty
+     * pages — instead of every resident frame. Snapshots matching dirty
+     * unpinned pages under the pool lock, then flushes them outside the lock.
+     * Returns the count of pages that were flushed.
      * Skips pinned pages to avoid torn writes.
      *
      * @param eligible predicate to determine if a dirty page should be flushed
@@ -445,17 +454,7 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
      * @throws IOException if the first flush fails (later failures are suppressed)
      */
     public int flushDirtyMatching(Predicate<Page> eligible) throws IOException {
-        List<Page> dirty = new ArrayList<>();
-        lock.lock();
-        try {
-            for (BufferFrame frame : frames.values()) {
-                if (frame.page.isDirty() && frame.pinCount == 0 && eligible.test(frame.page)) {
-                    dirty.add(frame.page);
-                }
-            }
-        } finally {
-            lock.unlock();
-        }
+        List<Page> dirty = snapshotResidentDirty(true, eligible);
 
         IOException failure = null;
         int flushedCount = 0;
@@ -545,23 +544,13 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
     }
 
     /**
-     * Snapshots the dirty resident pages under the lock, then flushes them
-     * outside it.
+     * Snapshots the dirty resident pages (o2 Buffer-4: iterates the
+     * dirty-page index, O(D)), then flushes them outside the pool lock.
      *
      * @return the first failure, or {@code null} when everything persisted
      */
     private IOException flushResidentDirty() {
-        List<Page> dirty = new ArrayList<>();
-        lock.lock();
-        try {
-            for (BufferFrame frame : frames.values()) {
-                if (frame.page.isDirty()) {
-                    dirty.add(frame.page);
-                }
-            }
-        } finally {
-            lock.unlock();
-        }
+        List<Page> dirty = snapshotResidentDirty(false, null);
 
         IOException failure = null;
         for (Page page : dirty) {
@@ -576,6 +565,92 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
             }
         }
         return failure;
+    }
+
+    /**
+     * Collects the pages referenced by the dirty-page index that are still
+     * resident (o2 Buffer-4). Ids can be transiently present for a page
+     * already removed from {@code frames} mid-eviction — such entries are
+     * skipped here and disappear once the flush completes.
+     *
+     * @param unpinnedOnly when true, skip frames with {@code pinCount > 0}
+     * @param eligible     extra predicate tested under the pool lock; {@code null}
+     *                     accepts everything
+     * @return matching dirty pages, in first-dirty (FIFO) order
+     */
+    private List<Page> snapshotResidentDirty(boolean unpinnedOnly, Predicate<Page> eligible) {
+        List<PageId> dirtyIds;
+        synchronized (dirtyLock) {
+            dirtyIds = new ArrayList<>(dirtyPageIds);
+        }
+        List<Page> dirty = new ArrayList<>(dirtyIds.size());
+        lock.lock();
+        try {
+            for (PageId id : dirtyIds) {
+                BufferFrame frame = frames.get(id);
+                if (frame == null || !frame.page.isDirty()) {
+                    continue;
+                }
+                if (unpinnedOnly && frame.pinCount != 0) {
+                    continue;
+                }
+                if (eligible != null && !eligible.test(frame.page)) {
+                    continue;
+                }
+                dirty.add(frame.page);
+            }
+        } finally {
+            lock.unlock();
+        }
+        return dirty;
+    }
+
+    /**
+     * Wires a freshly created frame's page into the dirty-page index
+     * (o2 Buffer-4): attaches the transition listener and registers the
+     * page when it arrives already dirty. Runs under the pool lock, so the
+     * nested {@code dirtyLock} acquisition keeps the lock order.
+     */
+    private void attachPageLocked(PageId pageId, Page page) {
+        page.setDirtyListener(this::onPageDirtyChanged);
+        if (page.isDirty()) {
+            synchronized (dirtyLock) {
+                dirtyPageIds.add(pageId);
+            }
+        }
+    }
+
+    /**
+     * Dirty-flag transition sink (o2 Buffer-4). Invoked by pinning threads
+     * without the pool lock; takes {@code dirtyLock} alone.
+     */
+    void onPageDirtyChanged(PageId pageId, boolean dirty) {
+        if (closed) {
+            return;
+        }
+        synchronized (dirtyLock) {
+            if (dirty) {
+                dirtyPageIds.add(pageId);
+            } else {
+                dirtyPageIds.remove(pageId);
+            }
+        }
+    }
+
+    /**
+     * Detaches dirty tracking from every resident page and drops all frame
+     * state (o2 Buffer-4). Runs under the pool lock during close/abandon.
+     */
+    private void releaseAllFramesLocked() {
+        for (BufferFrame frame : frames.values()) {
+            frame.page.setDirtyListener(null);
+        }
+        frames.clear();
+        lru.clear();
+        pinnedPages = 0;
+        synchronized (dirtyLock) {
+            dirtyPageIds.clear();
+        }
     }
 
     // ─── Configuration ──────────────────────────────────────────────

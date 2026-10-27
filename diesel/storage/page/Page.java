@@ -31,6 +31,24 @@ public final class Page {
     private byte[] data;
     private PageHeader header;
     private volatile boolean dirty;
+    private volatile DirtyListener dirtyListener;
+
+    /**
+     * Sink for dirty-flag transitions of a page hosted by a {@link BufferPool}
+     * (o2 Buffer-4). The pool attaches itself when the page becomes resident
+     * and maintains its dirty-page index from these callbacks, so the flush
+     * paths iterate dirty pages only instead of every resident frame.
+     */
+    @FunctionalInterface
+    interface DirtyListener {
+        /**
+         * Called after the dirty flag actually changed.
+         *
+         * @param id    the page the transition belongs to
+         * @param dirty the new dirty state
+         */
+        void onPageDirtyChanged(PageId id, boolean dirty);
+    }
 
     /**
      * Creates a new empty page with the given identifier and size.
@@ -241,8 +259,31 @@ public final class Page {
 
     /**
      * Marks the page as modified or clean.
+     *
+     * <p>Transitions are reported to the attached {@link DirtyListener}
+     * (o2 Buffer-4); setting the same value twice is a plain write with no
+     * callback, keeping the pool's dirty-page index free of duplicates.
      */
-    public void setDirty(boolean dirty) { this.dirty = dirty; }
+    public void setDirty(boolean dirty) {
+        if (this.dirty == dirty) {
+            return;
+        }
+        this.dirty = dirty;
+        DirtyListener listener = dirtyListener;
+        if (listener != null) {
+            listener.onPageDirtyChanged(pageId, dirty);
+        }
+    }
+
+    /**
+     * Attaches or detaches the dirty-transition listener (o2 Buffer-4).
+     * Called by {@link BufferPool} when a frame is created or released.
+     *
+     * @param listener the listener; {@code null} detaches the current one
+     */
+    void setDirtyListener(DirtyListener listener) {
+        this.dirtyListener = listener;
+    }
 
     /**
      * Returns a defensive copy of the full page data.

@@ -1056,3 +1056,5 @@ chore: test-profiles-audit changelog entry
 3.3.53 Tests: gate --add-modules=jdk.incubator.vector to perf/large/timing-quick/storage/flaky profiles only - AggregateFunctions falls back to scalar loops when the module is absent (TESTS-15)
 
 3.3.54 O2 Buffer-1/2/3: LinkedHashMap name index in CatalogTable - O(1) getTableSchema/updateTableSchema/dropTableSchema instead of O(N) list scan/removeIf; new CatalogLookupIsO1Test (100k-op bounds, smoke+storage)
+
+3.3.55 O2 Buffer-4: LinkedHashSet dirty-page index in BufferPool - O(1) getDirtyPageCount, O(D) flushDirtyMatching/flushResidentDirty via Page dirty listener; new DirtyPageTrackingIsODTest
