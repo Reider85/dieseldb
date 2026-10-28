@@ -82,6 +82,19 @@ public final class PageHeader {
     private int freeSlotCount;
 
     /**
+     * In-memory cache of the number of live (non-tombstoned) slots (o2 Buffer-8).
+     *
+     * <p>NOT persisted: like the free-slot stack, the on-disk slot directory is
+     * the single source of truth, so the count is rebuilt lazily by
+     * {@link SlottedPageLayout#countLiveTuples} after create/load/copy and
+     * maintained incrementally by insert/delete/defrag while valid. Lets
+     * {@code validateLayout} short-circuit pages with zero live tuples without
+     * walking a tombstone-riddled directory.
+     */
+    private int liveCount;
+    private boolean liveCountValid;
+
+    /**
      * Creates a new page header with default values.
      * 
      * @param pageId the page identifier (tablespaceId/fileId/pageNum)
@@ -118,6 +131,8 @@ public final class PageHeader {
         this.freeSpaceStart = HEADER_SIZE;
         this.freeSpaceEnd = pageSize;
         this.pageSize = pageSize;
+        this.liveCount = 0;
+        this.liveCountValid = true; // slotCount == 0: a fresh page is genuinely empty
     }
 
     /**
@@ -186,6 +201,7 @@ public final class PageHeader {
         header.slotCount = slotCount;
         header.freeSpaceStart = freeSpaceStart;
         header.freeSpaceEnd = freeSpaceEnd;
+        header.liveCountValid = false; // unknown until the directory is scanned (o2 Buffer-8)
         
         return header;
     }
@@ -300,6 +316,43 @@ public final class PageHeader {
     void invalidateFreeSlots() {
         freeSlotStack = null;
         freeSlotCount = 0;
+    }
+
+    // Live-tuple count cache (in-memory only, o2 Buffer-8) - package-private, used by SlottedPageLayout
+
+    /**
+     * Returns true if {@link #getLiveCount()} holds a trustworthy value
+     * (maintained incrementally or rebuilt from the directory).
+     */
+    boolean liveCountValid() {
+        return liveCountValid;
+    }
+
+    /**
+     * Returns the cached number of live (non-tombstoned) slots.
+     * Only meaningful when {@link #liveCountValid()} is true.
+     */
+    int getLiveCount() {
+        return liveCount;
+    }
+
+    /**
+     * Sets the live-tuple count and marks it valid - called after a directory
+     * scan, an incremental insert/delete adjustment, or a compaction.
+     */
+    void setLiveCount(int liveCount) {
+        this.liveCount = liveCount;
+        this.liveCountValid = true;
+    }
+
+    /**
+     * Marks the live-tuple count as needing a rebuild - called when the page
+     * bytes or the slot count are replaced wholesale ({@code Page.setData},
+     * {@code Page.copyContentFrom}), which can invalidate any previously
+     * scanned count.
+     */
+    void invalidateLiveCount() {
+        liveCountValid = false;
     }
 
     /**

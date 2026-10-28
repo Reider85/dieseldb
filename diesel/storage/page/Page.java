@@ -206,6 +206,8 @@ public final class Page {
     public PageId getPageId() { return pageId; }
     public int getPageSize() { return pageSize; }
     public int getSlotCount() { return header.getSlotCount(); }
+    /** Number of live (non-tombstoned) tuples - O(1) via the header cache (o2 Buffer-8). */
+    public int getLiveCount() { return SlottedPageLayout.countLiveTuples(data, header); }
     public int getFreeSpace() { return header.getFreeSpace(); }
     public long getLsn() { return header.getLsn(); }
     public int getChecksum() { return header.getChecksum(); }
@@ -235,6 +237,9 @@ public final class Page {
         newHeader.setSlotCount(header.getSlotCount());
         newHeader.setFreeSpaceStart(header.getFreeSpaceStart());
         newHeader.setFreeSpaceEnd(header.getFreeSpaceEnd());
+        // Fresh header claims liveCount=0/valid, but slotCount was copied - rebuild
+        // the count from the directory (o2 Buffer-8)
+        newHeader.invalidateLiveCount();
         this.header = newHeader;
         setDirty(true);
     }
@@ -312,6 +317,7 @@ public final class Page {
         }
         this.data = data.clone();
         header.invalidateFreeSlots(); // new bytes may contain different tombstones (o2 Buffer-7)
+        header.invalidateLiveCount(); // new bytes may contain a different live count (o2 Buffer-8)
         setDirty(true);
     }
 
@@ -335,6 +341,9 @@ public final class Page {
         h.setSlotCount(src.header.getSlotCount());
         h.setFreeSpaceStart(src.header.getFreeSpaceStart());
         h.setFreeSpaceEnd(src.header.getFreeSpaceEnd());
+        // Fresh header claims liveCount=0/valid, but slotCount was copied from src -
+        // the count must be rebuilt from the copied directory (o2 Buffer-8)
+        h.invalidateLiveCount();
         this.header = h;
         setDirty(true);
     }

@@ -29,8 +29,15 @@ import java.util.List;
  *   (NOT persisted), rebuilt lazily from directory tombstones on first insert/delete
  *   after create/load/copy, and reset by defragment. Reuse keeps slotCount bounded
  *   by the high-water mark of concurrent live tuples instead of historical inserts.
- *   INVARIANT: the stack is only mutated through insertTuple/deleteTuple/defragment -
- *   direct writeSlot callers would desynchronize it (none exist outside this class).
+ * - Live-tuple count (o2 Buffer-8): an in-memory cache of the number of live
+ *   (non-tombstoned) slots, also held by PageHeader (NOT persisted). Maintained
+ *   incrementally by insert/delete/defrag while valid, rebuilt lazily by
+ *   {@link #countLiveTuples} after create/load/copy. Lets validateLayout
+ *   short-circuit pages with zero live tuples.
+ *   INVARIANT: the stack and the live count are only mutated through
+ *   insertTuple/deleteTuple/defragment (plus wholesale-invalidation hooks in
+ *   Page.setData/copyContentFrom) - direct writeSlot callers would
+ *   desynchronize them (none exist outside this class).
  */
 public final class SlottedPageLayout {
 
@@ -157,6 +164,9 @@ public final class SlottedPageLayout {
         writeSlot(data, slotId, EMPTY_SLOT_OFFSET, 0);
         ensureFreeSlotsBuilt(data, header);
         header.pushFreeSlot(slotId);
+        if (header.liveCountValid()) {
+            header.setLiveCount(header.getLiveCount() - 1); // o2 Buffer-8
+        }
         // Note: slotCount remains the same; the directory doesn't shrink until defrag
     }
 
@@ -201,7 +211,10 @@ public final class SlottedPageLayout {
             header.setFreeSpaceStart(PageHeader.HEADER_SIZE + (slotId + 1) * SLOT_ENTRY_SIZE);
         }
         header.setFreeSpaceEnd(tupleOffset);
-        
+        if (header.liveCountValid()) {
+            header.setLiveCount(header.getLiveCount() + 1); // o2 Buffer-8
+        }
+
         return slotId;
     }
 
@@ -286,14 +299,45 @@ public final class SlottedPageLayout {
         header.setFreeSpaceEnd(newFreeSpaceEnd);
         // No tombstones remain after renumbering - reset the free-slot stack (o2 Buffer-7)
         header.resetFreeSlotsAfterCompaction();
+        header.setLiveCount(newSlotCount); // exact after renumbering (o2 Buffer-8)
 
         // Return reclaimed bytes (increase in free space: tuple bytes + tombstone directory entries)
         return header.getFreeSpace() - oldFreeSpace;
     }
 
     /**
+     * Counts the live (non-tombstoned) slots on the page (o2 Buffer-8).
+     *
+     * <p>O(1) when the header's cached count is valid (maintained incrementally
+     * by insert/delete/defrag); O(slotCount) once to rebuild after
+     * create/load/copy, then cached again.
+     *
+     * @param data the full page byte array
+     * @param header the page header (count cached here)
+     * @return the number of live tuples
+     */
+    public static int countLiveTuples(byte[] data, PageHeader header) {
+        if (header.liveCountValid()) {
+            return header.getLiveCount();
+        }
+        int count = 0;
+        for (int slotId = 0; slotId < header.getSlotCount(); slotId++) {
+            if (readSlotOffset(data, slotId) != EMPTY_SLOT_OFFSET) {
+                count++;
+            }
+        }
+        header.setLiveCount(count);
+        return count;
+    }
+
+    /**
      * Validates the consistency of a slotted page layout.
-     * 
+     *
+     * <p>Short-circuits the per-slot loop when the page is known to hold zero
+     * live tuples (o2 Buffer-8): a churned-then-fully-deleted page with a
+     * slotCount-sized directory of tombstones is validated in O(1) instead of
+     * O(slotCount). The free-space accounting check always runs.
+     *
      * @param data the full page byte array
      * @param header the page header
      * @return true if the layout is consistent
@@ -304,42 +348,50 @@ public final class SlottedPageLayout {
         if (!header.isValid()) {
             return false;
         }
-        
-        // Check each slot
-        for (int slotId = 0; slotId < header.getSlotCount(); slotId++) {
-            int offset = readSlotOffset(data, slotId);
-            int length = readSlotLength(data, slotId);
-            
-            if (offset == EMPTY_SLOT_OFFSET) {
-                if (length != 0) {
-                    throw new PageFormatException("Slot " + slotId + " has empty offset but non-zero length: " + length);
+
+        // Empty-page short-circuit: no live slots means no per-slot checks to run
+        if (!(header.liveCountValid() && header.getLiveCount() == 0)) {
+            int liveSeen = 0;
+            // Check each slot
+            for (int slotId = 0; slotId < header.getSlotCount(); slotId++) {
+                int offset = readSlotOffset(data, slotId);
+                int length = readSlotLength(data, slotId);
+
+                if (offset == EMPTY_SLOT_OFFSET) {
+                    if (length != 0) {
+                        throw new PageFormatException("Slot " + slotId + " has empty offset but non-zero length: " + length);
+                    }
+                    continue; // deleted slot is valid
                 }
-                continue; // deleted slot is valid
+                liveSeen++;
+
+                if (length <= 0) {
+                    throw new PageFormatException("Slot " + slotId + " has non-empty offset but invalid length: " + length);
+                }
+
+                // Check tuple bounds
+                if (offset < 0 || offset + length > data.length) {
+                    throw new PageFormatException("Slot " + slotId + " tuple out of bounds: offset=" + offset + ", length=" + length);
+                }
+
+                // Check if tuple is within free space (should not overlap with free space)
+                if (offset >= header.getFreeSpaceStart() && offset < header.getFreeSpaceEnd()) {
+                    throw new PageFormatException("Slot " + slotId + " tuple overlaps with free space");
+                }
             }
-            
-            if (length <= 0) {
-                throw new PageFormatException("Slot " + slotId + " has non-empty offset but invalid length: " + length);
-            }
-            
-            // Check tuple bounds
-            if (offset < 0 || offset + length > data.length) {
-                throw new PageFormatException("Slot " + slotId + " tuple out of bounds: offset=" + offset + ", length=" + length);
-            }
-            
-            // Check if tuple is within free space (should not overlap with free space)
-            if (offset >= header.getFreeSpaceStart() && offset < header.getFreeSpaceEnd()) {
-                throw new PageFormatException("Slot " + slotId + " tuple overlaps with free space");
-            }
+            // Cache the count only after every check passed - a corrupt page must
+            // not poison the cache (o2 Buffer-8)
+            header.setLiveCount(liveSeen);
         }
-        
+
         // Check free space accounting
         int expectedFreeSpace = header.getFreeSpaceEnd() - header.getFreeSpaceStart();
         int actualFreeSpace = data.length - header.getUsedSpace();
-        
+
         if (expectedFreeSpace != actualFreeSpace) {
             throw new PageFormatException("Free space mismatch: expected " + expectedFreeSpace + ", actual " + actualFreeSpace);
         }
-        
+
         return true;
     }
 }
