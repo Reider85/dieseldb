@@ -12,9 +12,11 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -117,7 +119,15 @@ public abstract class DelimitedIndexManager {
     private List<Object[]> rows = new ArrayList<>();
     private String primaryKeyColumn;
     private final NavigableMap<Object, Long> primaryKeyIndex = new TreeMap<>(KEY_ORDER);
-    private final Map<String, NavigableMap<Object, List<Long>>> secondaryIndexes =
+    /**
+     * Per-column secondary indexes: key → posting list of rowIds. The posting
+     * collection is a {@link LinkedHashSet} (o2 CSV-6): insertion order equals
+     * the old {@code ArrayList} append order, but {@code remove(rowId)} is
+     * O(1) hash-lookup instead of an O(k) linear scan + arraycopy — the old
+     * pattern made updateRow/deleteRow O(n²) under a low-cardinality key
+     * (k = posting size ≈ O(n)).
+     */
+    private final Map<String, NavigableMap<Object, LinkedHashSet<Long>>> secondaryIndexes =
             new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
     private long nextRowId = 0;
@@ -238,7 +248,7 @@ public abstract class DelimitedIndexManager {
         if (secondaryIndexes.containsKey(canonical)) {
             return true;
         }
-        NavigableMap<Object, List<Long>> index = new TreeMap<>(KEY_ORDER);
+        NavigableMap<Object, LinkedHashSet<Long>> index = new TreeMap<>(KEY_ORDER);
         for (int i = 0; i < rows.size(); i++) {
             Long rid = positionToRowId(i);
             if (rid == null) {
@@ -246,7 +256,7 @@ public abstract class DelimitedIndexManager {
             }
             Object key = rowColumns.get(rows.get(i), canonical);
             if (key != null) {
-                index.computeIfAbsent(key, k -> new ArrayList<>()).add(rid);
+                index.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(rid);
             }
         }
         secondaryIndexes.put(canonical, index);
@@ -256,7 +266,7 @@ public abstract class DelimitedIndexManager {
     /** Rebuilds the primary-key index and every secondary index from the current rows. */
     public void reindex() {
         primaryKeyIndex.clear();
-        for (NavigableMap<Object, List<Long>> index : secondaryIndexes.values()) {
+        for (NavigableMap<Object, LinkedHashSet<Long>> index : secondaryIndexes.values()) {
             index.clear();
         }
         rowIdToPosition.clear();
@@ -284,10 +294,10 @@ public abstract class DelimitedIndexManager {
                 primaryKeyIndex.put(key, rowId);
             }
         }
-        for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
+        for (Map.Entry<String, NavigableMap<Object, LinkedHashSet<Long>>> entry : secondaryIndexes.entrySet()) {
             Object key = rowColumns.get(row, entry.getKey());
             if (key != null) {
-                entry.getValue().computeIfAbsent(key, k -> new ArrayList<>()).add(rowId);
+                entry.getValue().computeIfAbsent(key, k -> new LinkedHashSet<>()).add(rowId);
             }
         }
     }
@@ -322,6 +332,11 @@ public abstract class DelimitedIndexManager {
     /**
      * Removes a row from all maintained indexes.
      *
+     * <p>Disassociation is O(1) per secondary index (o2 CSV-6): the posting
+     * collection is a {@link LinkedHashSet}, so {@code remove(rowId)} is a
+     * hash lookup. The previous {@code ArrayList.remove(Object)} scanned the
+     * whole posting list — O(k) per index, O(n) under a low-cardinality key.
+     *
      * @param row  the compact array row
      * @param rowId the stable row identifier to disassociate
      */
@@ -332,12 +347,12 @@ public abstract class DelimitedIndexManager {
                 primaryKeyIndex.remove(key);
             }
         }
-        for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
+        for (Map.Entry<String, NavigableMap<Object, LinkedHashSet<Long>>> entry : secondaryIndexes.entrySet()) {
             Object key = rowColumns.get(row, entry.getKey());
             if (key == null) {
                 continue;
             }
-            List<Long> ids = entry.getValue().get(key);
+            LinkedHashSet<Long> ids = entry.getValue().get(key);
             if (ids != null) {
                 ids.remove(rowId);
                 if (ids.isEmpty()) {
@@ -617,7 +632,7 @@ public abstract class DelimitedIndexManager {
      * positions, sorted ascending, omitting any rowIds whose position
      * is unknown.
      */
-    private List<Integer> translateRowIdsToPositions(List<Long> rowIds) {
+    private List<Integer> translateRowIdsToPositions(Collection<Long> rowIds) {
         List<Integer> result = new ArrayList<>(rowIds.size());
         for (Long rid : rowIds) {
             Integer pos = rowIdToPosition.get(rid);
@@ -678,11 +693,11 @@ public abstract class DelimitedIndexManager {
         if (primaryKeyColumn != null && primaryKeyColumn.equalsIgnoreCase(column)) {
             return searchByPrimaryKey(key);
         }
-        NavigableMap<Object, List<Long>> index = secondaryIndexes.get(column);
+        NavigableMap<Object, LinkedHashSet<Long>> index = secondaryIndexes.get(column);
         if (index == null) {
             return List.of();
         }
-        List<Long> ids = index.get(key);
+        Set<Long> ids = index.get(key);
         return ids == null ? List.of() : translateRowIdsToPositions(ids);
     }
 
@@ -701,7 +716,7 @@ public abstract class DelimitedIndexManager {
         if (primaryKeyColumn != null && primaryKeyColumn.equalsIgnoreCase(column)) {
             return collectPositions(subRange(primaryKeyIndex, low, high));
         }
-        NavigableMap<Object, List<Long>> index = secondaryIndexes.get(column);
+        NavigableMap<Object, LinkedHashSet<Long>> index = secondaryIndexes.get(column);
         if (index == null) {
             return List.of();
         }
@@ -1119,7 +1134,7 @@ public abstract class DelimitedIndexManager {
         for (Object value : entries.values()) {
             if (value instanceof Long rid) {
                 rowIds.add(rid);
-            } else if (value instanceof List<?> ids) {
+            } else if (value instanceof Iterable<?> ids) { // o2 CSV-6: posting lists are LinkedHashSet now — List check would silently drop them
                 for (Object id : ids) {
                     if (id instanceof Long rid) {
                         rowIds.add(rid);
