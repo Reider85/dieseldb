@@ -29,8 +29,9 @@ import org.slf4j.LoggerFactory;
  * Pinned frames are never chosen as eviction victims.
  *
  * <p><b>Eviction.</b> When a new frame would exceed capacity, the least
- * recently used <em>unpinned</em> frame is selected ({@link LruEvictionPolicy}):
- * a dirty page is written through the {@link PageFlusher} (on failure the
+ * recently released <em>unpinned</em> frame is selected in O(1)
+ * ({@link LruEvictionPolicy} keeps an unpinned-only queue, o2 Buffer-5): a
+ * dirty page is written through the {@link PageFlusher} (on failure the
  * frame is restored and the error propagates), a clean page is discarded.
  * When every frame is pinned a {@link BufferPoolFullException} is thrown.
  *
@@ -211,7 +212,6 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
             frame = new BufferFrame(page);
             frames.put(pageId, frame);
             attachPageLocked(pageId, page);
-            lru.add(pageId);
             pinFrameLocked(pageId, frame);
             return new PinnedPage(this, pageId, page);
         } finally {
@@ -243,7 +243,6 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
                 frame = new BufferFrame(page);
                 frames.put(pageId, frame);
                 attachPageLocked(pageId, page);
-                lru.add(pageId);
             }
             pinFrameLocked(pageId, frame);
             return new PinnedPage(this, pageId, frame.page);
@@ -281,6 +280,7 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
             }
             if (--frame.pinCount == 0) {
                 pinnedPages--;
+                lru.onUnpinned(pageId);
             }
         } finally {
             lock.unlock();
@@ -487,8 +487,8 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
     private void pinFrameLocked(PageId pageId, BufferFrame frame) {
         if (frame.pinCount++ == 0) {
             pinnedPages++;
+            lru.onPinned(pageId);
         }
-        lru.touch(pageId);
     }
 
     private void validateLoadedPage(PageId requested, Page page) throws IOException {
@@ -527,7 +527,9 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
                 }
             } catch (IOException | RuntimeException e) {
                 frames.put(victim, frame);
-                lru.add(victim);
+                // o2 Buffer-5: the victim left the queue in pollEvictable;
+                // re-register it (still unpinned) or it becomes unevictable.
+                lru.onUnpinned(victim);
                 throw e;
             }
             evictions.incrementAndGet();

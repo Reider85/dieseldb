@@ -1058,3 +1058,5 @@ chore: test-profiles-audit changelog entry
 3.3.54 O2 Buffer-1/2/3: LinkedHashMap name index in CatalogTable - O(1) getTableSchema/updateTableSchema/dropTableSchema instead of O(N) list scan/removeIf; new CatalogLookupIsO1Test (100k-op bounds, smoke+storage)
 
 3.3.55 O2 Buffer-4: LinkedHashSet dirty-page index in BufferPool - O(1) getDirtyPageCount, O(D) flushDirtyMatching/flushResidentDirty via Page dirty listener; new DirtyPageTrackingIsODTest
+
+3.3.56 O2 Buffer-5: unpinned-page queue in LruEvictionPolicy - O(1) eviction under pinned-head pin distribution; new EvictionUnderPinnedHeadTest
