@@ -17,12 +17,20 @@ import java.util.List;
  * - freeSpaceStart = end of slot directory (64 + slotCount * 8)
  * - freeSpaceEnd = lowest offset of any live tuple (or pageSize if empty)
  * - Free space = freeSpaceEnd - freeSpaceStart
- * - Insert: place tuple at freeSpaceEnd - length, decrement freeSpaceEnd, append slot
- * - Delete: mark slot offset = -1 (tombstone), freeSpaceEnd unchanged (space reclaimed only at defrag)
+ * - Insert: place tuple at freeSpaceEnd - length, decrement freeSpaceEnd; reuse a
+ *   tombstoned slot id popped from the free-slot stack, else append a new slot
+ * - Delete: mark slot offset = -1 (tombstone) and push its id onto the free-slot
+ *   stack; freeSpaceEnd unchanged (tuple space reclaimed only at defrag)
  * - Defrag: compact live tuples contiguously against page end, renumber live slots to
  *   a contiguous 0..L-1 directory (slotCount = L, tombstone slots reclaimed), maximize free space.
  *   Slot ids are page-local and transient (o2 Buffer-6): no structure outside the page
  *   persists them, so renumbering cannot invalidate external references.
+ * - Free-slot stack (o2 Buffer-7): an in-memory accelerator held by PageHeader
+ *   (NOT persisted), rebuilt lazily from directory tombstones on first insert/delete
+ *   after create/load/copy, and reset by defragment. Reuse keeps slotCount bounded
+ *   by the high-water mark of concurrent live tuples instead of historical inserts.
+ *   INVARIANT: the stack is only mutated through insertTuple/deleteTuple/defragment -
+ *   direct writeSlot callers would desynchronize it (none exist outside this class).
  */
 public final class SlottedPageLayout {
 
@@ -132,24 +140,37 @@ public final class SlottedPageLayout {
     }
 
     /**
-     * Marks a slot as deleted (offset = -1, length = 0).
-     * 
+     * Marks a slot as deleted (offset = -1, length = 0) and registers its id
+     * on the free-slot stack for reuse by the next insert (o2 Buffer-7).
+     *
      * @param data the full page byte array
      * @param header the page header (updated slotCount if needed)
      * @param slotId the slot index (0-based)
      */
     public static void deleteTuple(byte[] data, PageHeader header, int slotId) {
+        if (slotId < 0 || slotId >= header.getSlotCount()) {
+            return; // outside the live directory - nothing to delete
+        }
+        if (readSlotOffset(data, slotId) == EMPTY_SLOT_OFFSET) {
+            return; // already a tombstone - do not push twice (double reuse would corrupt data)
+        }
         writeSlot(data, slotId, EMPTY_SLOT_OFFSET, 0);
-        // Note: slotCount remains the same; slot directory doesn't shrink until defrag
+        ensureFreeSlotsBuilt(data, header);
+        header.pushFreeSlot(slotId);
+        // Note: slotCount remains the same; the directory doesn't shrink until defrag
     }
 
     /**
      * Inserts a tuple into the page, allocating space at the end.
-     * 
+     *
+     * <p>Reuses a tombstoned slot id popped from the free-slot stack when one is
+     * available (o2 Buffer-7), so slotCount stays bounded by the high-water mark
+     * of concurrent live tuples; otherwise appends a new slot as before.
+     *
      * @param data the full page byte array
      * @param header the page header (updated)
      * @param tuple the tuple bytes to insert
-     * @return the slotId where the tuple was inserted
+     * @return the slotId where the tuple was inserted (a reused tombstone id, or slotCount++)
      * @throws PageFullException if there is not enough free space
      */
     public static int insertTuple(byte[] data, PageHeader header, byte[] tuple) {
@@ -167,16 +188,38 @@ public final class SlottedPageLayout {
         // Write tuple data
         System.arraycopy(tuple, 0, data, tupleOffset, tupleLength);
         
-        // Update slot directory
-        int slotId = header.getSlotCount();
-        writeSlot(data, slotId, tupleOffset, tupleLength);
-        
-        // Update header
-        header.setSlotCount(slotId + 1);
-        header.setFreeSpaceStart(PageHeader.HEADER_SIZE + (slotId + 1) * SLOT_ENTRY_SIZE);
+        // Update slot directory: reuse a tombstoned slot if available, else append
+        ensureFreeSlotsBuilt(data, header);
+        int slotId = header.pollFreeSlot();
+        if (slotId >= 0) {
+            writeSlot(data, slotId, tupleOffset, tupleLength);
+            // slotCount and freeSpaceStart unchanged: the directory already covers this slot
+        } else {
+            slotId = header.getSlotCount();
+            writeSlot(data, slotId, tupleOffset, tupleLength);
+            header.setSlotCount(slotId + 1);
+            header.setFreeSpaceStart(PageHeader.HEADER_SIZE + (slotId + 1) * SLOT_ENTRY_SIZE);
+        }
         header.setFreeSpaceEnd(tupleOffset);
         
         return slotId;
+    }
+
+    /**
+     * Builds the free-slot stack by scanning the slot directory for tombstones,
+     * once per page lifetime after create/load/copy (o2 Buffer-7). O(slotCount)
+     * once, then insert/delete are O(1).
+     */
+    private static void ensureFreeSlotsBuilt(byte[] data, PageHeader header) {
+        if (header.freeSlotsInitialized()) {
+            return;
+        }
+        for (int slotId = 0; slotId < header.getSlotCount(); slotId++) {
+            if (readSlotOffset(data, slotId) == EMPTY_SLOT_OFFSET) {
+                header.pushFreeSlot(slotId);
+            }
+        }
+        header.markFreeSlotsInitialized();
     }
 
     /**
@@ -241,6 +284,8 @@ public final class SlottedPageLayout {
         header.setSlotCount(newSlotCount);
         header.setFreeSpaceStart(newFreeSpaceStart);
         header.setFreeSpaceEnd(newFreeSpaceEnd);
+        // No tombstones remain after renumbering - reset the free-slot stack (o2 Buffer-7)
+        header.resetFreeSlotsAfterCompaction();
 
         // Return reclaimed bytes (increase in free space: tuple bytes + tombstone directory entries)
         return header.getFreeSpace() - oldFreeSpace;

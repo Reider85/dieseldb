@@ -130,8 +130,8 @@ class DefragIsOLiveTest {
         for (int i = 0; i < LIVE; i++) {
             page.insert(uniqueBytes(8, 5_000 + i));
         }
-        assertEquals(2 * LIVE, page.getSlotCount(),
-                "re-inserts append after the compacted directory (no free-slot reuse in Buffer-6)");
+        assertEquals(LIVE, page.getSlotCount(),
+                "re-inserts must reuse the freed slots, keeping slotCount at the live count (o2 Buffer-7)");
         page.defrag();
         assertEquals(LIVE, page.getSlotCount(), "second churn cycle must compact back to the live count");
         page.validate();

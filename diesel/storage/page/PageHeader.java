@@ -70,6 +70,18 @@ public final class PageHeader {
     private final int pageSize;
 
     /**
+     * In-memory accelerator of tombstoned (free) slot ids (o2 Buffer-7).
+     *
+     * <p>NOT persisted: the on-disk slot directory remains the single source of
+     * truth (tombstone = offset == -1), so the stack is rebuilt lazily by
+     * {@link SlottedPageLayout} on the first insert/delete after the page is
+     * created, loaded or copied. Keeping it out of the persisted header avoids
+     * a page format change (formatVersion stays 1, HEADER_SIZE stays 64).
+     */
+    private int[] freeSlotStack;
+    private int freeSlotCount;
+
+    /**
      * Creates a new page header with default values.
      * 
      * @param pageId the page identifier (tablespaceId/fileId/pageNum)
@@ -228,6 +240,67 @@ public final class PageHeader {
     public void setSlotCount(int slotCount) { this.slotCount = slotCount; }
     public void setFreeSpaceStart(int freeSpaceStart) { this.freeSpaceStart = freeSpaceStart; }
     public void setFreeSpaceEnd(int freeSpaceEnd) { this.freeSpaceEnd = freeSpaceEnd; }
+
+    // Free-slot stack (in-memory only, o2 Buffer-7) - package-private, used by SlottedPageLayout
+
+    /**
+     * Returns true if the free-slot stack has been built for this header
+     * (either rebuilt from tombstones or explicitly reset after compaction).
+     */
+    boolean freeSlotsInitialized() {
+        return freeSlotStack != null;
+    }
+
+    /**
+     * Marks the stack as built (call after scanning the directory, even when
+     * zero tombstones were found).
+     */
+    void markFreeSlotsInitialized() {
+        if (freeSlotStack == null) {
+            freeSlotStack = new int[0];
+        }
+    }
+
+    /**
+     * Pushes a tombstoned slot id onto the free-slot stack (grows on demand).
+     */
+    void pushFreeSlot(int slotId) {
+        if (freeSlotStack == null) {
+            freeSlotStack = new int[8];
+        }
+        if (freeSlotCount == freeSlotStack.length) {
+            freeSlotStack = java.util.Arrays.copyOf(freeSlotStack, Math.max(8, freeSlotCount * 2));
+        }
+        freeSlotStack[freeSlotCount++] = slotId;
+    }
+
+    /**
+     * Pops a free slot id from the stack.
+     *
+     * @return a reusable tombstoned slot id, or -1 if the stack is empty
+     */
+    int pollFreeSlot() {
+        return freeSlotCount == 0 ? -1 : freeSlotStack[--freeSlotCount];
+    }
+
+    /**
+     * Resets the stack to empty and marks it initialized - called by
+     * {@code defragment}, whose renumbering leaves zero tombstones.
+     */
+    void resetFreeSlotsAfterCompaction() {
+        markFreeSlotsInitialized();
+        freeSlotCount = 0;
+    }
+
+    /**
+     * Marks the stack as needing a rebuild - called when the page bytes are
+     * replaced wholesale ({@code Page.setData}), which can invalidate any
+     * previously scanned tombstone ids.
+     */
+    void invalidateFreeSlots() {
+        freeSlotStack = null;
+        freeSlotCount = 0;
+    }
 
     /**
      * Returns the current free space in bytes.

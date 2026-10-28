@@ -160,13 +160,13 @@ public final class Page {
      * Inserts a tuple into the page.
      * 
      * @param tuple the tuple bytes to insert
-     * @return the slotId where the tuple was inserted
+     * @return the slotId where the tuple was inserted (may be a reused tombstone id, o2 Buffer-7)
      * @throws PageFullException if there is not enough free space
      */
     public int insert(byte[] tuple) {
-        SlottedPageLayout.insertTuple(data, header, tuple);
+        int slotId = SlottedPageLayout.insertTuple(data, header, tuple);
         setDirty(true);
-        return header.getSlotCount() - 1; // return the newly created slotId
+        return slotId;
     }
 
     /**
@@ -311,6 +311,7 @@ public final class Page {
             throw new IllegalArgumentException("Data size must match page size: " + data.length + " != " + this.pageSize);
         }
         this.data = data.clone();
+        header.invalidateFreeSlots(); // new bytes may contain different tombstones (o2 Buffer-7)
         setDirty(true);
     }
 
