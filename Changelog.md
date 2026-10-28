@@ -1064,3 +1064,5 @@ chore: test-profiles-audit changelog entry
 3.3.57 Isolate CursorTest/OomHandlingTest from repo ./data via @TempDir (they rewrote the real admin password on every network-profile run; wire probes now use admin/admin); start-client.sh/.bat launch interactive diesel.CliRepl with pass-through args instead of the demo runner; saveTablesToDisk logs 'Saved 0 tables' at FINE; @Isolated SnapshotGetRowIsLinearTest (TESTS-7)
 
 3.3.58 CliRepl prompts for login and password interactively when --user is missing (start-client.sh UX): password without echo via System.console(), piped-stdin fallback reads plain lines, empty login or EOF keeps connect-without-credentials; new CliReplPromptTest (smoke)
+
+3.3.59 O2 Buffer-6: compact slot directory in SlottedPageLayout.defragment - renumber live slots 0..L-1, slotCount=live count, reclaim tombstone directory space, harden readTuple for slotId>=slotCount; update DefragTest to renumbering contract; new DefragCompactsSlotDirectoryTest + DefragIsOLiveTest

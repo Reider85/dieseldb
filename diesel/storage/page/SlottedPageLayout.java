@@ -2,6 +2,7 @@ package diesel.storage.page;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -18,7 +19,10 @@ import java.util.List;
  * - Free space = freeSpaceEnd - freeSpaceStart
  * - Insert: place tuple at freeSpaceEnd - length, decrement freeSpaceEnd, append slot
  * - Delete: mark slot offset = -1 (tombstone), freeSpaceEnd unchanged (space reclaimed only at defrag)
- * - Defrag: compact live tuples contiguously against page end, update slot offsets, maximize free space
+ * - Defrag: compact live tuples contiguously against page end, renumber live slots to
+ *   a contiguous 0..L-1 directory (slotCount = L, tombstone slots reclaimed), maximize free space.
+ *   Slot ids are page-local and transient (o2 Buffer-6): no structure outside the page
+ *   persists them, so renumbering cannot invalidate external references.
  */
 public final class SlottedPageLayout {
 
@@ -104,6 +108,9 @@ public final class SlottedPageLayout {
      * @throws PageFormatException if slot data is corrupt (offset out of bounds)
      */
     public static byte[] readTuple(byte[] data, PageHeader header, int slotId) {
+        if (slotId >= header.getSlotCount()) {
+            return null; // slot beyond the live directory (defrag renumbers to 0..L-1, o2 Buffer-6)
+        }
         int offset = readSlotOffset(data, slotId);
         if (offset == EMPTY_SLOT_OFFSET) {
             return null; // deleted slot
@@ -173,63 +180,69 @@ public final class SlottedPageLayout {
     }
 
     /**
-     * Defragments the page by compacting all live tuples contiguously against the page end.
-     * 
+     * Defragments the page by compacting all live tuples and renumbering the
+     * slot directory to a contiguous 0..L-1 range (o2 Buffer-6).
+     *
      * <p>Algorithm:
      * 1. Collect all live tuples (offset != -1) in slotId order
      * 2. Write them contiguously starting from (pageSize - totalLiveBytes) toward the page end
-     * 3. Update slot offsets to point to new positions
-     * 4. Update freeSpaceEnd to pageSize - totalLiveBytes
-     * 
+     * 3. Rewrite the slot directory: the i-th live tuple gets slotId i (L = live count),
+     *    so tombstone slots disappear and slotCount shrinks to L
+     * 4. Reclaim the tombstone tail of the slot directory (freeSpaceStart = HEADER_SIZE + L * 8)
+     * 5. Update freeSpaceEnd to pageSize - totalLiveBytes
+     *
+     * <p>Slot ids are page-local and transient: no structure outside the page
+     * persists them (the only production consumer, CatalogTable, discards the
+     * insert slotId and re-scans slots on read), so renumbering cannot
+     * invalidate external references. After this call, every O(slotCount)
+     * operation (validateLayout, full scans, subsequent defrags) costs
+     * O(live count) instead of O(historical inserts).
+     *
      * @param data the full page byte array
      * @param header the page header (updated)
-     * @return the number of bytes reclaimed (always >= 0)
+     * @return the number of bytes reclaimed (always >= 0; includes both tuple
+     *         space and reclaimed slot-directory entries)
      */
     public static int defragment(byte[] data, PageHeader header) {
         int pageSize = header.getPageSize();
         int oldFreeSpace = header.getFreeSpace();
-        
+        int oldFreeSpaceStart = header.getFreeSpaceStart();
+
         // Collect live tuples in slotId order
         List<byte[]> liveTuples = new ArrayList<>();
-        List<Integer> liveSlotIds = new ArrayList<>();
-        
         for (int slotId = 0; slotId < header.getSlotCount(); slotId++) {
             int offset = readSlotOffset(data, slotId);
             if (offset != EMPTY_SLOT_OFFSET) {
                 byte[] tuple = readTuple(data, header, slotId);
                 liveTuples.add(tuple);
-                liveSlotIds.add(slotId);
             }
         }
-        
+
         int totalLiveBytes = liveTuples.stream().mapToInt(t -> t.length).sum();
         int newFreeSpaceEnd = pageSize - totalLiveBytes;
-        
-        // If no live tuples, nothing to do
-        if (liveTuples.isEmpty()) {
-            header.setFreeSpaceEnd(newFreeSpaceEnd);
-            return header.getFreeSpace() - oldFreeSpace; // reclaimed = new free space - old free space
-        }
+        int newSlotCount = liveTuples.size();
+        int newFreeSpaceStart = PageHeader.HEADER_SIZE + newSlotCount * SLOT_ENTRY_SIZE;
 
-        // Write live tuples contiguously from newFreeSpaceEnd upward
+        // Write live tuples contiguously from newFreeSpaceEnd upward; slot i holds the i-th live tuple
         int writePtr = newFreeSpaceEnd;
-        for (int i = 0; i < liveTuples.size(); i++) {
+        for (int i = 0; i < newSlotCount; i++) {
             byte[] tuple = liveTuples.get(i);
-            int slotId = liveSlotIds.get(i);
-
-            // Write tuple at writePtr
             System.arraycopy(tuple, 0, data, writePtr, tuple.length);
-
-            // Update slot offset
-            writeSlot(data, slotId, writePtr, tuple.length);
-
+            writeSlot(data, i, writePtr, tuple.length);
             writePtr += tuple.length;
         }
 
-        // Update header
+        // Zero the reclaimed tail of the slot directory (old entries L..oldSlotCount-1)
+        if (newFreeSpaceStart < oldFreeSpaceStart) {
+            Arrays.fill(data, newFreeSpaceStart, oldFreeSpaceStart, (byte) 0);
+        }
+
+        // Update header: directory shrinks to the live count, tombstones are gone
+        header.setSlotCount(newSlotCount);
+        header.setFreeSpaceStart(newFreeSpaceStart);
         header.setFreeSpaceEnd(newFreeSpaceEnd);
 
-        // Return reclaimed bytes (increase in free space)
+        // Return reclaimed bytes (increase in free space: tuple bytes + tombstone directory entries)
         return header.getFreeSpace() - oldFreeSpace;
     }
 
