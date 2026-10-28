@@ -4,8 +4,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-HOST="${1:-localhost}"
-PORT="${2:-3306}"
+# Interactive SQL CLI (diesel.CliRepl). All arguments pass through:
+#   ./start-client.sh                                    # REPL at localhost:3306
+#   ./start-client.sh myhost 3307                        # custom host/port
+#   ./start-client.sh localhost 3306 --user admin --password secret
+# First login with the bootstrap admin forces a password change.
+if [[ "${1:-}" == -* ]]; then
+    echo "Starting DieselDB CLI (diesel.CliRepl), server localhost:3306"
+else
+    HOST="${1:-localhost}"
+    PORT="${2:-3306}"
+    echo "Starting DieselDB CLI (diesel.CliRepl) for ${HOST}:${PORT}"
+fi
 
 build_classpath() {
     local cp="$SCRIPT_DIR/target/classes:$SCRIPT_DIR"
@@ -35,5 +45,4 @@ build_classpath() {
 
 CLASSPATH="$(build_classpath)"
 
-echo "Connecting to DieselDB server at ${HOST}:${PORT}"
-exec java -cp "$CLASSPATH" diesel.DatabaseClient "$HOST" "$PORT"
+exec java -cp "$CLASSPATH" diesel.CliRepl "$@"

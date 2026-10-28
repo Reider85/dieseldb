@@ -2,6 +2,7 @@ package diesel;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.util.HashMap;
 import java.util.List;
@@ -20,7 +21,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * Post-fix: getVisibleRow(index) walks until the index-th visible row is found,
  * returning only that row with no full list materialization.
  */
+// @Isolated (TESTS-7): the < 50ms wall-clock bound starves under cross-class
+// parallelism - this class native home was the concurrency profile (one class
+// per fork, quiet CPU). Observed 50ms under the merged '-P all' run.
 @Tag("concurrency")
+@Isolated
 class SnapshotGetRowIsLinearTest {
 
     /** Table that counts calls to the defensive-copy getRows() API. */

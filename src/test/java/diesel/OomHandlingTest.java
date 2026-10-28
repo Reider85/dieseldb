@@ -4,11 +4,13 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -33,23 +35,33 @@ import diesel.security.SessionToken;
 @ResourceLock("diesel.hashjoin.config")
 public class OomHandlingTest {
 
+    // Own data directory: the default "data" dir is the repo's real database,
+    // which earlier revisions of this test polluted (and whose admin password
+    // it rewrote on every run). The OOM server databases below share it.
+    @TempDir
+    Path tempDir;
+
     private Database database;
 
 @BeforeEach
     void setUp() {
         database = new Database();
-        
-        // Reset must-change password for admin to allow queries
-        // Note: This needs to be done after the database is fully initialized
-        try {
-            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
-        } catch (Exception e) {
-            // If admin doesn't exist yet, create it first
-            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
-        }
-        
+        database.setDataDir(tempDir.toString());
+
+        // The embedded database starts empty; create the bootstrap admin so
+        // the wire probes can authenticate as admin/admin. Isolated to
+        // @TempDir so the repo ./data admin credentials stay untouched.
+        database.executeQuery("CREATE USER admin PASSWORD 'admin'", null);
+
         database.executeQuery("CREATE TABLE OOMT_LEFT (ID LONG PRIMARY KEY SEQUENCE(oomt_lseq 1 1), VAL INTEGER)", null);
         database.executeQuery("CREATE TABLE OOMT_RIGHT (ID LONG PRIMARY KEY SEQUENCE(oomt_rseq 1 1), VAL INTEGER)", null);
+
+        // The OOM servers below are separate Database instances over the same
+        // tempDir: DatabaseServer.start() calls loadTablesFromDisk(), which
+        // reads *.table files only. Flush now so the server sees the
+        // admin/admin account created above instead of re-bootstrapping its
+        // own admin with the must-change flag (which would block cursors).
+        database.saveTablesToDisk();
     }
 
     @AfterEach
@@ -93,6 +105,10 @@ public class OomHandlingTest {
 
     /** Database that fails every query with an OutOfMemoryError. */
     static class OomThrowingDatabase extends Database {
+        OomThrowingDatabase(String dataDir) {
+            super(dataDir);
+        }
+
         @Override
         public Object executeQuery(String query, UUID transactionId) {
             // Bypass hard block by using a session without must-change password
@@ -110,7 +126,7 @@ public class OomHandlingTest {
     @Test
     void serverRespondsWithOomMessage() throws Exception {
         int port = freePort();
-        DatabaseServer server = new DatabaseServer(port, 5000, new OomThrowingDatabase());
+        DatabaseServer server = new DatabaseServer(port, 5000, new OomThrowingDatabase(tempDir.toString()));
         Thread serverThread = new Thread(server::start, "oom-test-server");
         serverThread.start();
         try {
@@ -147,7 +163,7 @@ public class OomHandlingTest {
         logger.addHandler(handler);
         try {
             int port = freePort();
-            DatabaseServer server = new DatabaseServer(port, 5000, new OomThrowingDatabase());
+            DatabaseServer server = new DatabaseServer(port, 5000, new OomThrowingDatabase(tempDir.toString()));
             Thread serverThread = new Thread(server::start, "oom-log-test-server");
             serverThread.start();
             try {
@@ -173,6 +189,10 @@ public class OomHandlingTest {
 
     /** Database that throws OutOfMemoryError on executeCursor (cursor open). */
     static class OomCursorOpenDatabase extends Database {
+        OomCursorOpenDatabase(String dataDir) {
+            super(dataDir);
+        }
+
         @Override
         public Cursor executeCursor(String query, int fetchSize, UUID transactionId) {
             throw new OutOfMemoryError("Java heap space");
@@ -182,15 +202,15 @@ public class OomHandlingTest {
     @Test
     void serverRespondsWithOomMessageOnCursorOpen() throws Exception {
         int port = freePort();
-        DatabaseServer server = new DatabaseServer(port, 5000, new OomCursorOpenDatabase());
+        DatabaseServer server = new DatabaseServer(port, 5000, new OomCursorOpenDatabase(tempDir.toString()));
         Thread serverThread = new Thread(server::start, "oom-cursor-open-test-server");
         serverThread.start();
         try {
             waitForServer(port);
             try (WireProbe probe = new WireProbe(port, 10000)) {
                 probe.handshake();
-                probe.auth("admin", "test-admin-pw");
-                probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
+                probe.auth("admin", "admin");
+                probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM OOMT_LEFT", 10, null));
                 Object response = probe.readValue();
                 assertEquals("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.", response,
                         "the client must receive the friendly OOM message on cursor open");
@@ -203,6 +223,10 @@ public class OomHandlingTest {
 
     /** Database whose cursor fetch() throws OutOfMemoryError. */
     static class OomCursorFetchDatabase extends Database {
+        OomCursorFetchDatabase(String dataDir) {
+            super(dataDir);
+        }
+
         @Override
         public Cursor executeCursor(String query, int fetchSize, UUID transactionId) {
             Iterator<Map<String, Object>> oomIterator = new Iterator<>() {
@@ -223,15 +247,15 @@ public class OomHandlingTest {
     @Test
     void serverRespondsWithOomMessageOnCursorFetch() throws Exception {
         int port = freePort();
-        DatabaseServer server = new DatabaseServer(port, 5000, new OomCursorFetchDatabase());
+        DatabaseServer server = new DatabaseServer(port, 5000, new OomCursorFetchDatabase(tempDir.toString()));
         Thread serverThread = new Thread(server::start, "oom-cursor-fetch-test-server");
         serverThread.start();
         try {
             waitForServer(port);
             try (WireProbe probe = new WireProbe(port, 10000)) {
                 probe.handshake();
-                probe.auth("admin", "test-admin-pw");
-                probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM USERS", 10, null));
+                probe.auth("admin", "admin");
+                probe.write(new diesel.net.messages.OpenCursorMessage("SELECT * FROM OOMT_LEFT", 10, null));
                 Object cursorIdResponse = probe.readValue();
                 assertTrue(cursorIdResponse instanceof String, "server should return a cursor id string");
                 UUID cursorId = UUID.fromString((String) cursorIdResponse);
@@ -274,7 +298,7 @@ public class OomHandlingTest {
     private static Object roundTrip(int port, String query) throws Exception {
         try (WireProbe probe = new WireProbe(port, 10000)) {
             probe.handshake();
-            probe.auth("admin", "test-admin-pw");
+            probe.auth("admin", "admin");
             return probe.query(query);
         }
     }

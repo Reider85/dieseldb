@@ -3131,7 +3131,13 @@ class Database {
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             entry.getValue().saveToSerializedFile(entry.getKey());
         }
-        LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
+        // Empty registry (e.g. tests that drop tables before close) is normal -
+        // keep it at FINE so INFO only shows real saves.
+        if (tables.isEmpty()) {
+            LOGGER.log(Level.FINE, "Saved 0 tables to disk (registry empty)");
+        } else {
+            LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
+        }
 
         // Wait for any in-flight persist to complete (e.g., from PersistFlusher daemon)
         // to prevent @TempDir deletion races

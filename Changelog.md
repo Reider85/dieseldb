@@ -1060,3 +1060,5 @@ chore: test-profiles-audit changelog entry
 3.3.55 O2 Buffer-4: LinkedHashSet dirty-page index in BufferPool - O(1) getDirtyPageCount, O(D) flushDirtyMatching/flushResidentDirty via Page dirty listener; new DirtyPageTrackingIsODTest
 
 3.3.56 O2 Buffer-5: unpinned-page queue in LruEvictionPolicy - O(1) eviction under pinned-head pin distribution; new EvictionUnderPinnedHeadTest
+
+3.3.57 Isolate CursorTest/OomHandlingTest from repo ./data via @TempDir (they rewrote the real admin password on every network-profile run; wire probes now use admin/admin); start-client.sh/.bat launch interactive diesel.CliRepl with pass-through args instead of the demo runner; saveTablesToDisk logs 'Saved 0 tables' at FINE; @Isolated SnapshotGetRowIsLinearTest (TESTS-7)

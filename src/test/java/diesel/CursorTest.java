@@ -4,10 +4,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -27,22 +29,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("network")
 public class CursorTest {
 
+    // Own data directory: the default "data" dir is the repo's real database,
+    // which earlier revisions of this test polluted (and whose admin password
+    // it rewrote on every run).
+    @TempDir
+    Path tempDir;
+
     private Database database;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         dropTable();
-        
-        // Reset must-change password for admin to allow queries
-        // Note: This needs to be done after the database is fully initialized
-        try {
-            database.executeQuery("ALTER USER admin PASSWORD 'test-admin-pw'", null);
-        } catch (Exception e) {
-            // If admin doesn't exist yet, create it first
-            database.executeQuery("CREATE USER admin PASSWORD 'test-admin-pw'", null);
-        }
-        
+
+        // The embedded database starts empty; create the bootstrap admin for
+        // the wire tests. admin/admin without the must-change flag keeps the
+        // repo ./data admin credentials untouched.
+        database.executeQuery("CREATE USER admin PASSWORD 'admin'", null);
+
         database.executeQuery("CREATE TABLE CUR_TEST (ID LONG PRIMARY KEY SEQUENCE(cur_seq 1 1), NAME STRING, AGE INTEGER)", null);
         for (int i = 0; i < 25; i++) {
             database.executeQuery(
@@ -196,7 +201,7 @@ public class CursorTest {
     @Test
     void clientServerOpenFetchCloseRoundTrip() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 String cursorId = client.openCursor("SELECT ID, NAME FROM CUR_TEST ORDER BY ID", 8);
@@ -226,7 +231,7 @@ public class CursorTest {
     @Test
     void clientServerFetchUnknownCursorReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 boolean threw = false;
@@ -248,7 +253,7 @@ public class CursorTest {
     @Test
     void clientServerOpenNonSelectReturnsError() throws Exception {
         try (ServerHarness harness = new ServerHarness(database)) {
-            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "test-admin-pw");
+            DatabaseClient client = new DatabaseClient("localhost", harness.port, "admin", "admin");
             try {
                 client.connect();
                 boolean threw = false;
