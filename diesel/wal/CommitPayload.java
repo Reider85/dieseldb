@@ -24,12 +24,23 @@ import java.util.Objects;
  *   commitCsn       (long,  8 bytes)
  *   modifiedTables  (int count, then per table: writeUTF name, int rowCount, int* rowIndex)
  *   deletedTables   (int count, then per table: writeUTF name, int rowCount, int* rowIndex)
+ *   commitTimestamp (long,  8 bytes)  — prompt 4 #43, PITR; absent in legacy payloads
  * </pre>
  *
  * <p>The payload carries the MVCC bookkeeping of a commit: the rows whose
  * pending {@code xmin/xmax} version state must be stamped as committed when
  * the record is replayed by {@code diesel.recovery.RedoPhase} (task 4 of
  * prompt 4 #18).
+ *
+ * <p><b>PITR timestamp (prompt 4 #43).</b> The trailing {@code commitTimestamp}
+ * epoch-millis field powers {@code diesel.recovery.PointInTimeRecovery}: a
+ * transaction is visible in a point-in-time restore exactly when its commit
+ * timestamp is at or before the restore target. Forward/backward wire
+ * compatibility: the field is APPENDED after the trailing table map, so an
+ * older reader simply leaves it unread (byte-array streams do not complain
+ * about trailing bytes), and a newer reader decoding a legacy payload hits
+ * EOF and records {@code 0} ("timestamp unknown" — PITR treats such commits
+ * as visible at any target and logs a warning).
  */
 public final class CommitPayload {
 
@@ -37,9 +48,11 @@ public final class CommitPayload {
     private final long commitCsn;
     private final Map<String, int[]> modifiedRows;
     private final Map<String, int[]> deletedRows;
+    private final long commitTimestampMs;
 
     /**
-     * Creates a payload from row-index collections.
+     * Creates a payload from row-index collections without a commit timestamp
+     * (legacy semantics: timestamp unknown = 0).
      *
      * @param txid        the committing transaction id
      * @param commitCsn   the commit sequence number stamped on the rows
@@ -49,14 +62,32 @@ public final class CommitPayload {
     public CommitPayload(long txid, long commitCsn,
                          Map<String, ? extends Collection<Integer>> modifiedRows,
                          Map<String, ? extends Collection<Integer>> deletedRows) {
+        this(txid, commitCsn, modifiedRows, deletedRows, 0L);
+    }
+
+    /**
+     * Creates a payload from row-index collections with a commit timestamp.
+     *
+     * @param txid        the committing transaction id
+     * @param commitCsn   the commit sequence number stamped on the rows
+     * @param modifiedRows table name → inserted/updated row indexes
+     * @param deletedRows  table name → deleted row indexes
+     * @param commitTimestampMs epoch-millis commit time for PITR, or 0 when unknown
+     */
+    public CommitPayload(long txid, long commitCsn,
+                         Map<String, ? extends Collection<Integer>> modifiedRows,
+                         Map<String, ? extends Collection<Integer>> deletedRows,
+                         long commitTimestampMs) {
         this.txid = txid;
         this.commitCsn = commitCsn;
         this.modifiedRows = copyRows(modifiedRows);
         this.deletedRows = copyRows(deletedRows);
+        this.commitTimestampMs = commitTimestampMs;
     }
 
     /**
-     * Serializes a commit payload in the Database commit format.
+     * Serializes a commit payload in the legacy Database commit format
+     * (no commit timestamp — written only by pre-PITR callers/tests).
      *
      * @param txid        the committing transaction id
      * @param commitCsn   the commit sequence number
@@ -69,6 +100,27 @@ public final class CommitPayload {
                                    Map<String, ? extends Collection<Integer>> modifiedRows,
                                    Map<String, ? extends Collection<Integer>> deletedRows)
             throws IOException {
+        return serialize(txid, commitCsn, modifiedRows, deletedRows, 0L);
+    }
+
+    /**
+     * Serializes a commit payload including the PITR commit timestamp
+     * (prompt 4 #43). The timestamp is appended after the trailing table map
+     * so legacy readers keep working unchanged.
+     *
+     * @param txid        the committing transaction id
+     * @param commitCsn   the commit sequence number
+     * @param modifiedRows table name → inserted/updated row indexes
+     * @param deletedRows  table name → deleted row indexes
+     * @param commitTimestampMs epoch-millis commit time, or 0 when unknown
+     * @return the encoded payload bytes
+     * @throws IOException if the payload cannot be written
+     */
+    public static byte[] serialize(long txid, long commitCsn,
+                                   Map<String, ? extends Collection<Integer>> modifiedRows,
+                                   Map<String, ? extends Collection<Integer>> deletedRows,
+                                   long commitTimestampMs)
+            throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
 
@@ -77,6 +129,7 @@ public final class CommitPayload {
 
         writeTables(dos, modifiedRows);
         writeTables(dos, deletedRows);
+        dos.writeLong(commitTimestampMs);
 
         dos.flush();
         return baos.toByteArray();
@@ -99,7 +152,17 @@ public final class CommitPayload {
             long commitCsn = dis.readLong();
             Map<String, int[]> modified = readTables(dis);
             Map<String, int[]> deleted = readTables(dis);
-            return new CommitPayload(txid, commitCsn, toCollections(modified), toCollections(deleted));
+            // PITR trailing field (prompt 4 #43): absent in legacy payloads.
+            // EOF here means "pre-PITR payload", NOT truncation — the four
+            // structural fields above are already complete.
+            long commitTimestampMs = 0L;
+            try {
+                commitTimestampMs = dis.readLong();
+            } catch (EOFException legacyNoTimestamp) {
+                commitTimestampMs = 0L;
+            }
+            return new CommitPayload(txid, commitCsn, toCollections(modified),
+                    toCollections(deleted), commitTimestampMs);
         } catch (EOFException e) {
             throw new IllegalArgumentException("Truncated commit payload (" + data.length + " bytes)", e);
         } catch (IOException e) {
@@ -195,10 +258,20 @@ public final class CommitPayload {
         return deletedRows;
     }
 
+    /**
+     * Returns the epoch-millis commit time recorded for PITR (prompt 4 #43),
+     * or {@code 0} for legacy payloads written before this field existed
+     * ("timestamp unknown" — visible at every restore target).
+     */
+    public long getCommitTimestampMs() {
+        return commitTimestampMs;
+    }
+
     @Override
     public String toString() {
         return "CommitPayload{txid=" + txid + ", commitCsn=" + commitCsn
                 + ", modifiedTables=" + modifiedRows.size()
-                + ", deletedTables=" + deletedRows.size() + '}';
+                + ", deletedTables=" + deletedRows.size()
+                + ", commitTimestampMs=" + commitTimestampMs + '}';
     }
 }

@@ -243,7 +243,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
         return valuesMatch(table.getVisibleRowForReader(rowIndex), expected);
     }
 
-    private static boolean valuesMatch(Map<String, Object> current, Map<String, Object> expected) {
+    static boolean valuesMatch(Map<String, Object> current, Map<String, Object> expected) {
         if (expected == null || expected.isEmpty()) {
             return true;
         }

@@ -1077,4 +1077,7 @@ chore: test-profiles-audit changelog entry
 
 3.3.64 O2 CSV-1: inverse position-to-rowId map in DelimitedIndexManager - O(1) positionToRowId instead of O(n) entry-set scan (createIndex O(n^2)->O(n log n), updateRow/deleteRow O(1) lookup free with CSV-2/3); shift loops rewritten as inverse-map walks keeping both maps in sync; removeDeadEntries O(d) via inverse lookup (TSV-7 folded in); new PositionToRowIdInverseMapTest (6 tests: wall-bound 10k updateRow over 100k rows, mid-table shift alignment, LIFO churn, compaction-during-churn, dead-entry disassociation, bulk-window rebuild)
 
+
 3.3.65 O2 CSV-2+CSV-6: LinkedHashSet posting lists in DelimitedIndexManager - O(1) removeIndexedRow (ArrayList.remove O(k) scan gone) + collectPositions instanceof Iterable fix (Set posting lists would silently break secondary rangeSearch); CSV-2 acceptance via new CreateIndexIsONLogNTest (wall-bound 100k createIndex, churn-equivalence maintained-vs-built index); new RemoveIndexedRowIsO1Test (ratio-bound k~50k vs k=2 cost independence, empty-key drop, range regression)
+
+3.3.66 Prompt4 #43: PITR (point-in-time recovery) via commit-timestamped WAL replay

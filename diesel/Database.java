@@ -1555,6 +1555,9 @@ class Database {
      *
      * <p>The encoding lives in {@link diesel.wal.CommitPayload} so the ARIES
      * redo phase (prompt 4 #18) replays commits with the exact writer format.
+     * The commit wall-clock time is stamped into the payload for PITR
+     * (prompt 4 #43): a point-in-time restore replays exactly the commits
+     * whose timestamp is at or before the restore target.
      *
      * @param transaction the committing transaction
      * @param commitCsn the commit sequence number
@@ -1563,7 +1566,8 @@ class Database {
     private byte[] serializeCommitPayload(Transaction transaction, long commitCsn) {
         try {
             return CommitPayload.serialize(transaction.getTxid(), commitCsn,
-                    transaction.getModifiedRows(), transaction.getDeletedRows());
+                    transaction.getModifiedRows(), transaction.getDeletedRows(),
+                    System.currentTimeMillis());
         } catch (IOException e) {
             throw new RuntimeException("Failed to serialize commit payload", e);
         }
