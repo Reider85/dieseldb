@@ -13,6 +13,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -121,6 +122,13 @@ public abstract class DelimitedIndexManager {
 
     private long nextRowId = 0;
     private final NavigableMap<Long, Integer> rowIdToPosition = new TreeMap<>();
+    /**
+     * Inverse of {@link #rowIdToPosition}: physical position → rowId
+     * (o2 CSV-1). Kept in sync on every mutation so the reverse lookup is
+     * O(1) instead of an O(n) entry-set scan (was O(n²) per createIndex /
+     * updateRow / deleteRow loop).
+     */
+    private final Map<Integer, Long> positionToRowIdMap = new HashMap<>();
     private final Set<Long> deletedRowIds = new HashSet<>();
     private static final double COMPACTION_THRESHOLD = 0.25;
 
@@ -206,6 +214,7 @@ public abstract class DelimitedIndexManager {
         this.primaryKeyIndex.clear();
         this.secondaryIndexes.clear();
         this.rowIdToPosition.clear();
+        this.positionToRowIdMap.clear();
         this.deletedRowIds.clear();
         this.nextRowId = 0;
         reindex();
@@ -251,11 +260,13 @@ public abstract class DelimitedIndexManager {
             index.clear();
         }
         rowIdToPosition.clear();
+        positionToRowIdMap.clear();
         deletedRowIds.clear();
         nextRowId = 0;
         for (int i = 0; i < rows.size(); i++) {
             long rid = nextRowId++;
             rowIdToPosition.put(rid, i);
+            positionToRowIdMap.put(i, rid);
             insertIndexedRow(rows.get(i), rid);
         }
     }
@@ -299,6 +310,7 @@ public abstract class DelimitedIndexManager {
     void appendIndexedRowShared(Object[] row, int rowIndex) {
         long rid = nextRowId++;
         rowIdToPosition.put(rid, rowIndex);
+        positionToRowIdMap.put(rowIndex, rid);
         if (rowIndex >= rows.size()) {
             rows.add(row);
         } else {
@@ -391,13 +403,22 @@ public abstract class DelimitedIndexManager {
             // Append: no existing row sits at or after rowIndex, so no
             // stored position changes — skip the O(n) shift entirely.
             rows.add(row);
+            positionToRowIdMap.put(rowIndex, rid); // o2 CSV-1
         } else {
             rows.add(rowIndex, row);
-            for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-                if (e.getValue() >= rowIndex && e.getKey() != rid) {
-                    e.setValue(e.getValue() + 1);
+            // o2 CSV-1: shift via the inverse map instead of the O(n)
+            // entry-set walk. Same O(n) worst case, but cache-friendlier
+            // (contiguous Integer keys, no boxing of setValue) and it keeps
+            // positionToRowIdMap in sync as a side effect. Walk downward so
+            // each move p → p+1 lands in a slot vacated by the prior iteration.
+            for (int p = rows.size() - 2; p >= rowIndex; p--) {
+                Long rid2 = positionToRowIdMap.remove(p);
+                if (rid2 != null) {
+                    positionToRowIdMap.put(p + 1, rid2);
+                    rowIdToPosition.put(rid2, p + 1);
                 }
             }
+            positionToRowIdMap.put(rowIndex, rid); // o2 CSV-1
         }
         insertIndexedRow(row, rid);
     }
@@ -431,10 +452,14 @@ public abstract class DelimitedIndexManager {
         Object[] row = rows.remove(rowIndex);
         removeIndexedRow(row, rid);
         rowIdToPosition.remove(rid);
+        positionToRowIdMap.remove(rowIndex); // o2 CSV-1
         deletedRowIds.add(rid);
-        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-            if (e.getValue() > rowIndex) {
-                e.setValue(e.getValue() - 1);
+        // o2 CSV-1: shift via the inverse map (mirror of insertAtShared).
+        for (int p = rowIndex; p < rows.size(); p++) {
+            Long rid2 = positionToRowIdMap.remove(p + 1);
+            if (rid2 != null) {
+                positionToRowIdMap.put(p, rid2);
+                rowIdToPosition.put(rid2, p);
             }
         }
         int liveRows = rowIdToPosition.size();
@@ -478,9 +503,13 @@ public abstract class DelimitedIndexManager {
             return 0;
         }
         List<Long> deadRowIds = new ArrayList<>(deadPositions.size());
-        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-            if (deadPositions.contains(e.getValue())) {
-                deadRowIds.add(e.getKey());
+        // o2 CSV-1/TSV-7: resolve dead positions via the inverse map in O(d)
+        // instead of walking every rowIdToPosition entry (was O(n) even for
+        // a tiny deadPositions set).
+        for (int pos : deadPositions) {
+            Long rid = positionToRowIdMap.get(pos);
+            if (rid != null) {
+                deadRowIds.add(rid);
             }
         }
         for (Long rid : deadRowIds) {
@@ -488,6 +517,7 @@ public abstract class DelimitedIndexManager {
             if (pos == null) {
                 continue;
             }
+            positionToRowIdMap.remove(pos); // o2 CSV-1
             Object[] row = (pos >= 0 && pos < rows.size()) ? rows.get(pos) : null;
             if (row != null) {
                 removeIndexedRow(row, rid);
@@ -574,15 +604,12 @@ public abstract class DelimitedIndexManager {
     /**
      * Returns the rowId at the given physical position, or {@code null}
      * if no mapping exists (e.g. after a raw list mutation without an
-     * index sync).
+     * index sync). O(1) via the inverse map (o2 CSV-1) — was an O(n)
+     * entry-set scan, which made createIndex/updateRow/deleteRow O(n²)
+     * when driven in a row loop.
      */
     private Long positionToRowId(int position) {
-        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-            if (e.getValue() == position) {
-                return e.getKey();
-            }
-        }
-        return null;
+        return positionToRowIdMap.get(position);
     }
 
     /**
