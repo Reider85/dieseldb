@@ -1072,3 +1072,5 @@ chore: test-profiles-audit changelog entry
 3.3.61 O2 Buffer-7: reuse tombstoned slot ids in SlottedPageLayout.insertTuple via in-memory free-slot stack in PageHeader - slotCount bounded by max concurrent live tuples instead of historical inserts; Page.insert returns actual slotId; new InsertReusesTombstoneSlotsTest + SlotDirectoryDoesNotGrowUnboundedlyTest
 
 3.3.62 O2 Buffer-8: liveCount cache in PageHeader + validateLayout short-circuit for zero-live pages (O(1) instead of O(slotCount) tombstone walk), O(1) Page.getLiveCount via countLiveTuples; invalidate on setData/copyContentFrom/setPageType (fresh-header liveCount=0/valid bug); new ValidateLayoutIsOLiveTest + FullPageScanIsOLiveTest
+
+3.3.63 Prompt4 #42: incremental physical backup (page-level CRC delta of pages.db + changed-file delta with parent-linked manifest + cumulative backup_state.idx chain) + BackupScheduler with 5-field cron parser (backup.enabled/backup.schedule config); new IncrementalBackupTest/BackupChainRestoreTest/BackupScheduleTest (15 tests, storage)

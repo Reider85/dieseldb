@@ -187,6 +187,8 @@ diesel/backup/BackupManifest.java		smoke,query,storage
 diesel/backup/PhysicalRestore.java		smoke,query,storage
 diesel/backup/DieselBackup.java		smoke,query,storage
 diesel/backup/DieselRestore.java		smoke,query,storage
+diesel/backup/IncrementalBackup.java		smoke,query,storage
+diesel/backup/BackupScheduler.java		smoke,query,storage
 
 # TESTS-10 drift sweep - previously unmapped sources found by
 # scripts/check-tia-mapping.sh (CI job 'lint-tia-mapping')
