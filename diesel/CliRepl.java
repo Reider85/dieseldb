@@ -220,6 +220,18 @@ public class CliRepl {
             return;
         }
         
+        // Remote mode: when no --user flag was given, ask for the login
+        // interactively (password without echo via System.console()). An
+        // empty login line or EOF keeps the old connect-without-credentials
+        // behaviour, so scripted invocations stay non-blocking.
+        String user = cli.user();
+        String password = cli.password();
+        if (user == null) {
+            String[] credentials = promptCredentials();
+            user = credentials[0];
+            password = credentials[1];
+        }
+        
         // Load client config and merge with CLI flags
         Properties clientConfig = loadClientConfig();
         boolean tls = cli.tls();
@@ -268,8 +280,8 @@ public class CliRepl {
             try {
                 javax.net.ssl.SSLContext context = diesel.net.SslContextFactory.createClient(tlsConfig);
                 javax.net.ssl.SSLSocketFactory factory = context.getSocketFactory();
-                DatabaseClient client = cli.user() != null
-                        ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
+                DatabaseClient client = user != null
+                        ? new DatabaseClient(cli.host(), cli.port(), user, password, cli.database())
                         : new DatabaseClient(cli.host(), cli.port());
                 client.setSslSocketFactory(factory);
                 client.connect();
@@ -284,13 +296,13 @@ public class CliRepl {
         
         DatabaseClient client;
         if (tls) {
-            client = cli.user() != null
-                    ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
+            client = user != null
+                    ? new DatabaseClient(cli.host(), cli.port(), user, password, cli.database())
                     : new DatabaseClient(cli.host(), cli.port());
             // TLS connection already done above
         } else {
-            client = cli.user() != null
-                    ? new DatabaseClient(cli.host(), cli.port(), cli.user(), cli.password(), cli.database())
+            client = user != null
+                    ? new DatabaseClient(cli.host(), cli.port(), user, password, cli.database())
                     : new DatabaseClient(cli.host(), cli.port());
             try {
                 client.connect();
@@ -301,7 +313,7 @@ public class CliRepl {
         }
         
         if (client.isMustChangePassword()) {
-            boolean changed = forcePasswordChange(client, cli.user());
+            boolean changed = forcePasswordChange(client, user);
             if (!changed) {
                 client.disconnect();
                 return;
@@ -411,6 +423,41 @@ public class CliRepl {
         }
         out().println("Giving up after " + PASSWORD_CHANGE_ATTEMPTS + " attempts.");
         return false;
+    }
+
+    /**
+     * Asks for the login interactively when no {@code --user} flag was given
+     * ({@code start-client.sh} / plain {@code java CliRepl}). The password is
+     * read without echo through {@link System#console()}; with piped stdin
+     * (no console attached) both values come from plain lines. An empty
+     * login line or end-of-input returns null credentials, keeping the
+     * connect-without-credentials behaviour for scripted invocations.
+     *
+     * @return {@code {user, password}}, both null when nothing was entered
+     */
+    static String[] promptCredentials() {
+        java.io.Console console = System.console();
+        if (console != null) {
+            String user = console.readLine("Login: ");
+            if (user == null || user.trim().isEmpty()) {
+                return new String[]{null, null};
+            }
+            char[] pwd = console.readPassword("Password: ");
+            return new String[]{user.trim(), pwd == null ? null : new String(pwd)};
+        }
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+            String user = reader.readLine();
+            if (user == null || user.trim().isEmpty()) {
+                return new String[]{null, null};
+            }
+            out().print("Password: ");
+            out().flush();
+            String password = reader.readLine();
+            return new String[]{user.trim(), password};
+        } catch (IOException e) {
+            return new String[]{null, null};
+        }
     }
 
     private static PrintWriter out() {
@@ -789,6 +836,7 @@ public class CliRepl {
         out.println("  CliRepl [host] [port]                  connect to a running server (default localhost:3306)");
         out.println("  CliRepl --local [dir]                  use a local database directly (default dir data)");
         out.println("  CliRepl --user u --password p [--db d] login on connect (prompt4 #31)");
+        out.println("  without --user you are asked for login and password interactively");
         out.println("  CliRepl --reset-admin [dir]            reset admin/admin locally, requires filesystem access");
         out.println("TLS options (remote mode only):");
         out.println("  --tls                         enable TLS encryption");

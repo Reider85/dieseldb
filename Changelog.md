@@ -1062,3 +1062,5 @@ chore: test-profiles-audit changelog entry
 3.3.56 O2 Buffer-5: unpinned-page queue in LruEvictionPolicy - O(1) eviction under pinned-head pin distribution; new EvictionUnderPinnedHeadTest
 
 3.3.57 Isolate CursorTest/OomHandlingTest from repo ./data via @TempDir (they rewrote the real admin password on every network-profile run; wire probes now use admin/admin); start-client.sh/.bat launch interactive diesel.CliRepl with pass-through args instead of the demo runner; saveTablesToDisk logs 'Saved 0 tables' at FINE; @Isolated SnapshotGetRowIsLinearTest (TESTS-7)
+
+3.3.58 CliRepl prompts for login and password interactively when --user is missing (start-client.sh UX): password without echo via System.console(), piped-stdin fallback reads plain lines, empty login or EOF keeps connect-without-credentials; new CliReplPromptTest (smoke)
