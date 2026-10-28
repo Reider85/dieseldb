@@ -5,6 +5,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Isolated;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -15,6 +17,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -27,6 +30,13 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Tag("smoke")
 @ResourceLock("diesel.alter.copy.config")
+// @Isolated: 4000 SELECT * sweeps x 10 readers + background COPY on a 512m
+// shared fork heap - under 4-way class parallelism the combined garbage from
+// a co-located class pushed the fork into OutOfMemoryError twice (the class
+// comment already documents an unpaced OOM variant on this machine). Green
+// in isolation; @Isolated (the repo-standard remedy since 3.3.38) keeps the
+// fork's heap for this test alone.
+@Isolated
 public class OnlineAlterTest {
 
     private static final String TABLE = "ONLINE_ALTER_T";
@@ -38,10 +48,13 @@ public class OnlineAlterTest {
     private static final long READER_PAUSE_MS = 30;
 
     private Database database;
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         try {
             database.dropTable(TABLE);
         } catch (RuntimeException ignored) {

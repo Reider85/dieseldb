@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -23,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class AutoJoinIndexTest {
 
     private Database database;
+    @TempDir
+    Path tempDir;
     private List<LogRecord> captured;
     private Handler handler;
     private long ownerThreadId;
@@ -30,6 +34,7 @@ public class AutoJoinIndexTest {
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         dropTables();
         Logger logger = Logger.getLogger("diesel.SelectQuery");
         captured = new ArrayList<>();

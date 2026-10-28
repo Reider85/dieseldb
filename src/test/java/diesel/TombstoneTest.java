@@ -4,10 +4,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,10 +26,13 @@ public class TombstoneTest {
     private static final int ROWS = 500;
 
     private Database database;
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         try {
             database.dropTable(TABLE);
         } catch (RuntimeException ignored) {
@@ -102,6 +107,7 @@ public class TombstoneTest {
         // the format-v4 hidden set travels with them.
         database.close();
         database = new Database();
+        database.setDataDir(tempDir.toString());
         database.loadTablesFromDisk();
 
         Table reopened = database.getTable(TABLE);

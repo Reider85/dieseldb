@@ -6,6 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -39,6 +41,8 @@ public class RegexPerformanceBenchmarkTest {
     };
 
     private Database database;
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void setUp() {
@@ -47,6 +51,7 @@ public class RegexPerformanceBenchmarkTest {
         java.util.logging.Logger.getLogger("diesel.SelectQueryParser").setLevel(java.util.logging.Level.WARNING);
         java.util.logging.Logger.getLogger("diesel.ConditionParser").setLevel(java.util.logging.Level.WARNING);
         database = new Database();
+        database.setDataDir(tempDir.toString());
         database.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)",
                 null);

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.util.HashMap;
 import java.util.List;
@@ -15,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -37,10 +39,13 @@ public class CopyAlgorithmTest {
     private static final int ROWS = 20_000;
 
     private Database database;
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         try {
             database.dropTable(TABLE);
         } catch (RuntimeException ignored) {
@@ -155,6 +160,7 @@ public class CopyAlgorithmTest {
         // Restart: catalog + data files must both carry the copied schema.
         database.close();
         database = new Database();
+        database.setDataDir(tempDir.toString());
         database.loadTablesFromDisk();
 
         Table reopened = database.getTable(TABLE);

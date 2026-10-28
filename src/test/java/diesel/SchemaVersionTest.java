@@ -8,12 +8,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.nio.file.Path;
 
 /**
  * Tests for online schema changes (prompt4 #37, R3-010 step 1/3).
@@ -23,11 +25,14 @@ import java.util.Map;
 public class SchemaVersionTest {
 
     private Database database;
+    @TempDir
+    Path tempDir;
     private static final String TEST_TABLE = "TEST_TABLE";
 
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
     }
 
     @AfterEach

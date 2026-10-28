@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
@@ -14,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.nio.file.Path;
 
 /**
  * Tests for schema version timeout behavior (prompt4 #37, R3-010 step 1/3).
@@ -23,6 +25,8 @@ import java.util.concurrent.TimeUnit;
 public class OldVersionTimeoutTest {
 
     private Database database;
+    @TempDir
+    Path tempDir;
     private static final String TEST_TABLE = "TEST_TABLE";
 
     @BeforeEach
@@ -30,6 +34,7 @@ public class OldVersionTimeoutTest {
         // Set short timeout for testing
         System.setProperty("schema.old.version.timeout.min", "1");
         database = new Database();
+        database.setDataDir(tempDir.toString());
     }
 
     @AfterEach
@@ -128,6 +133,7 @@ public class OldVersionTimeoutTest {
         
         try {
             database = new Database(); // Re-create with new timeout
+            database.setDataDir(tempDir.toString());
             database.createTable(TEST_TABLE, 
                 List.of("ID"), 
                 Map.of("ID", Integer.class), 

@@ -3,11 +3,13 @@ package diesel;
 import java.io.File;
 import java.util.List;
 import java.util.Map;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -29,12 +31,15 @@ public class DeadCodeRemovalTest {
     private static final String TABLE = "DEADCODE_T";
 
     private Database database;
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void setUp() {
         new File(TABLE + ".csv").delete();
         new File(TABLE + ".table").delete();
         database = new Database();
+        database.setDataDir(tempDir.toString());
         database.executeQuery("CREATE TABLE " + TABLE
                 + " (ID LONG PRIMARY KEY, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);
         database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, BALANCE) VALUES (1, 'Alice', 30, 100.5)", null);

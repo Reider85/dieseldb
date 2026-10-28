@@ -4,10 +4,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,6 +30,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class SnapshotToStringIsCheapTest {
 
     private Database database;
+    @TempDir
+    Path tempDir;
 
     @AfterEach
     void tearDown() {
@@ -40,6 +44,7 @@ class SnapshotToStringIsCheapTest {
     @Test
     void toStringContainsCorrectRowCount() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         Table table = new Table(database, "tostring_test", List.of("id", "name"),
                 Map.of("id", Integer.class, "name", String.class), "id", Map.of());
         
@@ -68,6 +73,7 @@ class SnapshotToStringIsCheapTest {
     @Test
     void toStringCheapAfterFirstCall() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         Table table = new Table(database, "cheap_test", List.of("id", "name"),
                 Map.of("id", Integer.class, "name", String.class), "id", Map.of());
         
@@ -130,6 +136,7 @@ class SnapshotToStringIsCheapTest {
     @Test
     void toStringWithDifferentRowCounts() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         
         // Test with 1 row
         Table table1 = new Table(database, "one_row", List.of("id", "name"),

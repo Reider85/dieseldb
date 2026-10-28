@@ -4,11 +4,13 @@ import java.io.File;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,6 +33,8 @@ public class NullSafetyTest {
     private static final String TABLE_B = "NULLSAFE_B";
 
     private Database database;
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void setUp() {
@@ -39,6 +43,7 @@ public class NullSafetyTest {
         new File(TABLE_B + ".csv").delete();
         new File(TABLE_B + ".table").delete();
         database = new Database();
+        database.setDataDir(tempDir.toString());
         database.executeQuery("CREATE TABLE " + TABLE
                 + " (ID LONG PRIMARY KEY, NAME STRING, SCORE INTEGER)", null);
         database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, SCORE) VALUES (1, 'Alice', 10)", null);

@@ -2,8 +2,10 @@ package diesel;
 
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
+import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -13,12 +15,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class TransactionTableSnapshotTest {
     
     private Database database;
+    @TempDir
+    Path tempDir;
     private Table testTable;
     private TxStatusTracker txStatusTracker;
     
     @BeforeEach
     void setUp() {
         database = new Database();
+        database.setDataDir(tempDir.toString());
         txStatusTracker = database.getTxStatusTracker();
         testTable = new Table(database, "test", List.of("id", "name"), 
                             Map.of("id", Integer.class, "name", String.class), "id", Map.of());
