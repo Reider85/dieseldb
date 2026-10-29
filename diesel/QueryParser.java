@@ -2017,6 +2017,17 @@ class QueryParser {
         return bracketDepth;
     }
     private Query<List<Map<String, Object>>> parseSelectQuery(String original, Database database) {
+        // Prompt 4 #48 (R3-013b): a SELECT without FROM is a constant select
+        // (SELECT 1 = 1, SELECT TRUE, SELECT 'x'). It must be recognised before
+        // the FROM-phase throws "отсутствует FROM"; both the lexer path and the
+        // legacy strategy path funnel through this method, so one check covers
+        // them. A non-constant expression falls through to the normal error.
+        if (findMainFromClause(original) == -1) {
+            Query<List<Map<String, Object>>> constantSelect = tryParseConstantSelect(original);
+            if (constantSelect != null) {
+                return constantSelect;
+            }
+        }
         // Разделяем парсинг на фазы для снижения когнитивной сложности
         SelectQueryPhaseContext phaseContext = parseSelectQueryPhases(original, database);
         
@@ -2040,6 +2051,152 @@ class QueryParser {
                 .extraTableAliases(phaseContext.tableAliases)
                 .columnTypes(phaseContext.combinedColumnTypes)
                 .build();
+    }
+
+    /**
+     * Prompt 4 #48 (R3-013b): parses a constant SELECT without FROM, such as
+     * {@code SELECT 1 = 1}, {@code SELECT TRUE} or {@code SELECT 'x' AS label}.
+     * Supported grammar: a single literal (INTEGER, DECIMAL, STRING_LITERAL,
+     * TRUE, FALSE, NULL) or a binary comparison of two literals with =, !=, &lt;&gt;,
+     * &lt;, &gt;, &lt;=, &gt;=, optionally followed by {@code AS alias} and a trailing
+     * semicolon. The expression is constant-folded here and wrapped in a
+     * {@link ConstantSelectQuery}; returns {@code null} when the statement does
+     * not match the grammar so the caller can raise the normal missing-FROM error.
+     */
+    private Query<List<Map<String, Object>>> tryParseConstantSelect(String original) {
+        String sql = original.trim();
+        if (sql.endsWith(";")) {
+            sql = sql.substring(0, sql.length() - 1).trim();
+        }
+        List<SqlLexer.Token> tokens;
+        try {
+            tokens = new SqlLexer().tokenize(sql);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (tokens.isEmpty() || tokens.get(0).type != SqlLexer.TokenType.KEYWORD
+                || !SqlKeywords.SELECT.equals(tokens.get(0).value.toUpperCase())) {
+            return null;
+        }
+        // Drop a trailing semicolon token if the lexer kept it as punctuation
+        // (tokenize already stops at ';', but be defensive).
+        while (!tokens.isEmpty() && ";".equals(tokens.get(tokens.size() - 1).value)) {
+            tokens.remove(tokens.size() - 1);
+        }
+        if (tokens.size() < 2) {
+            return null;
+        }
+
+        int end = tokens.size();
+        String alias = null;
+        // Optional trailing AS alias
+        if (end >= 3 && tokens.get(end - 2).type == SqlLexer.TokenType.KEYWORD
+                && "AS".equalsIgnoreCase(tokens.get(end - 2).value)
+                && isIdentifierToken(tokens.get(end - 1))) {
+            alias = SqlParsingUtils.unquoteIdentifier(tokens.get(end - 1).value);
+            end -= 2;
+        }
+        List<SqlLexer.Token> expr = tokens.subList(1, end);
+        if (expr.isEmpty()) {
+            return null;
+        }
+
+        Object value;
+        String columnName;
+        if (expr.size() == 1) {
+            value = parseConstantLiteral(expr.get(0));
+            if (value == MISSING_LITERAL) {
+                return null;
+            }
+            columnName = alias != null ? alias : expr.get(0).value;
+        } else if (expr.size() == 3 && isComparisonOperatorToken(expr.get(1))) {
+            Object left = parseConstantLiteral(expr.get(0));
+            Object right = parseConstantLiteral(expr.get(2));
+            if (left == MISSING_LITERAL || right == MISSING_LITERAL) {
+                return null;
+            }
+            value = evaluateConstantComparison(left, expr.get(1).value, right);
+            columnName = alias != null ? alias : (expr.get(0).value + " " + expr.get(1).value + " " + expr.get(2).value);
+        } else {
+            return null;
+        }
+        return new ConstantSelectQuery(columnName, value);
+    }
+
+    /** Sentinel for "not a constant literal" (null is a valid NULL literal). */
+    private static final Object MISSING_LITERAL = new Object();
+
+    private static boolean isIdentifierToken(SqlLexer.Token token) {
+        return token.type == SqlLexer.TokenType.IDENTIFIER
+                || token.type == SqlLexer.TokenType.QUOTED_IDENTIFIER;
+    }
+
+    private static boolean isComparisonOperatorToken(SqlLexer.Token token) {
+        if (token.type != SqlLexer.TokenType.COMPARISON_OPERATOR) {
+            return false;
+        }
+        return switch (token.value) {
+            case "=", "!=", "<>", "<", ">", "<=", ">=" -> true;
+            default -> false;
+        };
+    }
+
+    private static Object parseConstantLiteral(SqlLexer.Token token) {
+        return switch (token.type) {
+            case INTEGER -> {
+                try {
+                    yield Long.parseLong(token.value);
+                } catch (NumberFormatException e) {
+                    yield MISSING_LITERAL;
+                }
+            }
+            case DECIMAL -> {
+                try {
+                    yield new BigDecimal(token.value);
+                } catch (NumberFormatException e) {
+                    yield MISSING_LITERAL;
+                }
+            }
+            case STRING_LITERAL -> SqlLexer.extractStringLiteral(token.value);
+            case LITERAL -> switch (token.value.toUpperCase()) {
+                case SqlKeywords.TRUE -> Boolean.TRUE;
+                case SqlKeywords.FALSE -> Boolean.FALSE;
+                case SqlKeywords.NULL -> null;
+                default -> MISSING_LITERAL;
+            };
+            default -> MISSING_LITERAL;
+        };
+    }
+
+    /**
+     * Constant-folds a comparison of two literals. NULL operands yield null
+     * (SQL UNKNOWN); numbers compare numerically, booleans and strings by
+     * their natural order. Mixed types are not equal and cannot be ordered.
+     */
+    private static Object evaluateConstantComparison(Object left, String operator, Object right) {
+        if (left == null || right == null) {
+            return null;
+        }
+        int comparison;
+        if (left instanceof Number ln && right instanceof Number rn) {
+            comparison = new BigDecimal(ln.toString()).compareTo(new BigDecimal(rn.toString()));
+        } else if (left.getClass() == right.getClass() && left instanceof Comparable<?> cmp) {
+            @SuppressWarnings("unchecked")
+            Comparable<Object> comparable = (Comparable<Object>) cmp;
+            comparison = comparable.compareTo(right);
+        } else {
+            // Mixed types: only equality is defined, and they never match.
+            comparison = 1;
+        }
+        return switch (operator) {
+            case "=" -> comparison == 0;
+            case "!=", "<>" -> comparison != 0;
+            case "<" -> comparison < 0;
+            case ">" -> comparison > 0;
+            case "<=" -> comparison <= 0;
+            case ">=" -> comparison >= 0;
+            default -> MISSING_LITERAL;
+        };
     }
 
     /**
@@ -3161,6 +3318,16 @@ class QueryParser {
                     throw new IllegalArgumentException(MessageConstants.ERROR_BOOLEAN_VALUE_PREFIX + valueStr + ErrorMessages.TYPE_MISMATCH_SUFFIX + columnType.getSimpleName());
                 }
                 return Boolean.parseBoolean(valueStr);
+            }
+            // Prompt 4 #48 (R3-013b): boolean-as-integer coercion - a BOOLEAN
+            // column accepts the integer literals 1/0 (and the other storage
+            // synonyms) so WHERE active = 1 is equivalent to WHERE active = TRUE.
+            // Coercion happens here, at parse time, so every downstream path
+            // (condition evaluation, index lookups, INSERT/UPDATE/IN/HAVING
+            // which share this method) sees a real Boolean and never a stray
+            // Integer that Boolean.parseBoolean("1") would silently turn FALSE.
+            if (columnType == Boolean.class) {
+                return SqlParsingUtils.parseBooleanLiteral(valueStr);
             }
             return parseNumericLiteral(valueStr, columnType);
         } catch (IllegalArgumentException e) {

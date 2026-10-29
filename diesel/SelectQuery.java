@@ -3215,7 +3215,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                 case "BigDecimal" -> value instanceof BigDecimal bd ? bd
                         : new BigDecimal(value.toString());
                 case "String" -> value.toString();
-                case "Boolean" -> value instanceof Boolean b ? b : Boolean.parseBoolean(value.toString());
+                case "Boolean" -> value instanceof Boolean b ? b : SqlParsingUtils.parseBooleanLiteral(value.toString());
                 default -> value;
             };
         } catch (Exception e) {

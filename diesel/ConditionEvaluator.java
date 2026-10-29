@@ -227,7 +227,11 @@ class ConditionEvaluator {
             return new BigDecimal(stringValue);
         }
         if (targetType == Boolean.class) {
-            return Boolean.parseBoolean(stringValue);
+            // Prompt 4 #48 (R3-013b): strict parsing - Boolean.parseBoolean("1")
+            // silently yields false, so an Integer 1 condition value would match
+            // the FALSE rows on DELETE/UPDATE; parseBooleanLiteral accepts
+            // 1/0/yes/no/t/f and throws otherwise.
+            return SqlParsingUtils.parseBooleanLiteral(stringValue);
         }
         if (targetType == UUID.class) {
             return UUID.fromString(stringValue);
