@@ -60,6 +60,7 @@ diesel/storage/CsvIndexManager.java	storage-csv
 diesel/storage/TsvRowStorage.java	storage-tsv
 diesel/storage/TsvIndexManager.java	storage-tsv
 diesel/storage/JsonlRowStorage.java	storage-jsonl
+diesel/storage/JsonlIndexManager.java	storage-jsonl
 diesel/storage/avro/AvroRowStorage.java	storage-avro
 diesel/storage/avro/AvroCodecFactory.java	storage-avro
 diesel/storage/avro/AvroCompressionConfig.java	storage-avro

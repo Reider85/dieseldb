@@ -8,6 +8,7 @@ import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,7 +36,10 @@ import diesel.storage.json.JsonParserConfig;
  * <li>a separate {@code rowId -&gt; current position} map decouples the
  * indexes from physical positions, so a clustered {@code insertAt} into the
  * middle only shifts positions ({@code O(n)} in the trailing rows) and never
- * re-keys existing rows - the bug pattern fixed by prompt 25;</li>
+ * re-keys existing rows - the bug pattern fixed by prompt 25; its exact
+ * inverse ({@code position -&gt; rowId}, o2 JSONL-2) answers
+ * {@link #positionToRowId(int)} in {@code O(1)} so per-row
+ * update/delete lookups stay cheap;</li>
  * <li>deletions are tombstones ({@link #deletedRowIds}) with automatic
  * compaction ({@link #compact()} reindexes and reassigns rowIds) when 25% of
  * the live rows are dead.</li>
@@ -123,6 +127,19 @@ public final class JsonlIndexManager {
 
     private long nextRowId = 0;
     private final NavigableMap<Long, Integer> rowIdToPosition = new TreeMap<>();
+    /**
+     * Exact inverse of {@link #rowIdToPosition}: physical position -&gt; rowId
+     * (o2 JSONL-2, mirror of the delimited manager's map). Keeps
+     * {@link #positionToRowId(int)} an O(1) lookup instead of an O(R) scan
+     * over the entry set — {@code updateRow}/{@code deleteRow} call it per
+     * mutation, so the scan made K updates cost O(K * R).
+     *
+     * <p><b>Invariant:</b> mutated only alongside {@code rowIdToPosition} at
+     * the same five sites (appendRow, insertAt, deleteRow, reindex,
+     * adoptSidecar); the insert/delete shift walks move entries in both maps
+     * in lockstep (o2 JSONL-3).
+     */
+    private final Map<Integer, Long> positionToRowIdMap = new HashMap<>();
     private final Set<Long> deletedRowIds = new HashSet<>();
 
     private boolean bulkMode;
@@ -214,6 +231,7 @@ public final class JsonlIndexManager {
     public void appendRow(Object[] row, int rowIndex) {
         long rid = nextRowId++;
         rowIdToPosition.put(rid, rowIndex);
+        positionToRowIdMap.put(rowIndex, rid); // o2 JSONL-2
         rows.add(rowIndex, row);
         insertIndexedRow(row, rid);
     }
@@ -236,11 +254,21 @@ public final class JsonlIndexManager {
         long rid = nextRowId++;
         rowIdToPosition.put(rid, rowIndex);
         rows.add(rowIndex, row);
-        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-            if (e.getValue() >= rowIndex && e.getKey() != rid) {
-                e.setValue(e.getValue() + 1);
+        // o2 JSONL-2/3: shift via the inverse map instead of the O(R)
+        // entry-set walk. Same O(R) worst case, but cache-friendlier
+        // (contiguous Integer keys, no boxing of setValue) and it keeps
+        // positionToRowIdMap in sync as a side effect. Walk downward so each
+        // move p -> p+1 lands in a slot vacated by the prior iteration. The
+        // fresh rid is not in the inverse map yet, so the walk cannot touch
+        // it — its position entry goes in after the shift.
+        for (int p = rows.size() - 2; p >= rowIndex; p--) {
+            Long rid2 = positionToRowIdMap.remove(p);
+            if (rid2 != null) {
+                positionToRowIdMap.put(p + 1, rid2);
+                rowIdToPosition.put(rid2, p + 1);
             }
         }
+        positionToRowIdMap.put(rowIndex, rid); // o2 JSONL-2
         insertIndexedRow(row, rid);
     }
 
@@ -279,10 +307,14 @@ public final class JsonlIndexManager {
         Object[] row = rows.remove(rowIndex);
         removeIndexedRow(row, rid);
         rowIdToPosition.remove(rid);
+        positionToRowIdMap.remove(rowIndex); // o2 JSONL-2
         deletedRowIds.add(rid);
-        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-            if (e.getValue() > rowIndex) {
-                e.setValue(e.getValue() - 1);
+        // o2 JSONL-2/3: shift via the inverse map (mirror of insertAt).
+        for (int p = rowIndex; p < rows.size(); p++) {
+            Long rid2 = positionToRowIdMap.remove(p + 1);
+            if (rid2 != null) {
+                positionToRowIdMap.put(p, rid2);
+                rowIdToPosition.put(rid2, p);
             }
         }
         int liveRows = rowIdToPosition.size();
@@ -309,11 +341,13 @@ public final class JsonlIndexManager {
             nested.tree.clear();
         }
         rowIdToPosition.clear();
+        positionToRowIdMap.clear(); // o2 JSONL-2
         deletedRowIds.clear();
         nextRowId = 0;
         for (int i = 0; i < rows.size(); i++) {
             long rid = nextRowId++;
             rowIdToPosition.put(rid, i);
+            positionToRowIdMap.put(i, rid); // o2 JSONL-2
             insertIndexedRow(rows.get(i), rid);
         }
     }
@@ -780,12 +814,8 @@ public final class JsonlIndexManager {
 
     /** Returns the rowId at the given physical position, or {@code null}. */
     private Long positionToRowId(int position) {
-        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
-            if (e.getValue() == position) {
-                return e.getKey();
-            }
-        }
-        return null;
+        // o2 JSONL-2: O(1) inverse-map lookup instead of the O(R) entry scan.
+        return positionToRowIdMap.get(position);
     }
 
     /** Translates rowIds into current physical positions, sorted ascending. */
@@ -950,6 +980,11 @@ public final class JsonlIndexManager {
         }
         rowIdToPosition.clear();
         rowIdToPosition.putAll(sidecar.rowIdToPosition);
+        // o2 JSONL-2: rebuild the exact inverse of the adopted map.
+        positionToRowIdMap.clear();
+        for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
+            positionToRowIdMap.put(e.getValue(), e.getKey());
+        }
         nextRowId = Math.max(sidecar.nextRowId,
                 (rowIdToPosition.isEmpty() ? 0L : rowIdToPosition.lastKey()) + 1);
     }
