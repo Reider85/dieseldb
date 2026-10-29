@@ -295,6 +295,17 @@ class Database {
     }
 
     /**
+     * Returns the synchronous WAL writer, or null when the WAL is disabled.
+     *
+     * <p>Used by the health probe (prompt4 #46) to detect a dead writer thread.
+     *
+     * @return the WAL writer, or null
+     */
+    public WALWriter getWalWriter() {
+        return walWriter;
+    }
+
+    /**
      * Returns the group commit coordinator, or null if WAL is disabled.
      *
      * @return the group commit coordinator, or null

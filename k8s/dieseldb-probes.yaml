@@ -1,0 +1,79 @@
+# DieselDB on Kubernetes — liveness / readiness probe example (prompt4 #46).
+#
+# The metrics HTTP server (metrics.port, default 9090) serves:
+#   GET /health        -> 200 UP / 503 DOWN (combined)
+#   GET /health/live   -> liveness  (dead WAL writer or OOM-imminent -> DOWN)
+#   GET /health/ready  -> readiness (recovery in progress or cold buffer pool -> DOWN)
+#
+# Liveness probes restart the container; readiness probes only remove the pod
+# from Service load-balancer rotation. Keep liveness generous (the process may
+# legitimately take a while on crash recovery) and readiness tight.
+#
+# Apply with: kubectl apply -f k8s/dieseldb-probes.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dieseldb
+  labels:
+    app: dieseldb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dieseldb
+  template:
+    metadata:
+      labels:
+        app: dieseldb
+    spec:
+      containers:
+        - name: dieseldb
+          image: dieseldb:latest
+          ports:
+            - name: metrics
+              containerPort: 9090
+            - name: client
+              containerPort: 5432
+          # Liveness: restart only when the process cannot make progress
+          # (dead WAL writer / OOM-imminent). The 5s failureThreshold gives the
+          # probe ~60s of grace before a restart.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: metrics
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # Readiness: keep the pod out of rotation while ARIES recovery is
+          # running or the buffer pool is still cold.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dieseldb
+spec:
+  selector:
+    app: dieseldb
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+    - name: client
+      port: 5432
+      targetPort: client

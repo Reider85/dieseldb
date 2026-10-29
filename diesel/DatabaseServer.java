@@ -265,13 +265,15 @@ public class DatabaseServer {
                     : new IOException("TLS init failed: " + e.getMessage(), e);
             return;
         }
-        // Prometheus /metrics endpoint (prompt4 #45): started before the accept
-        // loop so scrapes work as soon as the server is up. Bind failures are
-        // non-fatal (logged inside MetricsHttpServer) — observability must not
-        // keep the database from serving clients.
+        // Prometheus /metrics endpoint (prompt4 #45) + /health endpoints (#46):
+        // started before the accept loop so scrapes/probes work as soon as the
+        // server is up. Bind failures are non-fatal (logged inside
+        // MetricsHttpServer) — observability must not keep the database from
+        // serving clients.
         if (ConfigLoader.getMetricsEnabled()) {
             MetricsHttpServer metrics = new MetricsHttpServer(
-                    ConfigLoader.getMetricsHost(), ConfigLoader.getMetricsPort());
+                    ConfigLoader.getMetricsHost(), ConfigLoader.getMetricsPort(),
+                    HealthSupport.forDatabase(database));
             metrics.start();
             metricsHttpServer = metrics;
         }

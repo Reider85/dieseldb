@@ -199,6 +199,7 @@ diesel/CreateAvroIndexQuery.java	index,query-full,storage-avro
 diesel/DatabaseRecoverySink.java	smoke,storage
 diesel/DatabasePitrSink.java		smoke,storage
 diesel/PitrSupport.java			smoke,storage
+diesel/HealthSupport.java		smoke,network
 diesel/DropTableQuery.java		query,query-full
 diesel/IsolationLevel.java		concurrency
 diesel/RecoveryManager.java		smoke,storage

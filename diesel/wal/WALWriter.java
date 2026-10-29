@@ -440,6 +440,19 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
     }
 
     /**
+     * Returns whether the background writer thread is still alive (prompt4 #46).
+     *
+     * <p>Used by the liveness probe: a dead writer thread means the WAL queue
+     * is no longer drained, so every commit would stall forever and the process
+     * must be restarted. Returns false after {@link #close()}.
+     *
+     * @return true while the writer thread is running
+     */
+    public boolean isWriterAlive() {
+        return writerThread.isAlive();
+    }
+
+    /**
      * Returns the JMX object name this writer is registered under, or null.
      */
     public ObjectName getObjectName() {

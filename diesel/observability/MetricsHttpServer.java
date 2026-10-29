@@ -32,25 +32,40 @@ public final class MetricsHttpServer {
 
     private static final Logger LOGGER = Logger.getLogger(MetricsHttpServer.class.getName());
 
-    /** The single endpoint this server serves. */
+    /** The Prometheus scrape endpoint this server serves. */
     public static final String METRICS_PATH = "/metrics";
 
     private final String host;
     private final int port;
+    private final HealthCheck healthCheck;
     private final AtomicInteger handledRequests = new AtomicInteger();
 
     private volatile HttpServer server;
     private volatile boolean running;
 
     /**
-     * Creates a metrics server bound to the given host and port.
+     * Creates a metrics-only server bound to the given host and port.
      *
      * @param host the bind address, e.g. {@code 0.0.0.0} to accept remote scrapes
      * @param port the TCP port; {@code 0} binds an ephemeral port (tests)
      */
     public MetricsHttpServer(String host, int port) {
+        this(host, port, null);
+    }
+
+    /**
+     * Creates a server exposing {@code /metrics} and, when a health check is
+     * supplied, the {@code /health}, {@code /health/live} and
+     * {@code /health/ready} endpoints (prompt4 #46).
+     *
+     * @param host        the bind address, e.g. {@code 0.0.0.0}
+     * @param port        the TCP port; {@code 0} binds an ephemeral port (tests)
+     * @param healthCheck the health orchestrator, or null to serve metrics only
+     */
+    public MetricsHttpServer(String host, int port, HealthCheck healthCheck) {
         this.host = host == null || host.isEmpty() ? "0.0.0.0" : host;
         this.port = port;
+        this.healthCheck = healthCheck;
     }
 
     /**
@@ -66,6 +81,11 @@ public final class MetricsHttpServer {
         try {
             HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 0);
             http.createContext(METRICS_PATH, this::handle);
+            if (healthCheck != null) {
+                // Prefix context: /health also captures /health/live and
+                // /health/ready (longest-prefix match in the JDK server).
+                http.createContext(HealthCheck.HEALTH_PATH, this::handleHealth);
+            }
             // Single daemon thread: scrapes are infrequent (default every 15s)
             // and the exporter is lock-free, so a pool would be pure overhead.
             // Daemon so an unclosed server can never block JVM exit.
@@ -140,28 +160,62 @@ public final class MetricsHttpServer {
             String method = exchange.getRequestMethod();
             if (!"GET".equalsIgnoreCase(method)) {
                 exchange.getResponseHeaders().set("Allow", "GET");
-                write(exchange, 405, "Method Not Allowed\n");
+                write(exchange, 405, "Method Not Allowed\n", PrometheusExporter.CONTENT_TYPE);
                 return;
             }
             String path = exchange.getRequestURI().getPath();
             if (!METRICS_PATH.equals(path)) {
                 // The JDK server routes by context prefix, so /metrics/xyz
                 // lands here too — answer 404 explicitly.
-                write(exchange, 404, "Not Found\n");
+                write(exchange, 404, "Not Found\n", PrometheusExporter.CONTENT_TYPE);
                 return;
             }
-            write(exchange, 200, PrometheusExporter.render());
+            write(exchange, 200, PrometheusExporter.render(), PrometheusExporter.CONTENT_TYPE);
         } catch (RuntimeException e) {
             LOGGER.log(Level.SEVERE, "Failed to render /metrics", e);
-            write(exchange, 500, "Internal Server Error\n");
+            write(exchange, 500, "Internal Server Error\n", PrometheusExporter.CONTENT_TYPE);
         } finally {
             exchange.close();
         }
     }
 
-    private static void write(HttpExchange exchange, int status, String body) throws IOException {
+    private void handleHealth(HttpExchange exchange) throws IOException {
+        try {
+            handledRequests.incrementAndGet();
+            String method = exchange.getRequestMethod();
+            if (!"GET".equalsIgnoreCase(method)) {
+                exchange.getResponseHeaders().set("Allow", "GET");
+                write(exchange, 405, "Method Not Allowed\n", HealthCheck.CONTENT_TYPE);
+                return;
+            }
+            String path = exchange.getRequestURI().getPath();
+            HealthResult result;
+            switch (path) {
+                case HealthCheck.HEALTH_PATH -> result = healthCheck.combined();
+                case HealthCheck.LIVE_PATH -> result = healthCheck.live();
+                case HealthCheck.READY_PATH -> result = healthCheck.ready();
+                default -> {
+                    // The JDK server routes by context prefix, so /health/xyz
+                    // lands here too — answer 404 explicitly.
+                    write(exchange, 404, "Not Found\n", HealthCheck.CONTENT_TYPE);
+                    return;
+                }
+            }
+            // 200 when UP, 503 when DOWN: Kubernetes native probes consume the
+            // HTTP status code directly; the JSON body carries diagnostic detail.
+            write(exchange, result.up() ? 200 : 503, result.body(), HealthCheck.CONTENT_TYPE);
+        } catch (RuntimeException e) {
+            LOGGER.log(Level.SEVERE, "Failed to render health endpoint", e);
+            write(exchange, 500, "Internal Server Error\n", HealthCheck.CONTENT_TYPE);
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private static void write(HttpExchange exchange, int status, String body, String contentType)
+            throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", PrometheusExporter.CONTENT_TYPE);
+        exchange.getResponseHeaders().set("Content-Type", contentType);
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(bytes);
