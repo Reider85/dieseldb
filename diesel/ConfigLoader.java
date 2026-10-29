@@ -87,4 +87,30 @@ final class ConfigLoader {
     static long getTablespaceFileMaxSizeMB(long defaultValue) {
         return getLong(TABLESPACE_FILE_MAX_SIZE_MB, defaultValue);
     }
+
+    // ─── Metrics HTTP endpoint (prompt4 #45) ────────────────────────
+    static final String METRICS_ENABLED = "metrics.enabled";
+    static final String METRICS_PORT = "metrics.port";
+    static final String METRICS_HOST = "metrics.host";
+    /** Default endpoint switch: on, so {@code curl :9090/metrics} works out of the box. */
+    static final boolean DEFAULT_METRICS_ENABLED = true;
+    /** Default Prometheus scrape port. */
+    static final int DEFAULT_METRICS_PORT = 9090;
+    /** Default bind address: all interfaces, so remote Prometheus/Grafana can scrape. */
+    static final String DEFAULT_METRICS_HOST = "0.0.0.0";
+
+    /** Whether the /metrics HTTP endpoint starts with the database server. */
+    static boolean getMetricsEnabled() {
+        return getBoolean(METRICS_ENABLED, DEFAULT_METRICS_ENABLED);
+    }
+
+    /** The TCP port for the /metrics endpoint. */
+    static int getMetricsPort() {
+        return getInt(METRICS_PORT, DEFAULT_METRICS_PORT);
+    }
+
+    /** The bind address for the /metrics endpoint. */
+    static String getMetricsHost() {
+        return getString(METRICS_HOST, DEFAULT_METRICS_HOST);
+    }
 }

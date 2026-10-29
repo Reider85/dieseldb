@@ -185,6 +185,17 @@ public final class Histogram {
     }
 
     /**
+     * Returns the exact sum of all recorded samples (prompt4 #45). Used by the
+     * Prometheus exporter for the {@code _sum} series of a histogram family —
+     * {@link #mean()} alone would lose precision through the divide.
+     *
+     * @return the sum in seconds, or 0 when no samples were recorded
+     */
+    public double sum() {
+        return sum.sum();
+    }
+
+    /**
      * Returns the smallest recorded sample.
      *
      * @return the minimum in seconds, or 0 when no samples were recorded

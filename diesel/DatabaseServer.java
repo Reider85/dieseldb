@@ -11,6 +11,7 @@ import java.util.logging.Level;
 
 import diesel.net.*;
 import diesel.net.messages.*;
+import diesel.observability.MetricsHttpServer;
 import diesel.observability.MetricsRegistry;
 import diesel.security.AccessDeniedException;
 import diesel.security.AuthException;
@@ -77,6 +78,8 @@ public class DatabaseServer {
     private volatile TlsHandshakeHandler tlsHandler;
     /** Currently in-flight connections (accepted, handler not yet finished; prompt4 #44). */
     private final AtomicInteger activeConnections = new AtomicInteger();
+    /** Prometheus /metrics endpoint (prompt4 #45); null until started or when disabled. */
+    private volatile MetricsHttpServer metricsHttpServer;
 
     /**
      * Creates a server on the given port with the default socket timeout.
@@ -262,6 +265,16 @@ public class DatabaseServer {
                     : new IOException("TLS init failed: " + e.getMessage(), e);
             return;
         }
+        // Prometheus /metrics endpoint (prompt4 #45): started before the accept
+        // loop so scrapes work as soon as the server is up. Bind failures are
+        // non-fatal (logged inside MetricsHttpServer) — observability must not
+        // keep the database from serving clients.
+        if (ConfigLoader.getMetricsEnabled()) {
+            MetricsHttpServer metrics = new MetricsHttpServer(
+                    ConfigLoader.getMetricsHost(), ConfigLoader.getMetricsPort());
+            metrics.start();
+            metricsHttpServer = metrics;
+        }
         try {
             if (preBoundSocket != null) {
                 serverSocket = preBoundSocket;
@@ -350,7 +363,18 @@ public class DatabaseServer {
      */
     public void stop() {
         running = false;
-        
+
+        // Stop the Prometheus /metrics endpoint (prompt4 #45; idempotent, and
+        // freeing 9090 matters for tests that restart servers back to back).
+        try {
+            MetricsHttpServer metrics = metricsHttpServer;
+            if (metrics != null) {
+                metrics.stop();
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error stopping metrics endpoint: {0}", e.getMessage());
+        }
+
         // Stop legacy server
         if (legacyServerSocket != null && !legacyServerSocket.isClosed()) {
             try {
