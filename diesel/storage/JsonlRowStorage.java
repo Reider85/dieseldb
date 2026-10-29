@@ -838,19 +838,38 @@ public class JsonlRowStorage extends AbstractRowStorage {
                 LOGGER.warn("Corrupt delta file for {}: {}", tableName, deltaPath);
                 return;
             }
-            // Remove deleted lines (iterate in reverse to preserve indices)
-            List<Integer> sortedDeletes = new ArrayList<>(deltaManager.getDeletedBaseLines());
-            sortedDeletes.sort((a, b) -> b - a); // reverse order
-            for (int lineNum : sortedDeletes) {
-                if (lineNum < rows.size()) {
-                    rows.remove(lineNum);
-                    rowPresence.remove(lineNum);
+            // O2 JSONL-7: two-pointer compaction over a deleted-line mask —
+            // one O(R) pass instead of D ArrayList.remove shifts (O(D*R)).
+            // The mask also de-duplicates repeated line numbers (the old
+            // reverse-sorted removes deleted the wrong neighbour on a
+            // duplicate: remove(3); remove(3) hit what used to be row 4's
+            // slot) and skips out-of-range entries, negative ones included —
+            // the old code threw AIOOBE on a negative line and aborted the
+            // whole application in the catch below.
+            boolean[] deleted = new boolean[rows.size()];
+            for (int lineNum : deltaManager.getDeletedBaseLines()) {
+                if (lineNum >= 0 && lineNum < deleted.length) {
+                    deleted[lineNum] = true;
                 }
+            }
+            int writeIdx = 0;
+            for (int readIdx = 0; readIdx < rows.size(); readIdx++) {
+                if (!deleted[readIdx]) {
+                    if (writeIdx != readIdx) {
+                        rows.set(writeIdx, rows.get(readIdx));
+                        rowPresence.set(writeIdx, rowPresence.get(readIdx));
+                    }
+                    writeIdx++;
+                }
+            }
+            if (writeIdx < rows.size()) {
+                rows.subList(writeIdx, rows.size()).clear();
+                rowPresence.subList(writeIdx, rowPresence.size()).clear();
             }
             // The delta file is kept: its deletions are re-applied on each
             // subsequent load until a compaction rewrites the base file.
             LOGGER.info("Applied delta: deleted {} lines -> {} total",
-                    sortedDeletes.size(), rows.size());
+                    deltaManager.getDeletedBaseLines().size(), rows.size());
         } catch (Exception e) {
             LOGGER.warn("Failed to apply delta {}: {}", deltaPath, e.getMessage());
         }

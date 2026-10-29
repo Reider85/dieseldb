@@ -114,27 +114,30 @@ public class JsonlSchemaManager {
      * Flatten-mode schema rule (prompt 45): a column that is a dot-prefix of
      * another column (e.g. {@code user} and {@code user.address} together)
      * is ambiguous and rejected with a schema error.
+     *
+     * <p>O2 JSONL-1: ancestor-membership walk over the existing case-insensitive
+     * name index — O(C log C) instead of the old O(C&sup2;) pairwise scan
+     * (which additionally checked every pair twice). A sorted adjacent-pair
+     * walk would be unsound here: an unrelated column such as {@code user!}
+     * sorts between {@code user} and {@code user.address} ({@code '!'} &lt;
+     * {@code '.'}) and hides the conflict from any adjacency check; walking
+     * every dot-boundary ancestor of each column catches exactly the pairs
+     * the old {@code isDotPrefix} scan matched (case-insensitive prefix +
+     * {@code '.'} boundary, multi-level included).
      */
     private void validateFlattenSchema() {
-        for (int i = 0; i < this.columns.size(); i++) {
-            for (int j = 0; j < this.columns.size(); j++) {
-                if (i == j) {
-                    continue;
-                }
-                String a = this.columns.get(i);
-                String b = this.columns.get(j);
-                if (isDotPrefix(a, b)) {
-                    throw new DieselIOException("flatten schema conflict: column '" + a
-                            + "' is a dot-prefix of '" + b + "' (ambiguous nested path)", null);
+        for (String candidate : this.columns) {
+            for (int dot = candidate.indexOf('.'); dot >= 0;
+                    dot = candidate.indexOf('.', dot + 1)) {
+                Integer index = indexByName.get(candidate.substring(0, dot));
+                if (index != null) {
+                    String prefix = this.columns.get(index);
+                    throw new DieselIOException("flatten schema conflict: column '" + prefix
+                            + "' is a dot-prefix of '" + candidate
+                            + "' (ambiguous nested path)", null);
                 }
             }
         }
-    }
-
-    private static boolean isDotPrefix(String prefix, String candidate) {
-        return candidate.length() > prefix.length()
-                && candidate.regionMatches(true, 0, prefix, 0, prefix.length())
-                && candidate.charAt(prefix.length()) == '.';
     }
 
     /**
