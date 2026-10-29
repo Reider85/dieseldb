@@ -5,11 +5,13 @@ import java.net.*;
 import java.security.GeneralSecurityException;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
 import diesel.net.*;
 import diesel.net.messages.*;
+import diesel.observability.MetricsRegistry;
 import diesel.security.AccessDeniedException;
 import diesel.security.AuthException;
 import diesel.security.Authenticator;
@@ -73,6 +75,8 @@ public class DatabaseServer {
     private volatile Authenticator authenticator;
     /** TLS wrapper for accepted connections (prompt4 #34); null when disabled. */
     private volatile TlsHandshakeHandler tlsHandler;
+    /** Currently in-flight connections (accepted, handler not yet finished; prompt4 #44). */
+    private final AtomicInteger activeConnections = new AtomicInteger();
 
     /**
      * Creates a server on the given port with the default socket timeout.
@@ -136,6 +140,10 @@ public class DatabaseServer {
                 poolSize, poolSize, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(queueCapacity),
                 new ThreadPoolExecutor.AbortPolicy());
+        // Prompt4 #44: connections-active gauge; the most recently created
+        // server wins the JVM-wide registration (tests start many servers).
+        MetricsRegistry.getInstance()
+                .registerGauge(MetricsRegistry.CONNECTIONS_ACTIVE, activeConnections::get);
     }
 
     /**
@@ -276,6 +284,8 @@ public class DatabaseServer {
             while (running) {
                 try {
                     Socket clientSocket = serverSocket.accept();
+                    MetricsRegistry.getInstance()
+                            .counter(MetricsRegistry.CONNECTIONS_ACCEPTED).increment();
                     if (tlsHandler != null) {
                         // Wrap only; the handshake runs lazily on the first
                         // read in the worker thread (anti handshake-DoS).
@@ -1159,10 +1169,23 @@ public class DatabaseServer {
      */
     private void handleClientConnection(Socket clientSocket, ThreadPoolExecutor executor, 
                                      Database database, int effectiveSocketTimeout, Properties config) {
+        activeConnections.incrementAndGet();
         try {
-            executor.execute(new ClientHandler(clientSocket, database, effectiveSocketTimeout,
-                    config, getAuthenticator()));
+            ClientHandler handler = new ClientHandler(clientSocket, database, effectiveSocketTimeout,
+                    config, getAuthenticator());
+            // prompt4 #44: decrement the gauge when the handler finishes,
+            // whether it returned normally or threw.
+            executor.execute(() -> {
+                try {
+                    handler.run();
+                } finally {
+                    activeConnections.decrementAndGet();
+                }
+            });
         } catch (RejectedExecutionException e) {
+            activeConnections.decrementAndGet();
+            MetricsRegistry.getInstance()
+                    .counter(MetricsRegistry.CONNECTIONS_REJECTED).increment();
             LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
                     new Object[]{clientSocket.getInetAddress(), e.getMessage()});
             closeClientSocket(clientSocket);

@@ -40,6 +40,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import diesel.concurrency.Savepoint;
+import diesel.observability.MetricsRegistry;
 import diesel.storage.page.CatalogTable;
 import diesel.storage.page.CatalogSchema;
 import diesel.concurrency.ConflictDetector;
@@ -142,6 +143,7 @@ class Database {
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
         }
+        registerMetricsGauges();
     }
 
     /**
@@ -182,6 +184,18 @@ class Database {
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
         }
+        registerMetricsGauges();
+    }
+
+    /**
+     * Registers the JVM-wide metric gauges owned by this instance (prompt4
+     * #44). Registration has replace semantics — the most recently created
+     * database reports under the gauge name, so a closed instance is never
+     * kept reachable by the global registry.
+     */
+    private void registerMetricsGauges() {
+        MetricsRegistry.getInstance().registerGauge(
+                MetricsRegistry.TRANSACTIONS_ACTIVE, () -> activeTransactions.size());
     }
 
     /**
@@ -739,7 +753,16 @@ class Database {
         }
         if (parsedQuery == null) {
             long parseStart = System.nanoTime();
-            parsedQuery = parse(cleanQuery);
+            // Prompt4 #44: a parse failure (e.g. unknown table) happens before
+            // the dispatch try-block below, so record it as a query error here
+            // instead of losing it; the type is classified from the SQL text
+            // because no AST exists yet.
+            try {
+                parsedQuery = parse(cleanQuery);
+            } catch (RuntimeException e) {
+                recordQueryMetrics(queryTypeOfText(cleanQuery), false, System.nanoTime() - parseStart);
+                throw e;
+            }
             parseNanos = System.nanoTime() - parseStart;
             // Derived tables materialize their inner SELECT at parse time, so
             // their plans are never reused (a later hit would scan stale rows).
@@ -755,15 +778,22 @@ class Database {
         // phase breakdown is reported to the QueryProfiler (parse time is known
         // above; plan/sort time come from the SelectQuery that just executed).
         long execStart = System.nanoTime();
+        // Prompt4 #44: standard metrics — query counter by type/status plus a
+        // latency histogram. The duration mirrors QueryProfiler semantics
+        // (dispatch wall time; parsing is timed separately above).
+        String metricType = queryTypeOf(parsedQuery);
         try {
             Object result = dispatch(parsedQuery, cleanQuery, currentTransaction, transactionId);
             recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
+            recordQueryMetrics(metricType, true, System.nanoTime() - execStart);
             return result;
         } catch (DieselException e) {
             recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
+            recordQueryMetrics(metricType, false, System.nanoTime() - execStart);
             throw e;
         } catch (RuntimeException e) {
             recordQueryProfiling(parsedQuery, cleanQuery, parseNanos, System.nanoTime() - execStart);
+            recordQueryMetrics(metricType, false, System.nanoTime() - execStart);
             throw e;
         }
     }
@@ -1317,6 +1347,49 @@ class Database {
         long executeNanos = Math.max(0, execTotalNanos - planNanos - sortNanos);
         QueryProfiler.getInstance().record(sql, parseNanos, planNanos, executeNanos, sortNanos,
                 indexLookups, indexOnlyScans);
+    }
+
+    /**
+     * Classifies a parsed query for the {@code diesel_queries_total{type}}
+     * label (prompt4 #44).
+     */
+    private static String queryTypeOf(Query<?> parsedQuery) {
+        if (parsedQuery instanceof SelectQuery) return "SELECT";
+        if (parsedQuery instanceof InsertQuery) return "INSERT";
+        if (parsedQuery instanceof UpdateQuery) return "UPDATE";
+        if (parsedQuery instanceof DeleteQuery) return "DELETE";
+        if (parsedQuery instanceof CreateTableQuery || parsedQuery instanceof DropTableQuery
+                || parsedQuery instanceof CreateIndexQueryBase || parsedQuery instanceof CreateCompositeIndexQuery
+                || parsedQuery instanceof CreateCoveringIndexQuery) {
+            return "DDL";
+        }
+        return "OTHER";
+    }
+
+    /**
+     * Classifies raw SQL by its leading keyword for the error metric of a
+     * failed parse (prompt4 #44): no AST exists yet, so the parsed type is
+     * unavailable and the text is the only signal.
+     */
+    private static String queryTypeOfText(String sql) {
+        String upper = Optional.ofNullable(
+                QueryParser.toUpperCasePreservingQuotedIdentifiers(sql.trim())).orElse("");
+        if (upper.startsWith("SELECT")) return "SELECT";
+        if (upper.startsWith("INSERT")) return "INSERT";
+        if (upper.startsWith("UPDATE")) return "UPDATE";
+        if (upper.startsWith("DELETE")) return "DELETE";
+        if (upper.startsWith("CREATE") || upper.startsWith("DROP") || upper.startsWith("ALTER")) return "DDL";
+        return "OTHER";
+    }
+
+    /**
+     * Records one finished query into the standard metrics (prompt4 #44):
+     * a counter by type/status and a latency histogram by type.
+     */
+    private void recordQueryMetrics(String type, boolean ok, long execNanos) {
+        MetricsRegistry registry = MetricsRegistry.getInstance();
+        registry.counter(MetricsRegistry.QUERIES_TOTAL, "type", type, "status", ok ? "ok" : "error").increment();
+        registry.histogram(MetricsRegistry.QUERY_DURATION_SECONDS, "type", type).recordNanos(execNanos);
     }
 
     private Query<?> parse(String query) {

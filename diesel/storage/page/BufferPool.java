@@ -14,6 +14,8 @@ import javax.management.ObjectName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.observability.MetricsRegistry;
+
 /**
  * Fixed-capacity pool of resident pages with LRU eviction and pinned frames
  * (prompt4.md step 7, ROADMAP3 R3-002).
@@ -159,6 +161,11 @@ public final class BufferPool implements BufferPoolMXBean, AutoCloseable {
         this.flusher = flusher;
         this.defaultLoader = loader;
         registerMBean();
+        // Prompt4 #44: hit-ratio gauge is supplier-backed by the existing
+        // AtomicLong counters; the most recently created pool wins the
+        // JVM-wide registration (tests create many pools per JVM).
+        MetricsRegistry.getInstance()
+                .registerGauge(MetricsRegistry.BUFFER_POOL_HIT_RATIO, this::getHitRate);
     }
 
     // ─── Pin / unpin ────────────────────────────────────────────────

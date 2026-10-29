@@ -43,6 +43,7 @@ diesel/CoveringBTreeIndex.java		index,query-full
 diesel/HashIndex.java			index,query-full
 diesel/UniqueIndex.java			index,query-full
 diesel/Database.java			smoke,query,query-full,storage,concurrency,network
+diesel/observability/*.java		smoke,query
 diesel/DieselDatabase.java		smoke,query,query-full,storage,concurrency,network
 diesel/TableStorage.java		storage,query-full
 diesel/ConfigLoader.java		storage

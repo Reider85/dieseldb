@@ -26,6 +26,8 @@ import javax.management.ReflectionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.observability.MetricsRegistry;
+
 /**
  * Single-writer thread for WAL entries with bounded queue and backpressure (prompt4.md step 13, R3-003 step 3/5).
  *
@@ -77,6 +79,8 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
     /** Ring buffer for append latencies (nanoseconds, single writer ⇒ no contention). */
     private final long[] latencyRing = new long[LATENCY_RING_SIZE];
     private int latencyRingIndex = 0;
+    /** Nano timestamp of the last successful batch append (diesel_wal_lag_ms gauge, prompt4 #44). */
+    private final AtomicLong lastAppendNanos = new AtomicLong();
     private volatile boolean running = true;
 
     /**
@@ -93,6 +97,12 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
         this.writerThread.setDaemon(true);
         this.writerThread.start();
         registerMBean();
+        // Prompt4 #44: WAL lag = staleness of the last successful append. The
+        // most recently created writer wins the JVM-wide gauge registration.
+        MetricsRegistry.getInstance().registerGauge(MetricsRegistry.WAL_LAG_MS, () -> {
+            long last = lastAppendNanos.get();
+            return last == 0L ? 0.0 : (System.nanoTime() - last) / 1_000_000.0;
+        });
     }
 
     /**
@@ -292,6 +302,7 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
         try {
             manager.appendBatch(entries);
             long completedAt = System.nanoTime();
+            lastAppendNanos.set(completedAt);
             for (int i = 0; i < entries.size(); i++) {
                 recordLatency(completedAt - requests.get(i).enqueueNanos());
                 appendCount.incrementAndGet();
@@ -307,11 +318,14 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
     }
 
     /**
-     * Records an append latency in the ring buffer for p99 calculation.
+     * Records an append latency in the ring buffer for p99 calculation and
+     * mirrors it into the standard latency histogram (prompt4 #44).
      */
     private void recordLatency(long latencyNanos) {
         latencyRing[latencyRingIndex] = latencyNanos;
         latencyRingIndex = (latencyRingIndex + 1) % LATENCY_RING_SIZE;
+        MetricsRegistry.getInstance()
+                .histogram(MetricsRegistry.WAL_APPEND_DURATION_SECONDS).recordNanos(latencyNanos);
     }
 
     /**

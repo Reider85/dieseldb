@@ -12,6 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingDeque;
 
+import diesel.observability.MetricsRegistry;
+
 /**
      * Lock manager for DieselDB's granular locking system.
      * <p>
@@ -95,6 +97,8 @@ public final class LockManager {
                     // Clean up waiting state and throw exception
                     removeWaiterForTx(txid, state);
                     List<Long> cycle = killedWaiters.remove(txid);
+                    MetricsRegistry.getInstance()
+                            .counter(MetricsRegistry.DEADLOCKS_TOTAL).increment();
                     throw new DeadlockVictimException(txid, cycle);
                 }
 
@@ -127,6 +131,8 @@ public final class LockManager {
                 String timedOutResource = timedOutWaiters.remove(txid);
                 if (timedOutResource != null) {
                     // Clean up waiter already done by loop
+                    MetricsRegistry.getInstance()
+                            .counter(MetricsRegistry.LOCK_TIMEOUTS_TOTAL).increment();
                     throw new LockTimeoutException(txid, timedOutResource, timeoutManager.getTimeoutMs());
                 }
 
