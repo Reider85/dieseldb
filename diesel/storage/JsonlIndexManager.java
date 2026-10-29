@@ -7,10 +7,12 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -78,6 +80,15 @@ import diesel.storage.json.JsonParserConfig;
  * {@link #endBulkUpdate()}, keeping mass delete/insert operations linear
  * instead of quadratic.
  *
+ * <p><b>Posting-list invariant (o2 JSONL-4, mirror of o2 CSV-6):</b> every
+ * key -&gt; rowId posting collection (secondary and nested) is a
+ * {@link LinkedHashSet}: removal is an O(1) hash-lookup (an
+ * {@code ArrayList.remove(Object)} scan is O(k) per call and made
+ * updateRow/deleteRow O(n^2) in a row loop under low-cardinality keys), and
+ * insertion order equals the old append order so translated positions stay
+ * ascending. The on-disk sidecar keeps {@code List<Long>} postings (wire
+ * compatibility); adoption converts to the set type.
+ *
  * <p><b>Thread safety:</b> like the delimited manager, this manager is
  * <i>not</i> internally synchronized. All mutable state is guarded by the
  * owning {@link diesel.Table} {@code tableLock}: mutations under the write
@@ -119,8 +130,19 @@ public final class JsonlIndexManager {
     private List<Object[]> rows = new ArrayList<>();
     private String primaryKeyColumn;
     private final NavigableMap<Object, Long> primaryKeyIndex = new TreeMap<>(KEY_ORDER);
-    /** Literal-column secondary indexes: column name -&gt; key -&gt; rowIds. */
-    private final Map<String, NavigableMap<Object, List<Long>>> secondaryIndexes =
+    /**
+     * Literal-column secondary indexes: column name -&gt; key -&gt; rowIds.
+     *
+     * <p><b>o2 JSONL-4</b> (mirror of o2 CSV-6): the posting collection is a
+     * {@link LinkedHashSet}, so {@code removeIndexedRow} disassociates a row
+     * in O(1) hash-lookup per index instead of the O(k) linear
+     * {@code ArrayList.remove(Object)} scan (k = posting size; under a
+     * low-cardinality key k is ~O(n), making updateRow/deleteRow O(n^2) in a
+     * row loop). Insertion order equals the old ArrayList-append order, so
+     * translated positions stay ascending; read sites accept any
+     * {@link Iterable} (see {@link #collectPositions}).
+     */
+    private final Map<String, NavigableMap<Object, LinkedHashSet<Long>>> secondaryIndexes =
             new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     /** Dot-path secondary indexes over whole-JSON cells (prompt 45). */
     private final Map<String, NestedIndex> nestedIndexes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
@@ -334,7 +356,7 @@ public final class JsonlIndexManager {
     /** Rebuilds the primary, secondary and nested indexes from the mirror rows. */
     public void reindex() {
         primaryKeyIndex.clear();
-        for (NavigableMap<Object, List<Long>> index : secondaryIndexes.values()) {
+        for (NavigableMap<Object, LinkedHashSet<Long>> index : secondaryIndexes.values()) {
             index.clear();
         }
         for (NestedIndex nested : nestedIndexes.values()) {
@@ -403,11 +425,11 @@ public final class JsonlIndexManager {
             if (secondaryIndexes.containsKey(column)) {
                 return true;
             }
-            NavigableMap<Object, List<Long>> index = new TreeMap<>(KEY_ORDER);
+            NavigableMap<Object, LinkedHashSet<Long>> index = new TreeMap<>(KEY_ORDER);
             for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
                 Object key = rowColumns.get(rows.get(e.getValue()), column);
                 if (key != null) {
-                    index.computeIfAbsent(key, k -> new ArrayList<>()).add(e.getKey());
+                    index.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(e.getKey());
                 }
             }
             secondaryIndexes.put(column, index);
@@ -416,11 +438,11 @@ public final class JsonlIndexManager {
         if (nestedIndexes.containsKey(columnOrPath)) {
             return true;
         }
-        NavigableMap<Object, List<Long>> tree = new TreeMap<>(KEY_ORDER);
+        NavigableMap<Object, LinkedHashSet<Long>> tree = new TreeMap<>(KEY_ORDER);
         for (Map.Entry<Long, Integer> e : rowIdToPosition.entrySet()) {
             Object key = nestedKey(resolved, rows.get(e.getValue()));
             if (key != null) {
-                tree.computeIfAbsent(key, k -> new ArrayList<>()).add(e.getKey());
+                tree.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(e.getKey());
             }
         }
         nestedIndexes.put(columnOrPath, new NestedIndex(resolved, tree));
@@ -473,7 +495,7 @@ public final class JsonlIndexManager {
         if (primaryKeyColumn != null && primaryKeyColumn.equalsIgnoreCase(column)) {
             return searchByPrimaryKey(key);
         }
-        NavigableMap<Object, List<Long>> index = secondaryIndexes.get(column);
+        NavigableMap<Object, LinkedHashSet<Long>> index = secondaryIndexes.get(column);
         if (index == null) {
             NestedIndex nested = nestedIndexes.get(column);
             if (nested != null) {
@@ -483,7 +505,7 @@ public final class JsonlIndexManager {
         if (index == null) {
             return List.of();
         }
-        List<Long> ids = index.get(key);
+        Collection<Long> ids = index.get(key);
         return ids == null ? List.of() : translateRowIdsToPositions(ids);
     }
 
@@ -503,7 +525,7 @@ public final class JsonlIndexManager {
         if (primaryKeyColumn != null && primaryKeyColumn.equalsIgnoreCase(column)) {
             return collectPositions(subRange(primaryKeyIndex, low, high));
         }
-        NavigableMap<Object, List<Long>> index = secondaryIndexes.get(column);
+        NavigableMap<Object, LinkedHashSet<Long>> index = secondaryIndexes.get(column);
         if (index == null) {
             NestedIndex nested = nestedIndexes.get(column);
             if (nested != null) {
@@ -753,16 +775,16 @@ public final class JsonlIndexManager {
                 primaryKeyIndex.put(key, rid);
             }
         }
-        for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
+        for (Map.Entry<String, NavigableMap<Object, LinkedHashSet<Long>>> entry : secondaryIndexes.entrySet()) {
             Object key = rowColumns.get(row, entry.getKey());
             if (key != null) {
-                entry.getValue().computeIfAbsent(key, k -> new ArrayList<>()).add(rid);
+                entry.getValue().computeIfAbsent(key, k -> new LinkedHashSet<>()).add(rid);
             }
         }
         for (NestedIndex nested : nestedIndexes.values()) {
             Object key = nestedKey(nested.path, row);
             if (key != null) {
-                nested.tree.computeIfAbsent(key, k -> new ArrayList<>()).add(rid);
+                nested.tree.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(rid);
             }
         }
     }
@@ -775,14 +797,14 @@ public final class JsonlIndexManager {
                 primaryKeyIndex.remove(key);
             }
         }
-        for (Map.Entry<String, NavigableMap<Object, List<Long>>> entry : secondaryIndexes.entrySet()) {
+        for (Map.Entry<String, NavigableMap<Object, LinkedHashSet<Long>>> entry : secondaryIndexes.entrySet()) {
             Object key = rowColumns.get(row, entry.getKey());
             if (key == null) {
                 continue;
             }
-            List<Long> ids = entry.getValue().get(key);
+            LinkedHashSet<Long> ids = entry.getValue().get(key);
             if (ids != null) {
-                ids.remove(rid);
+                ids.remove(rid); // o2 JSONL-4: O(1) hash-lookup, was O(k) ArrayList scan
                 if (ids.isEmpty()) {
                     entry.getValue().remove(key);
                 }
@@ -793,9 +815,9 @@ public final class JsonlIndexManager {
             if (key == null) {
                 continue;
             }
-            List<Long> ids = nested.tree.get(key);
+            LinkedHashSet<Long> ids = nested.tree.get(key);
             if (ids != null) {
-                ids.remove(rid);
+                ids.remove(rid); // o2 JSONL-4: O(1) hash-lookup, was O(k) ArrayList scan
                 if (ids.isEmpty()) {
                     nested.tree.remove(key);
                 }
@@ -819,7 +841,7 @@ public final class JsonlIndexManager {
     }
 
     /** Translates rowIds into current physical positions, sorted ascending. */
-    private List<Integer> translateRowIdsToPositions(List<Long> rowIds) {
+    private List<Integer> translateRowIdsToPositions(Collection<Long> rowIds) {
         List<Integer> result = new ArrayList<>(rowIds.size());
         for (Long rid : rowIds) {
             Integer pos = rowIdToPosition.get(rid);
@@ -858,7 +880,7 @@ public final class JsonlIndexManager {
         for (Object value : entries.values()) {
             if (value instanceof Long rid) {
                 rowIds.add(rid);
-            } else if (value instanceof List<?> ids) {
+            } else if (value instanceof Iterable<?> ids) { // o2 JSONL-4: posting lists are LinkedHashSet now — a List check would silently drop them
                 for (Object id : ids) {
                     if (id instanceof Long rid) {
                         rowIds.add(rid);
@@ -904,9 +926,11 @@ public final class JsonlIndexManager {
             primaryIterable = new LinkedHashMap<>(primaryKeyIndex);
         }
         Map<String, Map<Object, List<Long>>> secondaryMaps = new LinkedHashMap<>();
-        for (Map.Entry<String, NavigableMap<Object, List<Long>>> e : secondaryIndexes.entrySet()) {
+        for (Map.Entry<String, NavigableMap<Object, LinkedHashSet<Long>>> e : secondaryIndexes.entrySet()) {
             Map<Object, List<Long>> copy = new LinkedHashMap<>();
-            for (Map.Entry<Object, List<Long>> k : e.getValue().entrySet()) {
+            for (Map.Entry<Object, LinkedHashSet<Long>> k : e.getValue().entrySet()) {
+                // Sidecar wire format stays List<Long> (o2 JSONL-4): Java-serialised
+                // .idx files written before the LinkedHashSet switch stay readable.
                 copy.put(k.getKey(), new ArrayList<>(k.getValue()));
             }
             secondaryMaps.put(e.getKey(), copy);
@@ -914,7 +938,7 @@ public final class JsonlIndexManager {
         Map<String, Map<Object, List<Long>>> nestedMaps = new LinkedHashMap<>();
         for (Map.Entry<String, NestedIndex> e : nestedIndexes.entrySet()) {
             Map<Object, List<Long>> copy = new LinkedHashMap<>();
-            for (Map.Entry<Object, List<Long>> k : e.getValue().tree.entrySet()) {
+            for (Map.Entry<Object, LinkedHashSet<Long>> k : e.getValue().tree.entrySet()) {
                 copy.put(k.getKey(), new ArrayList<>(k.getValue()));
             }
             nestedMaps.put(e.getKey(), copy);
@@ -958,9 +982,9 @@ public final class JsonlIndexManager {
         }
         if (sidecar.secondaryRowIds != null) {
             for (Map.Entry<String, Map<Object, List<Long>>> e : sidecar.secondaryRowIds.entrySet()) {
-                NavigableMap<Object, List<Long>> tree = new TreeMap<>(KEY_ORDER);
+                NavigableMap<Object, LinkedHashSet<Long>> tree = new TreeMap<>(KEY_ORDER);
                 for (Map.Entry<Object, List<Long>> k : e.getValue().entrySet()) {
-                    tree.put(k.getKey(), new ArrayList<>(k.getValue()));
+                    tree.put(k.getKey(), new LinkedHashSet<>(k.getValue()));
                 }
                 secondaryIndexes.put(e.getKey(), tree);
             }
@@ -971,9 +995,9 @@ public final class JsonlIndexManager {
                 if (path.columnIndex() < 0) {
                     continue;
                 }
-                NavigableMap<Object, List<Long>> tree = new TreeMap<>(KEY_ORDER);
+                NavigableMap<Object, LinkedHashSet<Long>> tree = new TreeMap<>(KEY_ORDER);
                 for (Map.Entry<Object, List<Long>> k : e.getValue().entrySet()) {
-                    tree.put(k.getKey(), new ArrayList<>(k.getValue()));
+                    tree.put(k.getKey(), new LinkedHashSet<>(k.getValue()));
                 }
                 nestedIndexes.put(e.getKey(), new NestedIndex(path, tree));
             }
@@ -992,9 +1016,9 @@ public final class JsonlIndexManager {
     /** A nested dot-path index bound to its resolved schema path. */
     private static final class NestedIndex {
         final JsonPathResolver.ResolvedPath path;
-        final NavigableMap<Object, List<Long>> tree;
+        final NavigableMap<Object, LinkedHashSet<Long>> tree;
 
-        NestedIndex(JsonPathResolver.ResolvedPath path, NavigableMap<Object, List<Long>> tree) {
+        NestedIndex(JsonPathResolver.ResolvedPath path, NavigableMap<Object, LinkedHashSet<Long>> tree) {
             this.path = path;
             this.tree = tree;
         }

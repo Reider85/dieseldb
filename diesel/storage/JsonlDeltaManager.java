@@ -6,9 +6,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import org.slf4j.Logger;
@@ -45,16 +46,36 @@ public class JsonlDeltaManager {
     private int baseFileLineCount;
     private final List<Object[]> baseRows;
     private final Set<Integer> deletedBaseLines;
-    private final List<Object[]> pendingNewRows;
-    private final List<boolean[]> pendingNewPresence;
+    /**
+     * o2 JSONL-5: exact inverse of {@code baseRows} — a loaded row array
+     * reference to its 0-based base-file line. Identity-based (the storage
+     * never clones rows between {@code onLoad} and a later delete: the same
+     * {@code Object[]} instances live in the live row list), so
+     * {@code findBaseLineForValue} is an O(1) hash-lookup instead of an
+     * O(B*m) content scan ({@code Arrays.equals} over every non-deleted base
+     * row); K deletes against B base rows cost O(K) instead of O(K*B*m).
+     * Duplicate-content rows resolve to their own exact line — strictly
+     * more precise than the old "first non-deleted content match" scan.
+     * Cleared in {@link #onLoad}/{@link #reset}; extended in
+     * {@link #onSaveComplete} when pending rows graduate into the base.
+     */
+    private final Map<Object[], Integer> rowToBaseLine = new IdentityHashMap<>();
+    private final List<PendingRow> pendingNewRows;
     private final double compactionThreshold;
+
+    /**
+     * o2 JSONL-6: a pending (not-yet-saved) new row paired with its presence
+     * flags. The pair keeps the two parallel lists in lockstep with a single
+     * {@code remove(int)} on a pending-row delete (was two ArrayList shifts).
+     */
+    private record PendingRow(Object[] row, boolean[] presence) {
+    }
 
     public JsonlDeltaManager(double compactionThreshold) {
         this.baseFileLineCount = 0;
         this.baseRows = new ArrayList<>();
         this.deletedBaseLines = new HashSet<>();
         this.pendingNewRows = new ArrayList<>();
-        this.pendingNewPresence = new ArrayList<>();
         this.compactionThreshold = compactionThreshold;
     }
 
@@ -64,11 +85,15 @@ public class JsonlDeltaManager {
      */
     public void onLoad(List<Object[]> loadedRows, List<boolean[]> loadedPresence, int lineCount) {
         baseRows.clear();
-        baseRows.addAll(loadedRows);
+        rowToBaseLine.clear(); // o2 JSONL-5
+        for (int i = 0; i < loadedRows.size(); i++) {
+            Object[] row = loadedRows.get(i);
+            baseRows.add(row);
+            rowToBaseLine.put(row, i); // o2 JSONL-5: line number == index in baseRows
+        }
         baseFileLineCount = lineCount;
         deletedBaseLines.clear();
         pendingNewRows.clear();
-        pendingNewPresence.clear();
         LOGGER.debug("Delta manager initialized: baseLineCount={}, baseRows={}",
                 baseFileLineCount, baseRows.size());
     }
@@ -77,8 +102,7 @@ public class JsonlDeltaManager {
      * Called when a new row is inserted (not yet persisted to the base file).
      */
     public void onInsert(Object[] row, boolean[] present) {
-        pendingNewRows.add(row);
-        pendingNewPresence.add(present);
+        pendingNewRows.add(new PendingRow(row, present)); // o2 JSONL-6: paired insert
     }
 
     /**
@@ -95,35 +119,34 @@ public class JsonlDeltaManager {
         int pendingOffset = baseRows.size() - deletedBaseLines.size();
         if (rowIndex >= pendingOffset && rowIndex - pendingOffset < pendingNewRows.size()) {
             int pendingIdx = rowIndex - pendingOffset;
-            pendingNewRows.remove(pendingIdx);
-            pendingNewPresence.remove(pendingIdx);
+            pendingNewRows.remove(pendingIdx); // o2 JSONL-6: one pair-shift instead of two parallel ones
             LOGGER.debug("Removed pending new row at index {}", pendingIdx);
             return;
         }
-        // This is a base row - find its line number by content.
+        // This is a base row - resolve its line number via the identity map.
         int lineNum = findBaseLineForValue(row);
         if (lineNum >= 0) {
             deletedBaseLines.add(lineNum);
-            LOGGER.debug("Marked base line {} as deleted (row value match)", lineNum);
+            LOGGER.debug("Marked base line {} as deleted (identity lookup)", lineNum);
         } else {
             LOGGER.warn("Could not find base line for deleted row at index {} - delta may be incomplete", rowIndex);
         }
     }
 
     /**
-     * Searches the base rows for a row matching the given values. Returns the
-     * line number (0-based) of the first non-deleted match, or -1 if not found.
+     * Resolves the 0-based base-file line of the given row by reference
+     * identity. Returns -1 when the row is not a known base row or its line
+     * is already tombstoned.
+     *
+     * <p>o2 JSONL-5: was an O(B*m) {@code Arrays.equals} scan over every
+     * non-deleted base row; now an O(1) {@link IdentityHashMap} lookup.
      */
     private int findBaseLineForValue(Object[] target) {
-        for (int i = 0; i < baseRows.size(); i++) {
-            if (deletedBaseLines.contains(i)) {
-                continue;
-            }
-            if (Arrays.equals(baseRows.get(i), target)) {
-                return i;
-            }
+        Integer line = rowToBaseLine.get(target);
+        if (line == null || deletedBaseLines.contains(line)) {
+            return -1;
         }
-        return -1;
+        return line;
     }
 
     /**
@@ -134,11 +157,17 @@ public class JsonlDeltaManager {
      */
     public void onSaveComplete() {
         for (int i = 0; i < pendingNewRows.size(); i++) {
-            baseRows.add(pendingNewRows.get(i));
+            Object[] row = pendingNewRows.get(i).row();
+            int line = baseRows.size(); // o2 JSONL-5: physical line == index in baseRows
+            baseRows.add(row);
+            // o2 JSONL-5 (beyond the prompt sketch, required for correctness):
+            // register the graduated row so a delete right after this save
+            // resolves its line via the identity map instead of falling to
+            // the "delta may be incomplete" warn path.
+            rowToBaseLine.put(row, line);
         }
         baseFileLineCount += pendingNewRows.size();
         pendingNewRows.clear();
-        pendingNewPresence.clear();
         LOGGER.debug("Save complete: baseLineCount now {}, baseRows={}",
                 baseFileLineCount, baseRows.size());
     }
@@ -176,14 +205,22 @@ public class JsonlDeltaManager {
         return deletedBaseLines;
     }
 
-    /** Returns the list of new rows pending save. */
+    /** Returns the list of new rows pending save (projection view, o2 JSONL-6). */
     public List<Object[]> getPendingNewRows() {
-        return pendingNewRows;
+        List<Object[]> result = new ArrayList<>(pendingNewRows.size());
+        for (PendingRow pending : pendingNewRows) {
+            result.add(pending.row());
+        }
+        return result;
     }
 
-    /** Returns the presence flags for new rows pending save. */
+    /** Returns the presence flags for new rows pending save (projection view, o2 JSONL-6). */
     public List<boolean[]> getPendingNewPresence() {
-        return pendingNewPresence;
+        List<boolean[]> result = new ArrayList<>(pendingNewRows.size());
+        for (PendingRow pending : pendingNewRows) {
+            result.add(pending.presence());
+        }
+        return result;
     }
 
     /** Returns the base-file line count at the last load/save. */
@@ -206,9 +243,9 @@ public class JsonlDeltaManager {
      */
     public void reset() {
         baseRows.clear();
+        rowToBaseLine.clear(); // o2 JSONL-5
         deletedBaseLines.clear();
         pendingNewRows.clear();
-        pendingNewPresence.clear();
         baseFileLineCount = 0;
         LOGGER.debug("Delta manager reset");
     }
