@@ -243,12 +243,20 @@ class UpdateQuery implements Query<Void> {
         LOGGER.log(Level.INFO, "Bulk update mode: {0} rows >= threshold {1}",
                 new Object[]{rowsToUpdate.size(), BULK_UPDATE_THRESHOLD});
         table.disableIndices();
+        // o2 CSV-7: also open the storage bulk-update window so index-aware
+        // backends defer their per-row work to one rebuild at the end. The
+        // delimited manager's updateRow does not shift positions (already
+        // O(log n + k) after CSV-1/CSV-6), so today this is forward-looking
+        // wiring that keeps the UPDATE path on the same bulk contract the
+        // INSERT/DELETE batch paths use.
+        table.beginBulkUpdate();
         try {
             for (int rowIndex : rowsToUpdate) {
                 Map<String, Object> row = mutateRowUnderReadLock(table, rows, rowIndex, columnTypes, false);
                 table.updateRowInPlace(rowIndex, row);
             }
         } finally {
+            table.endBulkUpdate();
             table.enableAndRebuildIndices();
         }
     }

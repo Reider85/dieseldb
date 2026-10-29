@@ -2991,28 +2991,40 @@ class QueryParser {
         }
 
         String valuesPart = original.substring(parts[0].length() + SqlKeywords.VALUES.length()).trim();
-        if (!valuesPart.startsWith("(") || !valuesPart.endsWith(")")) {
-            throw new IllegalArgumentException("Invalid VALUES syntax");
-        }
-        valuesPart = valuesPart.substring(1, valuesPart.length() - 1).trim();
-        List<String> valueStrings = splitTopLevelComma(valuesPart);
-        List<Object> values = new ArrayList<>();
-        for (int i = 0; i < valueStrings.size(); i++) {
-            String val = valueStrings.get(i).trim();
-            String column = columns.get(i);
-            Class<?> columnType = columnTypes.get(column);
-            if (columnType == null) {
-                LOGGER.log(Level.SEVERE, "Unknown column in INSERT: {0}, available columns: {1}",
-                        new Object[]{column, columnTypes.keySet()});
-                throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
+        // o2 CSV-7: VALUES may carry one tuple "(v1, v2)" or many
+        // "(v1, v2), (v3, v4), ...". splitTopLevelComma separates the tuples
+        // (commas inside the parens sit at depth >= 1); each tuple is then
+        // stripped and split exactly like the single-tuple path always did.
+        List<String> tuples = splitTopLevelComma(valuesPart);
+        List<List<Object>> valueRows = new ArrayList<>(tuples.size());
+        for (String rawTuple : tuples) {
+            String tuple = rawTuple.trim();
+            if (!tuple.startsWith("(") || !tuple.endsWith(")")) {
+                throw new IllegalArgumentException("Invalid VALUES syntax");
             }
-            values.add(parseConditionValue(val, columnType));
+            tuple = tuple.substring(1, tuple.length() - 1).trim();
+            List<String> valueStrings = splitTopLevelComma(tuple);
+            List<Object> values = new ArrayList<>();
+            for (int i = 0; i < valueStrings.size(); i++) {
+                String val = valueStrings.get(i).trim();
+                String column = columns.get(i);
+                Class<?> columnType = columnTypes.get(column);
+                if (columnType == null) {
+                    LOGGER.log(Level.SEVERE, "Unknown column in INSERT: {0}, available columns: {1}",
+                            new Object[]{column, columnTypes.keySet()});
+                    throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
+                }
+                values.add(parseConditionValue(val, columnType));
+            }
+            valueRows.add(values);
         }
 
-        LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, values={2}",
-                new Object[]{tableName, columns, values});
+        LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, rows={2}",
+                new Object[]{tableName, columns, valueRows.size()});
 
-        return new InsertQuery(columns, values);
+        return valueRows.size() == 1
+                ? new InsertQuery(columns, valueRows.get(0))
+                : InsertQuery.multiRow(columns, valueRows);
     }
 
     private Query<Void> parseUpdateQuery(String normalized, String original, Database database) {

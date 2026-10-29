@@ -142,11 +142,16 @@ public abstract class DelimitedIndexManager {
     private final Set<Long> deletedRowIds = new HashSet<>();
     private static final double COMPACTION_THRESHOLD = 0.25;
 
-    /** Whether a deferred bulk-update window is open (prompt 35). Inside the
-     * window per-operation index mutations are replaced by a single rebuild on
-     * {@link #endBulkUpdate()}. Not thread-safe: bulk mode must be driven by a
-     * single writer context (e.g. under the table write lock). */
-    private boolean bulkMode;
+    /** Nesting depth of deferred bulk-update windows (prompt 35; depth
+     * counter since o2 CSV-7). While {@code bulkDepth > 0} per-operation
+     * index mutations are replaced by a single rebuild when the outermost
+     * window closes. A depth counter (not a boolean) keeps nested windows
+     * safe: the engine batch path opens one around a multi-row statement
+     * while in-statement operations like {@code Table.compact()} open their
+     * own inner window — an inner end must not close the outer one.
+     * Not thread-safe: bulk mode must be driven by a single writer context
+     * (e.g. under the table write lock). */
+    private int bulkDepth;
     /** Whether the index state is stale since the bulk window opened. */
     private boolean bulkDirty;
 
@@ -407,7 +412,7 @@ public abstract class DelimitedIndexManager {
      * {@link #insertAt(int, Map)} for the semantics.
      */
     void insertAtShared(int rowIndex, Object[] row) {
-        if (bulkMode) {
+        if (bulkDepth > 0) {
             rows.add(rowIndex, row);
             bulkDirty = true;
             return;
@@ -452,7 +457,7 @@ public abstract class DelimitedIndexManager {
      * @param rowIndex the zero-based position of the row to delete
      */
     public void deleteRow(int rowIndex) {
-        if (bulkMode) {
+        if (bulkDepth > 0) {
             if (rowIndex < 0 || rowIndex >= rows.size()) {
                 return;
             }
@@ -514,7 +519,7 @@ public abstract class DelimitedIndexManager {
      * @return the number of rowIds disassociated from the indexes
      */
     public int removeDeadEntries(Set<Integer> deadPositions) {
-        if (bulkMode || deadPositions == null || deadPositions.isEmpty()) {
+        if (bulkDepth > 0 || deadPositions == null || deadPositions.isEmpty()) {
             return 0;
         }
         List<Long> deadRowIds = new ArrayList<>(deadPositions.size());
@@ -544,26 +549,31 @@ public abstract class DelimitedIndexManager {
     // ─── Deferred bulk updates (prompt 35) ─────────────────────────
 
     /**
-     * Enters a deferred bulk-update window. Until {@link #endBulkUpdate()} is
-     * called, {@link #insertAt(int, Map)} and {@link #deleteRow(int)} only
-     * mutate the mirror row list and mark the index state dirty, deferring all
-     * position shifting and rebuilds to the single rebuild that closes the
-     * window. Index state is not query-consistent while the window is open.
+     * Enters a deferred bulk-update window. Until the outermost
+     * {@link #endBulkUpdate()} is called, {@link #insertAt(int, Map)} and
+     * {@link #deleteRow(int)} only mutate the mirror row list and mark the
+     * index state dirty, deferring all position shifting and rebuilds to the
+     * single rebuild that closes the outermost window. Index state is not
+     * query-consistent while the window is open. Windows nest (o2 CSV-7): an
+     * inner begin/end pair only bumps/lowers the depth, the deferred rebuild
+     * runs when the depth returns to zero.
      */
     public void beginBulkUpdate() {
-        bulkMode = true;
+        bulkDepth++;
     }
 
     /**
-     * Leaves a deferred bulk-update window and performs the single index
-     * rebuild accumulated while dirty, restoring a query-consistent state
-     * (rowIds reassigned, positions and tombstones recomputed, every index
-     * rebuilt). Must be paired with {@link #beginBulkUpdate()}, even on
-     * exceptional paths.
+     * Leaves a deferred bulk-update window. When the depth returns to zero
+     * this performs the single index rebuild accumulated while dirty,
+     * restoring a query-consistent state (rowIds reassigned, positions and
+     * tombstones recomputed, every index rebuilt). Must be paired with
+     * {@link #beginBulkUpdate()}, even on exceptional paths.
      */
     public void endBulkUpdate() {
-        bulkMode = false;
-        if (bulkDirty) {
+        if (bulkDepth > 0) {
+            bulkDepth--;
+        }
+        if (bulkDepth == 0 && bulkDirty) {
             bulkDirty = false;
             reindex();
         }
@@ -571,7 +581,7 @@ public abstract class DelimitedIndexManager {
 
     /** Returns whether a deferred bulk-update window is currently open. */
     public boolean isBulkUpdating() {
-        return bulkMode;
+        return bulkDepth > 0;
     }
 
     /**
@@ -585,7 +595,7 @@ public abstract class DelimitedIndexManager {
      * @param primaryKeyColumn the primary-key column name, or {@code null} for none
      */
     public void markIndexDirty(List<Map<String, Object>> data, String primaryKeyColumn) {
-        if (!bulkMode) {
+        if (bulkDepth == 0) {
             buildIndexes(data, primaryKeyColumn);
             return;
         }
@@ -605,7 +615,7 @@ public abstract class DelimitedIndexManager {
      * the indexes are rebuilt once at {@link #endBulkUpdate()}.
      */
     void markIndexDirtyFromArrays(List<Object[]> data, String primaryKeyColumn) {
-        if (!bulkMode) {
+        if (bulkDepth == 0) {
             buildIndexesFromArrays(data, primaryKeyColumn);
             return;
         }

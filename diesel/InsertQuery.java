@@ -16,8 +16,16 @@ import java.util.logging.Level;
  */
 class InsertQuery implements Query<Void> {
     private static final Logger LOGGER = Logger.getLogger(InsertQuery.class.getName());
+    /**
+     * Row count above which a multi-row INSERT is executed inside a deferred
+     * storage bulk-update window (o2 CSV-7), mirroring
+     * {@code diesel.bulkUpdate.threshold} on the UPDATE path.
+     */
+    private static final int BULK_INSERT_THRESHOLD =
+            Integer.getInteger("diesel.bulkInsert.threshold", 100);
     private final List<String> columns;
     private final List<Object> values;
+    private final List<List<Object>> valueRows;
     private long lastAffectedRows;
 
     /**
@@ -30,8 +38,9 @@ class InsertQuery implements Query<Void> {
     }
 
     /**
-     * Returns the number of rows the last {@link #execute} inserted (always 1
-     * on success), exposed for EXPLAIN ANALYZE metrics.
+     * Returns the number of rows the last {@link #execute} inserted (the
+     * statement's row count: 1 for a single-tuple INSERT, the tuple count for
+     * a multi-row VALUES batch), exposed for EXPLAIN ANALYZE metrics.
      *
      * @return the affected row count of the last execution
      */
@@ -48,12 +57,34 @@ class InsertQuery implements Query<Void> {
     public InsertQuery(List<String> columns, List<Object> values) {
         this.columns = columns;
         this.values = values;
+        this.valueRows = null;
         LOGGER.log(Level.FINE, "Created InsertQuery with columns: {0}, values: {1}", new Object[]{columns, values});
+    }
+
+    private InsertQuery(List<String> columns, List<Object> values, List<List<Object>> valueRows) {
+        this.columns = columns;
+        this.values = values;
+        this.valueRows = valueRows;
+    }
+
+    /**
+     * Creates a multi-row insert for a {@code VALUES (...), (...), ...}
+     * statement (o2 CSV-7).
+     *
+     * @param columns the column names being inserted into
+     * @param rows    the value tuples, one list per inserted row
+     * @return the multi-row insert query
+     */
+    static InsertQuery multiRow(List<String> columns, List<List<Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            throw new IllegalArgumentException("Multi-row INSERT requires at least one VALUES tuple");
+        }
+        return new InsertQuery(columns, rows.get(0), rows);
     }
 
     /**
      * Converts and validates each value against the table's column types and
-     * inserts the row.
+     * inserts the row (or every row of a multi-row VALUES batch, o2 CSV-7).
      *
      * @param table the table to insert into
      * @return null on success
@@ -63,10 +94,72 @@ class InsertQuery implements Query<Void> {
      */
     @Override
     public Void execute(Table table) {
-        validateInput();
-        Map<String, Object> row = buildRow(table);
-        insertRow(table, row);
+        if (valueRows == null) {
+            validateInput();
+            Map<String, Object> row = buildRow(table);
+            insertRow(table, row);
+            return null;
+        }
+        return executeMultiRow(table);
+    }
+
+    /**
+     * Executes a multi-row VALUES batch (o2 CSV-7). Batches at or above
+     * {@link #BULK_INSERT_THRESHOLD} run inside a deferred storage
+     * bulk-update window so the storage index manager performs one rebuild at
+     * the end instead of a per-row position shift. When the batch supplies
+     * the table's clustered key, the built rows are stably sorted by that key
+     * first: a clustered table stores rows in key order, so the sort changes
+     * no final row state, but it turns mid-table inserts into tail appends —
+     * both on the engine's row mirror ({@code ArrayList.add} shifts) and on
+     * the storage side. Sequence-based primary keys are never part of the
+     * column list (the parser rejects them), so their assignment order is
+     * unaffected; a non-PK sequence column would be assigned in clustered-key
+     * order rather than VALUES order on large batches (documented deviation —
+     * small batches keep strict VALUES order). A failing tuple leaves the
+     * earlier tuples of the batch inserted (no statement-level rollback
+     * outside an MVCC transaction).
+     */
+    private Void executeMultiRow(Table table) {
+        List<Map<String, Object>> builtRows = new ArrayList<>(valueRows.size());
+        for (List<Object> rowValues : valueRows) {
+            if (columns.size() != rowValues.size()) {
+                throw new IllegalArgumentException("Column and value counts mismatch");
+            }
+            builtRows.add(buildRow(table, rowValues));
+        }
+
+        if (builtRows.size() >= BULK_INSERT_THRESHOLD) {
+            String clusteredColumn = table.getClusteredIndexColumn();
+            if (clusteredColumn != null && !builtRows.isEmpty()
+                    && builtRows.get(0).containsKey(clusteredColumn)) {
+                sortByPrimaryKey(builtRows, clusteredColumn);
+            }
+            table.beginBulkUpdate();
+            try {
+                for (Map<String, Object> row : builtRows) {
+                    insertRow(table, row);
+                }
+            } finally {
+                table.endBulkUpdate();
+            }
+        } else {
+            for (Map<String, Object> row : builtRows) {
+                insertRow(table, row);
+            }
+        }
+        lastAffectedRows = builtRows.size();
+        LOGGER.log(Level.FINE, "Inserted {0} rows into table {1}",
+                new Object[]{builtRows.size(), table.getName()});
         return null;
+    }
+
+    /** Stable-sorts the built rows by their clustered-key value (natural order). */
+    @SuppressWarnings("unchecked")
+    private static void sortByPrimaryKey(List<Map<String, Object>> builtRows, String clusteredColumn) {
+        builtRows.sort(Comparator.comparing(
+                row -> (Comparable<Object>) row.get(clusteredColumn),
+                Comparator.nullsLast(Comparator.naturalOrder())));
     }
 
     private void validateInput() {
@@ -76,11 +169,15 @@ class InsertQuery implements Query<Void> {
     }
 
     private Map<String, Object> buildRow(Table table) {
+        return buildRow(table, values);
+    }
+
+    private Map<String, Object> buildRow(Table table, List<Object> rowValues) {
         Map<String, Object> row = new HashMap<>();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
         for (int i = 0; i < columns.size(); i++) {
             String column = columns.get(i);
-            Object value = values.get(i);
+            Object value = rowValues.get(i);
             Class<?> expectedType = columnTypes.get(column);
             if (expectedType == null) {
                 throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);

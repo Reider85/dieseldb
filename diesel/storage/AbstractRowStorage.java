@@ -287,6 +287,23 @@ public abstract class AbstractRowStorage implements RowStorage {
         }
     }
 
+    /**
+     * Runs the given body inside a deferred bulk-update window, guaranteeing
+     * the window is closed even when the body throws (o2 CSV-7 change #2).
+     * Equivalent to the {@code beginBulkUpdate(); try { body.run(); } finally {
+     * endBulkUpdate(); }} idiom that callers previously spelled out by hand.
+     *
+     * @param body the mutations to batch behind a single index rebuild
+     */
+    public void runInBulkMode(Runnable body) {
+        beginBulkUpdate();
+        try {
+            body.run();
+        } finally {
+            endBulkUpdate();
+        }
+    }
+
     // ─── Load mode resolution (prompt 32) ─────────────────────────────
 
     /**
