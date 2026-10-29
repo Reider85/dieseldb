@@ -137,6 +137,31 @@ class SqlParsingUtils {
      * present, is dropped before the JSON Path lookup.
      * Throws IllegalArgumentException if the column is not found.
      */
+    /**
+     * Strictly parses a boolean literal, accepting the synonyms
+     * {@code true/false}, {@code 1/0}, {@code yes/no} and {@code t/f}
+     * (case-insensitive, surrounding whitespace ignored). Unlike
+     * {@link Boolean#parseBoolean(String)} this never silently treats an
+     * arbitrary string as {@code false}, so a typo like {@code = 2} on a
+     * BOOLEAN column raises a parse error instead of matching FALSE rows.
+     * Mirrors the synonym set used by the storage readers
+     * ({@code DelimitedRowReader.parseBooleanStrict}).
+     *
+     * @param raw the raw literal text
+     * @return the parsed boolean
+     * @throws IllegalArgumentException when the value is not a boolean synonym
+     */
+    static Boolean parseBooleanLiteral(String raw) {
+        if (raw == null) {
+            throw new IllegalArgumentException("Invalid boolean value: null");
+        }
+        return switch (raw.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "true", "1", "yes", "t" -> Boolean.TRUE;
+            case "false", "0", "no", "f" -> Boolean.FALSE;
+            default -> throw new IllegalArgumentException("Invalid boolean value: '" + raw + "'");
+        };
+    }
+
     static void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
         Objects.requireNonNull(column, "Column name must not be null");
         if (!matchesColumnOrPath(column, combinedColumnTypes.keySet())) {

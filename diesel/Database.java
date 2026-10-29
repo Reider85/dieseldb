@@ -1329,6 +1329,12 @@ class Database {
         if (parsedQuery instanceof VacuumQuery q) {
             return executeVacuum(q);
         }
+        // Prompt 4 #48 (R3-013b): constant SELECT without FROM (SELECT 1 = 1)
+        // has no table, so it must be answered before executeDataQuery, which
+        // would try to extract a table name and throw.
+        if (parsedQuery instanceof ConstantSelectQuery q) {
+            return q.execute(this, -1L);
+        }
         return executeDataQuery(parsedQuery, cleanQuery, currentTransaction);
     }
 
@@ -1365,7 +1371,7 @@ class Database {
      * label (prompt4 #44).
      */
     private static String queryTypeOf(Query<?> parsedQuery) {
-        if (parsedQuery instanceof SelectQuery) return "SELECT";
+        if (parsedQuery instanceof SelectQuery || parsedQuery instanceof ConstantSelectQuery) return "SELECT";
         if (parsedQuery instanceof InsertQuery) return "INSERT";
         if (parsedQuery instanceof UpdateQuery) return "UPDATE";
         if (parsedQuery instanceof DeleteQuery) return "DELETE";

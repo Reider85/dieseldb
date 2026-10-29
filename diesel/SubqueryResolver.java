@@ -189,7 +189,11 @@ public class SubqueryResolver {
         converters.put(BigDecimal.class, BigDecimal::new);
         converters.put(Float.class, Float::parseFloat);
         converters.put(Double.class, Double::parseDouble);
-        converters.put(Boolean.class, Boolean::parseBoolean);
+        // Prompt 4 #48 (R3-013b): strict boolean parsing - Boolean.parseBoolean("1")
+        // silently yields false, which would make WHERE active = 1 match the FALSE
+        // rows; parseBooleanLiteral accepts 1/0/yes/no/t/f and throws otherwise,
+        // matching the main QueryParser coercion.
+        converters.put(Boolean.class, SqlParsingUtils::parseBooleanLiteral);
 
         Function<String, Object> converter = converters.get(columnType);
         if (converter != null) {
