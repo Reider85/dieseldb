@@ -266,8 +266,10 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.buildIndex(rows);
         }
-        // Rebuild all secondary indexes
-        secondaryIndexManager.rebuildAllIndexes(newRows);
+        // Rebuild all secondary indexes from the Object[] rows just built —
+        // positional lookups via the schema-level column index, no Map key
+        // scanning (o2 Avro-19; Avro-13 delegate path).
+        secondaryIndexManager.rebuildAllIndexesFromArrays(rows);
     }
 
     // ─── Persistence ────────────────────────────────────────────────
