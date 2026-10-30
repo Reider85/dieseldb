@@ -145,11 +145,19 @@ interface Index {
  */
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
-    private static final int CURRENT_FORMAT_VERSION = 4;
+    private static final int CURRENT_FORMAT_VERSION = 5;
     private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
     private final String name;
     private transient List<String> columns;
     private transient Map<String, Class<?>> columnTypes;
+    /**
+     * Per-column collation (prompt4 #49): maps a column name to its collation
+     * name - currently only {@code CASE_INSENSITIVE}. Columns absent from the
+     * map use the default case-sensitive comparison. Case-insensitive columns
+     * cannot be indexed (index keys are compared with the natural
+     * case-sensitive order); CREATE INDEX on such a column is rejected.
+     */
+    private transient volatile Map<String, String> columnCollations = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     private transient volatile SchemaVersionRegistry schemaVersions;
     /**
      * Write journal attached while an online ALTER TABLE ... ALGORITHM=COPY
@@ -524,6 +532,9 @@ class Table implements Serializable {
         copy.indexDefinitions.putAll(this.indexDefinitions);
         copy.coverColumnDefinitions.putAll(this.coverColumnDefinitions);
 
+        // Copy per-column collations (prompt4 #49).
+        copy.setColumnCollations(this.getColumnCollations());
+
         // Copy clustered index metadata.
         copy.hasClusteredIndex = this.hasClusteredIndex;
         copy.clusteredIndexColumn = this.clusteredIndexColumn;
@@ -752,6 +763,8 @@ class Table implements Serializable {
             if (!columnTypes.containsKey(col)) {
                 throw new ColumnNotFoundException(ErrorMessages.COLUMN_PREFIX + col + ErrorMessages.DOES_NOT_EXIST);
             }
+            // Prompt 4 #49: any case-insensitive column in the composite key rejects the index.
+            rejectCaseInsensitiveIndex(col);
         }
         CompositeBTreeIndex index = new CompositeBTreeIndex(columnNames);
         int n = rows.size();
@@ -882,6 +895,8 @@ class Table implements Serializable {
         if (!columnTypes.containsKey(columnName)) {
             throw new ColumnNotFoundException(ErrorMessages.COLUMN_PREFIX + columnName + ErrorMessages.DOES_NOT_EXIST);
         }
+        // Prompt 4 #49: a case-insensitive column cannot back a case-sensitive index.
+        rejectCaseInsensitiveIndex(columnName);
         Index index = indexFactory.apply(columnTypes.get(columnName));
         if (index instanceof BTreeIndex btree) {
             // Bulk-load: collect all key/rowIndex pairs, sort, then build in O(N).
@@ -1082,6 +1097,66 @@ class Table implements Serializable {
         Map<String, Class<?>> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         copy.putAll(columnTypes);
         return copy;
+    }
+
+    /**
+     * Returns the per-column collation map (prompt4 #49). Columns without an
+     * entry use the default case-sensitive comparison. The returned map is a
+     * case-insensitive copy.
+     *
+     * @return column name to collation name (currently only CASE_INSENSITIVE)
+     */
+    public Map<String, String> getColumnCollations() {
+        Map<String, String> collations = columnCollations;
+        Map<String, String> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (collations != null) {
+            copy.putAll(collations);
+        }
+        return copy;
+    }
+
+    /**
+     * Sets the per-column collation map (prompt4 #49). Used by
+     * {@link Database#createTable} after construction and by deserialization.
+     *
+     * @param collations the column name to collation mapping; null clears it
+     */
+    public void setColumnCollations(Map<String, String> collations) {
+        Map<String, String> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (collations != null) {
+            copy.putAll(collations);
+        }
+        this.columnCollations = copy;
+    }
+
+    /**
+     * Returns whether the given column carries the CASE_INSENSITIVE collation
+     * (prompt4 #49). Case-insensitive columns compare with
+     * {@link String#equalsIgnoreCase} but cannot be indexed.
+     *
+     * @param column the column name (case-insensitive)
+     * @return true when the column is declared COLLATE CASE_INSENSITIVE
+     */
+    public boolean isCaseInsensitiveColumn(String column) {
+        Map<String, String> collations = columnCollations;
+        return collations != null
+                && "CASE_INSENSITIVE".equals(collations.get(column));
+    }
+
+    /**
+     * Rejects an index on a CASE_INSENSITIVE column (prompt4 #49): index keys
+     * are ordered with the case-sensitive natural comparator, so a
+     * case-insensitive equality scan over the index would silently miss rows.
+     *
+     * @param columnName the column about to be indexed
+     * @throws IllegalArgumentException when the column is CASE_INSENSITIVE
+     */
+    private void rejectCaseInsensitiveIndex(String columnName) {
+        if (isCaseInsensitiveColumn(columnName)) {
+            throw new IllegalArgumentException(
+                    "Cannot create index on column " + columnName
+                    + " with COLLATE CASE_INSENSITIVE (index keys are case-sensitive)");
+        }
     }
 
     /**
@@ -2827,6 +2902,16 @@ class Table implements Serializable {
         oos.writeObject(dropped == null || dropped.isEmpty()
                 ? java.util.Collections.emptySet()
                 : new java.util.HashSet<>(dropped));
+        // Format v5: per-column collations (prompt4 #49). Always written after
+        // the v4 block; readers of older files (formatVersion < 5) skip it.
+        Map<String, String> collations = columnCollations;
+        if (collations == null || collations.isEmpty()) {
+            oos.writeObject(java.util.Collections.emptyMap());
+        } else {
+            Map<String, String> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            copy.putAll(collations);
+            oos.writeObject(copy);
+        }
     }
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
@@ -2935,6 +3020,18 @@ class Table implements Serializable {
                 java.util.Set<String> active = ConcurrentHashMap.newKeySet();
                 active.addAll(readDropped);
                 this.droppedColumns = active;
+            }
+        }
+        // Format v5+: per-column collations (prompt4 #49). Older files carry
+        // no collation entries (default case-sensitive comparison). Field
+        // initializers do not run during deserialization, so the map is
+        // materialized here for every format version.
+        this.columnCollations = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (formatVersion >= 5) {
+            @SuppressWarnings("unchecked")
+            Map<String, String> readCollations = (Map<String, String>) ois.readObject();
+            if (readCollations != null) {
+                this.columnCollations.putAll(readCollations);
             }
         }
         this.database = null;

@@ -113,4 +113,33 @@ final class ConfigLoader {
     static String getMetricsHost() {
         return getString(METRICS_HOST, DEFAULT_METRICS_HOST);
     }
+
+    // ─── String literal case compatibility (prompt4 #49) ────────────
+    static final String COMPAT_UPPERCASE_STRING_LITERALS = "compat.uppercase.string.literals";
+    /** Default false: string literals keep their original case (SQL standard). */
+    static final boolean DEFAULT_COMPAT_UPPERCASE_STRING_LITERALS = false;
+    /**
+     * File-based value resolved once at class load. The flag is consulted on
+     * every string-literal extraction (hot path: a 100k-row INSERT calls it
+     * 100k times), so re-reading config.properties per call would cost one
+     * file open per literal. Tests flip the SYSTEM PROPERTY instead, which is
+     * still checked on every call below.
+     */
+    private static final boolean COMPAT_UPPERCASE_FILE_VALUE =
+            getBoolean(COMPAT_UPPERCASE_STRING_LITERALS, DEFAULT_COMPAT_UPPERCASE_STRING_LITERALS);
+
+    /**
+     * Whether string literals are uppercased at parse time (pre-#49 legacy
+     * behavior). Resolution order: system property (checked per call so tests
+     * can flip it) then the once-cached config.properties value then the
+     * default - the sysprop-first pattern of {@code Table.resolvePersistConfig},
+     * with the file read hoisted out of the per-literal hot path.
+     */
+    static boolean getCompatUppercaseStringLiterals() {
+        String sysprop = System.getProperty(COMPAT_UPPERCASE_STRING_LITERALS);
+        if (sysprop != null && !sysprop.isBlank()) {
+            return Boolean.parseBoolean(sysprop.trim());
+        }
+        return COMPAT_UPPERCASE_FILE_VALUE;
+    }
 }

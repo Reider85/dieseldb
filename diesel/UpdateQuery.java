@@ -433,20 +433,22 @@ class UpdateQuery implements Query<Void> {
      private void fullTableScanWithCondition(List<Map<String, Object>> rows,
                                              Map<String, Class<?>> columnTypes,
                                              Table table, List<Integer> rowsToUpdate) {
+         // Prompt 4 #49: collations are resolved once per scan, not per row.
+         Map<String, String> collations = table.getColumnCollations();
          IntStream.range(0, rows.size())
                  .filter(i -> !table.isDeleted(i))
                  .forEach(i -> {
                      // Match against the reader-visible version: a snapshot
                      // reader must not target rows through another writer's
                      // newer values (shadow model, prompt4.md #4).
-                     if (evaluateConditions(table.getVisibleRowForReader(i, rows.get(i)), conditions, columnTypes)) {
+                     if (evaluateConditions(table.getVisibleRowForReader(i, rows.get(i)), conditions, columnTypes, collations)) {
                          rowsToUpdate.add(i);
                      }
                  });
      }
 
      private void fullTableScanAll(List<Map<String, Object>> rows,
-                                       Table table, List<Integer> rowsToUpdate) {
+                                   Table table, List<Integer> rowsToUpdate) {
          IntStream.range(0, rows.size())
                  .filter(i -> !table.isDeleted(i))
                  .forEach(rowsToUpdate::add);
@@ -454,7 +456,8 @@ class UpdateQuery implements Query<Void> {
 
     private static final ConditionEvaluator EVAL = new ConditionEvaluator();
 
-    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        return EVAL.evaluateConditions(row, conditions, columnTypes);
+    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions,
+                                       Map<String, Class<?>> columnTypes, Map<String, String> collations) {
+        return EVAL.evaluateConditions(row, conditions, columnTypes, collations);
     }
 }

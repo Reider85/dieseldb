@@ -25,20 +25,31 @@ class ConditionEvaluator {
      * Evaluates a list of conditions using SQL three-valued logic with short-circuit evaluation.
      */
     ThreeValuedLogic evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
+        return evaluateConditions3vl(row, conditions, columnTypes, java.util.Collections.emptyMap());
+    }
+
+    /**
+     * Evaluates a list of conditions with per-column collations (prompt4 #49).
+     * A column mapped to {@code CASE_INSENSITIVE} compares strings with
+     * {@link String#equalsIgnoreCase}; columns absent from {@code collations}
+     * keep the default case-sensitive comparison.
+     */
+    ThreeValuedLogic evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions,
+                                           Map<String, Class<?>> columnTypes, Map<String, String> collations) {
         if (conditions.isEmpty()) {
             return TRUE;
         }
-        ThreeValuedLogic result = evaluateCondition3vl(row, conditions.get(0), columnTypes);
+        ThreeValuedLogic result = evaluateCondition3vl(row, conditions.get(0), columnTypes, collations);
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
             if (Objects.equals(conjunction, SqlKeywords.OR)) {
                 if (!result.orIsDetermined()) {
-                    result = result.or(evaluateCondition3vl(row, condition, columnTypes));
+                    result = result.or(evaluateCondition3vl(row, condition, columnTypes, collations));
                 }
             } else if ((conjunction == null || conjunction.equalsIgnoreCase(SqlKeywords.AND))
                     && !result.andIsDetermined()) {
-                result = result.and(evaluateCondition3vl(row, condition, columnTypes));
+                result = result.and(evaluateCondition3vl(row, condition, columnTypes, collations));
             }
         }
         return result;
@@ -48,15 +59,28 @@ class ConditionEvaluator {
      * Convenience wrapper that returns a boolean result.
      */
     boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        return evaluateConditions3vl(row, conditions, columnTypes).isTrue();
+        return evaluateConditions(row, conditions, columnTypes, java.util.Collections.emptyMap());
+    }
+
+    /**
+     * Convenience wrapper with collations (prompt4 #49).
+     */
+    boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions,
+                               Map<String, Class<?>> columnTypes, Map<String, String> collations) {
+        return evaluateConditions3vl(row, conditions, columnTypes, collations).isTrue();
     }
 
     /**
      * Evaluates a single condition against a row using SQL three-valued logic.
      */
     ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
+        return evaluateCondition3vl(row, condition, columnTypes, java.util.Collections.emptyMap());
+    }
+
+    private ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
+                                                  Map<String, Class<?>> columnTypes, Map<String, String> collations) {
         if (condition.isGrouped()) {
-            return evaluateGroupedCondition(row, condition, columnTypes);
+            return evaluateGroupedCondition(row, condition, columnTypes, collations);
         }
 
         if (condition.isNullOperator()) {
@@ -70,7 +94,7 @@ class ConditionEvaluator {
         }
 
         if (condition.isInOperator()) {
-            return evaluateInCondition(rowValue, condition, columnTypes);
+            return evaluateInCondition(rowValue, condition, columnTypes, collations);
         }
 
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass());
@@ -81,7 +105,7 @@ class ConditionEvaluator {
         LOGGER.log(Level.FINE, "Condition values: rowValue={0}, conditionValue={1}, column={2}, operator={3}",
                 new Object[]{rowValue, conditionValue, condition.column, condition.operator});
 
-        boolean result = evaluateOperatorCondition(rowValue, conditionValue, condition);
+        boolean result = evaluateOperatorCondition(rowValue, conditionValue, condition, collations);
 
         result = condition.not ? !result : result;
         LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue: {1}, conditionValue: {2}, result: {3}",
@@ -89,8 +113,9 @@ class ConditionEvaluator {
         return result ? TRUE : FALSE;
     }
 
-    private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
-        ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, columnTypes);
+    private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, QueryParser.Condition condition,
+                                                      Map<String, Class<?>> columnTypes, Map<String, String> collations) {
+        ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, columnTypes, collations);
         return condition.not ? subResult.not() : subResult;
     }
 
@@ -104,11 +129,13 @@ class ConditionEvaluator {
         return finalResult ? TRUE : FALSE;
     }
 
-    private ThreeValuedLogic evaluateInCondition(Object rowValue, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
+    private ThreeValuedLogic evaluateInCondition(Object rowValue, QueryParser.Condition condition,
+                                                 Map<String, Class<?>> columnTypes, Map<String, String> collations) {
+        boolean caseInsensitive = isCaseInsensitive(condition.column, collations);
         boolean inResult = false;
         for (Object value : condition.inValues) {
             Object convertedValue = convertConditionValue(value, condition.column, rowValue.getClass());
-            if (valuesEqual(rowValue, convertedValue)) {
+            if (valuesEqual(rowValue, convertedValue, caseInsensitive)) {
                 inResult = true;
                 break;
             }
@@ -119,12 +146,13 @@ class ConditionEvaluator {
         return result ? TRUE : FALSE;
     }
 
-    private boolean evaluateOperatorCondition(Object rowValue, Object conditionValue, QueryParser.Condition condition) {
+    private boolean evaluateOperatorCondition(Object rowValue, Object conditionValue, QueryParser.Condition condition,
+                                              Map<String, String> collations) {
         if (condition.operator == QueryParser.Operator.LIKE || condition.operator == QueryParser.Operator.NOT_LIKE) {
             return evaluateLikeCondition(rowValue, conditionValue, condition);
         }
         if (condition.operator == QueryParser.Operator.EQUALS || condition.operator == QueryParser.Operator.NOT_EQUALS) {
-            return evaluateEqualityCondition(rowValue, conditionValue, condition);
+            return evaluateEqualityCondition(rowValue, conditionValue, condition, collations);
         }
         return evaluateComparisonCondition(rowValue, conditionValue, condition);
     }
@@ -142,8 +170,9 @@ class ConditionEvaluator {
         }
     }
 
-    private boolean evaluateEqualityCondition(Object rowValue, Object conditionValue, QueryParser.Condition condition) {
-        boolean isEqual = valuesEqual(rowValue, conditionValue);
+    private boolean evaluateEqualityCondition(Object rowValue, Object conditionValue, QueryParser.Condition condition,
+                                              Map<String, String> collations) {
+        boolean isEqual = valuesEqual(rowValue, conditionValue, isCaseInsensitive(condition.column, collations));
         return condition.operator == QueryParser.Operator.EQUALS ? isEqual : !isEqual;
     }
 
@@ -165,15 +194,45 @@ class ConditionEvaluator {
      * Checks equality with epsilon comparison for floating-point types.
      */
     boolean valuesEqual(Object rowValue, Object conditionValue) {
-            if (rowValue instanceof Float rf && conditionValue instanceof Float cf) {
-                return Math.abs(rf - cf) < 1e-7;
-            } else if (rowValue instanceof Double rd && conditionValue instanceof Double cd) {
-                return Math.abs(rd - cd) < 1e-7;
-            } else if (rowValue instanceof BigDecimal rbd && conditionValue instanceof BigDecimal cbd) {
-                return rbd.compareTo(cbd) == 0;
+        return valuesEqual(rowValue, conditionValue, false);
+    }
+
+    /**
+     * Checks equality honoring a CASE_INSENSITIVE collation (prompt4 #49):
+     * when {@code caseInsensitive} is true and both operands are Strings the
+     * comparison uses {@link String#equalsIgnoreCase}; every other type keeps
+     * the exact-equality semantics of the two-argument overload.
+     */
+    boolean valuesEqual(Object rowValue, Object conditionValue, boolean caseInsensitive) {
+        if (rowValue instanceof Float rf && conditionValue instanceof Float cf) {
+            return Math.abs(rf - cf) < 1e-7;
+        } else if (rowValue instanceof Double rd && conditionValue instanceof Double cd) {
+            return Math.abs(rd - cd) < 1e-7;
+        } else if (rowValue instanceof BigDecimal rbd && conditionValue instanceof BigDecimal cbd) {
+            return rbd.compareTo(cbd) == 0;
+        } else if (caseInsensitive && rowValue instanceof String rs && conditionValue instanceof String cs) {
+            return rs.equalsIgnoreCase(cs);
         } else {
             return String.valueOf(rowValue).equals(String.valueOf(conditionValue));
         }
+    }
+
+    /**
+     * Whether the column carries the CASE_INSENSITIVE collation (prompt4 #49).
+     * A qualified {@code TABLE.COLUMN} key is stripped before the lookup so
+     * both bare and qualified condition columns resolve against the map.
+     */
+    private static boolean isCaseInsensitive(String column, Map<String, String> collations) {
+        if (collations == null || collations.isEmpty() || column == null) {
+            return false;
+        }
+        String bare = column;
+        int dot = column.indexOf('.');
+        if (dot >= 0 && dot + 1 < column.length()) {
+            bare = column.substring(dot + 1);
+        }
+        return "CASE_INSENSITIVE".equals(collations.get(bare))
+                || "CASE_INSENSITIVE".equals(collations.get(column));
     }
 
     /**

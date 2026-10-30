@@ -136,13 +136,16 @@ public class SubqueryParser {
         if (query == null || query.isEmpty()) {
             return "";
         }
-        String normalized = query.trim()
+        // Prompt 4 #49 (R3-013c): rewrites apply only outside single-quoted
+        // string literals so ON-clause literals keep their case and contents
+        // (parity with QueryParser.normalizeQueryString).
+        String normalized = SqlParsingUtils.mapOutsideSingleQuotes(query.trim(), seg -> seg
                 .replaceAll(SubqueryConstants.WHITESPACE_PATTERN, SubqueryConstants.SINGLE_SPACE)
                 .replaceAll("([=><!])", " $1 ")
                 .replaceAll("(?i)\\s*\\(\\s*SELECT\\b", " (SELECT")
                 .replaceAll("(?i)(\\))\\s*(LIMIT|WHERE|ORDER\\s+BY|GROUP\\s+BY|HAVING|AS|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN)", "$1 $2")
                 .replaceAll("\\s*;", "")
-                .replaceAll(SubqueryConstants.WHITESPACE_PATTERN, SubqueryConstants.SINGLE_SPACE);
+                .replaceAll(SubqueryConstants.WHITESPACE_PATTERN, SubqueryConstants.SINGLE_SPACE));
         LOGGER.log(Level.FINEST, "Normalized query: {0}", normalized);
         return normalized;
     }

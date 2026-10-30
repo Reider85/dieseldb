@@ -2881,6 +2881,15 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                                                            List<QueryParser.Condition> conditions,
                                                            Map<String, Class<?>> combinedColumnTypes) {
         try {
+            // Prompt 4 #49: the binary pushdown predicate is case-sensitive
+            // (it never sees the collation map), so a table that declares any
+            // COLLATE CASE_INSENSITIVE column bypasses it when a WHERE filter
+            // is present - the in-memory scan applies the collation-aware
+            // condition evaluation instead.
+            if (conditions != null && !conditions.isEmpty()
+                    && !table.getColumnCollations().isEmpty()) {
+                return table.getLiveRows();
+            }
             // Prompt: when rows have been lazily deleted in memory, the on-disk
             // Avro file still contains those tombstoned rows and the pushdown
             // reader is not aware of them. Bypass pushdown and use the in-memory
@@ -3524,6 +3533,16 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
     }
 
     private boolean valuesEqual(Object left, Object right) {
+        return valuesEqual(left, right, false);
+    }
+
+    /**
+     * Equality check honoring a CASE_INSENSITIVE collation (prompt4 #49): when
+     * {@code caseInsensitive} is true and both operands are Strings the
+     * comparison uses {@link String#equalsIgnoreCase}; every other type keeps
+     * the exact-equality semantics of the two-argument overload.
+     */
+    private boolean valuesEqual(Object left, Object right, boolean caseInsensitive) {
         if (left == null || right == null) {
             return false;
         }
@@ -3533,10 +3552,25 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             return Math.abs(ld - rd) < 1e-7;
         } else if (left instanceof BigDecimal lbd && right instanceof BigDecimal rbd) {
             return lbd.compareTo(rbd) == 0;
+        } else if (caseInsensitive && left instanceof String ls && right instanceof String rs) {
+            return ls.equalsIgnoreCase(rs);
         } else if (left.getClass() == right.getClass()) {
             return left.equals(right);
         }
         return String.valueOf(left).equals(String.valueOf(right));
+    }
+
+    /**
+     * Whether the (already table-normalized, {@code TABLE.COLUMN}) column
+     * carries the CASE_INSENSITIVE collation (prompt4 #49).
+     */
+    private static boolean isCaseInsensitiveColumn(String normalizedColumn, Map<String, Table> tables) {
+        int dot = normalizedColumn.indexOf('.');
+        if (dot < 0 || dot + 1 >= normalizedColumn.length()) {
+            return false;
+        }
+        Table t = tables.get(normalizedColumn.substring(0, dot));
+        return t != null && t.isCaseInsensitiveColumn(normalizedColumn.substring(dot + 1));
     }
 
     private Map<String, Object> flattenJoinedRow(Map<String, Map<String, Object>> joinedRow) {
@@ -3692,8 +3726,17 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             throw new IllegalStateException("IN condition has no values or subquery results");
         }
 
-        boolean inResult = condition.inValueSet != null && condition.inValueSet.contains(value)
-                || inValues.stream().anyMatch(v -> valuesEqual(v, value));
+        // Prompt 4 #49: a CASE_INSENSITIVE column bypasses the exact-match
+        // inValueSet fast path (its keys are case-sensitive) and compares
+        // every candidate with the collation-aware valuesEqual.
+        boolean caseInsensitive = isCaseInsensitiveColumn(column, tables);
+        boolean inResult;
+        if (caseInsensitive) {
+            inResult = inValues.stream().anyMatch(v -> valuesEqual(v, value, true));
+        } else {
+            inResult = condition.inValueSet != null && condition.inValueSet.contains(value)
+                    || inValues.stream().anyMatch(v -> valuesEqual(v, value));
+        }
         boolean result = condition.not ? !inResult : inResult;
         return result ? TRUE : FALSE;
     }
@@ -3732,7 +3775,9 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         String rightColumn = normalizeColumnName(condition.rightColumn, mainTableName);
         Object leftValue = resolveRowValue(row, leftColumn);
         Object rightValue = resolveRowValue(row, rightColumn);
-        return compareConditionOperand(leftValue, rightValue, condition);
+        // Prompt 4 #49: column-to-column comparisons use the natural (case-
+        // sensitive) order - collation applies to literal equality only.
+        return compareConditionOperand(leftValue, rightValue, condition, false);
     }
 
     private ThreeValuedLogic evaluateScalarCondition(Map<String, Object> row, QueryParser.Condition condition,
@@ -3746,23 +3791,35 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             String resolvedKey = substituteOuterReferences(subQueryString, row);
             Object subQueryValue = scalarSubQueryCache.computeIfAbsent(resolvedKey,
                     key -> evaluateGroupBySubQuery(key, Collections.emptyMap(), database));
-            return compareConditionOperand(rowValue, subQueryValue, condition);
+            return compareConditionOperand(rowValue, subQueryValue, condition, isCaseInsensitiveColumn(column, tables));
         }
         Object conditionValue = condition.value;
-        return compareConditionOperand(rowValue, conditionValue, condition);
+        return compareConditionOperand(rowValue, conditionValue, condition, isCaseInsensitiveColumn(column, tables));
     }
 
     private ThreeValuedLogic compareConditionOperand(Object leftValue, Object rightValue, QueryParser.Condition condition) {
+        return compareConditionOperand(leftValue, rightValue, condition, false);
+    }
+
+    /**
+     * Compares two operands honoring a CASE_INSENSITIVE collation on the
+     * left column (prompt4 #49): {@code =}/{@code !=} compare strings with
+     * {@link String#equalsIgnoreCase}; ordering ({@code <}, {@code >},
+     * {@code <=}, {@code >=}) and LIKE keep the case-sensitive semantics
+     * (documented in KNOWN_LIMITATIONS 20).
+     */
+    private ThreeValuedLogic compareConditionOperand(Object leftValue, Object rightValue,
+                                                     QueryParser.Condition condition, boolean caseInsensitive) {
         if (leftValue == null || rightValue == null) {
             return UNKNOWN;
         }
         boolean comparisonResult;
         switch (condition.operator) {
             case EQUALS:
-                comparisonResult = valuesEqual(leftValue, rightValue);
+                comparisonResult = valuesEqual(leftValue, rightValue, caseInsensitive);
                 break;
             case NOT_EQUALS:
-                comparisonResult = !valuesEqual(leftValue, rightValue);
+                comparisonResult = !valuesEqual(leftValue, rightValue, caseInsensitive);
                 break;
             case LESS_THAN:
                 comparisonResult = compareValues(leftValue, rightValue) < 0;
