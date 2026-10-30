@@ -1,1 +1,1 @@
-3.3.80 Fix R3-013d explicit indexDefinitions serialization in Table.java
+3.3.81 Prompt4 #51: CRC32C implementation (hardware-accelerated)
