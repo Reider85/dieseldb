@@ -5,6 +5,8 @@ import org.apache.avro.generic.GenericRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import diesel.storage.avro.AvroSchemaIndex;
+
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -157,12 +159,16 @@ public final class AvroQueryExecutor {
         List<String> projectionList = new ArrayList<>(requiredColumns);
         List<Map<String, Object>> result = new ArrayList<>();
         Map<String, Class<?>> resolvedTypes = buildColumnTypeLookup(columnTypes);
+        AvroSchemaIndex schemaIndex = null;  // lazy: only build if we have records
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile, projectionList)) {
             while (reader.hasNext()) {
                 GenericRecord avroRecord = reader.nextRecord();
                 if (predicate.test(avroRecord)) {
-                    result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes));
+                    if (schemaIndex == null) {
+                        schemaIndex = AvroSchemaIndex.forSchema(avroRecord.getSchema());
+                    }
+                    result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes, schemaIndex));
                     if (limit != null && result.size() >= limit) {
                         break;
                     }
@@ -182,11 +188,15 @@ public final class AvroQueryExecutor {
         List<String> projectionList = new ArrayList<>(requiredColumns);
         List<Map<String, Object>> result = new ArrayList<>();
         Map<String, Class<?>> resolvedTypes = buildColumnTypeLookup(columnTypes);
+        AvroSchemaIndex schemaIndex = null;  // lazy: only build if we have records
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile, projectionList)) {
             while (reader.hasNext()) {
                 GenericRecord avroRecord = reader.nextRecord();
-                result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes));
+                if (schemaIndex == null) {
+                    schemaIndex = AvroSchemaIndex.forSchema(avroRecord.getSchema());
+                }
+                result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes, schemaIndex));
                 if (limit != null && result.size() >= limit) {
                     break;
                 }
@@ -203,10 +213,15 @@ public final class AvroQueryExecutor {
                                                  Integer limit) throws IOException {
         List<Map<String, Object>> result = new ArrayList<>();
         Map<String, Class<?>> resolvedTypes = buildColumnTypeLookup(columnTypes);
+        AvroSchemaIndex schemaIndex = null;  // lazy: only build if we have records
+
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile)) {
             while (reader.hasNext()) {
                 GenericRecord avroRecord = reader.nextRecord();
-                result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes));
+                if (schemaIndex == null) {
+                    schemaIndex = AvroSchemaIndex.forSchema(avroRecord.getSchema());
+                }
+                result.add(convertRecordToMap(avroRecord, allColumns, resolvedTypes, schemaIndex));
                 if (limit != null && result.size() >= limit) {
                     break;
                 }
@@ -224,39 +239,38 @@ public final class AvroQueryExecutor {
 
     // ─── Record value extraction ────────────────────────────────────
 
-    private static Map<String, Object> convertRecordToMap(GenericRecord avroRecord,
-                                                           List<String> allColumns,
-                                                           Map<String, Class<?>> columnTypes) {
+private static Map<String, Object> convertRecordToMap(GenericRecord avroRecord,
+                                                            List<String> allColumns,
+                                                            Map<String, Class<?>> columnTypes,
+                                                            AvroSchemaIndex schemaIndex) {
         // Only include columns present in the record's schema (projected subset).
         // Non-projected fields are skipped entirely to keep the map lean.
-        Schema recordSchema = avroRecord.getSchema();
-        Map<String, Object> map = new LinkedHashMap<>(Math.max(recordSchema.getFields().size() * 2, 4));
+        Map<String, Object> map = new LinkedHashMap<>(Math.max(schemaIndex.getPosition("dummy") != null ? schemaIndex.getPosition("dummy") + 1 : 4, 4));
         for (String col : allColumns) {
-            if (recordSchema.getField(col) != null) {
-                Object val = avroRecord.get(col);
+            Integer pos = schemaIndex.getPosition(col);
+            if (pos != null) {
+                Object val = avroRecord.get(pos);
+                Schema.Field field = schemaIndex.getField(col);
                 if (val instanceof org.apache.avro.util.Utf8 utf8) {
                     map.put(col, utf8.toString());
                 } else if (val instanceof ByteBuffer bb) {
                     Class<?> targetType = columnTypes.get(col);
-                    if (targetType == BigDecimal.class) {
+                    if (targetType == BigDecimal.class && field != null) {
                         int scale = 18; // default
-                        Schema.Field field = recordSchema.getField(col);
-                        if (field != null) {
-                            org.apache.avro.LogicalType lt = field.schema().getLogicalType();
-                            if (lt != null) {
-                                org.apache.avro.Schema base = field.schema();
-                                if (base.getType() == Schema.Type.UNION) {
-                                    for (Schema branch : base.getTypes()) {
-                                        if (branch.getType() == Schema.Type.BYTES
-                                                && branch.getLogicalType() != null) {
-                                            base = branch;
-                                            break;
-                                        }
+                        org.apache.avro.LogicalType lt = field.schema().getLogicalType();
+                        if (lt != null) {
+                            org.apache.avro.Schema base = field.schema();
+                            if (base.getType() == Schema.Type.UNION) {
+                                for (Schema branch : base.getTypes()) {
+                                    if (branch.getType() == Schema.Type.BYTES
+                                            && branch.getLogicalType() != null) {
+                                        base = branch;
+                                        break;
                                     }
                                 }
-                                if (base.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
-                                    scale = d.getScale();
-                                }
+                            }
+                            if (base.getLogicalType() instanceof org.apache.avro.LogicalTypes.Decimal d) {
+                                scale = d.getScale();
                             }
                         }
                         map.put(col, new BigDecimal(new BigInteger(bb.array()), scale).stripTrailingZeros());

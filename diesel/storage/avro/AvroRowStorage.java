@@ -569,11 +569,12 @@ static Object[] fromRecord(GenericRecord avroRecord, List<String> columns,
 
     static Object[] fromRecord(GenericRecord avroRecord, List<String> columns, Class<?>[] targetTypes) {
         Object[] row = new Object[columns.size()];
-        Schema schema = avroRecord.getSchema();
+        AvroSchemaIndex schemaIndex = AvroSchemaIndex.forSchema(avroRecord.getSchema());
         for (int i = 0; i < columns.size(); i++) {
             String col = columns.get(i);
-            Object avroValue = avroRecord.get(col);
-            Schema.Field field = schema.getField(col);
+            Integer pos = schemaIndex.getPosition(col);
+            Object avroValue = (pos != null) ? avroRecord.get(pos) : null;
+            Schema.Field field = schemaIndex.getField(col);
             row[i] = fromAvroValue(avroValue, targetTypes[i], field != null ? field.schema() : null);
         }
         return row;
