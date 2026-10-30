@@ -24,6 +24,15 @@ public class AvroSecondaryIndexManager implements Serializable {
     private transient List<String> columns;
     private transient Map<String, Class<?>> columnTypes;
     
+    /**
+     * Case-insensitive column-name to position map (o2 Avro-15). Built once per
+     * manager instance (constructor + sidecar {@code readObject}); positions index
+     * into {@code columns} and stay valid because {@code columns} is never mutated
+     * after construction. Survives {@code .asi} reload as a transient rebuild —
+     * never serialized.
+     */
+    private transient Map<String, Integer> columnIndex;
+    
     // Map: indexName -> AvroSecondaryIndex
     private transient Map<String, AvroSecondaryIndex> indexes;
     
@@ -32,6 +41,7 @@ public class AvroSecondaryIndexManager implements Serializable {
     
     public AvroSecondaryIndexManager(String tableName, List<String> columns, Map<?, ?> columnTypes) {
         this.columns = new ArrayList<>(columns);
+        rebuildColumnIndex();
         this.columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         if (columnTypes != null) {
             for (Map.Entry<?, ?> entry : columnTypes.entrySet()) {
@@ -141,8 +151,13 @@ public class AvroSecondaryIndexManager implements Serializable {
         if (expectedColumns == null || expectedTypes == null || columns.size() != expectedColumns.size()) {
             return false;
         }
+        // o2 Avro-15: positional case-insensitive check via the pre-built index
+        // instead of columns.get(i).equalsIgnoreCase — O(log columns) per entry.
+        // CI-duplicate column names collapse to the last position in columnIndex
+        // and fail this check conservatively (sidecar rejected -> rebuild fallback).
         for (int i = 0; i < columns.size(); i++) {
-            if (!columns.get(i).equalsIgnoreCase(expectedColumns.get(i))) {
+            Integer pos = columnIndex.get(expectedColumns.get(i));
+            if (pos == null || pos != i) {
                 return false;
             }
         }
@@ -163,13 +178,31 @@ public class AvroSecondaryIndexManager implements Serializable {
         return true;
     }
 
-    private int findColumnIndex(String columnName) {
-        for (int i = 0; i < columns.size(); i++) {
-            if (columns.get(i).equalsIgnoreCase(columnName)) {
-                return i;
+    /**
+     * Rebuilds the case-insensitive {@link #columnIndex} from {@link #columns}.
+     * Null column names are skipped (TreeMap CI compare rejects them; the previous
+     * linear scan tolerated them by returning -1 for a null query).
+     */
+    private void rebuildColumnIndex() {
+        Map<String, Integer> map = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (columns != null) {
+            for (int i = 0; i < columns.size(); i++) {
+                String column = columns.get(i);
+                if (column != null) {
+                    map.put(column, i);
+                }
             }
         }
-        return -1;
+        this.columnIndex = map;
+    }
+
+    /** o2 Avro-15: O(log columns) map lookup instead of an O(columns) linear scan. */
+    private int findColumnIndex(String columnName) {
+        if (columnName == null || columnIndex == null) {
+            return -1;
+        }
+        Integer pos = columnIndex.get(columnName);
+        return pos != null ? pos : -1;
     }
 
     private Class<?> getExpectedType(Map<String, Class<?>> expectedTypes, String columnName) {
@@ -189,8 +222,10 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Synchronize index on insert operation
      */
     public synchronized void syncOnInsert(Map<String, Object> row, int rowIndex) {
+        // o2 Avro-14: one lazy case-insensitive view per call, amortized over all indexes
+        RowCiView view = new RowCiView(row);
         for (AvroSecondaryIndex index : indexes.values()) {
-            Object key = buildKeyForIndex(row, index);
+            Object key = buildKeyForIndex(view, index);
             if (key != null) {
                 index.insert(key, rowIndex);
             }
@@ -201,9 +236,13 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Synchronize index on update operation
      */
     public synchronized void syncOnUpdate(Map<String, Object> oldRow, Map<String, Object> newRow, int rowIndex) {
+        // o2 Avro-14: one lazy view per row (old/new separately; sharing a built
+        // CI map between them would leak values — each view caches its own row's keys)
+        RowCiView oldView = new RowCiView(oldRow);
+        RowCiView newView = new RowCiView(newRow);
         for (AvroSecondaryIndex index : indexes.values()) {
-            Object oldKey = buildKeyForIndex(oldRow, index);
-            Object newKey = buildKeyForIndex(newRow, index);
+            Object oldKey = buildKeyForIndex(oldView, index);
+            Object newKey = buildKeyForIndex(newView, index);
             
             if (oldKey != null && !Objects.equals(oldKey, newKey)) {
                 // Key changed, remove old entry
@@ -221,8 +260,9 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Synchronize index on delete operation
      */
     public synchronized void syncOnDelete(Map<String, Object> row, int rowIndex) {
+        RowCiView view = new RowCiView(row);
         for (AvroSecondaryIndex index : indexes.values()) {
-            Object key = buildKeyForIndex(row, index);
+            Object key = buildKeyForIndex(view, index);
             if (key != null) {
                 index.remove(key, rowIndex);
             }
@@ -230,7 +270,12 @@ public class AvroSecondaryIndexManager implements Serializable {
     }
     
     /**
-     * Rebuild all indexes from current data
+     * Rebuild all indexes from current data.
+     *
+     * <p>o2 Avro-13: every row is wrapped in one {@link RowCiView} shared by all
+     * indexes of that row — exact-match lookups stay O(1) hashmap hits and the
+     * first case-insensitive miss builds a single per-row TreeMap, replacing the
+     * former O(row_size) entrySet scan per (row, index, column).</p>
      */
     public synchronized void rebuildAllIndexes(List<Map<String, Object>> allRows) {
         for (AvroSecondaryIndex index : indexes.values()) {
@@ -238,9 +283,38 @@ public class AvroSecondaryIndexManager implements Serializable {
         }
 
         for (int rowIndex = 0; rowIndex < allRows.size(); rowIndex++) {
-            Map<String, Object> row = allRows.get(rowIndex);
+            RowCiView view = new RowCiView(allRows.get(rowIndex));
             for (AvroSecondaryIndex index : indexes.values()) {
-                Object key = buildKeyForIndex(row, index);
+                Object key = buildKeyForIndex(view, index);
+                if (key != null) {
+                    index.insert(key, rowIndex);
+                }
+            }
+        }
+    }
+
+    /**
+     * Array-backed rebuild (o2 Avro-19, enables Avro-13's delegate path): values
+     * are read positionally from the {@code Object[]} rows, so a bulk load pays
+     * zero {@code Map} key scanning — per (row, index, covered column) the cost is
+     * one O(log columns) position lookup against the schema-level
+     * {@link #columnIndex}.
+     *
+     * <p><b>Position invariant:</b> the element layout of {@code allRows} must
+     * match this manager's {@code columns} order. {@link AvroRowStorage} guarantees
+     * it — the same {@code columns} list is passed into this manager's constructor
+     * and drives {@code colNames}/{@code fromMap}; sidecar-reloaded managers are
+     * position-checked by {@link #isCompatible} before their indexes are trusted.</p>
+     */
+    public synchronized void rebuildAllIndexesFromArrays(List<Object[]> allRows) {
+        for (AvroSecondaryIndex index : indexes.values()) {
+            index.clear();
+        }
+
+        for (int rowIndex = 0; rowIndex < allRows.size(); rowIndex++) {
+            Object[] row = allRows.get(rowIndex);
+            for (AvroSecondaryIndex index : indexes.values()) {
+                Object key = buildKeyForIndexFromArray(row, index);
                 if (key != null) {
                     index.insert(key, rowIndex);
                 }
@@ -338,38 +412,85 @@ public class AvroSecondaryIndexManager implements Serializable {
     }
     
     /**
-     * Build a key for a specific index from a row
+     * Per-row case-insensitive value view (o2 Avro-13/Avro-14). Exact-match
+     * lookups stay O(1) hashmap hits — the CI TreeMap is built lazily on the FIRST
+     * case-insensitive miss and then amortized over every index/column lookup of
+     * that row, replacing the former O(row_size) {@code entrySet} scan per lookup.
      */
-    private Object buildKeyForIndex(Map<String, Object> row, AvroSecondaryIndex index) {
+    private static final class RowCiView {
+        private final Map<String, Object> row;
+        private Map<String, Object> ciRow;
+
+        RowCiView(Map<String, Object> row) {
+            this.row = row;
+        }
+
+        Object get(String columnName) {
+            if (row == null || columnName == null) {
+                return null;
+            }
+            if (row.containsKey(columnName)) {
+                return row.get(columnName);
+            }
+            if (ciRow == null) {
+                TreeMap<String, Object> ci = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                for (Map.Entry<String, Object> entry : row.entrySet()) {
+                    // TreeMap(CI) rejects null keys; the old equalsIgnoreCase scan skipped them
+                    if (entry.getKey() != null) {
+                        ci.put(entry.getKey(), entry.getValue());
+                    }
+                }
+                ciRow = ci;
+            }
+            return ciRow.get(columnName);
+        }
+    }
+
+    /**
+     * Build a key for a specific index from a row view.
+     */
+    private Object buildKeyForIndex(RowCiView row, AvroSecondaryIndex index) {
         List<String> columns = index.getCoversColumns();
         if (columns.size() > 1) {
             // Composite index
             Object[] components = new Object[columns.size()];
             
             for (int i = 0; i < columns.size(); i++) {
-                components[i] = getRowValue(row, columns.get(i));
+                components[i] = row.get(columns.get(i));
             }
             
             return new AvroSecondaryIndex.CompositeKey(components);
         } else {
             // Single column index
-            return getRowValue(row, columns.get(0));
+            return row.get(columns.get(0));
         }
     }
 
-    private Object getRowValue(Map<String, Object> row, String columnName) {
+    /**
+     * Array-backed key build (o2 Avro-19): positional access through the
+     * schema-level {@link #columnIndex}, no map key scanning at all.
+     */
+    private Object buildKeyForIndexFromArray(Object[] row, AvroSecondaryIndex index) {
+        List<String> covered = index.getCoversColumns();
+        if (covered.size() > 1) {
+            Object[] components = new Object[covered.size()];
+            for (int i = 0; i < covered.size(); i++) {
+                components[i] = getArrayValue(row, covered.get(i));
+            }
+            return new AvroSecondaryIndex.CompositeKey(components);
+        }
+        return getArrayValue(row, covered.get(0));
+    }
+
+    private Object getArrayValue(Object[] row, String columnName) {
         if (row == null || columnName == null) {
             return null;
         }
-        if (row.containsKey(columnName)) {
-            return row.get(columnName);
+        Integer pos = columnIndex.get(columnName);
+        if (pos == null || pos >= row.length) {
+            return null;
         }
-        for (Map.Entry<String, Object> entry : row.entrySet()) {
-            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(columnName)) {
-                return entry.getValue();
-            }
-        }
-        return null;
+        return row[pos];
     }
     
     /**
@@ -411,6 +532,7 @@ public class AvroSecondaryIndexManager implements Serializable {
         this.columns = readColumns;
         this.columnTypes = normalized;
         this.indexes = readIndexes;
+        rebuildColumnIndex(); // o2 Avro-15: transient index rebuilt on sidecar load
     }
     
     /**

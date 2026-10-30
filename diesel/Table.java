@@ -293,11 +293,19 @@ class Table implements Serializable {
      */
     private transient volatile boolean persistSaving;
 
-    /** True when clustered index was restored from serialized data. */
-    private transient boolean restoredClustered;
+    
 
     /** Tracks positions of tombstoned (logically deleted) rows. Physical removal happens only during {@link #compact()}. */
     private transient BitSet deletedRows;
+
+    /** Number of indexes restored from serialized data during load. */
+    private transient int indexesRestoredOnLoad;
+
+    /** Number of indexes rebuilt from rows during load. */
+    private transient int indexesRebuiltOnLoad;
+
+    /** True when clustered index was restored from serialized data during load. */
+    private transient boolean clusteredRestoredOnLoad;
 
     /**
      * MVCC metadata per row: maps row index to version information.
@@ -709,6 +717,34 @@ class Table implements Serializable {
      */
     public Map<String, Sequence> getSequences() {
         return sequences;
+    }
+    
+    /**
+     * Returns the set of deleted row indexes for this table.
+     *
+     * @return the deleted rows bitset
+     */
+    public BitSet getDeletedRows() {
+        return deletedRows;
+    }
+    
+    /**
+     * Returns the cover column definitions for indexes in this table.
+     *
+     * @return the cover column definitions map
+     */
+    public Map<String, List<String>> getCoverColumnDefinitions() {
+        return coverColumnDefinitions;
+    }
+    
+    /**
+     * Returns the exact number of rows in the table.
+     * This method traverses all rows to count them, unlike the statistics-based estimate.
+     *
+     * @return the exact row count
+     */
+    public int getRowCount() {
+        return rows.size();
     }
 
     /**
@@ -2970,25 +3006,45 @@ class Table implements Serializable {
         } catch (Exception e) {
             this.deletedRows = new BitSet();
         }
+        
+        // Reset load counters
+        this.indexesRestoredOnLoad = 0;
+        this.indexesRebuiltOnLoad = 0;
+        this.clusteredRestoredOnLoad = false;
+        
         // Format v3+ stores serialized indexes with checksums.
-        boolean restoredClustered = false;
         if (formatVersion >= 3) {
             try {
                 // Restore secondary indexes from serialized data.
                 int indexCount = ois.readInt();
                 IntStream.range(0, indexCount).forEach(i -> {
-                    restoreSecondaryIndex(ois, name);
+                    if (restoreSecondaryIndex(ois, name)) {
+                        indexesRestoredOnLoad++;
+                    }
                 });
                 // Restore clustered index from serialized data.
-                restoreClusteredIndex(ois, name);
+                if (restoreClusteredIndex(ois, name)) {
+                    indexesRestoredOnLoad++;
+                    clusteredRestoredOnLoad = true;
+                }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING,
                         "Failed to read serialized index block in table {0}, will rebuild from rows: {1}",
                         new Object[]{name, e.getMessage()});
             }
+        } else if (indexDefinitions != null && !indexDefinitions.isEmpty()) {
+            // Legacy format: warn about rebuilding indexes from rows
+            int indexCount = indexDefinitions.size();
+            if (hasClusteredIndex) {
+                indexCount++;
+            }
+            LOGGER.log(Level.WARNING,
+                    "Table {0} loaded from legacy format v{1} (no serialized index block): rebuilding {2} index(es) from rows",
+                    new Object[]{name, formatVersion, indexCount});
         }
+        
         // Fallback: rebuild clustered index from rows if not restored from serialized data.
-        if (!restoredClustered && hasClusteredIndex) {
+        if (!clusteredRestoredOnLoad && hasClusteredIndex) {
             this.clusteredIndex = new BTreeClusteredIndex(columnTypes.get(clusteredIndexColumn));
             List<Object> keys = new ArrayList<>(rows.size());
             List<Integer> indices = new ArrayList<>(rows.size());
@@ -3000,6 +3056,7 @@ class Table implements Serializable {
                 }
             }
             clusteredIndex.bulkLoad(keys, indices);
+            indexesRebuiltOnLoad++;
             LOGGER.log(Level.FINE,
                     "Rebuilt clustered index from rows for table {0}", name);
         }
@@ -3925,6 +3982,7 @@ class Table implements Serializable {
                 Map.Entry<String, Index> result = future.get();
                 if (result != null) {
                     indexes.put(result.getKey(), result.getValue());
+                    indexesRebuiltOnLoad++;
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -4384,8 +4442,9 @@ class Table implements Serializable {
     
     /**
      * Restores a secondary index from serialized data.
+     * @return true if index was successfully restored, false otherwise
      */
-    private void restoreSecondaryIndex(ObjectInputStream ois, String tableName) {
+    private boolean restoreSecondaryIndex(ObjectInputStream ois, String tableName) {
         try {
             String key = ois.readUTF();
             byte[] indexBytes = (byte[]) ois.readObject();
@@ -4395,6 +4454,7 @@ class Table implements Serializable {
                 LOGGER.log(Level.WARNING,
                         "Checksum mismatch for index ''{0}'' in table {1}, will rebuild",
                         new Object[]{key, tableName});
+                return false;
             } else {
                 Index idx = (Index) new ObjectInputStream(
                         new ByteArrayInputStream(indexBytes)).readObject();
@@ -4402,18 +4462,21 @@ class Table implements Serializable {
                 LOGGER.log(Level.FINE,
                         "Restored index ''{0}'' from serialized data for table {1}",
                         new Object[]{key, tableName});
+                return true;
             }
         } catch (Exception e) {
             LOGGER.log(Level.WARNING,
                     "Failed to deserialize index in table {0}: {1}",
                     new Object[]{tableName, e.getMessage()});
+            return false;
         }
     }
     
     /**
      * Restores the clustered index from serialized data.
+     * @return true if clustered index was successfully restored, false otherwise
      */
-    private void restoreClusteredIndex(ObjectInputStream ois, String tableName) {
+    private boolean restoreClusteredIndex(ObjectInputStream ois, String tableName) {
         try {
             boolean hasSerializedClustered = ois.readBoolean();
             if (hasSerializedClustered) {
@@ -4423,14 +4486,16 @@ class Table implements Serializable {
                 if (storedChecksum == computedChecksum) {
                     this.clusteredIndex = (BTreeClusteredIndex) new ObjectInputStream(
                             new ByteArrayInputStream(clusterBytes)).readObject();
-                    restoredClustered = true;
+                    clusteredRestoredOnLoad = true;
                     LOGGER.log(Level.FINE,
                             "Restored clustered index from serialized data for table {0}",
                             tableName);
+                    return true;
                 } else {
                     LOGGER.log(Level.WARNING,
                             "Checksum mismatch for clustered index in table {0}, will rebuild",
                             tableName);
+                    return false;
                 }
             }
         } catch (Exception e) {
@@ -4438,6 +4503,7 @@ class Table implements Serializable {
                     "Failed to deserialize clustered index for table {0}: {1}",
                     new Object[]{tableName, e.getMessage()});
         }
+        return false;
     }
 
     /**
@@ -4587,5 +4653,18 @@ class Table implements Serializable {
         }
         throw new IllegalArgumentException("Unsupported column type for CSV load: "
                 + colName + " -> " + expectedType.getSimpleName());
+    }
+    
+    // Package-private getters for test verification of index restoration/rebuild behavior
+    int getIndexesRestoredOnLoad() {
+        return indexesRestoredOnLoad;
+    }
+    
+    int getIndexesRebuiltOnLoad() {
+        return indexesRebuiltOnLoad;
+    }
+    
+    boolean wasClusteredIndexRestoredOnLoad() {
+        return clusteredRestoredOnLoad;
     }
 }
