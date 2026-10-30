@@ -537,3 +537,39 @@ none), tls.ca.path (server truststore для mTLS), tls.truststore.type
 **Ключи конфигурации (system properties):** `alter.inplace.hold.ms`
 (default: 0 — без задержки), `alter.copy.gate.timeout.ms` (default: 10000,
 общий с §18).
+
+## §20 COLLATE CASE_INSENSITIVE + регистр строковых литералов (Prompt4 #49, 2026-10-30)
+
+Со счёта 3 (R3-013c): строковые литералы сохраняют оригинальный регистр
+(включая JOIN ON — residual-фикс через quote-aware нормализацию), сравнения
+case-sensitive по умолчанию, опционально `COLLATE CASE_INSENSITIVE` на
+STRING-колонке (равенство `=`/`!=`/`IN` в SELECT/UPDATE/DELETE), legacy-режим
+`compat.uppercase.string.literals` (default false).
+
+**Ограничения осознанные (вне скоупа #49, согласовано):**
+- **COLLATE покрывает только равенство** (`=`, `!=`, `IN`). Операторы
+  упорядочивания (`<`, `>`, `<=`, `>=`), `ORDER BY`, `GROUP BY`, `HAVING` и
+  `LIKE` на CI-колонках остаются case-sensitive (сравнения идут через
+  `Comparable.compareTo` / regex без `CASE_INSENSITIVE`-флага).
+- **Индексы на CI-колонках запрещены**: `CREATE INDEX`/`CREATE HASH INDEX`/
+  composite с CI-колонкой бросают IllegalArgumentException (ключи индекса
+  упорядочиваются case-sensitive natural-порядком — индексная выборка
+  молча теряла бы строки). Авто-индексирование (§7) CI-колонку молча
+  пропускает (FINE-лог).
+- **COLLATE + PRIMARY KEY отклоняется на парсере** (clustered-ключи не могут
+  не согласовываться с семантикой сравнения).
+- **Avro pushdown** — бинарный предикат не знает о collations: таблица с
+  любой CI-колонкой при наличии WHERE обходит pushdown (in-memory scan
+  применяет CI-aware eval). Незаметно на дефолтных таблицах.
+- **COLLATE только на уровне колонки при CREATE TABLE** — ALTER TABLE
+  не добавляет/не меняет collation (нет синтаксиса).
+- **Формат .table v5**: collation-мапа пишется хвостом после v4-блока
+  (droppedColumns). Файлы v5 нечитаемы старыми бинарниками (CURRENT
+  FORMAT_VERSION guard, как v4→v3); downgrade старой версией откатится на
+  пустую таблицу через catch-loadFromFile (прецедент v4).
+
+**Ключи конфигурации:** `compat.uppercase.string.literals` (default false;
+sysprop `-Dcompat.uppercase.string.literals=true` или config.properties;
+sysprop-first). С compat=true литералы упираются в UPPER на parse-time
+(INSERT хранит 'NAME2', обе стороны сравнения апперкасится — case-blind,
+старое поведение до #49).

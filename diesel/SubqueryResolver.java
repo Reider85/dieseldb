@@ -78,7 +78,8 @@ public class SubqueryResolver {
         try {
             if (value.startsWith("'") && value.endsWith("'")) {
                 // String literal branch
-                String strValue = SqlLexer.extractStringLiteral(value);
+                // Prompt 4 #49 (R3-013c): compat.uppercase.string.literals policy.
+                String strValue = SqlParsingUtils.normalizeStringLiteralCase(SqlLexer.extractStringLiteral(value));
                 return parseStringLiteral(strValue, columnType);
             } else {
                 // Numeric/boolean branch - use strategy map

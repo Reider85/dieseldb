@@ -1730,6 +1730,7 @@ class QueryParser {
         List<String> columns = new ArrayList<>();
         Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         Map<String, Sequence> sequences = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, String> columnCollations = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         String primaryKeyColumn = null;
 
         for (String colDef : columnDefs) {
@@ -1740,6 +1741,16 @@ class QueryParser {
                 parseSequenceColumn(result.colName, result.type, result.constraints, colDef, result.colParts, sequences, columnTypes);
             } else {
                 columnTypes.put(result.colName, resolveColumnJavaType(result.type));
+            }
+
+            if (result.collation != null) {
+                // Prompt 4 #49: COLLATE on a primary key would make the
+                // clustered index keys disagree with the comparison semantics.
+                if (result.isPrimaryKey) {
+                    throw new IllegalArgumentException(
+                            "COLLATE is not supported on PRIMARY KEY column " + result.colName);
+                }
+                columnCollations.put(result.colName, result.collation);
             }
 
             if (result.isPrimaryKey) {
@@ -1753,7 +1764,7 @@ class QueryParser {
         LOGGER.log(Level.INFO, "Parsed CREATE TABLE query: table={0}, columns={1}, types={2}, primaryKey={3}, sequences={4}",
                 new Object[]{tableName, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
 
-        return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences);
+        return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences, columnCollations);
     }
 
     private String extractCreateTableName(String original, int firstParen) {
@@ -1776,8 +1787,43 @@ class QueryParser {
         String constraints = colParts.length > 2 ? colParts[2].toUpperCase() : "";
         boolean isPrimaryKey = constraints.contains(SqlKeywords.PRIMARY_KEY);
         boolean hasSequence = constraints.contains(SqlKeywords.SEQUENCE) || type.endsWith("_SEQUENCE");
-        return new ColumnParseResult(colName, type, constraints, colParts, isPrimaryKey, hasSequence);
+        // Prompt 4 #49: COLLATE <name> column option; only CASE_INSENSITIVE today.
+        String collation = extractCollation(constraints, type, colDef);
+        return new ColumnParseResult(colName, type, constraints, colParts, isPrimaryKey, hasSequence, collation);
     }
+
+    /**
+     * Extracts the {@code COLLATE <name>} column option (prompt4 #49) from the
+     * uppercased constraints tail. Only {@code CASE_INSENSITIVE} is supported
+     * and only on STRING columns; anything else raises a parse error. The
+     * matcher requires a word boundary on the left so a SEQUENCE definition
+     * whose name happens to be "COLLATE" does not trigger a false positive.
+     *
+     * @param constraints the uppercased constraint tail of the column definition
+     * @param type        the uppercased column type
+     * @param colDef      the full column definition (for error messages)
+     * @return the collation name, or null when no COLLATE option is present
+     */
+    private String extractCollation(String constraints, String type, String colDef) {
+        java.util.regex.Matcher m = COLLATE_OPTION_PATTERN.matcher(constraints);
+        if (!m.find()) {
+            return null;
+        }
+        String collation = m.group(1);
+        if (!"CASE_INSENSITIVE".equals(collation)) {
+            throw new IllegalArgumentException(
+                    "Unsupported collation: " + collation + " (supported: CASE_INSENSITIVE) in column: " + colDef);
+        }
+        if (!SqlKeywords.TYPE_STRING.equals(type)) {
+            throw new IllegalArgumentException(
+                    "COLLATE CASE_INSENSITIVE is only supported for STRING columns: " + colDef);
+        }
+        return collation;
+    }
+
+    /** Word-boundary COLLATE option matcher for column constraint tails. */
+    private static final java.util.regex.Pattern COLLATE_OPTION_PATTERN =
+            java.util.regex.Pattern.compile("(?:^|\\s)COLLATE\\s+(\\S+)");
 
     private static final class ColumnParseResult {
         final String colName;
@@ -1786,14 +1832,18 @@ class QueryParser {
         final String[] colParts;
         final boolean isPrimaryKey;
         final boolean hasSequence;
+        /** COLLATE option (prompt4 #49): CASE_INSENSITIVE or null for the default. */
+        final String collation;
 
-        ColumnParseResult(String colName, String type, String constraints, String[] colParts, boolean isPrimaryKey, boolean hasSequence) {
+        ColumnParseResult(String colName, String type, String constraints, String[] colParts,
+                          boolean isPrimaryKey, boolean hasSequence, String collation) {
             this.colName = colName;
             this.type = type;
             this.constraints = constraints;
             this.colParts = colParts;
             this.isPrimaryKey = isPrimaryKey;
             this.hasSequence = hasSequence;
+            this.collation = collation;
         }
     }
 
@@ -2157,7 +2207,7 @@ class QueryParser {
                     yield MISSING_LITERAL;
                 }
             }
-            case STRING_LITERAL -> SqlLexer.extractStringLiteral(token.value);
+            case STRING_LITERAL -> SqlParsingUtils.normalizeStringLiteralCase(SqlLexer.extractStringLiteral(token.value));
             case LITERAL -> switch (token.value.toUpperCase()) {
                 case SqlKeywords.TRUE -> Boolean.TRUE;
                 case SqlKeywords.FALSE -> Boolean.FALSE;
@@ -3339,7 +3389,10 @@ class QueryParser {
         // Prompt 39 (java:S2259): guard against a nullable columnType before
         // getSimpleName() is reached on unsupported types.
         Objects.requireNonNull(columnType, ErrorMessages.COLUMN_TYPE_NULL_MSG);
-        String strippedValue = SqlLexer.extractStringLiteral(valueStr);
+        // Prompt 4 #49 (R3-013c): compat.uppercase.string.literals=true
+        // uppercases the extracted literal here (all types, matching the
+        // pre-#49 whole-query uppercase); default leaves case untouched.
+        String strippedValue = SqlParsingUtils.normalizeStringLiteralCase(SqlLexer.extractStringLiteral(valueStr));
         if (columnType == String.class) return strippedValue;
         if (columnType == LocalDate.class && CharOps.isLocalDateLiteral(strippedValue)) return LocalDate.parse(strippedValue);
         if (columnType == LocalDateTime.class && CharOps.isLocalDateTimeMillisLiteral(strippedValue)) return LocalDateTime.parse(strippedValue, DATETIME_MS_FORMATTER);
@@ -4455,11 +4508,15 @@ class QueryParser {
         if (scan.inSubQuery) {
             return scan.text;
         }
-        return scan.text.replaceAll("(?i)\\bEQUALS\\b", "=")
+        // Prompt 4 #49 (R3-013c): keyword rewrites (EQUALS->= etc.) apply only
+        // outside single-quoted string literals - a literal containing the
+        // word "LIKE" must not be rewritten.
+        return SqlParsingUtils.mapOutsideSingleQuotes(scan.text, text -> text
+                .replaceAll("(?i)\\bEQUALS\\b", "=")
                 .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
                 .replaceAll("(?i)\\bGREATER_THAN\\b", ">")
                 .replaceAll("(?i)\\bLIKE\\b", SqlKeywords.LIKE)
-                .replaceAll("(?i)\\bNOT_LIKE\\b", SqlKeywords.NOT_LIKE);
+                .replaceAll("(?i)\\bNOT_LIKE\\b", SqlKeywords.NOT_LIKE));
     }
 
     private String collapseWhitespaceOutsideSubqueries(String input) {
@@ -4476,7 +4533,10 @@ class QueryParser {
                  if (!inQuotes[0]) {
                      trackSubQueryBoundary(c, i, input, parenDepth, inSubQuery);
                  }
-                 if (!inSubQuery[0] && Character.isWhitespace(c) && result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
+                 // Prompt 4 #49: collapse only OUTSIDE string literals -
+                 // double spaces inside 'a  =  b' must survive verbatim.
+                 if (!inQuotes[0] && !inSubQuery[0] && Character.isWhitespace(c)
+                         && result.length() > 0 && Character.isWhitespace(result.charAt(result.length() - 1))) {
                      // collapse consecutive whitespace outside subqueries
                  } else {
                      result.append(c);
@@ -4487,12 +4547,18 @@ class QueryParser {
     }
 
     private String normalizeQueryString(String query) {
-        String normalized = query.trim()
+        // Prompt 4 #49 (R3-013c): every rewrite below runs only outside
+        // single-quoted string literals - whitespace collapses, operator
+        // spacing, keyword rewrites (EQUALS/LIKE/WHERE/...) and the final
+        // '= ' trim must not touch literal contents; the uppercase pass
+        // (toUpperCasePreservingQuotedIdentifiers) preserves literals too.
+        String trimmed = query.trim();
+        String withRegexes = SqlParsingUtils.mapOutsideSingleQuotes(trimmed, seg -> seg
                 .replaceAll("\\s+", " ")
                 .replaceAll("\\s*([=><!(),])\\s*", "$1")
                 .replaceAll("(?i)\\bEQUALS\\b", "=")
                 .replaceAll("(?i)\\bNOT_EQUALS\\b", "!=")
-                .replaceAll("(?i)\\bGREATER_THAN\\b", ">") // Add this line
+                .replaceAll("(?i)\\bGREATER_THAN\\b", ">")
                 .replaceAll("(?i)\\bLIKE\\b", SqlKeywords.LIKE)
                 .replaceAll("(?i)\\bNOT_LIKE\\b", SqlKeywords.NOT_LIKE)
                 .replaceAll("\\s*;", "")
@@ -4504,18 +4570,22 @@ class QueryParser {
                 .replaceAll("\\(\\s+", "(")
                 .replaceAll("\\s+\\)", ")")
                 .replaceAll("(?i)\\bID\\s*=\\s*U\\.ID\\b", "ID=U.ID")
-                .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID");
+                .replaceAll("(?i)\\bU\\.ID\\s*=\\s*ID\\b", "ID=U.ID"));
         // Prompt 38 (java:S2259): toUpperCasePreservingQuotedIdentifiers can
         // return null; wrap in Optional to avoid NPE on replaceAll.
-        normalized = Optional.ofNullable(toUpperCasePreservingQuotedIdentifiers(normalized)).orElse(normalized);
-        return normalized
+        String normalized = Optional.ofNullable(toUpperCasePreservingQuotedIdentifiers(withRegexes)).orElse(withRegexes);
+        return SqlParsingUtils.mapOutsideSingleQuotes(normalized, seg -> seg
                 .replaceAll("\\s*=", "=")
-                .replaceAll("=\\s*", "=");
+                .replaceAll("=\\s*", "="));
     }
 
     /**
      * Uppercases every character of the input except the contents of
-     * double-quoted identifiers, which keep their original case.
+     * double-quoted identifiers and single-quoted string literals, which
+     * keep their original case. Prompt 4 #49 (R3-013c): single-quoted
+     * literals were previously uppercased here, breaking case-sensitive
+     * comparisons in the JOIN ON path that consumes normalized text.
+     * Escaped quotes ({@code ''} and {@code \'}) stay inside the literal.
      */
     @Nullable
     static String toUpperCasePreservingQuotedIdentifiers(String input) {
@@ -4524,9 +4594,26 @@ class QueryParser {
         }
         StringBuilder sb = new StringBuilder(input.length());
         boolean inQuotedIdentifier = false;
+        boolean inStringLiteral = false;
         for (int i = 0; i < input.length(); i++) {
             char c = input.charAt(i);
-            if (c == '"') {
+            if (inStringLiteral) {
+                sb.append(c);
+                if (c == '\\' && i + 1 < input.length()) {
+                    sb.append(input.charAt(i + 1));
+                    i++;
+                } else if (c == '\'') {
+                    if (i + 1 < input.length() && input.charAt(i + 1) == '\'') {
+                        sb.append(input.charAt(i + 1));
+                        i++;
+                    } else {
+                        inStringLiteral = false;
+                    }
+                }
+            } else if (c == '\'') {
+                inStringLiteral = true;
+                sb.append(c);
+            } else if (c == '"') {
                 inQuotedIdentifier = !inQuotedIdentifier;
                 sb.append(c);
             } else {

@@ -605,12 +605,32 @@ class Database {
      *                                  primary key column is not part of the schema
      */
     public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn) {
+        createTable(tableName, columns, columnTypes, primaryKeyColumn, java.util.Collections.emptyMap());
+    }
+
+    /**
+     * Creates a table with per-column collations (prompt4 #49).
+     *
+     * @param tableName        the table name, must be unique
+     * @param columns          the ordered list of column names
+     * @param columnTypes      the column name to type mapping
+     * @param primaryKeyColumn the primary key column, or null for none
+     * @param columnCollations  the column name to collation mapping (only
+     *                         CASE_INSENSITIVE is supported today)
+     * @throws IllegalArgumentException if the table already exists or the
+     *                                  primary key column is not part of the schema
+     */
+    public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes,
+                            String primaryKeyColumn, Map<String, String> columnCollations) {
         if (tables.containsKey(tableName)) {
             throw new IllegalArgumentException(ErrorMessages.TABLE_PREFIX + tableName + " already exists");
         }
         
         // Create table
         Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
+        // Prompt 4 #49: collations are installed after construction (the Table
+        // ctor has no collation parameter - many call sites use the 6-arg form).
+        newTable.setColumnCollations(columnCollations);
         tables.put(tableName, newTable);
         queryCache.invalidateAll();
         for (Transaction transaction : activeTransactions.values()) {
@@ -756,6 +776,13 @@ class Database {
             if (Optional.ofNullable(QueryParser.toUpperCasePreservingQuotedIdentifiers(trimmed)).orElse("").startsWith(SqlKeywords.SELECT)) {
                 try {
                     normalizedSelect = QueryCache.normalize(trimmed);
+                    // Prompt 4 #49 (R3-013c): the compat flag changes literal
+                    // values inside the AST, so entries parsed under one flag
+                    // must not be served to the other; prefix the key.
+                    if (ConfigLoader.getCompatUppercaseStringLiterals()) {
+                        normalizedSelect = new QueryCache.NormalizedSql(
+                                "COMPAT_UC " + normalizedSelect.key, normalizedSelect.literals);
+                    }
                     parsedQuery = queryCache.get(normalizedSelect, queryCache.currentEpoch());
                 } catch (IllegalArgumentException e) {
                     normalizedSelect = null;
@@ -1901,7 +1928,8 @@ class Database {
     }
 
     private Object executeCreateTable(CreateTableQuery createQuery) {
-        createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes(), createQuery.getPrimaryKeyColumn());
+        createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes(),
+                createQuery.getPrimaryKeyColumn(), createQuery.getColumnCollations());
         Table table = getTable(createQuery.getTableName());
         for (Map.Entry<String, Sequence> entry : createQuery.getSequences().entrySet()) {
             table.getSequences().put(entry.getKey(), entry.getValue());

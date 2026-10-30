@@ -5,6 +5,7 @@ import diesel.storage.json.JsonPathResolver;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
@@ -131,6 +132,67 @@ class SqlParsingUtils {
     }
 
     /**
+     * Applies {@code transform} only to the segments of {@code input} that lie
+     * outside single-quoted string literals; the literals themselves are
+     * copied verbatim. Prompt 4 #49 (R3-013c): query normalization must never
+     * mutate the contents of a string literal (case, whitespace around
+     * operators inside the literal, or words that happen to look like SQL
+     * keywords such as {@code LIKE}).
+     *
+     * <p>The scanner honors the same escape rules as
+     * {@link SqlLexer#extractStringLiteral}: a doubled quote {@code ''} and a
+     * backslash escape {@code \'} both stay inside the literal, so an
+     * unterminated literal keeps the remainder of the input verbatim (the
+     * lexer itself is the component that reports unterminated literals).
+     *
+     * @param input     the text to process
+     * @param transform the regex chain applied to non-literal segments
+     * @return the reassembled text
+     */
+    static String mapOutsideSingleQuotes(String input, Function<String, String> transform) {
+        Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(transform, "transform must not be null");
+        StringBuilder result = new StringBuilder(input.length());
+        StringBuilder outside = new StringBuilder();
+        int i = 0;
+        int n = input.length();
+        while (i < n) {
+            char c = input.charAt(i);
+            if (c == '\'') {
+                if (outside.length() > 0) {
+                    result.append(transform.apply(outside.toString()));
+                    outside.setLength(0);
+                }
+                result.append(c);
+                i++;
+                while (i < n) {
+                    char literalChar = input.charAt(i);
+                    result.append(literalChar);
+                    i++;
+                    if (literalChar == '\\' && i < n) {
+                        result.append(input.charAt(i));
+                        i++;
+                    } else if (literalChar == '\'') {
+                        if (i < n && input.charAt(i) == '\'') {
+                            result.append(input.charAt(i));
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                outside.append(c);
+                i++;
+            }
+        }
+        if (outside.length() > 0) {
+            result.append(transform.apply(outside.toString()));
+        }
+        return result.toString();
+    }
+
+    /**
      * Validates that a column exists in the combined column types map.
      * A dotted path matches when it is an exact (case-insensitive) column name
      * or resolves to a JSON Path prefix; a leading {@code TABLE.} segment, if
@@ -160,6 +222,29 @@ class SqlParsingUtils {
             case "false", "0", "no", "f" -> Boolean.FALSE;
             default -> throw new IllegalArgumentException("Invalid boolean value: '" + raw + "'");
         };
+    }
+
+    /**
+     * Applies the {@code compat.uppercase.string.literals} policy to an
+     * extracted string-literal value. Prompt 4 #49 (R3-013c): the default
+     * (false) returns the value unchanged so literals keep their original
+     * case; the legacy mode (true, sysprop or config.properties) uppercases
+     * the value at parse time, reproducing the pre-#49 parser behavior where
+     * every literal was normalized through {@code toUpperCase()}.
+     *
+     * <p>Called at every site that extracts a single-quoted literal value
+     * ({@code SqlLexer.extractStringLiteral} consumers), so INSERT values,
+     * WHERE/JOIN ON comparisons and constant SELECTs all observe the same
+     * policy.
+     *
+     * @param value the extracted literal (quotes already stripped)
+     * @return the case-policy-applied value
+     */
+    static String normalizeStringLiteralCase(String value) {
+        if (value == null || !ConfigLoader.getCompatUppercaseStringLiterals()) {
+            return value;
+        }
+        return value.toUpperCase();
     }
 
     static void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
