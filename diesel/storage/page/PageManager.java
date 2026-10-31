@@ -2,11 +2,16 @@ package diesel.storage.page;
 
 import diesel.wal.WALEntry;
 import diesel.wal.WALOpcode;
+import diesel.wal.WALManager;
+import diesel.checksum.ChecksummedPage;
+import diesel.checksum.PageValidator;
+import diesel.observability.MetricsRegistry;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -39,6 +44,11 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
      * to block page writes during checkpoint. Nullable.
      */
     private volatile java.util.concurrent.locks.ReadWriteLock writeGate;
+
+    /**
+     * WAL manager for page recovery from WAL entries. Nullable until wired by Database.
+     */
+    private WALManager walManager;
 
     /**
      * Creates a PageManager that owns its BufferPool.
@@ -163,6 +173,9 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
         }
 
         try {
+            // Update checksum before writing
+            ChecksummedPage.updateChecksum(page);
+            
             // Ensure page is resident (insert returns pinned handle)
             try (PinnedPage pinned = pool.insert(page)) {
                 // insert() keeps the existing frame instance when the PageId is
@@ -269,6 +282,10 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
         if (offset >= 0 && offset + pageSize <= io.size()) {
             try (PinnedPage pinned = readPage(pageId)) {
                 currentLsn = pinned.getPage().getLsn();
+            } catch (IOException e) {
+                // Page is corrupted or unreadable - treat as not yet redone (currentLsn = -1)
+                // so the after-image will be applied to fix the corruption
+                currentLsn = -1L;
             }
         }
         if (currentLsn >= entry.getLsn()) {
@@ -350,8 +367,11 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
             throw new IllegalArgumentException("page size mismatch: expected " + pageSize + ", got " + page.getPageSize());
         }
 
+        // Compute and store checksum before writing (Prompt4 #52)
+        ChecksummedPage.updateChecksum(page);
+        
         ByteBuffer buffer = ByteBuffer.allocate(pageSize);
-        page.writeTo(buffer); // syncs header into data
+        page.writeTo(buffer); // syncs header (with checksum) into data
         buffer.flip();
         io.writePage(page.getPageId(), buffer);
     }
@@ -382,6 +402,30 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
             ByteBuffer buffer = io.readPage(pageId);
             Page page = Page.readFrom(buffer);
             page.setDirty(false); // loaded from disk - content is clean
+            
+            // Verify checksum (Prompt4 #52)
+            try {
+                PageValidator.validate(page);
+            } catch (PageCorruptedException e) {
+                // Attempt recovery from WAL if available
+                long walLsn = page.getLsn();
+                if (walLsn > 0) {
+                    try {
+                        boolean recovered = recoverPageFromWal(page, pageId);
+                        if (recovered) {
+                            // Recovery succeeded, verify again
+                            PageValidator.validate(page);
+                        } else {
+                            throw new IOException("page " + pageId + " failed checksum verification and could not be recovered from WAL", e);
+                        }
+                    } catch (IOException recoveryException) {
+                        throw new IOException("page " + pageId + " failed checksum verification and recovery failed", e);
+                    }
+                } else {
+                    throw new IOException("page " + pageId + " failed checksum verification and no WAL available for recovery", e);
+                }
+            }
+            
             return page;
         } catch (PageFormatException e) {
             throw new IOException("corrupt page " + pageId + " at offset " + offset, e);
@@ -417,6 +461,66 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
         return FileChannelIO.MODE_DEFAULT; // Could expose via FileChannelIO if needed
     }
 
+    /**
+     * Sets the WAL manager for page recovery from WAL entries.
+     * Called by Database after creating both PageManager and WALManager.
+     * 
+     * @param walManager the WAL manager to use for recovery
+     */
+    public void setWalManager(WALManager walManager) {
+        this.walManager = walManager;
+    }
+    
+    /**
+     * Attempts to recover a corrupted page from WAL entries.
+     * 
+     * @param page the corrupted page to recover
+     * @param pageId the page ID
+     * @return true if recovery succeeded, false if still corrupted
+     * @throws IOException if WAL operations fail
+     */
+    private boolean recoverPageFromWal(Page page, PageId pageId) throws IOException {
+        if (walManager == null) {
+            return false;
+        }
+        
+        long pageLsn = page.getLsn();
+        if (pageLsn <= 0) {
+            return false; // No LSN, cannot recover
+        }
+        
+        try {
+            // Find all WAL entries for this pageId from pageLsn onwards
+            List<WALEntry> entries = walManager.readRange(pageLsn, Long.MAX_VALUE);
+            
+            // Apply PAGE_IMAGE entries in order (newest wins)
+            Page recoveredPage = null;
+            for (WALEntry entry : entries) {
+                if (entry.getOp() == WALOpcode.PAGE_IMAGE) {
+                    // Check if this entry is for our pageId by reading the image
+                    Page image = Page.readFrom(ByteBuffer.wrap(entry.getAfterImage()));
+                    if (image.getPageId().equals(pageId)) {
+                        // Apply the after-image
+                        recoveredPage = image;
+                        recoveredPage.setLsn(entry.getLsn()); // Update to the LSN of this entry
+                    }
+                }
+            }
+            
+            if (recoveredPage != null) {
+                // Copy the recovered content back to the original page
+                page.copyContentFrom(recoveredPage);
+                page.syncHeader(); // Ensure header is synced with new data
+                ChecksummedPage.updateChecksum(page); // Recompute checksum for recovered page
+                return true;
+            }
+            
+            return false;
+        } catch (IOException e) {
+            throw new IOException("Failed to recover page " + pageId + " from WAL", e);
+        }
+    }
+    
     /**
      * Cleans up leftover temporary files from interrupted atomic writes.
      * Called during close() to ensure no temp files remain after shutdown.

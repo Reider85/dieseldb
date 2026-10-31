@@ -211,3 +211,6 @@ diesel/ShowCreateTableQuery.java	query,query-full
 diesel/ShowTablesQuery.java		query,query-full
 diesel/SubqueryResolver.java		query,query-full
 diesel/checksum/CRC32C.java		smoke,perf
+diesel/checksum/ChecksummedPage.java		storage
+diesel/checksum/PageValidator.java		storage
+diesel/storage/page/PageCorruptedException.java		storage

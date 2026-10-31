@@ -249,6 +249,11 @@ class Database {
                 walConfig.getGroupWindowMs(), walConfig.getGroupMaxSize(), walScheduler);
             this.groupCoordinator = asyncWALWriter.getCoordinator();
             
+            // Wire WAL manager to PageManager for page recovery
+            if (pageManager != null) {
+                pageManager.setWalManager(walWriter.getManager());
+            }
+            
             // Load checkpoint record for ARIES recovery
             try {
                 CheckpointRecord checkpointRecord = walWriter.getManager().loadCheckpointRecord();
