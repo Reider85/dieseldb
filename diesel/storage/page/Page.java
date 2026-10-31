@@ -291,6 +291,15 @@ public final class Page {
     }
 
     /**
+     * Syncs the header fields to the data array.
+     * This ensures that the data array contains the current header state,
+     * which is important for checksum computation and serialization.
+     */
+    public void syncHeader() {
+        header.writeTo(data);
+    }
+    
+    /**
      * Returns a defensive copy of the full page data.
      * Useful for testing and serialization.
      */

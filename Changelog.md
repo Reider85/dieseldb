@@ -9,3 +9,5 @@
 >>>>>>> d0a3c77
 
 3.3.81 Prompt4 #51: CRC32C implementation (hardware-accelerated)
+
+3.3.82 ChecksummedPage implementation: CRC32C checksummed pages with corruption detection and recovery
