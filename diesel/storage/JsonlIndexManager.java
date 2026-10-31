@@ -25,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import diesel.ErrorMessages;
 import diesel.storage.json.JsonPathResolver;
 import diesel.storage.json.JsonParserConfig;
+import diesel.storage.json.JsonPathResolver.SchemaIndex;
 
 /**
  * Index management for the JSONL storage backend (prompt 53). Built directly
@@ -124,6 +125,7 @@ public final class JsonlIndexManager {
     private final String tableName;
     private final JsonParserConfig config;
     private List<String> columns;
+    private final SchemaIndex schemaIndex;
     private RowArrays rowColumns;
 
     /** Mirror of the storage's rows (the very same array objects, prompt 36). */
@@ -182,6 +184,11 @@ public final class JsonlIndexManager {
     public JsonlIndexManager(String tableName, List<String> columns, JsonParserConfig config) {
         this.tableName = tableName == null ? "" : tableName;
         this.columns = new ArrayList<>(columns == null ? List.of() : columns);
+        TreeMap<String, Integer> indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < this.columns.size(); i++) {
+            indexByName.put(this.columns.get(i), i);
+        }
+        this.schemaIndex = new SchemaIndex(this.columns, indexByName);
         this.rowColumns = new RowArrays(this.columns);
         this.config = config != null ? config : JsonParserConfig.defaults();
     }
@@ -413,7 +420,7 @@ public final class JsonlIndexManager {
         if (columnOrPath == null || columnOrPath.isBlank()) {
             return false;
         }
-        JsonPathResolver.ResolvedPath resolved = JsonPathResolver.resolve(columns, columnOrPath);
+        JsonPathResolver.ResolvedPath resolved = schemaIndex.resolve(columnOrPath);
         if (resolved.columnIndex() < 0) {
             return false;
         }
@@ -991,7 +998,7 @@ public final class JsonlIndexManager {
         }
         if (sidecar.nestedRowIds != null) {
             for (Map.Entry<String, Map<Object, List<Long>>> e : sidecar.nestedRowIds.entrySet()) {
-                JsonPathResolver.ResolvedPath path = JsonPathResolver.resolve(columns, e.getKey());
+                JsonPathResolver.ResolvedPath path = schemaIndex.resolve(e.getKey());
                 if (path.columnIndex() < 0) {
                     continue;
                 }

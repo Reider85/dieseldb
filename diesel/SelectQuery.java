@@ -4103,7 +4103,13 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             return direct;
         }
         JsonPathResolver.ResolvedPath resolved = pathResolutionCache.computeIfAbsent(columnKey, key -> {
-            JsonPathResolver.ResolvedPath resolvedPath = JsonPathResolver.resolve(row.keySet(), key);
+            List<String> columns = new ArrayList<>(row.keySet());
+            TreeMap<String, Integer> indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            for (int i = 0; i < columns.size(); i++) {
+                indexByName.put(columns.get(i), i);
+            }
+            JsonPathResolver.SchemaIndex schemaIndex = new JsonPathResolver.SchemaIndex(columns, indexByName);
+            JsonPathResolver.ResolvedPath resolvedPath = schemaIndex.resolve(key);
             return resolvedPath.columnIndex() < 0 ? JsonPathResolver.UNRESOLVED : resolvedPath;
         });
         if (resolved.columnIndex() < 0 || resolved.segments().isEmpty()) {

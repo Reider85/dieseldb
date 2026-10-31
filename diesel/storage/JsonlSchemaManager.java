@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.UUID;
+import diesel.storage.json.JsonPathResolver.SchemaIndex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,6 +63,7 @@ public class JsonlSchemaManager {
     private final List<String> columns;
     private final Map<String, Class<?>> columnTypes;
     private final Map<String, Integer> indexByName;
+    private final JsonPathResolver.SchemaIndex schemaIndex;
     private final JsonParserConfig jsonConfig;
     /** Columns that hold compact JSON text for a nested object/array (prompt 45). */
     private final Set<Integer> nestedJsonColumns;
@@ -83,6 +85,7 @@ public class JsonlSchemaManager {
         for (int i = 0; i < this.columns.size(); i++) {
             indexByName.put(this.columns.get(i), i);
         }
+        this.schemaIndex = new JsonPathResolver.SchemaIndex(this.columns, new TreeMap<>(indexByName));
         this.jsonConfig = jsonConfig != null ? jsonConfig : JsonParserConfig.defaults();
         if (nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
             validateFlattenSchema();
@@ -426,7 +429,7 @@ public class JsonlSchemaManager {
         if (item == null || item.isBlank()) {
             return new ProjectionSlot(-1, List.of(), item);
         }
-        JsonPathResolver.ResolvedPath resolved = JsonPathResolver.resolve(columns, item);
+        JsonPathResolver.ResolvedPath resolved = schemaIndex.resolve(item);
         return new ProjectionSlot(resolved.columnIndex(), resolved.segments(), item);
     }
 

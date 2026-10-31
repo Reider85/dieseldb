@@ -18,6 +18,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -990,11 +993,14 @@ public class JsonlRowStorage extends AbstractRowStorage {
         }
         // HYBRID: keep the current columns, append the fields the data adds.
         List<String> planColumns = new ArrayList<>(columns);
+        Set<String> planColumnsSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        planColumnsSet.addAll(columns);
         Map<String, Class<?>> planTypes = copyTypes(columnTypes);
         if (fresh) {
             for (JsonlSchemaManager.SchemaColumn column : sidecar.columns()) {
-                if (indexOfIgnoreCase(planColumns, column.name()) < 0) {
+                if (!planColumnsSet.contains(column.name())) {
                     planColumns.add(column.name());
+                    planColumnsSet.add(column.name());
                     planTypes.put(column.name(), JsonlSchemaManager.typeClass(column.type()));
                 }
             }
@@ -1002,8 +1008,9 @@ public class JsonlRowStorage extends AbstractRowStorage {
         }
         JsonSchemaInference.InferredSchema inferred = inferFromPreScanned(file, codec);
         for (String field : inferred.columns()) {
-            if (indexOfIgnoreCase(planColumns, field) < 0) {
+            if (!planColumnsSet.contains(field)) {
                 planColumns.add(field);
+                planColumnsSet.add(field);
                 planTypes.put(field, inferred.columnTypes().get(field));
             }
         }
@@ -1081,15 +1088,6 @@ public class JsonlRowStorage extends AbstractRowStorage {
         Map<String, Class<?>> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         copy.putAll(types);
         return copy;
-    }
-
-    private static int indexOfIgnoreCase(List<String> names, String name) {
-        for (int i = 0; i < names.size(); i++) {
-            if (names.get(i).equalsIgnoreCase(name)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     // ─── Internal helpers ───────────────────────────────────────────

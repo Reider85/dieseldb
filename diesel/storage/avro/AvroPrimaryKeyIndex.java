@@ -82,10 +82,15 @@ public class AvroPrimaryKeyIndex {
     /** LRU page cache: pageIndex &rarr; snapshot of row data for that page. */
     private final LinkedHashMap<Integer, Object[]> pageCache;
 
+    /** Reverse map: row position &rarr; primary key (for O(affected) shifts). */
+    private final TreeMap<Integer, Object> positionToKey = new TreeMap<>();
+
     /** Number of lookups served from cache (metrics). */
     private long cacheHits;
     /** Number of lookups that missed the cache (metrics). */
     private long cacheMisses;
+    /** Bulk update mode flag - defers index rebuilds during bulk operations. */
+    private boolean bulkMode = false;
 
     private AvroPrimaryKeyIndex(List<String> columns, Map<String, Class<?>> columnTypes,
                                  boolean enabled, int cacheCapacity, int pageSize) {
@@ -209,6 +214,21 @@ public class AvroPrimaryKeyIndex {
         return pkColumnIndex;
     }
 
+    /**
+     * Sets bulk update mode. When in bulk mode, index operations are deferred
+     * until endBulkUpdate() is called, which improves performance for bulk operations.
+     */
+    public void setBulkMode(boolean bulkMode) {
+        this.bulkMode = bulkMode;
+    }
+
+    /**
+     * Returns whether bulk update mode is active.
+     */
+    public boolean isBulkMode() {
+        return bulkMode;
+    }
+
     public Class<?> getKeyType() {
         if (pkColumnIndex < 0 || pkColumnIndex >= columns.size()) {
             return null;
@@ -229,6 +249,7 @@ public class AvroPrimaryKeyIndex {
         if (key == null) return;
         validateInsert(row, rowIndex);
         primaryKeyMap.put(key, rowIndex);
+        positionToKey.put(rowIndex, key);
         invalidatePageCache();
     }
 
@@ -259,9 +280,11 @@ public class AvroPrimaryKeyIndex {
         Object newKey = extractKey(newRow);
         if (oldKey != null) {
             primaryKeyMap.remove(oldKey);
+            positionToKey.remove(rowIndex);
         }
         if (newKey != null) {
             primaryKeyMap.put(newKey, rowIndex);
+            positionToKey.put(rowIndex, newKey);
         }
         invalidatePageCache();
     }
@@ -298,13 +321,25 @@ public class AvroPrimaryKeyIndex {
         Object key = extractKey(row);
         if (key != null) {
             primaryKeyMap.remove(key);
+            positionToKey.remove(rowIndex);
         }
         invalidatePageCache();
     }
 
     public void shiftPositions(int rowIndex, int delta) {
         if (delta == 0 || pkColumnIndex < 0) return;
-        primaryKeyMap.replaceAll((key, position) -> position >= rowIndex ? position + delta : position);
+        
+        // Take a snapshot of affected positions to avoid ConcurrentModificationException
+        List<Integer> affectedPositions = new ArrayList<>(positionToKey.subMap(rowIndex, true, Integer.MAX_VALUE, true).keySet());
+        
+        // Update each entry in primaryKeyMap and positionToKey
+        for (int p : affectedPositions) {
+            Object key = positionToKey.remove(p);
+            int newPos = p + delta;
+            primaryKeyMap.put(key, newPos);
+            positionToKey.put(newPos, key);
+        }
+        
         invalidatePageCache();
     }
 
@@ -314,8 +349,9 @@ public class AvroPrimaryKeyIndex {
      *
      * @param rows the current in-memory rows
      */
-    public void buildIndex(List<Object[]> rows) {
+public void buildIndex(List<Object[]> rows) {
         primaryKeyMap.clear();
+        positionToKey.clear();
         pageCache.clear();
         cacheHits = 0;
         cacheMisses = 0;
@@ -325,10 +361,9 @@ public class AvroPrimaryKeyIndex {
             Object key = extractKey(row);
             if (key != null) {
                 primaryKeyMap.put(key, i);
-            }
+                positionToKey.put(i, key);
+}
         }
-        LOGGER.debug("AvroPrimaryKeyIndex built: {} entries for column index {}",
-                primaryKeyMap.size(), pkColumnIndex);
     }
 
     public boolean restoreFromSidecar(Map<Object, Integer> loaded, List<Object[]> currentRows) {

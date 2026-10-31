@@ -2,9 +2,12 @@ package diesel;
 
 import diesel.storage.json.JsonPathResolver;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -262,7 +265,13 @@ class SqlParsingUtils {
                 return true;
             }
         }
-        return JsonPathResolver.resolveQualified(schemaColumns, column).columnIndex() >= 0;
+        List<String> columns = new ArrayList<>(schemaColumns);
+        TreeMap<String, Integer> indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < columns.size(); i++) {
+            indexByName.put(columns.get(i), i);
+        }
+        JsonPathResolver.SchemaIndex schemaIndex = new JsonPathResolver.SchemaIndex(columns, indexByName);
+        return schemaIndex.resolve(column).columnIndex() >= 0;
     }
 
     /**
@@ -273,7 +282,13 @@ class SqlParsingUtils {
      */
     @Nullable
     static Class<?> resolveColumnType(String column, Map<String, Class<?>> combinedColumnTypes) {
-        JsonPathResolver.ResolvedPath resolved = JsonPathResolver.resolveQualified(combinedColumnTypes.keySet(), column);
+        List<String> columns = new ArrayList<>(combinedColumnTypes.keySet());
+        TreeMap<String, Integer> indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < columns.size(); i++) {
+            indexByName.put(columns.get(i), i);
+        }
+        JsonPathResolver.SchemaIndex schemaIndex = new JsonPathResolver.SchemaIndex(columns, indexByName);
+        JsonPathResolver.ResolvedPath resolved = schemaIndex.resolve(column);
         if (resolved.columnIndex() < 0) {
             return null;
         }

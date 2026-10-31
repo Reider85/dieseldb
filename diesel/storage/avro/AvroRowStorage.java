@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.BitSet;
 
 import org.apache.avro.Schema;
 import org.apache.avro.file.DataFileWriter;
@@ -59,6 +60,8 @@ public class AvroRowStorage extends AbstractRowStorage {
     private static final String DEFAULT_AVRO_PATH = "data/avro";
 
     protected final List<Object[]> rows = new ArrayList<>();
+    private final BitSet deletedRows = new BitSet();
+    private int bulkDepth = 0;
     private final List<String> colNames;
     private final Map<String, Integer> colIndex;
     private boolean fileInitialized;
@@ -192,11 +195,21 @@ public class AvroRowStorage extends AbstractRowStorage {
 
     @Override
     public synchronized List<Map<String, Object>> scan() {
-        List<Map<String, Object>> result = new ArrayList<>(rows.size());
-        for (Object[] row : rows) {
-            result.add(toMap(row));
+        List<Map<String, Object>> result = new ArrayList<>(rows.size() - deletedRows.cardinality());
+        for (int i = 0; i < rows.size(); i++) {
+            if (!deletedRows.get(i)) {
+                result.add(toMap(rows.get(i)));
+            }
         }
         return result;
+    }
+
+    /**
+     * Returns the number of non-deleted (live) rows in the storage.
+     * This excludes tombstoned rows.
+     */
+    public synchronized int getRowCount() {
+        return rows.size() - deletedRows.cardinality();
     }
 
     @Override
@@ -245,20 +258,28 @@ public class AvroRowStorage extends AbstractRowStorage {
 
     @Override
     public synchronized void delete(int rowIndex) {
+        if (rowIndex < 0 || rowIndex >= rows.size()) {
+            throw new IndexOutOfBoundsException("Row index " + rowIndex + " out of bounds");
+        }
+        
         Object[] row = rows.get(rowIndex);
-        rows.remove(rowIndex);
+        deletedRows.set(rowIndex);
         syncIndexDelete(rowIndex);
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.delete(row, rowIndex);
-            primaryKeyIndex.shiftPositions(rowIndex, -1);
+            // No shiftPositions(-1) needed with tombstones - positions stay stable
         }
         secondaryIndexManager.syncOnDelete(toMap(row), rowIndex);
-        secondaryIndexManager.shiftPositions(rowIndex, -1);
+        // No shiftPositions(-1) needed with tombstones - positions stay stable
+        
+        // Check if compaction is needed
+        checkCompaction();
     }
 
     @Override
     public synchronized void setRows(List<Map<String, Object>> newRows) {
         rows.clear();
+        deletedRows.clear();
         for (Map<String, Object> row : newRows) {
             rows.add(fromMap(row));
         }
@@ -270,6 +291,139 @@ public class AvroRowStorage extends AbstractRowStorage {
         // positional lookups via the schema-level column index, no Map key
         // scanning (o2 Avro-19; Avro-13 delegate path).
         secondaryIndexManager.rebuildAllIndexesFromArrays(rows);
+    }
+
+    /**
+     * Checks if compaction is needed and performs it if the tombstone
+     * threshold is exceeded. Compaction removes tombstoned rows and
+     * rebuilds indexes to maintain consistency.
+     */
+    private synchronized void checkCompaction() {
+        // Compact when 25% or more of rows are deleted (similar to DelimitedIndexManager)
+        final double COMPACTION_THRESHOLD = 0.25;
+        int deletedCount = deletedRows.cardinality();
+        int totalRows = rows.size();
+        boolean shouldCompact = totalRows >= 100 && deletedCount >= totalRows * COMPACTION_THRESHOLD;
+        
+        
+        
+        if (shouldCompact) {
+            LOGGER.debug("Compaction triggered: {} deleted rows out of {} total (threshold: {})", 
+                        deletedCount, totalRows, COMPACTION_THRESHOLD);
+            compact();
+        } else {
+            LOGGER.debug("Compaction not needed: {} deleted rows out of {} total (threshold: {})", 
+                        deletedCount, totalRows, COMPACTION_THRESHOLD);
+        }
+    }
+
+    /**
+     * Compacts the row storage by removing tombstoned rows and rebuilding indexes.
+     * This is a synchronous operation that should be called infrequently.
+     */
+    private synchronized void compact() {
+        int originalSize = rows.size();
+        int originalDeleted = deletedRows.cardinality();
+        
+        List<Object[]> compactedRows = new ArrayList<>();
+        BitSet compactedDeleted = new BitSet();
+        
+        // Copy non-deleted rows to new list
+        for (int i = 0; i < rows.size(); i++) {
+            if (!deletedRows.get(i)) {
+                compactedRows.add(rows.get(i));
+                compactedDeleted.set(compactedRows.size() - 1);
+            }
+        }
+        
+        // Replace the old rows with compacted ones
+        rows.clear();
+        rows.addAll(compactedRows);
+        deletedRows.clear(); // After compaction, no rows should be deleted
+        
+        
+        
+        // Rebuild indexes to reflect new positions
+        syncIndexBulkFromArrays(rows);
+        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+            primaryKeyIndex.buildIndex(rows);
+        }
+        secondaryIndexManager.rebuildAllIndexesFromArrays(rows);
+        
+        LOGGER.debug("Compacted Avro table '{}': removed {} tombstoned rows, {} remaining", 
+                     tableName, deletedRows.cardinality(), rows.size());
+    }
+
+    @Override
+    public synchronized void beginBulkUpdate() {
+        bulkDepth++;
+        if (bulkDepth == 1) {
+            // First level of bulk nesting - defer index operations
+            if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+                primaryKeyIndex.setBulkMode(true);
+            }
+            secondaryIndexManager.setBulkMode(true);
+        }
+    }
+
+    @Override
+    public synchronized void endBulkUpdate() {
+        if (bulkDepth <= 0) {
+            throw new IllegalStateException("endBulkUpdate() called without beginBulkUpdate()");
+        }
+        bulkDepth--;
+        if (bulkDepth == 0) {
+            // Exiting bulk mode - rebuild indexes
+            if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+                primaryKeyIndex.setBulkMode(false);
+                primaryKeyIndex.buildIndex(rows);
+            }
+            secondaryIndexManager.setBulkMode(false);
+            secondaryIndexManager.rebuildAllIndexesFromArrays(rows);
+            
+            // Check for compaction after bulk operations
+            checkCompaction();
+        }
+    }
+
+    @Override
+    protected void syncIndexAppend(Object[] row, int rowIndex) {
+        if (bulkDepth > 0) {
+            return; // Skip index updates during bulk operations
+        }
+        // Default implementation does nothing - subclasses can override
+    }
+
+    @Override
+    protected void syncIndexInsert(Object[] row, int rowIndex) {
+        if (bulkDepth > 0) {
+            return; // Skip index updates during bulk operations
+        }
+        // Default implementation does nothing - subclasses can override
+    }
+
+    @Override
+    protected void syncIndexUpdate(Object[] oldRow, int rowIndex, Object[] newRow) {
+        if (bulkDepth > 0) {
+            return; // Skip index updates during bulk operations
+        }
+        // Default implementation does nothing - subclasses can override
+    }
+
+    @Override
+    protected void syncIndexDelete(int rowIndex) {
+        if (bulkDepth > 0) {
+            return; // Skip index updates during bulk operations
+        }
+        // Default implementation does nothing - subclasses can override
+    }
+
+    @Override
+    protected void syncIndexBulkFromArrays(List<Object[]> rows) {
+        if (bulkDepth > 0) {
+            return; // Skip index updates during bulk operations
+        }
+        // Default implementation does nothing - subclasses can override
     }
 
     // ─── Persistence ────────────────────────────────────────────────

@@ -55,6 +55,58 @@ public final class JsonPathResolver {
     }
 
     /**
+     * Precomputed index for fast path resolution (prompt 11).
+     * @param orderedColumns the ordered schema column names (immutable)
+     * @param indexByName case-insensitive map from column name to index (immutable)
+     */
+    public record SchemaIndex(List<String> orderedColumns, TreeMap<String, Integer> indexByName) {
+        /** Resolves a dotted path against the precomputed index. */
+        public ResolvedPath resolve(String path) {
+            if (path == null || path.isBlank()) {
+                return UNRESOLVED;
+            }
+            Integer exact = indexByName.get(path.trim());
+            if (exact != null) {
+                return new ResolvedPath(exact, orderedColumns.get(exact), List.of());
+            }
+            String[] parts = path.split("\\.");
+            // Cache joined prefixes incrementally to avoid O(L²) string concatenation
+            String fullJoined = parts[0];
+            Integer idx = indexByName.get(fullJoined);
+            if (idx != null) {
+                List<String> rest = new ArrayList<>();
+                for (int k = 1; k < parts.length; k++) {
+                    rest.add(parts[k]);
+                }
+                return new ResolvedPath(idx, orderedColumns.get(idx), rest);
+            }
+            for (int prefix = parts.length; prefix > 1; prefix--) {
+                fullJoined = fullJoined + "." + parts[prefix - 1];
+                idx = indexByName.get(fullJoined);
+                if (idx != null) {
+                    List<String> rest = new ArrayList<>();
+                    for (int k = prefix; k < parts.length; k++) {
+                        rest.add(parts[k]);
+                    }
+                    return new ResolvedPath(idx, orderedColumns.get(idx), rest);
+                }
+            }
+            return UNRESOLVED;
+        }
+    }
+
+    /**
+     * Resolves a dotted path against the schema column names, case-insensitively.
+     * An exact column name wins; otherwise the longest schema-column prefix of
+     * the dotted path wins and the remaining segments are returned.
+     *
+     * @param columns the ordered schema column names
+     * @param path the dotted path to resolve
+     * @return the {@link ResolvedPath}, or {@link #UNRESOLVED} when no column matches
+     */
+
+     
+    /**
      * Resolves a dotted path against the schema column names, case-insensitively.
      * An exact column name wins; otherwise the longest schema-column prefix of
      * the dotted path wins and the remaining segments are returned.
@@ -77,12 +129,19 @@ public final class JsonPathResolver {
             return new ResolvedPath(exact, orderedColumns.get(exact), List.of());
         }
         String[] parts = path.split("\\.");
-        for (int prefix = parts.length; prefix > 0; prefix--) {
-            String joined = parts[0];
-            for (int k = 1; k < prefix; k++) {
-                joined = joined + "." + parts[k];
+        // Cache joined prefixes incrementally to avoid O(L²) string concatenation
+        String fullJoined = parts[0];
+        Integer idx = index.get(fullJoined);
+        if (idx != null) {
+            List<String> rest = new ArrayList<>();
+            for (int k = 1; k < parts.length; k++) {
+                rest.add(parts[k]);
             }
-            Integer idx = index.get(joined);
+            return new ResolvedPath(idx, orderedColumns.get(idx), rest);
+        }
+        for (int prefix = parts.length; prefix > 1; prefix--) {
+            fullJoined = fullJoined + "." + parts[prefix - 1];
+            idx = index.get(fullJoined);
             if (idx != null) {
                 List<String> rest = new ArrayList<>();
                 for (int k = prefix; k < parts.length; k++) {
