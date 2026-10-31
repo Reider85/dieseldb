@@ -39,6 +39,9 @@ public class AvroSecondaryIndexManager implements Serializable {
     // Persistence file extension
     private static final String INDEX_FILE_EXTENSION = ".asi";
     
+    // Bulk update mode flag - defers index rebuilds during bulk operations
+    private transient boolean bulkMode = false;
+    
     public AvroSecondaryIndexManager(String tableName, List<String> columns, Map<?, ?> columnTypes) {
         this.columns = new ArrayList<>(columns);
         rebuildColumnIndex();
@@ -222,6 +225,9 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Synchronize index on insert operation
      */
     public synchronized void syncOnInsert(Map<String, Object> row, int rowIndex) {
+        if (bulkMode) {
+            return; // Skip index updates during bulk operations
+        }
         // o2 Avro-14: one lazy case-insensitive view per call, amortized over all indexes
         RowCiView view = new RowCiView(row);
         for (AvroSecondaryIndex index : indexes.values()) {
@@ -236,6 +242,9 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Synchronize index on update operation
      */
     public synchronized void syncOnUpdate(Map<String, Object> oldRow, Map<String, Object> newRow, int rowIndex) {
+        if (bulkMode) {
+            return; // Skip index updates during bulk operations
+        }
         // o2 Avro-14: one lazy view per row (old/new separately; sharing a built
         // CI map between them would leak values — each view caches its own row's keys)
         RowCiView oldView = new RowCiView(oldRow);
@@ -260,6 +269,9 @@ public class AvroSecondaryIndexManager implements Serializable {
      * Synchronize index on delete operation
      */
     public synchronized void syncOnDelete(Map<String, Object> row, int rowIndex) {
+        if (bulkMode) {
+            return; // Skip index updates during bulk operations
+        }
         RowCiView view = new RowCiView(row);
         for (AvroSecondaryIndex index : indexes.values()) {
             Object key = buildKeyForIndex(view, index);
@@ -580,5 +592,20 @@ public class AvroSecondaryIndexManager implements Serializable {
      */
     public synchronized void clearAllIndexes() {
         indexes.clear();
+    }
+    
+    /**
+     * Sets bulk update mode. When in bulk mode, index operations are deferred
+     * until endBulkUpdate() is called, which improves performance for bulk operations.
+     */
+    public synchronized void setBulkMode(boolean bulkMode) {
+        this.bulkMode = bulkMode;
+    }
+    
+    /**
+     * Returns whether bulk update mode is active.
+     */
+    public synchronized boolean isBulkMode() {
+        return bulkMode;
     }
 }

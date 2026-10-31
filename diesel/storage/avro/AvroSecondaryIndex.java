@@ -106,11 +106,14 @@ public class AvroSecondaryIndex implements Serializable {
     public void shiftPositions(int rowIndex, int delta) {
         if (delta == 0) return;
         for (List<Integer> rows : indexMap.values()) {
-            for (int i = 0; i < rows.size(); i++) {
-                int position = rows.get(i);
-                if (position >= rowIndex) {
-                    rows.set(i, position + delta);
-                }
+            // Binary search for the first position >= rowIndex
+            int fromIndex = Collections.binarySearch(rows, rowIndex);
+            if (fromIndex < 0) {
+                fromIndex = -(fromIndex + 1); // Convert to insertion point
+            }
+            // Shift only the suffix of positions >= rowIndex
+            for (int i = fromIndex; i < rows.size(); i++) {
+                rows.set(i, rows.get(i) + delta);
             }
         }
         lastAccessTime = System.currentTimeMillis();

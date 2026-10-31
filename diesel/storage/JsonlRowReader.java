@@ -102,6 +102,8 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
     private final JsonTypeMapper typeMapper;
     private List<JsonlSchemaManager.ProjectionSlot> projectionSlots;
     private boolean[] neededByColumn;
+    /** Map from columnIndex to list of slot positions for O(1) slot lookup per field (prompt 10). */
+    private Map<Integer, List<Integer>> columnIndexToSlots;
     /** Case-insensitive dot/array prefixes that must be descended in FLATTEN mode
      *  when a projection is active (prompt 55): e.g. {@code user} and
      *  {@code user.address} for a projected {@code user.address.city}, or
@@ -594,6 +596,7 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             return;
         }
         List<JsonlSchemaManager.ProjectionSlot> slots = new ArrayList<>();
+        Map<Integer, List<Integer>> columnIndexToSlots = new HashMap<>();
         boolean[] needed = new boolean[columns.size()];
         java.util.Set<String> prefixes = new java.util.HashSet<>();
         for (String item : items) {
@@ -605,10 +608,14 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             needed[slot.columnIndex()] = true;
             addNeededPrefixes(columns.get(slot.columnIndex()), prefixes);
             slots.add(slot);
+            
+            // Build bucket: map columnIndex to list of slot positions
+            columnIndexToSlots.computeIfAbsent(slot.columnIndex(), k -> new ArrayList<>()).add(slots.size() - 1);
         }
         projectionSlots = slots.isEmpty() ? null : slots;
         neededByColumn = slots.isEmpty() ? null : needed;
         neededPrefixes = (slots.isEmpty() || prefixes.isEmpty()) ? null : java.util.Set.copyOf(prefixes);
+        this.columnIndexToSlots = slots.isEmpty() ? null : columnIndexToSlots;
     }
 
     /**
@@ -765,16 +772,34 @@ public class JsonlRowReader implements Iterator<Map<String, Object>>, AutoClosea
             Object value = parseFieldValue(p, idx, field, valueToken);
             seenColumn[idx] = true;
             lastRowPresent = seenColumn;
-            for (int s = 0; s < slots; s++) {
-                JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
-                if (slot.columnIndex() != idx) {
-                    continue;
+            
+            // Direct slot lookup via columnIndexToSlots: O(slots-for-this-column) instead of O(S)
+            if (columnIndexToSlots != null) {
+                List<Integer> slotPositions = columnIndexToSlots.get(idx);
+                if (slotPositions != null) {
+                    for (int pos : slotPositions) {
+                        JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(pos);
+                        if (slot.isPlainColumn()) {
+                            values[pos] = value;
+                        } else if (value instanceof String txt
+                                && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
+                            values[pos] = schema.extractPathValue(txt, slot.segments());
+                        }
+                    }
                 }
-                if (slot.isPlainColumn()) {
-                    values[s] = value;
-                } else if (value instanceof String txt
-                        && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
-                    values[s] = schema.extractPathValue(txt, slot.segments());
+            } else {
+                // Fallback: old O(S) scan (should not happen with projectionSlots != null)
+                for (int s = 0; s < slots; s++) {
+                    JsonlSchemaManager.ProjectionSlot slot = projectionSlots.get(s);
+                    if (slot.columnIndex() != idx) {
+                        continue;
+                    }
+                    if (slot.isPlainColumn()) {
+                        values[s] = value;
+                    } else if (value instanceof String txt
+                            && (valueToken == JsonEvent.START_OBJECT || valueToken == JsonEvent.START_ARRAY)) {
+                        values[s] = schema.extractPathValue(txt, slot.segments());
+                    }
                 }
             }
         }

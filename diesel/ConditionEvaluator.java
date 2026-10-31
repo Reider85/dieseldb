@@ -5,13 +5,16 @@ import static diesel.ThreeValuedLogic.FALSE;
 import static diesel.ThreeValuedLogic.UNKNOWN;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import javax.annotation.Nullable;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import diesel.storage.json.JsonPathResolver;
 
 /**
  * Shared condition evaluation logic for DELETE, UPDATE, and SELECT queries.
@@ -87,7 +90,7 @@ class ConditionEvaluator {
             return evaluateIsNullCondition(row, condition);
         }
 
-        Object rowValue = row.get(condition.column);
+        Object rowValue = resolveRowValue(row, condition.column);
         if (rowValue == null) {
             LOGGER.log(Level.FINE, "Row value for column {0} is null, condition is UNKNOWN", condition.column);
             return UNKNOWN;
@@ -111,6 +114,40 @@ class ConditionEvaluator {
         LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue: {1}, conditionValue: {2}, result: {3}",
                 new Object[]{condition, rowValue, conditionValue, result});
         return result ? TRUE : FALSE;
+    }
+
+    /**
+     * Resolves a dotted path against the row's columns. For dotted paths like
+     * "PROFL.user.address.city", it extracts the value from the JSON text in
+     * the PROFL column.
+     */
+    private Object resolveRowValue(Map<String, Object> row, String columnKey) {
+        Object direct = row.get(columnKey);
+        if (direct != null) {
+            return direct;
+        }
+        
+        // Check if this is a dotted path that needs resolution
+        if (columnKey.contains(".")) {
+            List<String> columns = new ArrayList<>(row.keySet());
+            TreeMap<String, Integer> indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            for (int i = 0; i < columns.size(); i++) {
+                indexByName.put(columns.get(i), i);
+            }
+            
+            JsonPathResolver.SchemaIndex schemaIndex = new JsonPathResolver.SchemaIndex(columns, indexByName);
+            JsonPathResolver.ResolvedPath resolved = schemaIndex.resolve(columnKey);
+            
+            if (resolved.columnIndex() >= 0 && !resolved.segments().isEmpty()) {
+                Object baseValue = row.get(resolved.column());
+                if (baseValue instanceof String jsonText) {
+                    return JsonPathResolver.extract(jsonText, resolved.segments(), 
+                            new diesel.storage.json.JsonParserConfig.Builder().build());
+                }
+            }
+        }
+        
+        return null;
     }
 
     private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, QueryParser.Condition condition,

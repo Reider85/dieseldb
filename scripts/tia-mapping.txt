@@ -61,6 +61,7 @@ diesel/storage/CsvIndexManager.java	storage-csv
 diesel/storage/TsvRowStorage.java	storage-tsv
 diesel/storage/TsvIndexManager.java	storage-tsv
 diesel/storage/JsonlRowStorage.java	storage-jsonl
+diesel/storage/JsonlRowReader.java	storage-jsonl
 diesel/storage/JsonlIndexManager.java	storage-jsonl
 diesel/storage/JsonlDeltaManager.java	storage-jsonl
 diesel/storage/JsonlSchemaManager.java	storage-jsonl
