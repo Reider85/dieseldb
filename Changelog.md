@@ -11,3 +11,5 @@
 3.3.81 Prompt4 #51: CRC32C implementation (hardware-accelerated)
 
 3.3.82 ChecksummedPage implementation: CRC32C checksummed pages with corruption detection and recovery
+
+3.3.83 Background PageScrubber + CheckpointStrategy for R3-014 (CRC32C checkpoint durability)
