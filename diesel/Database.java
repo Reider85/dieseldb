@@ -27,6 +27,10 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import diesel.recovery.CheckpointRecord;
+import diesel.recovery.CheckpointStrategy;
+import diesel.recovery.CheckpointMode;
+import diesel.recovery.FuzzyCheckpoint;
+import diesel.recovery.SharpCheckpoint;
     import java.util.concurrent.CompletableFuture;
     import java.util.concurrent.ConcurrentHashMap;
     import java.util.concurrent.ExecutionException;
@@ -101,6 +105,7 @@ class Database {
     private final ConflictDetector conflictDetector = new ConflictDetector();     // MVCC: SERIALIZABLE SSI conflict detection (prompt4 #5)
     private CatalogTable catalog;                                               // System catalog for table schemas
     private diesel.storage.page.PageManager pageManager;                             // Page manager for catalog storage
+    private volatile diesel.storage.page.PageScrubber pageScrubber;                  // Background page scrubber (prompt4 #53)
     private IsolationLevel defaultIsolationLevel = IsolationLevel.READ_UNCOMMITTED;
     private boolean autoCommit = true;
     private String dataDir = "data";
@@ -442,7 +447,7 @@ class Database {
     /**
      * Starts the background checkpoint manager if enabled and WAL is enabled.
      * Reads configuration and creates the checkpoint manager with the given
-     * dependencies. Idempotent: does nothing if already running.
+     * dependencies and strategy. Idempotent: does nothing if already running.
      */
     public void startCheckpointManager() {
         if (checkpointManager != null && checkpointManager.isRunning()) {
@@ -470,7 +475,27 @@ class Database {
                 props.getProperty("checkpoint.max.wal.bytes", "268435456"));
 
             if (enabled) {
-                // Create checkpoint manager
+                // Create checkpoint strategy based on configuration
+                String modeStr = ConfigLoader.getCheckpointMode();
+                CheckpointMode mode = CheckpointMode.parse(modeStr);
+                CheckpointStrategy strategy;
+                
+                if (mode == CheckpointMode.FUZZY) {
+                    strategy = new FuzzyCheckpoint(
+                        walWriter.getManager(),
+                        bufferPoolFlusher,
+                        pageManager.getBufferPool(),
+                        txStatusTracker);
+                } else {
+                    strategy = new SharpCheckpoint(
+                        walWriter.getManager(),
+                        bufferPoolFlusher,
+                        pageManager.getBufferPool(),
+                        txStatusTracker,
+                        checkpointManager != null ? checkpointManager.getWriteGate() : null);
+                }
+
+                // Create checkpoint manager with strategy
                 checkpointManager = new diesel.storage.page.CheckpointManager(
                     walWriter.getManager(),
                     bufferPoolFlusher,
@@ -478,17 +503,73 @@ class Database {
                     txStatusTracker,
                     intervalMs,
                     maxWalBytes,
-                    enabled);
+                    enabled,
+                    strategy);
 
-                // Set write gate in page manager
+                // Set write gate in page manager (always set, even for fuzzy strategy)
                 pageManager.setWriteGate(checkpointManager.getWriteGate());
 
                 // Start the checkpoint manager
                 checkpointManager.start();
-                LOGGER.info("CheckpointManager started with interval " + intervalMs + "ms, maxWalBytes " + maxWalBytes);
+                LOGGER.info("CheckpointManager started with interval " + intervalMs + "ms, maxWalBytes " + maxWalBytes + 
+                           ", mode=" + mode.toLowerCase());
             }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Failed to start CheckpointManager: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Starts the background page scrubber if enabled.
+     * Reads configuration and creates the scrubber with the given dependencies.
+     * Idempotent: does nothing if already running.
+     */
+    public void startPageScrubber() {
+        if (pageScrubber != null) {
+            LOGGER.fine("PageScrubber already running");
+            return;
+        }
+
+        if (pageManager == null) {
+            LOGGER.warning("Cannot start page scrubber: PageManager not initialized");
+            return;
+        }
+
+        try {
+            boolean enabled = ConfigLoader.getScrubberEnabled();
+            int intervalDays = ConfigLoader.getScrubberIntervalDays();
+            
+            if (enabled) {
+                // Create page scrubber
+                pageScrubber = new diesel.storage.page.PageScrubber(
+                    pageManager.getPageFile(),
+                    pageManager.pageSize(),
+                    intervalDays,
+                    enabled);
+
+                // Start the scrubber
+                pageScrubber.start();
+                LOGGER.info("PageScrubber started with interval " + intervalDays + " days");
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to start PageScrubber: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Stops the background page scrubber.
+     * Idempotent: does nothing if not running.
+     */
+    public void stopPageScrubber() {
+        if (pageScrubber != null) {
+            try {
+                pageScrubber.stop();
+                LOGGER.info("PageScrubber stopped");
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to stop PageScrubber: " + e.getMessage(), e);
+            } finally {
+                pageScrubber = null;
+            }
         }
     }
 
@@ -3474,7 +3555,10 @@ class Database {
             audit.close();
         }
 
-        // Stop page flusher first (final flush)
+        // Stop page scrubber first
+        stopPageScrubber();
+        
+        // Stop page flusher (final flush)
         stopPageFlusher();
         
         // Close WAL subsystem to ensure all commits are flushed

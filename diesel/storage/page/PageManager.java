@@ -460,6 +460,16 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
     public String getIoMode() {
         return FileChannelIO.MODE_DEFAULT; // Could expose via FileChannelIO if needed
     }
+    
+    /**
+     * Returns the path to the page file.
+     * Used by PageScrubber and other components for direct file access.
+     *
+     * @return the page file path
+     */
+    public Path getPageFile() {
+        return file;
+    }
 
     /**
      * Sets the WAL manager for page recovery from WAL entries.

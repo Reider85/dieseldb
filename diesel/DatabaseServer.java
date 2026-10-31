@@ -240,6 +240,8 @@ public class DatabaseServer {
         database.startPageFlusher();
         // Start background checkpoint manager (prompt4 #21)
         database.startCheckpointManager();
+        // Start background page scrubber (prompt4 #53)
+        database.startPageScrubber();
         database.getVacuumManager().startAutoVacuum();
         // Bootstrap the admin account on the first run (prompt4 #31, #30 step 2/4)
         if (Boolean.parseBoolean(config.getProperty("security.auth.bootstrap-admin", "true"))) {
@@ -393,6 +395,12 @@ public class DatabaseServer {
             database.stopCheckpointManager();
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error stopping checkpoint manager: {0}", e.getMessage());
+        }
+        // Stop background page scrubber (prompt4 #53)
+        try {
+            database.stopPageScrubber();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error stopping page scrubber: {0}", e.getMessage());
         }
         // Stop background page flusher
         try {
