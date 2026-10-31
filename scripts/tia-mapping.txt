@@ -214,3 +214,13 @@ diesel/checksum/CRC32C.java		smoke,perf
 diesel/checksum/ChecksummedPage.java		storage
 diesel/checksum/PageValidator.java		storage
 diesel/storage/page/PageCorruptedException.java		storage
+diesel/net/libpq/LibpqProtocol.java		network
+diesel/net/libpq/LibpqMessage.java		network
+diesel/net/libpq/LibpqMessageDecoder.java		network
+diesel/net/libpq/ScramSha256.java		network
+diesel/LibpqServer.java		network
+diesel/LibpqClientHandler.java		network
+src/test/java/diesel/net/libpq/ScramSha256Test.java		network
+src/test/java/diesel/net/libpq/LibpqProtocolTest.java		network
+src/test/java/diesel/net/libpq/PsqlCompatTest.java		network
+src/test/java/diesel/net/libpq/ExtendedQueryTest.java		network

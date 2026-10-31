@@ -13,3 +13,5 @@
 3.3.82 ChecksummedPage implementation: CRC32C checksummed pages with corruption detection and recovery
 
 3.3.83 Background PageScrubber + CheckpointStrategy for R3-014 (CRC32C checkpoint durability)
+
+3.3.84 Prompt4 #54: libpq message protocol foundation with SCRAM auth and psql meta-commands

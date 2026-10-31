@@ -9,17 +9,19 @@ import diesel.TxStatusTracker;
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Sharp checkpoint strategy (Prompt4 #53).
  * 
- * <p>Performs blocking checkpoints by holding the write gate for the entire
- * duration and flushing all dirty pages. Writers are blocked during checkpoint.
+ * Implements blocking checkpoint behavior via write gate, preserving existing
+ * gated behavior. Flushes all dirty pages to disk and waits for completion.
  * 
- * <p>This is the traditional checkpoint behavior used in existing tests.
- * Checkpoint record includes active transaction IDs at checkpoint time.
+ * @author DieselDB Team
  */
-public final class SharpCheckpoint implements CheckpointStrategy {
+public class SharpCheckpoint implements CheckpointStrategy {
+    private static final Logger LOGGER = Logger.getLogger(SharpCheckpoint.class.getName());
     
     private final WALManager walManager;
     private final BufferPoolFlusher flusher;
@@ -104,12 +106,10 @@ public final class SharpCheckpoint implements CheckpointStrategy {
         }
         
         try {
-            int flushed = bufferPool.flushDirty();
-            if (flushed > 0) {
-                System.out.println("SharpCheckpoint: flushed " + flushed + " dirty pages (fallback)");
-            }
+            bufferPool.flushDirty();
+            LOGGER.info("SharpCheckpoint: flushed all dirty pages (fallback)");
         } catch (IOException e) {
-            System.err.println("SharpCheckpoint: fallback flush failed: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "SharpCheckpoint: fallback flush failed: " + e.getMessage(), e);
             throw e;
         }
     }

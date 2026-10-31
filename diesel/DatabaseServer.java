@@ -80,6 +80,8 @@ public class DatabaseServer {
     private final AtomicInteger activeConnections = new AtomicInteger();
     /** Prometheus /metrics endpoint (prompt4 #45); null until started or when disabled. */
     private volatile MetricsHttpServer metricsHttpServer;
+    /** libpq protocol server (prompt4 #54); null until started or when disabled. */
+    private volatile LibpqServer libpqServer;
 
     /**
      * Creates a server on the given port with the default socket timeout.
@@ -297,6 +299,27 @@ public class DatabaseServer {
             if (legacyPort > 0) {
                 startLegacyServer(database, effectiveSocketTimeout, config);
             }
+            
+            // Start libpq server if enabled
+            int libpqPort = Integer.parseInt(config.getProperty("libpq.port", "0"));
+            String libpqAuthMethod = config.getProperty("libpq.auth.method", "scram-sha-256");
+            if (libpqPort > 0) {
+                try {
+                    libpqServer = new LibpqServer(database, libpqPort, libpqAuthMethod);
+                    new Thread(() -> {
+                        try {
+                            libpqServer.start();
+                        } catch (IOException e) {
+                            LOGGER.log(Level.WARNING, "libpq server failed to start on port {0}: {1}", 
+                                    new Object[]{libpqPort, e.getMessage()});
+                        }
+                    }, "libpq-server").start();
+                    LOGGER.log(Level.INFO, "libpq server started on port {0} with auth method {1}", 
+                            new Object[]{libpqPort, libpqAuthMethod});
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Failed to start libpq server: {0}", e.getMessage());
+                }
+            }
 
             while (running) {
                 try {
@@ -386,6 +409,16 @@ public class DatabaseServer {
                 LOGGER.log(Level.INFO, "Legacy server socket closed");
             } catch (IOException e) {
                 LOGGER.log(Level.SEVERE, "Error closing legacy server socket: {0}", e.getMessage());
+            }
+        }
+        
+        // Stop libpq server
+        if (libpqServer != null && libpqServer.isRunning()) {
+            try {
+                libpqServer.stop();
+                LOGGER.log(Level.INFO, "libpq server stopped");
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error stopping libpq server: {0}", e.getMessage());
             }
         }
         
