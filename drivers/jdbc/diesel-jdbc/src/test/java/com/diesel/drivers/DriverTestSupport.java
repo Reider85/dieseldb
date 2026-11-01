@@ -47,9 +47,17 @@ final class DriverTestSupport {
      * with exit code 0 within 10 seconds, or {@code null} if none does.
      */
     static String findExecutable(String... candidates) {
+        return findExecutableProbing("--version", candidates);
+    }
+
+    /**
+     * Like {@link #findExecutable} but probes with an arbitrary subcommand:
+     * Go answers {@code go version} and exits 2 on {@code go --version}.
+     */
+    static String findExecutableProbing(String probe, String... candidates) {
         for (String candidate : candidates) {
             try {
-                ProcessBuilder pb = new ProcessBuilder(candidate, "--version");
+                ProcessBuilder pb = new ProcessBuilder(candidate, probe);
                 pb.redirectErrorStream(true);
                 Process proc = pb.start();
                 drain(proc.getInputStream());

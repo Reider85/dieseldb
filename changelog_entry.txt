@@ -1,1 +1,1 @@
-3.3.86 Prompt4 #56: Python (psycopg2-compatible) + Node.js (pg-compatible) drivers, asyncio/Promise variants, PyPI/npm publish pipeline
+3.3.87 Prompt4 #57: Go (database/sql, lib/pq-style) + Rust (tokio-postgres-style, crate diesel-db) drivers with client-side \..\ binding, GoTest/RustTest JUnit acceptance wrappers, pkg.go.dev + crates.io publish pipeline

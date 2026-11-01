@@ -11,7 +11,7 @@ data/
 logs/
 pages.db
 
-# Driver build artifacts (prompt 56: Python/Node drivers)
+# Driver build artifacts (prompt 56: Python/Node drivers, prompt 57: Go/Rust)
 node_modules/
 dist/
 build/
@@ -19,6 +19,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 *.tgz
+*.exe
+# Library crate: Cargo.lock is not committed (target/ above already covers
+# the build directory at any depth).
+Cargo.lock
 
 # Benchmark timings
 timing/*

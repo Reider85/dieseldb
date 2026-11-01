@@ -1,24 +1,30 @@
 name: Publish Drivers
 
 # Prompt 56: PyPI + npm publication pipeline for the Python/Node drivers.
-# Secrets required (repository settings): PYPI_API_TOKEN, NPM_TOKEN.
-# Trigger: tag driver-python-v* (PyPI), driver-node-v* (npm), drivers-v*
-# (both), or manual workflow_dispatch with a driver choice.
+# Prompt 57: Go (pkg.go.dev auto-index via GOPROXY) + Rust (crates.io) jobs.
+# Secrets required (repository settings): PYPI_API_TOKEN, NPM_TOKEN,
+# CRATES_IO_TOKEN. The Go job needs no secrets - pkg.go.dev indexes the
+# monorepo subdirectory tag drivers/go/diesel-go/vX.Y.Z automatically.
+# Trigger: tag driver-python-v* (PyPI), driver-node-v* (npm),
+# driver-go-v* (Go smoke gate), driver-rust-v* (crates.io), drivers-v* (all),
+# or manual workflow_dispatch with a driver choice.
 
 on:
   push:
     tags:
       - 'driver-python-v*'
       - 'driver-node-v*'
+      - 'driver-go-v*'
+      - 'driver-rust-v*'
       - 'drivers-v*'
   workflow_dispatch:
     inputs:
       driver:
         description: 'Driver to publish'
         type: choice
-        options: [python, node, both]
+        options: [python, node, go, rust, both, all]
         required: true
-        default: both
+        default: all
 
 jobs:
   pypi:
@@ -26,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: >-
       (github.event_name == 'workflow_dispatch' &&
-       (inputs.driver == 'python' || inputs.driver == 'both')) ||
+       (inputs.driver == 'python' || inputs.driver == 'both' || inputs.driver == 'all')) ||
       (github.event_name == 'push' &&
        (startsWith(github.ref, 'refs/tags/driver-python-v') ||
         startsWith(github.ref, 'refs/tags/drivers-v')))
@@ -54,7 +60,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: >-
       (github.event_name == 'workflow_dispatch' &&
-       (inputs.driver == 'node' || inputs.driver == 'both')) ||
+       (inputs.driver == 'node' || inputs.driver == 'both' || inputs.driver == 'all')) ||
       (github.event_name == 'push' &&
        (startsWith(github.ref, 'refs/tags/driver-node-v') ||
         startsWith(github.ref, 'refs/tags/drivers-v')))
@@ -77,3 +83,53 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  go:
+    name: go-smoke-gate
+    runs-on: ubuntu-24.04
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.driver == 'go' || inputs.driver == 'all')) ||
+      (github.event_name == 'push' &&
+       (startsWith(github.ref, 'refs/tags/driver-go-v') ||
+        startsWith(github.ref, 'refs/tags/drivers-v')))
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: drivers/go/diesel-go/go.sum
+
+      # pkg.go.dev / proxy.golang.org index the monorepo subdirectory module
+      # automatically once the tag drivers/go/diesel-go/vX.Y.Z is public; this
+      # job is the compile/test gate before tagging.
+      - name: Vet and test
+        working-directory: drivers/go/diesel-go
+        run: |
+          go vet ./...
+          go test ./...
+
+  crates:
+    name: publish-crates-io
+    runs-on: ubuntu-24.04
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.driver == 'rust' || inputs.driver == 'all')) ||
+      (github.event_name == 'push' &&
+       (startsWith(github.ref, 'refs/tags/driver-rust-v') ||
+        startsWith(github.ref, 'refs/tags/drivers-v')))
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test
+        working-directory: drivers/rust/diesel-rs
+        run: cargo test --no-run
+
+      - name: Publish to crates.io
+        working-directory: drivers/rust/diesel-rs
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}

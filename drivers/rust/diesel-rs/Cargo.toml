@@ -1,0 +1,17 @@
+[package]
+name = "diesel-db"
+version = "0.1.0"
+edition = "2021"
+description = "Tokio-postgres-compatible async driver for the DieselDB libpq server"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Reider85/dieseldb"
+homepage = "https://github.com/Reider85/dieseldb"
+readme = "README.md"
+keywords = ["dieseldb", "libpq", "database", "async", "postgresql"]
+categories = ["database", "asynchronous"]
+
+[dependencies]
+tokio = { version = "1", features = ["net", "io-util", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util", "time", "macros", "rt-multi-thread"] }
