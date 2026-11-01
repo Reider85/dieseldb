@@ -104,10 +104,8 @@ public final class SharpCheckpoint implements CheckpointStrategy {
         }
         
         try {
-            int flushed = bufferPool.flushDirty();
-            if (flushed > 0) {
-                System.out.println("SharpCheckpoint: flushed " + flushed + " dirty pages (fallback)");
-            }
+            bufferPool.flushDirty();
+            System.out.println("SharpCheckpoint: flushed dirty pages (fallback)");
         } catch (IOException e) {
             System.err.println("SharpCheckpoint: fallback flush failed: " + e.getMessage());
             throw e;

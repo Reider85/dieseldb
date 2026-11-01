@@ -202,11 +202,11 @@ public final class PageScrubber implements AutoCloseable {
                 
                 // Record metrics
                 MetricsRegistry.getInstance().counter("diesel_scrubber_pages_scanned_total")
-                    .increment(pageCount);
+                    .add(pageCount);
                 MetricsRegistry.getInstance().histogram("diesel_scrubber_duration_seconds")
                     .record(durationMs / 1000.0);
                 MetricsRegistry.getInstance().counter("diesel_page_checksum_failures_total")
-                    .increment(corruptedPages.size());
+                    .add(corruptedPages.size());
                 
                 return new ScrubResult(pageCount, corruptedPages, durationMs);
             }
