@@ -583,7 +583,11 @@ class AvroPrimaryKeyIndexTest {
         storage.insert(mapRow(2L, "Bob", 25, false));
         storage.delete(0);
         assertNull(storage.getPrimaryKeyIndex().lookup(1L));
-        assertEquals(0, storage.getPrimaryKeyIndex().lookup(2L));
+        // o2 Avro-11 tombstone contract: delete no longer shifts positions,
+        // so Bob keeps physical position 1 (position 0 stays tombstoned until
+        // the 25%-threshold compaction runs). scan() skips the tombstone.
+        assertEquals(1, storage.getPrimaryKeyIndex().lookup(2L));
+        assertEquals(1, storage.scan().size());
     }
 
     @Test
@@ -657,10 +661,13 @@ class AvroPrimaryKeyIndexTest {
         AvroSecondaryIndex index = storage.getSecondaryIndexManager().getIndex("age_idx");
         assertEquals(List.of(0, 1, 3), index.search(30));
 
+        // o2 Avro-11 tombstone contract: delete(0) removes Alice from the
+        // index but leaves the remaining positions untouched (no shift) -
+        // Diana stays at 1, Charlie at 3.
         storage.delete(0);
-        assertEquals(List.of(0, 2), index.search(30));
-        assertEquals(0, storage.getPrimaryKeyIndex().lookup(4L));
-        assertEquals(1, storage.getPrimaryKeyIndex().lookup(2L));
+        assertEquals(List.of(1, 3), index.search(30));
+        assertEquals(1, storage.getPrimaryKeyIndex().lookup(4L));
+        assertEquals(2, storage.getPrimaryKeyIndex().lookup(2L));
     }
 
     @Test

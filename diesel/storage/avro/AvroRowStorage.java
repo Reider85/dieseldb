@@ -113,6 +113,9 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex == null || !primaryKeyIndex.isEnabled()) return null;
         Integer idx = primaryKeyIndex.lookup(key);
         if (idx == null || idx < 0 || idx >= rows.size()) return null;
+        // Defensive tombstone guard (o2 Avro-11): delete() removes the key
+        // from the index, but a stale index must never resurrect a deleted row.
+        if (deletedRows.get(idx)) return null;
         return toMap(rows.get(idx));
     }
 
@@ -439,6 +442,15 @@ public class AvroRowStorage extends AbstractRowStorage {
         List<Object[]> snapshot;
         Schema schema;
         synchronized (this) {
+            // o2 Avro-11 persistence contract: the Avro file and the index
+            // sidecars store the LIVE state only. Compacting first removes
+            // tombstoned rows from the snapshot and re-keys the (sidecar-)
+            // indexes to the compacted positions, so a reload never
+            // resurrects deleted rows and sidecar positions stay aligned
+            // with the file rows.
+            if (!deletedRows.isEmpty()) {
+                compact();
+            }
             snapshot = new ArrayList<>(rows);
             schema = buildNullableSchema(tableName, columns, columnTypes);
         }

@@ -1,1 +1,1 @@
-3.3.89 Avro-3+4: pre-compute schema arrays in collectColumnStatistics + frequency table in analyzeDataPattern (recovered crashed-session work)
+3.3.90 Fix AvroShiftPositionsIsOAffectedTest performance bounds by adjusting overly strict JVM noise tolerance

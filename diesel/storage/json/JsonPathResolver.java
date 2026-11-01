@@ -93,6 +93,26 @@ public final class JsonPathResolver {
             }
             return UNRESOLVED;
         }
+
+        /**
+         * Resolves a possibly table-qualified path (instance form of
+         * {@link JsonPathResolver#resolveQualified}): {@link #resolve} on the
+         * full path first; when that fails, drops one leading {@code table.}
+         * segment and retries. Used by parse-time type/column maps whose keys
+         * are bare column names while conditions are normalized to the
+         * {@code TABLE.column} form.
+         */
+        public ResolvedPath resolveQualified(String path) {
+            ResolvedPath resolved = resolve(path);
+            if (resolved.columnIndex() >= 0) {
+                return resolved;
+            }
+            int sep = path == null ? -1 : path.indexOf('.');
+            if (sep > 0) {
+                return resolve(path.substring(sep + 1));
+            }
+            return UNRESOLVED;
+        }
     }
 
     /**

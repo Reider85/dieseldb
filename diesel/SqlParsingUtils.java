@@ -271,7 +271,7 @@ class SqlParsingUtils {
             indexByName.put(columns.get(i), i);
         }
         JsonPathResolver.SchemaIndex schemaIndex = new JsonPathResolver.SchemaIndex(columns, indexByName);
-        return schemaIndex.resolve(column).columnIndex() >= 0;
+        return schemaIndex.resolveQualified(column).columnIndex() >= 0;
     }
 
     /**
@@ -288,7 +288,7 @@ class SqlParsingUtils {
             indexByName.put(columns.get(i), i);
         }
         JsonPathResolver.SchemaIndex schemaIndex = new JsonPathResolver.SchemaIndex(columns, indexByName);
-        JsonPathResolver.ResolvedPath resolved = schemaIndex.resolve(column);
+        JsonPathResolver.ResolvedPath resolved = schemaIndex.resolveQualified(column);
         if (resolved.columnIndex() < 0) {
             return null;
         }

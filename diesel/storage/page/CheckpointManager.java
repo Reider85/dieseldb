@@ -127,10 +127,19 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
     
     /**
      * Creates a default sharp checkpoint strategy for backward compatibility.
+     *
+     * <p>The {@code txStatusTracker} parameter is documented as nullable
+     * ("empty list used if null" - see the constructor javadoc and the
+     * null-safe read at the checkpoint-record site), but the sharp/fuzzy
+     * strategy constructors reject null. Substitute an empty tracker here so
+     * legacy callers (tests, older wiring) keep the documented behaviour
+     * instead of failing construction with "TxStatusTracker must not be
+     * null" (prompt4 #53 contract mismatch).
      */
     private CheckpointStrategy createDefaultStrategy() {
-        return new diesel.recovery.SharpCheckpoint(walManager, bufferPoolFlusher, 
-                                                  bufferPool, txStatusTracker, writeGate);
+        TxStatusTracker tracker = txStatusTracker != null ? txStatusTracker : new TxStatusTracker();
+        return new diesel.recovery.SharpCheckpoint(walManager, bufferPoolFlusher,
+                                                  bufferPool, tracker, writeGate);
     }
 
     /**

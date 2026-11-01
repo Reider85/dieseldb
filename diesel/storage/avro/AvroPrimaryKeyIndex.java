@@ -328,21 +328,30 @@ public class AvroPrimaryKeyIndex {
 
     public void shiftPositions(int rowIndex, int delta) {
         if (delta == 0 || pkColumnIndex < 0) return;
-        
-        // Take a snapshot of affected positions to avoid ConcurrentModificationException
-        List<Integer> affectedPositions = new ArrayList<>(positionToKey.subMap(rowIndex, true, Integer.MAX_VALUE, true).keySet());
-        
-        // Update each entry in primaryKeyMap and positionToKey
-        for (int p : affectedPositions) {
-            Object key = positionToKey.remove(p);
-            int newPos = p + delta;
-            primaryKeyMap.put(key, newPos);
-            positionToKey.put(newPos, key);
+
+        // Snapshot the affected entries (positions >= rowIndex) into an
+        // INDEPENDENT map, REMOVE them all from the live TreeMap first, then
+        // re-insert at p + delta. Two traps this avoids:
+        // (1) writing new positions while old ones are still present
+        //     overwrites not-yet-shifted neighbours (delta=+1 put(2,B)
+        //     clobbered C at 2);
+        // (2) snapshotting TreeMap.Entry REFERENCES is unsafe - remove() of a
+        //     two-child node copies the successor's key/value INTO that same
+        //     Entry object, so a later getKey()/getValue() reads mutated data.
+        //     The LinkedHashMap copy stores its own nodes and is immune.
+        Map<Integer, Object> affected = new java.util.LinkedHashMap<>(
+                positionToKey.subMap(rowIndex, true, Integer.MAX_VALUE, true));
+        for (Integer p : affected.keySet()) {
+            positionToKey.remove(p);
         }
-        
+        for (Map.Entry<Integer, Object> e : affected.entrySet()) {
+            int newPos = e.getKey() + delta;
+            positionToKey.put(newPos, e.getValue());
+            primaryKeyMap.put(e.getValue(), newPos);
+        }
+
         invalidatePageCache();
     }
-
     /**
      * Rebuilds the entire index from the given rows. Called after bulk
      * operations and on load.
