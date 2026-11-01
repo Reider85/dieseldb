@@ -7,12 +7,10 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
+import java.util.HashMap;import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
@@ -381,12 +379,15 @@ public final class AdaptiveCompressionManager {
         long repeatedValues = 0;
         long knownValues = 0;
 
-        // Pre-collect the global set of distinct string values to detect constants.
-        Set<String> distinctStrings = new HashSet<>();
+        // o2 Avro-4: one frequency pass over the sample (O(sample x row_size))
+        // replaces the distinct-set pass plus a countMatches re-scan of the
+        // whole sample for every value occurrence (O(sample^2 x row_size)).
+        // Key set is the same distinct-strings set the size-gate used before.
+        Map<String, Integer> frequency = new HashMap<>();
         for (int i = 0; i < sample; i++) {
             for (Object v : extractValues(rows.get(i))) {
                 if (v instanceof String s) {
-                    distinctStrings.add(s);
+                    frequency.merge(s, 1, Integer::sum);
                 }
             }
         }
@@ -401,7 +402,7 @@ public final class AdaptiveCompressionManager {
                     knownValues++;
                     // A value is "repeated" when it is one of few distinct strings
                     // seen many times in the sample.
-                    if (distinctStrings.size() <= 8 && countMatches(rows, sample, s) >= 2) {
+                    if (frequency.size() <= 8 && frequency.getOrDefault(s, 0) >= 2) {
                         repeatedValues++;
                     }
                 } else if (v instanceof Number || v instanceof Boolean) {
@@ -577,18 +578,6 @@ public final class AdaptiveCompressionManager {
             return m.values().toArray();
         }
         return new Object[0];
-    }
-
-    private static int countMatches(List<?> rows, int sample, String value) {
-        int matches = 0;
-        for (int i = 0; i < sample && i < rows.size(); i++) {
-            for (Object v : extractValues(rows.get(i))) {
-                if (value.equals(v)) {
-                    matches++;
-                }
-            }
-        }
-        return matches;
     }
 
     private static String readProperty(String key) {

@@ -210,14 +210,30 @@ public final class AvroStatistics {
         rowCount = 0;
 
         try (AvroDataFileReader reader = new AvroDataFileReader(avroFile)) {
+            // o2 Avro-3: hoist the per-column schema lookups out of the row loop.
+            // avroRecord.get(col) is O(fields) (name -> position scan) and
+            // getBaseType() does another schema.getField(col) scan; both are
+            // resolved once against the file schema, so the hot loop is
+            // O(rows x columns) instead of O(rows x columns x fields).
+            final org.apache.avro.Schema fileSchema = reader.getSchema();
+            final boolean recordSchema = fileSchema != null
+                    && fileSchema.getType() == org.apache.avro.Schema.Type.RECORD;
+            final int columnCount = columns.size();
+            final int[] fieldPositions = new int[columnCount];
+            final org.apache.avro.Schema.Type[] baseTypes = new org.apache.avro.Schema.Type[columnCount];
+            for (int i = 0; i < columnCount; i++) {
+                final String col = columns.get(i);
+                final org.apache.avro.Schema.Field f = recordSchema ? fileSchema.getField(col) : null;
+                fieldPositions[i] = (f != null) ? f.pos() : -1;
+                baseTypes[i] = getBaseType(fileSchema, col);
+            }
             while (reader.hasNext()) {
                 org.apache.avro.generic.GenericRecord avroRecord = reader.nextRecord();
                 rowCount++;
-                for (String col : columns) {
-                    Object value = avroRecord.get(col);
-                    ColumnStats cs = columnStatistics.get(col);
-                    if (value == null || org.apache.avro.Schema.Type.NULL.equals(
-                            getBaseType(avroRecord.getSchema(), col))) {
+                for (int i = 0; i < columnCount; i++) {
+                    Object value = fieldPositions[i] >= 0 ? avroRecord.get(fieldPositions[i]) : null;
+                    ColumnStats cs = columnStatistics.get(columns.get(i));
+                    if (value == null || org.apache.avro.Schema.Type.NULL.equals(baseTypes[i])) {
                         cs.nullCount++;
                     } else {
                         updateMinMax(cs, value);
