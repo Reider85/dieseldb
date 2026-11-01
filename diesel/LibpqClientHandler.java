@@ -44,6 +44,9 @@ public class LibpqClientHandler implements Runnable {
             handleConnection();
         } catch (IOException e) {
             System.err.println("Error handling client connection: " + e.getMessage());
+        } catch (RuntimeException e) {
+            // Prompt 55: surface protocol bugs instead of silently killing the socket.
+            System.err.println("Protocol error handling client connection: " + e);
         } finally {
             try {
                 clientSocket.close();
@@ -97,60 +100,24 @@ public class LibpqClientHandler implements Runnable {
         // Skip protocol version
         buffer.getInt();
         
-        // Parse parameters
+        // Parse parameters as null-terminated key/value pairs terminated by an
+        // empty key (Prompt 55: the old cursor arithmetic skipped the first
+        // byte of each value and could run past the buffer end, killing the
+        // handshake with an uncaught RuntimeException).
         String username = "postgres";
         String database = "postgres";
-        
         while (buffer.hasRemaining()) {
-            int start = buffer.position();
-            while (buffer.hasRemaining() && buffer.get() != 0) {
-                // Skip bytes
+            String key = readNullTerminatedString(buffer);
+            if (key.isEmpty()) {
+                break; // end-of-parameters marker
             }
-            int end = buffer.position();
-            buffer.position(end + 1); // Skip null terminator
-            
-            if (start < end) {
-                byte[] paramBytes = new byte[end - start];
-                buffer.position(start);
-                buffer.get(paramBytes);
-                String param = new String(paramBytes, StandardCharsets.UTF_8);
-                
-                if (param.equals("user")) {
-                    if (buffer.hasRemaining()) {
-                        start = buffer.position();
-                        while (buffer.hasRemaining() && buffer.get() != 0) {
-                            // Skip bytes
-                        }
-                        end = buffer.position();
-                        buffer.position(end + 1);
-                        
-                        if (start < end) {
-                            byte[] valueBytes = new byte[end - start];
-                            buffer.position(start);
-                            buffer.get(valueBytes);
-                            username = new String(valueBytes, StandardCharsets.UTF_8);
-                        }
-                    }
-                } else if (param.equals("database")) {
-                    if (buffer.hasRemaining()) {
-                        start = buffer.position();
-                        while (buffer.hasRemaining() && buffer.get() != 0) {
-                            // Skip bytes
-                        }
-                        end = buffer.position();
-                        buffer.position(end + 1);
-                        
-                        if (start < end) {
-                            byte[] valueBytes = new byte[end - start];
-                            buffer.position(start);
-                            buffer.get(valueBytes);
-                            database = new String(valueBytes, StandardCharsets.UTF_8);
-                        }
-                    }
-                }
+            String value = buffer.hasRemaining() ? readNullTerminatedString(buffer) : "";
+            if (key.equals("user")) {
+                username = value;
+            } else if (key.equals("database")) {
+                database = value;
             }
         }
-        
         return new String[]{username, database};
     }
     
@@ -298,7 +265,9 @@ public class LibpqClientHandler implements Runnable {
             if (result instanceof java.util.List) {
                 java.util.List<?> rows = (java.util.List<?>) result;
                 if (!rows.isEmpty()) {
-                    LibpqMessage.FieldDescription[] fields = createFieldDescriptions((Object) rows);
+                    // Prompt55: derive real column metadata from Map rows so JDBC
+                    // clients see matching RowDescription/DataRow column order.
+                    LibpqMessage.FieldDescription[] fields = createFieldDescriptions(rows);
                     byte[] rowDesc = LibpqProtocol.encodeRowDescription(fields);
                     output.write(rowDesc);
                     
@@ -306,6 +275,15 @@ public class LibpqClientHandler implements Runnable {
                     for (Object row : rows) {
                         if (row instanceof Object[]) {
                             sendDataRow((Object[]) row);
+                        } else if (row instanceof java.util.Map) {
+                            @SuppressWarnings("unchecked")
+                            java.util.Map<String, Object> mapRow =
+                                    (java.util.Map<String, Object>) row;
+                            Object[] values = new Object[fields.length];
+                            for (int i = 0; i < fields.length; i++) {
+                                values[i] = mapRow.get(fields[i].name);
+                            }
+                            sendDataRow(values);
                         }
                     }
                 }
@@ -317,7 +295,9 @@ public class LibpqClientHandler implements Runnable {
             output.write(complete);
             
         } catch (Exception e) {
-            sendErrorResponse("Query execution error: " + e.getMessage());
+            System.err.println("Query failed: " + query);
+            e.printStackTrace(System.err);
+            sendErrorResponse("Query execution error: " + e);
         }
         
         sendReadyForQuery(LibpqProtocol.IDLE);
@@ -489,54 +469,98 @@ public class LibpqClientHandler implements Runnable {
     }
     
     private void sendDataRow(Object[] row) throws IOException {
-        ByteBuffer buffer = ByteBuffer.allocate(4); // Start with length field
-        
-        // Write column count
-        buffer.putShort((short) row.length);
-        
-        // Write each column
-        for (Object value : row) {
-            if (value == null) {
-                buffer.putInt(-1);
-            } else {
-                byte[] bytes = value.toString().getBytes(StandardCharsets.UTF_8);
-                buffer.putInt(bytes.length);
-                buffer.put(bytes);
-            }
-        }
-        
-        // Prepare final message
-        byte[] payload = new byte[buffer.position()];
-        buffer.flip();
-        buffer.get(payload);
-        
-        byte[] message = LibpqProtocol.encodeMessage(LibpqProtocol.DATA_ROW, payload);
-        output.write(message);
+        // Prompt 55: the old code allocated a fixed 4-byte buffer and overflowed
+        // it on the first column; LibpqProtocol.encodeDataRow sizes correctly.
+        output.write(LibpqProtocol.encodeDataRow(row));
     }
     
     private String readNullTerminatedString(ByteBuffer buffer) {
+        // Prompt 55: consume bytes up to AND including the null terminator;
+        // the old code did position(end + 1) which overshot the buffer limit
+        // on the last field (IllegalArgumentException killed the handshake)
+        // and included the terminator byte in the returned string.
         int start = buffer.position();
-        while (buffer.hasRemaining() && buffer.get() != 0) {
-            // Skip bytes
+        boolean terminated = false;
+        while (buffer.hasRemaining()) {
+            if (buffer.get() == 0) {
+                terminated = true;
+                break;
+            }
         }
-        int end = buffer.position();
-        buffer.position(end + 1); // Skip null terminator
-        
-        if (start < end) {
-            byte[] strBytes = new byte[end - start];
-            buffer.position(start);
-            buffer.get(strBytes);
-            return new String(strBytes, StandardCharsets.UTF_8);
+        int end = terminated ? buffer.position() - 1 : buffer.position();
+        if (start >= end) {
+            return "";
         }
-        return "";
+        byte[] strBytes = new byte[end - start];
+        buffer.position(start);
+        buffer.get(strBytes);
+        if (terminated) {
+            buffer.get(); // consume the null terminator (position == end now)
+        }
+        return new String(strBytes, StandardCharsets.UTF_8);
     }
     
     private LibpqMessage.FieldDescription[] createFieldDescriptions(Object result) {
-        // In a real implementation, this would extract field information from the result
-        // For now, return a placeholder
-        return new LibpqMessage.FieldDescription[]{
-            new LibpqMessage.FieldDescription(0, "column1", (short)0, (short)0, 0, (short)255, (short)0, (short)0)
-        };
+        if (!(result instanceof java.util.List<?> rows) || rows.isEmpty()
+                || !(rows.get(0) instanceof java.util.Map)) {
+            // Non-Map results (legacy Object[] rows): keep a single placeholder.
+            return new LibpqMessage.FieldDescription[]{
+                new LibpqMessage.FieldDescription(0, "column1", (short)0, (short)0, 0, (short)255, (short)0, (short)0)
+            };
+        }
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> firstRow = (java.util.Map<String, Object>) rows.get(0);
+        // Preserve the first row's key order so RowDescription matches the
+        // order DataRow values are emitted in (Prompt 55: JDBC column mapping).
+        java.util.List<String> columnNames = new java.util.ArrayList<>(firstRow.keySet());
+        LibpqMessage.FieldDescription[] fields =
+                new LibpqMessage.FieldDescription[columnNames.size()];
+        for (int i = 0; i < columnNames.size(); i++) {
+            String name = columnNames.get(i);
+            int typeOid = typeOidFor(firstRow.get(name));
+            fields[i] = new LibpqMessage.FieldDescription(0, name, (short)0, (short) i,
+                    typeOid, (short) -1, (short)0, (short)0);
+        }
+        return fields;
+    }
+
+    /**
+     * Maps a Java value to a PostgreSQL-compatible type OID so JDBC clients can
+     * decode columns without a separate type system. Unknown/null values default
+     * to text (25).
+     */
+    private static int typeOidFor(Object value) {
+        if (value == null) {
+            return 25; // text
+        }
+        if (value instanceof Boolean) {
+            return 16; // bool
+        }
+        if (value instanceof Integer || value instanceof Short) {
+            return 23; // int4
+        }
+        if (value instanceof Long) {
+            return 20; // int8
+        }
+        if (value instanceof Float) {
+            return 700; // float4
+        }
+        if (value instanceof Double) {
+            return 701; // float8
+        }
+        if (value instanceof java.math.BigDecimal) {
+            return 1700; // numeric
+        }
+        if (value instanceof java.sql.Timestamp) {
+            return 1114; // timestamp
+        }
+        if (value instanceof java.sql.Time) {
+            return 1083; // time
+        }
+        if (value instanceof java.sql.Date) {
+            return 1082; // date
+        }
+        return 25; // text
     }
     
     private String getCommandCompleteTag(String query) {
@@ -555,16 +579,19 @@ public class LibpqClientHandler implements Runnable {
     }
     
     private LibpqMessage readMessage() throws IOException {
-        // Read message header
+        // Read message header (Prompt 55: a single read may return fewer bytes
+        // than requested on loopback under load - loop until complete).
         byte[] header = new byte[5];
-        int bytesRead = input.read(header);
-        
-        if (bytesRead == -1) {
-            return null; // EOF
-        }
-        
-        if (bytesRead < 5) {
-            throw new IOException("Incomplete message header");
+        int total = 0;
+        while (total < 5) {
+            int n = input.read(header, total, 5 - total);
+            if (n == -1) {
+                if (total == 0) {
+                    return null; // clean EOF between messages
+                }
+                throw new IOException("Connection closed mid-header");
+            }
+            total += n;
         }
         
         // Parse header
@@ -574,17 +601,20 @@ public class LibpqClientHandler implements Runnable {
                      ((header[3] & 0xFF) << 8) | 
                      (header[4] & 0xFF);
         
-        if (length < 5) {
+        if (length < 4) {
             throw new IOException("Invalid message length: " + length);
         }
         
-        // Read payload
+        // Read payload (Terminate 'X' legally carries length == 4, i.e. no payload)
         int payloadLength = length - 4;
         byte[] payload = new byte[payloadLength];
-        bytesRead = input.read(payload);
-        
-        if (bytesRead != payloadLength) {
-            throw new IOException("Incomplete message payload");
+        total = 0;
+        while (total < payloadLength) {
+            int n = input.read(payload, total, payloadLength - total);
+            if (n == -1) {
+                throw new IOException("Connection closed mid-payload");
+            }
+            total += n;
         }
         
         return new LibpqMessage(type, payload);

@@ -59,7 +59,9 @@ public class CheckpointManagerTest {
         flusher = new BufferPoolFlusher(bufferPool, () -> Long.MAX_VALUE, 1000);
         
         // Create checkpoint manager (disabled for most tests)
-        checkpointManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        // Prompt55: SharpCheckpoint requires a non-null TxStatusTracker.
+        checkpointManager = new CheckpointManager(walManager, flusher, bufferPool,
+                                                  new TxStatusTracker(),
                                                   300000, 268435456, false);
     }
 
@@ -81,7 +83,7 @@ public class CheckpointManagerTest {
 @Test
     void checkpointNowWritesRecordAndPtr() throws Exception {
         // Enabled checkpoint manager
-        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                                 300000, 268435456, true);
         enabledManager.start();
         
@@ -110,7 +112,7 @@ public class CheckpointManagerTest {
     @Test
     void checkpointNowFlushesDirtyPages() throws Exception {
         // Enable checkpoint manager
-        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                                300000, 268435456, true);
         enabledManager.start();
         
@@ -163,7 +165,7 @@ public class CheckpointManagerTest {
     @Test
     void walBytesTriggerFiresCheckpoint() throws Exception {
         // Enable checkpoint manager with small WAL threshold
-        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                                300000, 100, true); // 100 bytes threshold
         enabledManager.start();
         
@@ -190,7 +192,7 @@ public class CheckpointManagerTest {
     @Test
     void intervalTriggerFiresCheckpoint() throws Exception {
         // Enable checkpoint manager with short interval
-        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                                50, 268435456, true); // 50ms interval
         enabledManager.start();
         
@@ -254,7 +256,7 @@ public class CheckpointManagerTest {
     @Test
     void lifecycleIdempotent() throws Exception {
         // Create a new enabled checkpoint manager for this test
-        CheckpointManager testManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager testManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                             300000, 268435456, true);
         
         try {
@@ -281,7 +283,7 @@ public class CheckpointManagerTest {
     @Test
     void stopDoesFinalCheckpoint() throws Exception {
         // Enable checkpoint manager
-        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                                300000, 268435456, true);
         enabledManager.start();
         
@@ -299,7 +301,7 @@ public class CheckpointManagerTest {
     @Test
     void disabledSkipsDaemonButManualWorks() throws Exception {
         // Disabled checkpoint manager
-        CheckpointManager disabledManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager disabledManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                                 300000, 268435456, false);
         disabledManager.start();
         
@@ -318,7 +320,7 @@ public class CheckpointManagerTest {
     @Test
     void jmxMetricsExposed() throws Exception {
         // Enable checkpoint manager
-        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, null,
+        CheckpointManager enabledManager = new CheckpointManager(walManager, flusher, bufferPool, new TxStatusTracker(),
                                                                300000, 268435456, true);
         enabledManager.start();
         

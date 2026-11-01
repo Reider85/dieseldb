@@ -1588,7 +1588,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
 
     private Map<String, Object> buildGroupResultRow(List<Object> groupKey, List<Map<String, Object>> group,
                                                     Map<String, Class<?>> combinedColumnTypes) {
-        Map<String, Object> resultRow = new HashMap<>();
+        Map<String, Object> resultRow = new LinkedHashMap<>();
 
         populateGroupByColumns(groupKey, resultRow);
         computeGroupAggregates(group, resultRow, combinedColumnTypes);
@@ -1650,7 +1650,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             // then applies to that single result row, so
             // SELECT COUNT(*) FROM t LIMIT 1 returns the full count and
             // SELECT COUNT(*) FROM t LIMIT 0 returns an empty result.
-            Map<String, Object> resultRow = new HashMap<>();
+            Map<String, Object> resultRow = new LinkedHashMap<>();
             for (QueryParser.AggregateFunction agg : aggregates) {
                 String resultKey = agg.alias != null ? agg.alias : agg.toString();
                 resultRow.put(resultKey, computeAggregate(agg, finalRows, combinedColumnTypes));
@@ -3960,7 +3960,10 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         if (plan == null) {
             plan = buildProjectionPlan();
         }
-        Map<String, Object> filtered = new HashMap<>();
+        // Prompt55: LinkedHashMap keeps the SELECT-list projection order, so
+        // wire protocols (libpq RowDescription / native column list) can map
+        // result columns positionally the way JDBC clients expect.
+        Map<String, Object> filtered = new LinkedHashMap<>();
         for (int ci = 0; ci < columns.size(); ci++) {
             ColumnProjection proj = plan.get(ci);
             if (proj.normalized != null && row.containsKey(proj.normalized)

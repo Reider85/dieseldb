@@ -15,3 +15,5 @@
 3.3.83 Background PageScrubber + CheckpointStrategy for R3-014 (CRC32C checkpoint durability)
 
 3.3.84 Prompt4 #54: libpq message protocol foundation with SCRAM auth and psql meta-commands
+
+3.3.85 Prompt4 #55: JDBC driver (diesel-jdbc) module with libpq wire client, Hibernate-compatible DatabaseMetaData, Maven Central pipeline; server-side libpq handshake/RowDescription/DataRow fixes; SELECT projection column order (LinkedHashMap)
