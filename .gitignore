@@ -11,6 +11,15 @@ data/
 logs/
 pages.db
 
+# Driver build artifacts (prompt 56: Python/Node drivers)
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+*.egg-info/
+*.tgz
+
 # Benchmark timings
 timing/*
 !timing/timing.md

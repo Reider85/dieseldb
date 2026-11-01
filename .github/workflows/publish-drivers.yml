@@ -1,0 +1,79 @@
+name: Publish Drivers
+
+# Prompt 56: PyPI + npm publication pipeline for the Python/Node drivers.
+# Secrets required (repository settings): PYPI_API_TOKEN, NPM_TOKEN.
+# Trigger: tag driver-python-v* (PyPI), driver-node-v* (npm), drivers-v*
+# (both), or manual workflow_dispatch with a driver choice.
+
+on:
+  push:
+    tags:
+      - 'driver-python-v*'
+      - 'driver-node-v*'
+      - 'drivers-v*'
+  workflow_dispatch:
+    inputs:
+      driver:
+        description: 'Driver to publish'
+        type: choice
+        options: [python, node, both]
+        required: true
+        default: both
+
+jobs:
+  pypi:
+    name: publish-pypi
+    runs-on: ubuntu-24.04
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.driver == 'python' || inputs.driver == 'both')) ||
+      (github.event_name == 'push' &&
+       (startsWith(github.ref, 'refs/tags/driver-python-v') ||
+        startsWith(github.ref, 'refs/tags/drivers-v')))
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build sdist and wheel
+        working-directory: drivers/python/diesel-python
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: drivers/python/diesel-python/dist/
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  npm:
+    name: publish-npm
+    runs-on: ubuntu-24.04
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.driver == 'node' || inputs.driver == 'both')) ||
+      (github.event_name == 'push' &&
+       (startsWith(github.ref, 'refs/tags/driver-node-v') ||
+        startsWith(github.ref, 'refs/tags/drivers-v')))
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies and build
+        working-directory: drivers/nodejs/diesel-node
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish to npm
+        working-directory: drivers/nodejs/diesel-node
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

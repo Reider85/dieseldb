@@ -17,3 +17,5 @@
 3.3.84 Prompt4 #54: libpq message protocol foundation with SCRAM auth and psql meta-commands
 
 3.3.85 Prompt4 #55: JDBC driver (diesel-jdbc) module with libpq wire client, Hibernate-compatible DatabaseMetaData, Maven Central pipeline; server-side libpq handshake/RowDescription/DataRow fixes; SELECT projection column order (LinkedHashMap)
+
+3.3.86 Prompt4 #56: Python (psycopg2-compatible) + Node.js (pg-compatible) drivers, asyncio/Promise variants, PyPI/npm publish pipeline

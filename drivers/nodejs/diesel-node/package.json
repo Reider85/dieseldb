@@ -1,0 +1,43 @@
+{
+  "name": "diesel-node",
+  "version": "0.1.0",
+  "description": "Pure-TypeScript pg-compatible driver for DieselDB (libpq wire protocol)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/diesel-node.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  },
+  "keywords": [
+    "diesel",
+    "dieseldb",
+    "database",
+    "driver",
+    "libpq",
+    "postgres-protocol",
+    "pg-compatible"
+  ],
+  "author": "DieselDB Project",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Reider85/dieseldb.git",
+    "directory": "drivers/nodejs/diesel-node"
+  },
+  "homepage": "https://github.com/Reider85/dieseldb/tree/main/drivers/nodejs/diesel-node",
+  "publishConfig": {
+    "access": "public"
+  }
+}
