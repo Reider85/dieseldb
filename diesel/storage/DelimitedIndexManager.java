@@ -482,7 +482,7 @@ public abstract class DelimitedIndexManager {
                 rowIdToPosition.put(rid2, p);
             }
         }
-        int liveRows = rowIdToPosition.size();
+        int liveRows = positionToRowIdMap.size();
         if (liveRows > 0 && (double) deletedRowIds.size() / liveRows > COMPACTION_THRESHOLD) {
             compact();
         }
