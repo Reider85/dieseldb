@@ -94,6 +94,90 @@ public final class WALConfig {
     private final int groupMaxSize;
     private final long recoveryCacheSizeBytes;
 
+    /**
+     * Builder for creating WALConfig instances with better readability.
+     */
+    static class Builder {
+        private Path walDir;
+        private long maxSegmentSizeBytes;
+        private long queueMaxSize;
+        private long maxSegmentAgeMs;
+        private Path archiveDir;
+        private int archiveRetentionDays;
+        private long archiveIntervalMs;
+        private boolean enabled;
+        private FsyncPolicy fsyncPolicy;
+        private long groupWindowMs;
+        private int groupMaxSize;
+        private long recoveryCacheSizeBytes;
+        
+        Builder walDir(Path walDir) {
+            this.walDir = walDir;
+            return this;
+        }
+        
+        Builder maxSegmentSizeBytes(long maxSegmentSizeBytes) {
+            this.maxSegmentSizeBytes = maxSegmentSizeBytes;
+            return this;
+        }
+        
+        Builder queueMaxSize(long queueMaxSize) {
+            this.queueMaxSize = queueMaxSize;
+            return this;
+        }
+        
+        Builder maxSegmentAgeMs(long maxSegmentAgeMs) {
+            this.maxSegmentAgeMs = maxSegmentAgeMs;
+            return this;
+        }
+        
+        Builder archiveDir(Path archiveDir) {
+            this.archiveDir = archiveDir;
+            return this;
+        }
+        
+        Builder archiveRetentionDays(int archiveRetentionDays) {
+            this.archiveRetentionDays = archiveRetentionDays;
+            return this;
+        }
+        
+        Builder archiveIntervalMs(long archiveIntervalMs) {
+            this.archiveIntervalMs = archiveIntervalMs;
+            return this;
+        }
+        
+        Builder enabled(boolean enabled) {
+            this.enabled = enabled;
+            return this;
+        }
+        
+        Builder fsyncPolicy(FsyncPolicy fsyncPolicy) {
+            this.fsyncPolicy = fsyncPolicy;
+            return this;
+        }
+        
+        Builder groupWindowMs(long groupWindowMs) {
+            this.groupWindowMs = groupWindowMs;
+            return this;
+        }
+        
+        Builder groupMaxSize(int groupMaxSize) {
+            this.groupMaxSize = groupMaxSize;
+            return this;
+        }
+        
+        Builder recoveryCacheSizeBytes(long recoveryCacheSizeBytes) {
+            this.recoveryCacheSizeBytes = recoveryCacheSizeBytes;
+            return this;
+        }
+        
+        WALConfig build() {
+            return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, maxSegmentAgeMs,
+                               archiveDir, archiveRetentionDays, archiveIntervalMs,
+                               enabled, fsyncPolicy, groupWindowMs, groupMaxSize, recoveryCacheSizeBytes);
+        }
+    }
+
     private WALConfig(Path walDir, long maxSegmentSizeBytes, long queueMaxSize, 
                      long maxSegmentAgeMs, Path archiveDir, int archiveRetentionDays, long archiveIntervalMs,
                      boolean enabled, FsyncPolicy fsyncPolicy, long groupWindowMs, int groupMaxSize,
@@ -423,8 +507,20 @@ public final class WALConfig {
             cacheSizeBytes = DEFAULT_RECOVERY_CACHE_SIZE_BYTES;
         }
 
-        return new WALConfig(walDir, sizeBytes, queueSize, ageMs, resolvedArchiveDir, retentionDays, intervalMs,
-                           enabled, policy, windowMs, groupSize, cacheSizeBytes);
+        return new Builder()
+                .walDir(walDir)
+                .maxSegmentSizeBytes(sizeBytes)
+                .queueMaxSize(queueSize)
+                .maxSegmentAgeMs(ageMs)
+                .archiveDir(resolvedArchiveDir)
+                .archiveRetentionDays(retentionDays)
+                .archiveIntervalMs(intervalMs)
+                .enabled(enabled)
+                .fsyncPolicy(policy)
+                .groupWindowMs(windowMs)
+                .groupMaxSize(groupSize)
+                .recoveryCacheSizeBytes(cacheSizeBytes)
+                .build();
     }
 
     /**
@@ -438,11 +534,20 @@ public final class WALConfig {
         if (maxSegmentSizeBytes < MIN_SEGMENT_SIZE_BYTES) {
             throw new IllegalArgumentException("maxSegmentSizeBytes must be >= " + MIN_SEGMENT_SIZE_BYTES);
         }
-        return new WALConfig(walDir, maxSegmentSizeBytes, DEFAULT_QUEUE_MAX_SIZE,
-                            DEFAULT_SEGMENT_MAX_AGE_MS, walDir.resolve(DEFAULT_ARCHIVE_DIR), 
-                            DEFAULT_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_INTERVAL_MS,
-                            DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE,
-                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
+        return new Builder()
+                .walDir(walDir)
+                .maxSegmentSizeBytes(maxSegmentSizeBytes)
+                .queueMaxSize(DEFAULT_QUEUE_MAX_SIZE)
+                .maxSegmentAgeMs(DEFAULT_SEGMENT_MAX_AGE_MS)
+                .archiveDir(walDir.resolve(DEFAULT_ARCHIVE_DIR))
+                .archiveRetentionDays(DEFAULT_ARCHIVE_RETENTION_DAYS)
+                .archiveIntervalMs(DEFAULT_ARCHIVE_INTERVAL_MS)
+                .enabled(DEFAULT_ENABLED)
+                .fsyncPolicy(DEFAULT_FSYNC_POLICY)
+                .groupWindowMs(DEFAULT_GROUP_WINDOW_MS)
+                .groupMaxSize(DEFAULT_GROUP_MAX_SIZE)
+                .recoveryCacheSizeBytes(DEFAULT_RECOVERY_CACHE_SIZE_BYTES)
+                .build();
     }
 
     /**
@@ -460,11 +565,20 @@ public final class WALConfig {
         if (queueMaxSize < MIN_QUEUE_MAX_SIZE) {
             throw new IllegalArgumentException("queueMaxSize must be >= " + MIN_QUEUE_MAX_SIZE);
         }
-        return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
-                            DEFAULT_SEGMENT_MAX_AGE_MS, walDir.resolve(DEFAULT_ARCHIVE_DIR), 
-                            DEFAULT_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_INTERVAL_MS,
-                            DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE,
-                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
+return new Builder()
+                .walDir(walDir)
+                .maxSegmentSizeBytes(maxSegmentSizeBytes)
+                .queueMaxSize(queueMaxSize)
+                .maxSegmentAgeMs(DEFAULT_SEGMENT_MAX_AGE_MS)
+                .archiveDir(walDir.resolve(DEFAULT_ARCHIVE_DIR))
+                .archiveRetentionDays(DEFAULT_ARCHIVE_RETENTION_DAYS)
+                .archiveIntervalMs(DEFAULT_ARCHIVE_INTERVAL_MS)
+                .enabled(DEFAULT_ENABLED)
+                .fsyncPolicy(DEFAULT_FSYNC_POLICY)
+                .groupWindowMs(DEFAULT_GROUP_WINDOW_MS)
+                .groupMaxSize(DEFAULT_GROUP_MAX_SIZE)
+                .recoveryCacheSizeBytes(DEFAULT_RECOVERY_CACHE_SIZE_BYTES)
+                .build();
     }
 
     /**
@@ -487,10 +601,20 @@ public final class WALConfig {
         if (queueMaxSize < MIN_QUEUE_MAX_SIZE) {
             throw new IllegalArgumentException("queueMaxSize must be >= " + MIN_QUEUE_MAX_SIZE);
         }
-        return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
-                            maxSegmentAgeMs, archiveDir, archiveRetentionDays, archiveIntervalMs,
-                            DEFAULT_ENABLED, DEFAULT_FSYNC_POLICY, DEFAULT_GROUP_WINDOW_MS, DEFAULT_GROUP_MAX_SIZE,
-                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
+return new Builder()
+                .walDir(walDir)
+                .maxSegmentSizeBytes(maxSegmentSizeBytes)
+                .queueMaxSize(queueMaxSize)
+                .maxSegmentAgeMs(maxSegmentAgeMs)
+                .archiveDir(archiveDir)
+                .archiveRetentionDays(archiveRetentionDays)
+                .archiveIntervalMs(archiveIntervalMs)
+                .enabled(DEFAULT_ENABLED)
+                .fsyncPolicy(DEFAULT_FSYNC_POLICY)
+                .groupWindowMs(DEFAULT_GROUP_WINDOW_MS)
+                .groupMaxSize(DEFAULT_GROUP_MAX_SIZE)
+                .recoveryCacheSizeBytes(DEFAULT_RECOVERY_CACHE_SIZE_BYTES)
+                .build();
     }
 
     /**
@@ -518,10 +642,20 @@ public final class WALConfig {
         if (queueMaxSize < MIN_QUEUE_MAX_SIZE) {
             throw new IllegalArgumentException("queueMaxSize must be >= " + MIN_QUEUE_MAX_SIZE);
         }
-        return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
-                            maxSegmentAgeMs, archiveDir, archiveRetentionDays, archiveIntervalMs,
-                            enabled, fsyncPolicy, groupWindowMs, groupMaxSize,
-                            DEFAULT_RECOVERY_CACHE_SIZE_BYTES);
+return new Builder()
+                .walDir(walDir)
+                .maxSegmentSizeBytes(maxSegmentSizeBytes)
+                .queueMaxSize(queueMaxSize)
+                .maxSegmentAgeMs(maxSegmentAgeMs)
+                .archiveDir(archiveDir)
+                .archiveRetentionDays(archiveRetentionDays)
+                .archiveIntervalMs(archiveIntervalMs)
+                .enabled(enabled)
+                .fsyncPolicy(fsyncPolicy)
+                .groupWindowMs(groupWindowMs)
+                .groupMaxSize(groupMaxSize)
+                .recoveryCacheSizeBytes(DEFAULT_RECOVERY_CACHE_SIZE_BYTES)
+                .build();
     }
 
     /**
@@ -554,9 +688,20 @@ public final class WALConfig {
         if (recoveryCacheSizeBytes < 0) {
             throw new IllegalArgumentException("recoveryCacheSizeBytes must be >= 0");
         }
-        return new WALConfig(walDir, maxSegmentSizeBytes, queueMaxSize, 
-                            maxSegmentAgeMs, archiveDir, archiveRetentionDays, archiveIntervalMs,
-                            enabled, fsyncPolicy, groupWindowMs, groupMaxSize, recoveryCacheSizeBytes);
+return new Builder()
+                .walDir(walDir)
+                .maxSegmentSizeBytes(maxSegmentSizeBytes)
+                .queueMaxSize(queueMaxSize)
+                .maxSegmentAgeMs(maxSegmentAgeMs)
+                .archiveDir(archiveDir)
+                .archiveRetentionDays(archiveRetentionDays)
+                .archiveIntervalMs(archiveIntervalMs)
+                .enabled(enabled)
+                .fsyncPolicy(fsyncPolicy)
+                .groupWindowMs(groupWindowMs)
+                .groupMaxSize(groupMaxSize)
+                .recoveryCacheSizeBytes(recoveryCacheSizeBytes)
+                .build();
     }
 
     /**

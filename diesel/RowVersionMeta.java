@@ -75,6 +75,80 @@ public class RowVersionMeta implements Serializable {
     }
 
     /**
+     * Builder for creating RowVersionMeta instances.
+     */
+    static class Builder {
+        private long xmin;
+        private long xmax;
+        private long commandId;
+        private Map<String, Object> committedValues;
+        private boolean uncommittedInsert;
+        private boolean uncommittedDelete;
+        private boolean uncommittedUpdate;
+        private long ownerTxid;
+        private long lastCommittedCsn;
+        
+        Builder xmin(long xmin) {
+            this.xmin = xmin;
+            return this;
+        }
+        
+        Builder xmax(long xmax) {
+            this.xmax = xmax;
+            return this;
+        }
+        
+        Builder commandId(long commandId) {
+            this.commandId = commandId;
+            return this;
+        }
+        
+        Builder committedValues(Map<String, Object> committedValues) {
+            this.committedValues = committedValues;
+            return this;
+        }
+        
+        Builder uncommittedInsert(boolean uncommittedInsert) {
+            this.uncommittedInsert = uncommittedInsert;
+            return this;
+        }
+        
+        Builder uncommittedDelete(boolean uncommittedDelete) {
+            this.uncommittedDelete = uncommittedDelete;
+            return this;
+        }
+        
+        Builder uncommittedUpdate(boolean uncommittedUpdate) {
+            this.uncommittedUpdate = uncommittedUpdate;
+            return this;
+        }
+        
+        Builder ownerTxid(long ownerTxid) {
+            this.ownerTxid = ownerTxid;
+            return this;
+        }
+        
+        Builder lastCommittedCsn(long lastCommittedCsn) {
+            this.lastCommittedCsn = lastCommittedCsn;
+            return this;
+        }
+        
+        RowVersionMeta build() {
+            return new RowVersionMeta.Builder()
+                    .xmin(xmin)
+                    .xmax(xmax)
+                    .commandId(commandId)
+                    .committedValues(committedValues)
+                    .uncommittedInsert(uncommittedInsert)
+                    .uncommittedDelete(uncommittedDelete)
+                    .uncommittedUpdate(uncommittedUpdate)
+                    .ownerTxid(ownerTxid)
+                    .lastCommittedCsn(lastCommittedCsn)
+                    .build();
+        }
+    }
+
+    /**
      * Creates metadata for a row with the full version info.
      */
     public RowVersionMeta(long xmin, long xmax, long commandId,

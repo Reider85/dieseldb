@@ -91,12 +91,12 @@ public class CliTlsTest {
             "--user", "admin", "--password", "admin",
             "localhost", port + ""
         });
-        assertTrue(args.tls());
-        assertEquals(caPemFile.toString(), args.tlsCa());
-        assertEquals("admin", args.user());
-        assertEquals("admin", args.password());
-        assertEquals("localhost", args.host());
-        assertEquals(port, args.port());
+        assertTrue(args.network().tls());
+        assertEquals(caPemFile.toString(), args.network().tlsCa());
+        assertEquals("admin", args.network().user());
+        assertEquals("admin", args.network().password());
+        assertEquals("localhost", args.network().host());
+        assertEquals(port, args.network().port());
     }
 
     @Test
@@ -134,10 +134,10 @@ public class CliTlsTest {
             "--tls", "--tls-ca", "/override/path.pem",
             "--user", "admin", "localhost", port + ""
         });
-        assertTrue(args.tls());
-        assertEquals("/override/path.pem", args.tlsCa());
-        assertNull(args.tlsCert());
-        assertNull(args.tlsKey());
+        assertTrue(args.network().tls());
+        assertEquals("/override/path.pem", args.network().tlsCa());
+        assertNull(args.network().tlsCert());
+        assertNull(args.network().tlsKey());
     }
 
     @Test

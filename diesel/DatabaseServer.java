@@ -332,6 +332,12 @@ public class DatabaseServer {
                         clientSocket = tlsHandler.wrap(clientSocket);
                     }
                     LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
+                    // Set socket timeout after accepting the connection (prompt 31)
+                    try {
+                        clientSocket.setSoTimeout(effectiveSocketTimeout);
+                    } catch (SocketException e) {
+                        LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
+                    }
                     handleClientConnection(clientSocket, executor, database, effectiveSocketTimeout, config);
                 } catch (IOException e) {
                     if (running) {
@@ -521,11 +527,6 @@ public class DatabaseServer {
             this.authenticator = authenticator;
             this.transactionId = null;
             this.compressionAlgorithm = DEFAULT_ALGORITHM;
-            try {
-                clientSocket.setSoTimeout(socketTimeout);
-            } catch (SocketException e) {
-                LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
-            }
             // Default values, will be updated by handshake
             this.compressionThreshold = Integer.parseInt(config.getProperty("compression.threshold.bytes", String.valueOf(defaultCompressionThreshold)));
             this.compressionLevel = Integer.parseInt(config.getProperty("compression.level", String.valueOf(defaultCompressionLevel)));

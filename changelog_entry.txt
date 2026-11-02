@@ -1,1 +1,1 @@
-3.3.90 Fix AvroShiftPositionsIsOAffectedTest performance bounds by adjusting overly strict JVM noise tolerance
+3.3.92 Reduce method parameter count (java:S107) using Builder pattern for CliArgs, WALConfig, LibpqMessage.FieldDescription, AvroIntegrityChecker.BlockIntegrityResult, and RowVersionMeta classes

@@ -72,27 +72,172 @@ public class CliRepl {
         this.out = new PrintWriter(System.out, true);
     }
 
-    /**
-     * Parsed command-line arguments of {@link #main} (prompt4 #31, #35).
-     *
-     * @param host       remote server host (default {@code localhost})
-     * @param port       remote server port (default {@code 3306})
-     * @param dataDir    local data directory for {@code --local}/{@code --reset-admin}
-     * @param local      whether to run against a local {@link Database}
-     * @param resetAdmin whether to reset the admin password and exit
-     * @param user       login account, or null for no credentials
-     * @param password   login password, or null
-     * @param database   requested database name, or null for the default
-     * @param tls        whether to use TLS encryption (requires remote mode)
-     * @param tlsCa      path to CA/truststore file (PEM or PKCS12), or null for system truststore
-     * @param tlsCert    path to client certificate file (PEM or PKCS12), or null
-     * @param tlsKey     path to client private key file (PEM), or null (ignored if tlsCert is PKCS12)
-     */
-    record CliArgs(String host, int port, String dataDir, boolean local, boolean resetAdmin,
-                   String user, String password, String database, boolean tls, String tlsCa, String tlsCert, String tlsKey) {
-        static CliArgs defaults() {
-            return new CliArgs("localhost", 3306, "data", false, false, null, null, null, false, null, null, null);
+/**
+ * Network and security configuration for CLI client.
+ *
+ * @param host     server host (default: localhost)
+ * @param port     server port (default: 3306)
+ * @param user     username (default: null)
+ * @param password password (default: null)
+ * @param tls      TLS enabled flag
+ * @param tlsCa    TLS CA certificate path (default: null)
+ * @param tlsCert  TLS certificate path (default: null)
+ * @param tlsKey   TLS private key path (default: null)
+ */
+record NetworkConfig(String host, int port, String user, String password, boolean tls, 
+                     String tlsCa, String tlsCert, String tlsKey) {
+    static NetworkConfig defaults() {
+        return new NetworkConfig("localhost", 3306, null, null, false, null, null, null);
+    }
+    
+    static class Builder {
+        private String host = "localhost";
+        private int port = 3306;
+        private String user;
+        private String password;
+        private boolean tls = false;
+        private String tlsCa;
+        private String tlsCert;
+        private String tlsKey;
+        
+        Builder host(String host) {
+            this.host = host;
+            return this;
         }
+        
+        Builder port(int port) {
+            this.port = port;
+            return this;
+        }
+        
+        Builder user(String user) {
+            this.user = user;
+            return this;
+        }
+        
+        Builder password(String password) {
+            this.password = password;
+            return this;
+        }
+        
+        Builder tls(boolean tls) {
+            this.tls = tls;
+            return this;
+        }
+        
+        Builder tlsCa(String tlsCa) {
+            this.tlsCa = tlsCa;
+            return this;
+        }
+        
+        Builder tlsCert(String tlsCert) {
+            this.tlsCert = tlsCert;
+            return this;
+        }
+        
+        Builder tlsKey(String tlsKey) {
+            this.tlsKey = tlsKey;
+            return this;
+        }
+        
+        NetworkConfig build() {
+            return new NetworkConfig(host, port, user, password, tls, tlsCa, tlsCert, tlsKey);
+        }
+    }
+}
+
+/**
+ * Command-line arguments for CLI client. Package-private for tests (prompt4 #31).
+ *
+ * @param network  network configuration
+ * @param dataDir  data directory (default: data)
+ * @param local    local mode flag
+ * @param resetAdmin reset admin account flag
+ * @param database database name (default: null)
+ */
+record CliArgs(NetworkConfig network, String dataDir, boolean local, boolean resetAdmin, String database) {
+    static CliArgs defaults() {
+        return new CliArgs(NetworkConfig.defaults(), "data", false, false, null);
+    }
+    
+    /**
+     * Builder for creating CliArgs instances with better readability.
+     */
+    static class Builder {
+        private String host = "localhost";
+        private int port = 3306;
+        private String dataDir = "data";
+        private boolean local = false;
+        private boolean resetAdmin = false;
+        private String user;
+        private String password;
+        private String database;
+        private boolean tls = false;
+        private String tlsCa;
+        private String tlsCert;
+        private String tlsKey;
+        
+        Builder host(String host) {
+            this.host = host;
+            return this;
+        }
+        
+        Builder port(int port) {
+            this.port = port;
+            return this;
+        }
+        
+        Builder dataDir(String dataDir) {
+            this.dataDir = dataDir;
+            return this;
+        }
+        
+        Builder local(boolean local) {
+            this.local = local;
+            return this;
+        }
+        
+        Builder resetAdmin(boolean resetAdmin) {
+            this.resetAdmin = resetAdmin;
+            return this;
+        }
+        
+        Builder user(String user) {
+            this.user = user;
+            return this;
+        }
+        
+        Builder password(String password) {
+            this.password = password;
+            return this;
+        }
+        
+        Builder database(String database) {
+            this.database = database;
+            return this;
+        }
+        
+        Builder tls(boolean tls) {
+            this.tls = tls;
+            return this;
+        }
+        
+        Builder tlsCa(String tlsCa) {
+            this.tlsCa = tlsCa;
+            return this;
+        }
+        
+        Builder tlsCert(String tlsCert) {
+            this.tlsCert = tlsCert;
+            return this;
+        }
+        
+        Builder tlsKey(String tlsKey) {
+            this.tlsKey = tlsKey;
+            return this;
+        }
+        
+}
     }
 
     /**
@@ -102,19 +247,12 @@ public class CliRepl {
      * (local / reset-admin). Package-private for tests (prompt4 #31).
      */
     static CliArgs parseArgs(String[] args) {
-        CliArgs d = CliArgs.defaults();
-        String host = d.host();
-        int port = d.port();
-        String dataDir = d.dataDir();
+        CliArgs defaults = CliArgs.defaults();
+        NetworkConfig.Builder networkBuilder = new NetworkConfig.Builder();
+        String dataDir = defaults.dataDir();
         boolean local = false;
         boolean resetAdmin = false;
-        String user = null;
-        String password = null;
         String database = null;
-        boolean tls = false;
-        String tlsCa = null;
-        String tlsCert = null;
-        String tlsKey = null;
         List<String> positional = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -125,25 +263,25 @@ public class CliRepl {
                     resetAdmin = true;
                     break;
                 case "--user":
-                    user = requireFlagValue(args, ++i, "--user");
+                    networkBuilder.user(requireFlagValue(args, ++i, "--user"));
                     break;
                 case "--password":
-                    password = requireFlagValue(args, ++i, "--password");
+                    networkBuilder.password(requireFlagValue(args, ++i, "--password"));
                     break;
                 case "--database":
                     database = requireFlagValue(args, ++i, "--database");
                     break;
                 case "--tls":
-                    tls = true;
+                    networkBuilder.tls(true);
                     break;
                 case "--tls-ca":
-                    tlsCa = requireFlagValue(args, ++i, "--tls-ca");
+                    networkBuilder.tlsCa(requireFlagValue(args, ++i, "--tls-ca"));
                     break;
                 case "--tls-cert":
-                    tlsCert = requireFlagValue(args, ++i, "--tls-cert");
+                    networkBuilder.tlsCert(requireFlagValue(args, ++i, "--tls-cert"));
                     break;
                 case "--tls-key":
-                    tlsKey = requireFlagValue(args, ++i, "--tls-key");
+                    networkBuilder.tlsKey(requireFlagValue(args, ++i, "--tls-key"));
                     break;
                 default:
                     positional.add(args[i]);
@@ -152,19 +290,19 @@ public class CliRepl {
         }
         
         // Validate TLS flags
-        if (tls && local) {
+        if (networkBuilder.tls && local) {
             throw new IllegalArgumentException("--tls requires remote mode, not --local");
         }
-        if (tlsCa != null && !tls) {
+        if (networkBuilder.tlsCa != null && !networkBuilder.tls) {
             throw new IllegalArgumentException("--tls-ca requires --tls");
         }
-        if (tlsCert != null && !tls) {
+        if (networkBuilder.tlsCert != null && !networkBuilder.tls) {
             throw new IllegalArgumentException("--tls-cert requires --tls");
         }
-        if (tlsKey != null && !tls) {
+        if (networkBuilder.tlsKey != null && !networkBuilder.tls) {
             throw new IllegalArgumentException("--tls-key requires --tls");
         }
-        if (tlsKey != null && tlsCert == null) {
+        if (networkBuilder.tlsKey != null && networkBuilder.tlsCert == null) {
             throw new IllegalArgumentException("--tls-key requires --tls-cert");
         }
         
@@ -174,17 +312,18 @@ public class CliRepl {
             }
         } else {
             if (positional.size() > 0) {
-                host = positional.get(0);
+                networkBuilder.host(positional.get(0));
             }
             if (positional.size() > 1) {
                 try {
-                    port = Integer.parseInt(positional.get(1));
+                    networkBuilder.port(Integer.parseInt(positional.get(1)));
                 } catch (NumberFormatException e) {
-                    LOGGER.warn("Invalid port {}, using default {}", positional.get(1), port);
+                    LOGGER.warn("Invalid port {}, using default {}", positional.get(1), networkBuilder.port);
                 }
             }
         }
-        return new CliArgs(host, port, dataDir, local, resetAdmin, user, password, database, tls, tlsCa, tlsCert, tlsKey);
+        NetworkConfig network = networkBuilder.build();
+        return new CliArgs(network, dataDir, local, resetAdmin, database);
     }
 
     private static String requireFlagValue(String[] args, int index, String flag) {
@@ -224,8 +363,8 @@ public class CliRepl {
         // interactively (password without echo via System.console()). An
         // empty login line or EOF keeps the old connect-without-credentials
         // behaviour, so scripted invocations stay non-blocking.
-        String user = cli.user();
-        String password = cli.password();
+        String user = cli.network().user();
+        String password = cli.network().password();
         if (user == null) {
             String[] credentials = promptCredentials();
             user = credentials[0];
@@ -234,7 +373,7 @@ public class CliRepl {
         
         // Load client config and merge with CLI flags
         Properties clientConfig = loadClientConfig();
-        boolean tls = cli.tls();
+        boolean tls = cli.network().tls();
         if (!tls && Boolean.parseBoolean(clientConfig.getProperty("tls.enabled", "false"))) {
             tls = true;
         }
@@ -243,24 +382,24 @@ public class CliRepl {
             // Build TLS configuration
             Properties tlsConfig = new Properties();
             tlsConfig.setProperty("tls.enabled", "true");
-            if (cli.tlsCa() != null) {
-                tlsConfig.setProperty("tls.ca.path", cli.tlsCa());
+            if (cli.network().tlsCa() != null) {
+                tlsConfig.setProperty("tls.ca.path", cli.network().tlsCa());
             } else {
                 String caPath = clientConfig.getProperty("tls.ca.path");
                 if (caPath != null) {
                     tlsConfig.setProperty("tls.ca.path", caPath);
                 }
             }
-            if (cli.tlsCert() != null) {
-                tlsConfig.setProperty("tls.cert.path", cli.tlsCert());
+            if (cli.network().tlsCert() != null) {
+                tlsConfig.setProperty("tls.cert.path", cli.network().tlsCert());
             } else {
                 String certPath = clientConfig.getProperty("tls.cert.path");
                 if (certPath != null) {
                     tlsConfig.setProperty("tls.cert.path", certPath);
                 }
             }
-            if (cli.tlsKey() != null) {
-                tlsConfig.setProperty("tls.key.path", cli.tlsKey());
+            if (cli.network().tlsKey() != null) {
+                tlsConfig.setProperty("tls.key.path", cli.network().tlsKey());
             } else {
                 String keyPath = clientConfig.getProperty("tls.key.path");
                 if (keyPath != null) {
@@ -281,8 +420,8 @@ public class CliRepl {
                 javax.net.ssl.SSLContext context = diesel.net.SslContextFactory.createClient(tlsConfig);
                 javax.net.ssl.SSLSocketFactory factory = context.getSocketFactory();
                 DatabaseClient client = user != null
-                        ? new DatabaseClient(cli.host(), cli.port(), user, password, cli.database())
-                        : new DatabaseClient(cli.host(), cli.port());
+                        ? new DatabaseClient(cli.network().host(), cli.network().port(), user, password, cli.database())
+                        : new DatabaseClient(cli.network().host(), cli.network().port());
                 client.setSslSocketFactory(factory);
                 client.connect();
             } catch (Exception e) {
@@ -297,13 +436,13 @@ public class CliRepl {
         DatabaseClient client;
         if (tls) {
             client = user != null
-                    ? new DatabaseClient(cli.host(), cli.port(), user, password, cli.database())
-                    : new DatabaseClient(cli.host(), cli.port());
+                    ? new DatabaseClient(cli.network().host(), cli.network().port(), user, password, cli.database())
+                    : new DatabaseClient(cli.network().host(), cli.network().port());
             // TLS connection already done above
         } else {
             client = user != null
-                    ? new DatabaseClient(cli.host(), cli.port(), user, password, cli.database())
-                    : new DatabaseClient(cli.host(), cli.port());
+                    ? new DatabaseClient(cli.network().host(), cli.network().port(), user, password, cli.database())
+                    : new DatabaseClient(cli.network().host(), cli.network().port());
             try {
                 client.connect();
             } catch (RuntimeException e) {

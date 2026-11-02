@@ -2529,7 +2529,17 @@ class Table implements Serializable {
             RowVersionMeta meta = getRowVersionMeta(rowIndex);
             if (meta == null) {
                 // Bootstrap row being deleted
-                meta = new RowVersionMeta(0, 0, 0, preImage, false, false, false, txid, 0);
+                meta = new RowVersionMeta.Builder()
+                .xmin(0)
+                .xmax(0)
+                .commandId(0)
+                .committedValues(preImage)
+                .uncommittedInsert(false)
+                .uncommittedDelete(false)
+                .uncommittedUpdate(false)
+                .ownerTxid(txid)
+                .lastCommittedCsn(0)
+                .build();
                 setRowVersionMeta(rowIndex, meta);
             } else if (preImage != null) {
                 // Refresh the retained image with the pre-delete physical values:

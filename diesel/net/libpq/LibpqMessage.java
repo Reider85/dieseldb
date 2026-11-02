@@ -166,7 +166,16 @@ public class LibpqMessage {
             short formatCode = parseShort(offset);
             offset += 2;
             
-            fields[i] = new FieldDescription(objectId, name, tableId, columnId, fieldType, typeSize, typeModifier, formatCode);
+            fields[i] = new FieldDescription.Builder()
+                .objectId(objectId)
+                .name(name)
+                .tableId(tableId)
+                .columnId(columnId)
+                .fieldType(fieldType)
+                .typeSize(typeSize)
+                .typeModifier(typeModifier)
+                .formatCode(formatCode)
+                .build();
         }
         
         return fields;
@@ -281,6 +290,65 @@ public class LibpqMessage {
             this.typeSize = typeSize;
             this.typeModifier = typeModifier;
             this.formatCode = formatCode;
+        }
+        
+        /**
+         * Builder for creating FieldDescription instances.
+         */
+        static class Builder {
+            private int objectId;
+            private String name;
+            private short tableId;
+            private short columnId;
+            private int fieldType;
+            private short typeSize;
+            private short typeModifier;
+            private short formatCode;
+            
+            Builder objectId(int objectId) {
+                this.objectId = objectId;
+                return this;
+            }
+            
+            Builder name(String name) {
+                this.name = name;
+                return this;
+            }
+            
+            Builder tableId(short tableId) {
+                this.tableId = tableId;
+                return this;
+            }
+            
+            Builder columnId(short columnId) {
+                this.columnId = columnId;
+                return this;
+            }
+            
+            Builder fieldType(int fieldType) {
+                this.fieldType = fieldType;
+                return this;
+            }
+            
+            Builder typeSize(short typeSize) {
+                this.typeSize = typeSize;
+                return this;
+            }
+            
+            Builder typeModifier(short typeModifier) {
+                this.typeModifier = typeModifier;
+                return this;
+            }
+            
+            Builder formatCode(short formatCode) {
+                this.formatCode = formatCode;
+                return this;
+            }
+            
+            FieldDescription build() {
+                return new FieldDescription(objectId, name, tableId, columnId, fieldType, 
+                                         typeSize, typeModifier, formatCode);
+            }
         }
     }
 }

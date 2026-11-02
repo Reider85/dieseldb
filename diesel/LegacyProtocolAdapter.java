@@ -112,7 +112,16 @@ final class LegacyProtocolAdapter {
             out.flush();
             in = new ObjectInputStream(clientSocket.getInputStream());
 
-            Object pending = in.readObject();
+            // Read first message with SocketTimeoutException handling
+            Object pending;
+            try {
+                pending = in.readObject();
+            } catch (SocketTimeoutException e) {
+                LOGGER.log(Level.WARNING, "Legacy client {0} timed out while reading first message: {1}",
+                        new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                return; // Exit the connection on timeout
+            }
+            
             boolean serving = true;
             if (pending instanceof CompressionHandshakeMessage handshake) {
                 handleLegacyCompressionHandshake(handshake);
@@ -122,14 +131,19 @@ final class LegacyProtocolAdapter {
                 serving = dispatch(pending);
             }
 
-            while (serving && dispatch(in.readObject())) {
-                // Keep serving until EXIT / EOF / timeout.
+            // Read subsequent messages with SocketTimeoutException handling
+            while (serving) {
+                try {
+                    Object message = in.readObject();
+                    serving = dispatch(message);
+                } catch (SocketTimeoutException e) {
+                    LOGGER.log(Level.WARNING, "Legacy client {0} timed out while reading message: {1}",
+                            new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                    break; // Exit the loop on timeout
+                }
             }
         } catch (EOFException e) {
             LOGGER.log(Level.FINE, "Legacy client {0} closed the connection", clientSocket.getInetAddress());
-        } catch (SocketTimeoutException e) {
-            LOGGER.log(Level.WARNING, "Legacy client {0} timed out: {1}",
-                    new Object[]{clientSocket.getInetAddress(), e.getMessage()});
         } catch (ClassNotFoundException e) {
             LOGGER.log(Level.SEVERE, "Legacy client sent an unknown class", e);
             writeError("Error: Unknown message type");

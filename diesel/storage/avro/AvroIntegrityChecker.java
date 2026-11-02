@@ -158,6 +158,78 @@ public final class AvroIntegrityChecker {
             List<String> problems,
             long contentEndOffset,
             long scanTimeNanos) {
+        
+        /**
+         * Builder for creating BlockIntegrityResult instances.
+         */
+        static class Builder {
+            private int blockIndex;
+            private long recordCount;
+            private long compressedSize;
+            private long decompressedSize;
+            private long computedCrc;
+            private long expectedCrc;
+            private boolean valid;
+            private List<String> problems;
+            private long contentEndOffset;
+            private long scanTimeNanos;
+            
+            Builder blockIndex(int blockIndex) {
+                this.blockIndex = blockIndex;
+                return this;
+            }
+            
+            Builder recordCount(long recordCount) {
+                this.recordCount = recordCount;
+                return this;
+            }
+            
+            Builder compressedSize(long compressedSize) {
+                this.compressedSize = compressedSize;
+                return this;
+            }
+            
+            Builder decompressedSize(long decompressedSize) {
+                this.decompressedSize = decompressedSize;
+                return this;
+            }
+            
+            Builder computedCrc(long computedCrc) {
+                this.computedCrc = computedCrc;
+                return this;
+            }
+            
+            Builder expectedCrc(long expectedCrc) {
+                this.expectedCrc = expectedCrc;
+                return this;
+            }
+            
+            Builder valid(boolean valid) {
+                this.valid = valid;
+                return this;
+            }
+            
+            Builder problems(List<String> problems) {
+                this.problems = problems;
+                return this;
+            }
+            
+            Builder contentEndOffset(long contentEndOffset) {
+                this.contentEndOffset = contentEndOffset;
+                return this;
+            }
+            
+            Builder scanTimeNanos(long scanTimeNanos) {
+                this.scanTimeNanos = scanTimeNanos;
+                return this;
+            }
+            
+            BlockIntegrityResult build() {
+                return new BlockIntegrityResult(blockIndex, recordCount, compressedSize, 
+                                             decompressedSize, computedCrc, expectedCrc, valid,
+                                             problems, contentEndOffset, scanTimeNanos);
+            }
+        }
 
         /** Whether a reference CRC existed and disagreed with the computed one. */
         public boolean crcMismatch() {
@@ -567,9 +639,18 @@ public final class AvroIntegrityChecker {
                 .put(blockIndex, computed);
         probe.remember(blockIndex, computed);
 
-        return new BlockIntegrityResult(blockIndex, count, size, decompressed.length,
-                computed, expected, problems.isEmpty(),
-                Collections.unmodifiableList(problems), syncPos + SYNC_SIZE, System.nanoTime() - blockStart);
+        return new BlockIntegrityResult.Builder()
+                .blockIndex(blockIndex)
+                .recordCount(count)
+                .compressedSize(size)
+                .decompressedSize(decompressed.length)
+                .computedCrc(computed)
+                .expectedCrc(expected)
+                .valid(problems.isEmpty())
+                .problems(Collections.unmodifiableList(problems))
+                .contentEndOffset(syncPos + SYNC_SIZE)
+                .scanTimeNanos(System.nanoTime() - blockStart)
+                .build();
     }
 
     /**
@@ -586,8 +667,18 @@ public final class AvroIntegrityChecker {
             throw new IOException("Avro integrity failed at offset " + headerPos
                     + " of block " + blockIndex + ": " + message);
         }
-        return new BlockIntegrityResult(blockIndex, -1, 0, 0, 0L, NO_EXPECTED_CRC, false,
-                List.of(message), -1L, System.nanoTime() - blockStart);
+        return new BlockIntegrityResult.Builder()
+                .blockIndex(blockIndex)
+                .recordCount(-1)
+                .compressedSize(0)
+                .decompressedSize(0)
+                .computedCrc(0L)
+                .expectedCrc(NO_EXPECTED_CRC)
+                .valid(false)
+                .problems(List.of(message))
+                .contentEndOffset(-1L)
+                .scanTimeNanos(System.nanoTime() - blockStart)
+                .build();
     }
 
     private byte[] decompress(byte[] compressed, Codec codec) throws IOException {
