@@ -166,4 +166,8 @@ public final class SqlKeywords {
     public static final String SHOW_TABLES = "SHOW TABLES";
     public static final String SHOW_CREATE_TABLE = "SHOW CREATE TABLE";
     public static final String SHOW_CREATE_INDEXES = "SHOW CREATE INDEXES";
+    
+    // Replication slot commands (prompt4 #59)
+    public static final String CREATE_REPLICATION_SLOT = "CREATE REPLICATION SLOT";
+    public static final String DROP_REPLICATION_SLOT = "DROP REPLICATION SLOT";
 }

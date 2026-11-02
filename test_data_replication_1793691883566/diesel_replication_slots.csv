@@ -1,0 +1,3 @@
+ID,SLOT_NAME,CONFIRMED_FLUSH_LSN,RESTART_LSN,CREATED_AT
+persist_test_slot,persist_test_slot,1000,1000,1793691884684
+temp_init_slot,temp_init_slot,0,0,1793691884628

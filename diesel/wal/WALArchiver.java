@@ -41,21 +41,24 @@ public final class WALArchiver implements AutoCloseable {
     private final WALConfig config;
     private final WALManager manager;
     private final Clock clock;
+    private final diesel.Database database;
     private final ScheduledExecutorService executor;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final Set<Integer> archivedSegments = Collections.synchronizedSet(new TreeSet<>());
 
-    /**
-     * Creates a new WAL archiver.
-     *
-     * @param config the WAL configuration
-     * @param manager the WAL manager for current segment number queries
-     * @param clock the clock for retention calculations (for tests: injectable)
-     */
-    public WALArchiver(WALConfig config, WALManager manager, Clock clock) {
+/**
+      * Creates a new WAL archiver.
+      *
+      * @param config the WAL configuration
+      * @param manager the WAL manager for current segment number queries
+      * @param clock the clock for retention calculations (for tests: injectable)
+      * @param database the database instance for replication slot checks (prompt4 #59)
+      */
+    public WALArchiver(WALConfig config, WALManager manager, Clock clock, diesel.Database database) {
         this.config = config;
         this.manager = manager;
         this.clock = clock;
+        this.database = database;
         this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, THREAD_NAME);
             t.setDaemon(true);
@@ -68,10 +71,11 @@ public final class WALArchiver implements AutoCloseable {
      *
      * @param config the WAL configuration
      * @param manager the WAL manager
+     * @param database the database instance for replication slot checks (prompt4 #59)
      * @return the archiver
      */
-    public static WALArchiver create(WALConfig config, WALManager manager) {
-        return new WALArchiver(config, manager, Clock.systemUTC());
+    public static WALArchiver create(WALConfig config, WALManager manager, diesel.Database database) {
+        return new WALArchiver(config, manager, Clock.systemUTC(), database);
     }
 
     /**
@@ -80,10 +84,11 @@ public final class WALArchiver implements AutoCloseable {
      * @param config the WAL configuration
      * @param manager the WAL manager
      * @param clock the clock for retention calculations
+     * @param database the database instance for replication slot checks
      * @return the archiver
      */
-    public static WALArchiver create(WALConfig config, WALManager manager, Clock clock) {
-        return new WALArchiver(config, manager, clock);
+    public static WALArchiver create(WALConfig config, WALManager manager, Clock clock, diesel.Database database) {
+        return new WALArchiver(config, manager, clock, database);
     }
 
     /**
@@ -174,7 +179,7 @@ public final class WALArchiver implements AutoCloseable {
      * @param segmentNumber the segment number
      * @throws IOException if archiving fails
      */
-    private void archiveSegment(Path walFile, int segmentNumber) throws IOException {
+    public void archiveSegment(Path walFile, int segmentNumber) throws IOException {
         Path archiveFile = config.getArchiveDir().resolve("wal-" + 
                 String.format("%04d", segmentNumber) + ".log" + GZIP_EXTENSION);
         Path tempFile = archiveFile.resolveSibling(archiveFile.getFileName() + TEMP_EXTENSION);
@@ -247,6 +252,8 @@ public final class WALArchiver implements AutoCloseable {
      * <p>Retention deletes only the gzip copies; the in-memory archived-segments set is
      * intentionally left untouched so purged segments are never re-archived.
      * When retention is disabled ({@code retentionDays <= 0}) nothing is deleted.
+     * <p>Retention respects replication slots: archives are only deleted if no
+     * replication slot needs the WAL segments (prompt4 #59).
      */
     public synchronized void runRetention() {
         if (config.getArchiveRetentionDays() <= 0) {
@@ -254,6 +261,69 @@ public final class WALArchiver implements AutoCloseable {
             return;
         }
 
+        // Check replication slots before deleting any archives
+        if (database != null) {
+            // Get the minimum LSN that all slots have confirmed
+            long minConfirmedLsn = database.getMinimumConfirmedReplicationLsn();
+            if (minConfirmedLsn >= 0) {
+                // Check if any archived segments are still needed by replication slots
+                int currentSegment = manager.getCurrentSegmentNumber();
+                int segmentSize = (int) config.getMaxSegmentSizeBytes(); // Use configured segment size
+                int minSafeSegment = (int) (minConfirmedLsn / segmentSize);
+                
+                // Don't delete archives that contain segments needed by replication slots
+                List<Path> safeToDelete = new ArrayList<>();
+                try {
+                    try (var dirStream = Files.list(config.getArchiveDir())) {
+                        dirStream
+                            .filter(p -> p.getFileName().toString().endsWith(GZIP_EXTENSION))
+.forEach(archiveFile -> {
+                        try {
+                            // Extract segment number from filename (e.g., "wal.0001.log.gz")
+                            String fileName = archiveFile.getFileName().toString();
+                            String segmentStr = fileName.substring(4, 8); // Extract "0001" from "wal.0001.log.gz"
+                            int segmentNumber = Integer.parseInt(segmentStr);
+                                
+                                // Only delete if this segment is beyond what any slot needs
+                                if (segmentNumber <= minSafeSegment) {
+                                    long fileTime = Files.getLastModifiedTime(archiveFile).toMillis();
+                                    long retentionMs = config.getArchiveRetentionDays() * 24L * 60L * 60L * 1000L;
+                                    long cutoffTime = clock.instant().toEpochMilli() - retentionMs;
+                                    
+                                    if (fileTime < cutoffTime) {
+                                        safeToDelete.add(archiveFile);
+                                    }
+                                } else {
+                                    LOGGER.debug("Skipping archive {} - segment {} needed by replication slots", 
+                                            fileName, segmentNumber);
+                                }
+                            } catch (Exception e) {
+                                LOGGER.warn("Failed to process archive {}: {}", archiveFile, e.getMessage());
+                            }
+                        });
+                    }
+                } catch (IOException e) {
+                    LOGGER.warn("Failed to list archive directory: {}", e.getMessage());
+                    return; // Exit if we can't list the directory
+                }
+                
+                // Delete only the safe archives
+                for (Path archiveFile : safeToDelete) {
+                    try {
+                        Files.deleteIfExists(archiveFile);
+                        LOGGER.debug("Deleted expired archive: {}", archiveFile.getFileName());
+                    } catch (IOException e) {
+                        LOGGER.warn("Failed to delete expired archive {}: {}", archiveFile, e.getMessage());
+                    }
+                }
+                
+                LOGGER.debug("Retention completed: deleted {} expired archives ({} segments safe for deletion)", 
+                        safeToDelete.size(), minSafeSegment);
+                return;
+            }
+        }
+
+        // Fallback to original retention logic if no database or no slots
         long retentionMs = config.getArchiveRetentionDays() * 24L * 60L * 60L * 1000L;
         long cutoffTime = clock.instant().toEpochMilli() - retentionMs;
 

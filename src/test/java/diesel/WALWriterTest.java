@@ -40,7 +40,7 @@ class WALWriterTest {
     @BeforeEach
     void setUp() throws IOException {
         config = WALConfig.of(tempDir, 1024 * 1024, 10_000); // Small queue for testing
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
     }
 
     @Test

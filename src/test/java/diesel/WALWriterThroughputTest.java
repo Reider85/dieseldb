@@ -39,7 +39,7 @@ class WALWriterThroughputTest {
     @BeforeEach
     void setUp() throws IOException {
         config = WALConfig.of(tempDir, 1024 * 1024, 100_000); // Default queue size
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
     }
 
     @Test

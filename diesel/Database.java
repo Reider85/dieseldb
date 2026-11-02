@@ -31,6 +31,8 @@ import diesel.recovery.CheckpointStrategy;
 import diesel.recovery.CheckpointMode;
 import diesel.recovery.FuzzyCheckpoint;
 import diesel.recovery.SharpCheckpoint;
+import diesel.replication.ReplicationSlot;
+import diesel.replication.ReplicationSlotRegistry;
     import java.util.concurrent.CompletableFuture;
     import java.util.concurrent.ConcurrentHashMap;
     import java.util.concurrent.ExecutionException;
@@ -95,7 +97,7 @@ import diesel.security.UserStoreBackend;
  * @see Transaction
  * @see QueryParser
  */
-class Database {
+public class Database {
     private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
     private final QueryCache queryCache = new QueryCache();
@@ -127,6 +129,7 @@ class Database {
     private volatile AuditLogger auditLogger;                                   // SQL audit logger (prompt4 #33), lazy
     private volatile TenantStore tenantStore;                                   // SNI tenant store (prompt4 #36), lazy
     private volatile boolean auditInitDone;                                     // audit config resolved at most once
+    private volatile ReplicationSlotRegistry replicationSlotRegistry;            // Replication slot registry (prompt4 #59), lazy
     // Online ALTER TABLE ... ALGORITHM=COPY (prompt4 #38): running copies by
     // table name + bounded history of finished ones for ALTER STATUS.
     private final Map<String, AlterTableCopyAlgorithm> activeAlters = new ConcurrentHashMap<>();
@@ -190,6 +193,7 @@ class Database {
         try {
             createPageManager();
             initializeWAL(walConfigOverride);
+            loadTablesFromDisk();
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
         }
@@ -253,7 +257,7 @@ class Database {
         
         try {
             // Initialize WAL writer with async wrapper and group coordinator
-            this.walWriter = WALWriter.open(walConfig);
+            this.walWriter = WALWriter.open(walConfig, this);
             this.asyncWALWriter = new AsyncWALWriter(walWriter, walConfig.getFsyncPolicy(),
                 walConfig.getGroupWindowMs(), walConfig.getGroupMaxSize(), walScheduler);
             this.groupCoordinator = asyncWALWriter.getCoordinator();
@@ -2422,6 +2426,43 @@ class Database {
         }
     }
 
+    /** Replication slot registry — lazy initialization (prompt4 #59). */
+    private ReplicationSlotRegistry getReplicationSlotRegistry() {
+        synchronized (this) {
+            if (replicationSlotRegistry == null) {
+                ensureSystemTable("diesel_replication_slots",
+                        List.of("ID", "SLOT_NAME", "CONFIRMED_FLUSH_LSN", "RESTART_LSN", "CREATED_AT"), "ID");
+                replicationSlotRegistry = new ReplicationSlotRegistry();
+                // Load existing slots from the system table
+                loadReplicationSlots();
+            }
+            return replicationSlotRegistry;
+        }
+    }
+
+    /** Load existing replication slots from the system table (prompt4 #59). */
+    private void loadReplicationSlots() {
+        Table slotsTable = getTable("diesel_replication_slots");
+        if (slotsTable != null) {
+            System.out.println("DEBUG: Loading " + slotsTable.getRows().size() + " replication slots from table");
+            for (Map<String, Object> row : slotsTable.getRows()) {
+                String slotName = (String) row.get("SLOT_NAME");
+                String confirmedFlushLsnStr = (String) row.get("CONFIRMED_FLUSH_LSN");
+                String restartLsnStr = (String) row.get("RESTART_LSN");
+                System.out.println("DEBUG: Loading slot " + slotName + " with confirmedFlushLsn=" + confirmedFlushLsnStr + ", restartLsn=" + restartLsnStr);
+                
+                long confirmedFlushLsn = Long.parseLong(confirmedFlushLsnStr);
+                long restartLsn = Long.parseLong(restartLsnStr);
+                
+                ReplicationSlot slot = new ReplicationSlot(slotName, restartLsn);
+                slot.setConfirmedFlushLsn(confirmedFlushLsn);
+                getReplicationSlotRegistry().createSlot(slotName, restartLsn);
+                getReplicationSlotRegistry().updateConfirmedFlushLsn(slotName, confirmedFlushLsn);
+                System.out.println("DEBUG: Loaded slot " + slotName + " with confirmedFlushLsn=" + confirmedFlushLsn);
+            }
+        }
+    }
+
     /** CREATE TENANT — stores the SNI→keystore mapping (prompt4 #36). */
     String executeCreateTenant(CreateTenantQuery query) {
         getTenantStore().createTenant(query.getTenantName(), query.getSniHostname(),
@@ -2459,8 +2500,52 @@ class Database {
         return "Password changed: " + query.getUserName();
     }
 
+    /** CREATE REPLICATION SLOT — creates a replication slot (prompt4 #59). */
+    String executeCreateReplicationSlot(CreateReplicationSlotQuery query) {
+        ReplicationSlotRegistry registry = getReplicationSlotRegistry();
+        long currentLsn = getCurrentWALLSN();
+        registry.createSlot(query.getSlotName(), currentLsn);
+        
+        // Persist the slot to the system table
+        Table slotsTable = getTable("diesel_replication_slots");
+        if (slotsTable != null) {
+            Map<String, Object> slotRow = new HashMap<>();
+            slotRow.put("SLOT_NAME", query.getSlotName());
+            slotRow.put("CONFIRMED_FLUSH_LSN", currentLsn);
+            slotRow.put("RESTART_LSN", currentLsn);
+            slotRow.put("CREATED_AT", System.currentTimeMillis());
+            slotsTable.addRow(slotRow);
+        }
+        
+        return "Replication slot created: " + query.getSlotName();
+    }
+
+    /** DROP REPLICATION SLOT — removes a replication slot (prompt4 #59). */
+    String executeDropReplicationSlot(DropReplicationSlotQuery query) {
+        ReplicationSlotRegistry registry = getReplicationSlotRegistry();
+        boolean dropped = registry.dropSlot(query.getSlotName());
+        
+        if (dropped) {
+            // Remove from the system table
+            Table slotsTable = getTable("diesel_replication_slots");
+            if (slotsTable != null) {
+                List<Map<String, Object>> current = slotsTable.getRows();
+                for (int i = 0; i < current.size(); i++) {
+                    if (Objects.equals(query.getSlotName(), current.get(i).get("SLOT_NAME"))) {
+                        slotsTable.removeRow(i);
+                        slotsTable.saveToFile("diesel_replication_slots");
+                        return "Replication slot dropped: " + query.getSlotName();
+                    }
+                }
+                }
+                return "Replication slot not found: " + query.getSlotName();
+            } else {
+            return "Replication slot not found: " + query.getSlotName();
+        }
+    }
+
     /** GRANT privilege TO role — grants one or more privileges (prompt4 #32). */
-    String executeGrantPrivilege(GrantPrivilegeQuery query) {
+    public String executeGrantPrivilege(GrantPrivilegeQuery query) {
         for (Privilege.Action action : query.getActions()) {
             getUserStore().grantPrivilege(query.getRoleName(), action, query.getTableName());
         }
@@ -2470,7 +2555,7 @@ class Database {
     }
 
     /** REVOKE privilege FROM role — revokes one or more privileges (prompt4 #32). */
-    String executeRevokePrivilege(RevokePrivilegeQuery query) {
+    public String executeRevokePrivilege(RevokePrivilegeQuery query) {
         for (Privilege.Action action : query.getActions()) {
             getUserStore().revokePrivilege(query.getRoleName(), action, query.getTableName());
         }
@@ -3791,11 +3876,161 @@ class Database {
         return null;
     }
 
-    /**
-     * Returns the current transaction id (MVCC support).
-     */
+/**
+      * Returns the current transaction id (MVCC support).
+      */
     public long getCurrentTxid() {
         Transaction current = getCurrentTransaction();
         return current != null ? current.getTxid() : -1;
+    }
+
+    /**
+     * Creates a replication slot (prompt4 #59).
+     * 
+     * @param slotName the name of the slot
+     * @param initialLsn the initial LSN for the slot
+     */
+    public void createReplicationSlot(String slotName, long initialLsn) {
+        getReplicationSlotRegistry().createSlot(slotName, initialLsn);
+        
+        // Save the slot to the database for persistence
+        Table slotsTable = getTable("diesel_replication_slots");
+        if (slotsTable != null) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("ID", slotName); // Use slot name as ID
+            row.put("SLOT_NAME", slotName);
+            row.put("CONFIRMED_FLUSH_LSN", String.valueOf(initialLsn));
+            row.put("RESTART_LSN", String.valueOf(initialLsn));
+            row.put("CREATED_AT", String.valueOf(System.currentTimeMillis()));
+            slotsTable.addRow(row);
+            slotsTable.saveToFile("diesel_replication_slots");
+        }
+    }
+
+    /**
+     * Drops a replication slot (prompt4 #59).
+     * 
+     * @param slotName the name of the slot
+     * @return true if the slot was dropped, false if not found
+     */
+    public boolean dropReplicationSlot(String slotName) {
+        boolean dropped = getReplicationSlotRegistry().dropSlot(slotName);
+        
+        // Remove the slot from the database table for persistence
+        if (dropped) {
+            Table slotsTable = getTable("diesel_replication_slots");
+            if (slotsTable != null) {
+                List<Map<String, Object>> rows = slotsTable.getRows();
+                for (int i = 0; i < rows.size(); i++) {
+                    if (Objects.equals(slotName, rows.get(i).get("SLOT_NAME"))) {
+                        rows.remove(i);
+                        slotsTable.saveToFile("diesel_replication_slots");
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return dropped;
+    }
+
+    /**
+     * Gets a replication slot by name (prompt4 #59).
+     * 
+     * @param slotName the name of the slot
+     * @return the replication slot, or null if not found
+     */
+    public ReplicationSlot getReplicationSlot(String slotName) {
+        return getReplicationSlotRegistry().getSlot(slotName);
+    }
+
+    /**
+     * Gets all replication slots (prompt4 #59).
+     * 
+     * @return map of all replication slots
+     */
+    public Map<String, ReplicationSlot> getAllReplicationSlots() {
+        return getReplicationSlotRegistry().getAllSlots();
+    }
+
+    /**
+     * Updates the confirmed flush LSN for a replication slot (prompt4 #59).
+     * 
+     * @param slotName the name of the slot
+     * @param lsn the new confirmed LSN
+     * @return true if updated successfully, false if slot not found
+     */
+    public boolean updateReplicationSlotConfirmedFlushLsn(String slotName, long lsn) {
+        boolean updated = getReplicationSlotRegistry().updateConfirmedFlushLsn(slotName, lsn);
+        
+        // Save the updated value to the database for persistence
+        if (updated) {
+            Table slotsTable = getTable("diesel_replication_slots");
+            if (slotsTable != null) {
+                List<Map<String, Object>> rows = slotsTable.getRows();
+                for (int i = 0; i < rows.size(); i++) {
+                    Map<String, Object> row = rows.get(i);
+                    if (Objects.equals(slotName, row.get("SLOT_NAME"))) {
+                        row.put("CONFIRMED_FLUSH_LSN", String.valueOf(lsn));
+                        
+                        // Update the storage directly to ensure the change is persisted
+                        if (slotsTable.getStorage() != null) {
+                            slotsTable.getStorage().update(i, row);
+                            
+                            // Update the Table's rows to match the storage
+                            List<Map<String, Object>> tableRows = slotsTable.getRows();
+                            tableRows.set(i, row);
+                        }
+                        
+                        // Reload the table from storage to ensure rows are in sync
+                        slotsTable.reloadFromStorage();
+                        
+                        // Save both the binary and CSV files
+                        slotsTable.saveToSerializedFile("diesel_replication_slots");
+                        
+                        // Explicitly save the CSV file
+                        slotsTable.saveToFile("diesel_replication_slots");
+                        break;
+                    }
+                }
+                // Save all tables to disk to ensure consistency
+                saveTablesToDisk();
+            }
+        }
+        
+        return updated;
+    }
+
+    /**
+     * Gets the minimum LSN that all replication slots have confirmed (prompt4 #59).
+     * This is the safe LSN for WAL segment deletion.
+     * 
+     * @return the minimum confirmed LSN, or -1 if no slots exist
+     */
+    public long getMinimumConfirmedReplicationLsn() {
+        return getReplicationSlotRegistry().getMinimumConfirmedLsn();
+    }
+
+    /**
+     * Checks if any replication slot prevents WAL segments from being deleted
+     * up to the given LSN (prompt4 #59).
+     * 
+     * @param lsn the LSN to check
+     * @return true if any slot needs WAL segments beyond this LSN, false otherwise
+     */
+    public boolean replicationSlotsNeedWALSegmentsBeyond(long lsn) {
+        return getReplicationSlotRegistry().needsWALSegmentsBeyond(lsn);
+    }
+
+    /**
+     * Gets the current WAL end LSN (prompt4 #59).
+     * 
+     * @return the current WAL end LSN
+     */
+    public long getCurrentWALLSN() {
+        if (walWriter != null) {
+            return walWriter.getManager().getLastLsn();
+        }
+        return 0;
     }
 }

@@ -32,7 +32,7 @@ public class AsyncWALWriterTest {
     void setUp() throws IOException {
         walDir = Files.createTempDirectory("wal-async-test");
         WALConfig config = WALConfig.of(walDir, 1024 * 1024, 1000);
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
         scheduler = Executors.newSingleThreadScheduledExecutor();
         asyncWriter = new AsyncWALWriter(writer, FsyncPolicy.GROUP, 10, 4, scheduler);
     }

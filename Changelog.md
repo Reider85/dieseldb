@@ -26,3 +26,5 @@
 3.3.91 Prompt4 #58: Physical streaming replication (WAL streaming to standbies)
 
 3.3.93 O2 CSV-5 + TSV-5: inverse-map-based shift optimization for deleteRow
+
+3.3.94 Implement replication slots for database HA and replication

@@ -43,7 +43,7 @@ class SegmentRotationTest {
         java.nio.file.Files.createDirectories(walDir);
         config = WALConfig.of(walDir, 2 * 1024 * 1024); // 2MB segment for rotation tests
         clock = new TestClock();
-        walManager = new WALManager(config, clock);
+        walManager = new WALManager(config, clock, null);
     }
 
     @Test
@@ -78,7 +78,7 @@ class SegmentRotationTest {
         WALConfig ageConfig = WALConfig.of(config.getWalDir(), 10 * 1024 * 1024, // 10MB segment
                 config.getQueueMaxSize(), 1000, // 1 second max age
                 config.getArchiveDir(), config.getArchiveRetentionDays(), config.getArchiveIntervalMs());
-        WALManager ageManager = new WALManager(ageConfig, clock);
+        WALManager ageManager = new WALManager(ageConfig, clock, null);
 
         // Append one entry
         WALEntry entry = ageManager.append(1L, WALOpcode.INSERT, null, "test".getBytes());
@@ -103,7 +103,7 @@ class SegmentRotationTest {
         WALConfig ageConfig = WALConfig.of(config.getWalDir(), 10 * 1024 * 1024,
                 config.getQueueMaxSize(), 1000, // 1 second max age
                 config.getArchiveDir(), config.getArchiveRetentionDays(), config.getArchiveIntervalMs());
-        WALManager ageManager = new WALManager(ageConfig, clock);
+        WALManager ageManager = new WALManager(ageConfig, clock, null);
 
         // Append entry
         ageManager.append(1L, WALOpcode.INSERT, null, "test".getBytes());
@@ -123,7 +123,7 @@ class SegmentRotationTest {
         WALConfig disabledConfig = WALConfig.of(config.getWalDir(), 10 * 1024 * 1024,
                 config.getQueueMaxSize(), 0, // disabled max age
                 config.getArchiveDir(), config.getArchiveRetentionDays(), config.getArchiveIntervalMs());
-        WALManager disabledManager = new WALManager(disabledConfig, clock);
+        WALManager disabledManager = new WALManager(disabledConfig, clock, null);
 
         // Append entry
         disabledManager.append(1L, WALOpcode.INSERT, null, "test".getBytes());
@@ -143,7 +143,7 @@ class SegmentRotationTest {
         WALConfig ageConfig = WALConfig.of(config.getWalDir(), 10 * 1024 * 1024,
                 config.getQueueMaxSize(), 1000, // 1 second max age
                 config.getArchiveDir(), config.getArchiveRetentionDays(), config.getArchiveIntervalMs());
-        WALManager ageManager = new WALManager(ageConfig, clock);
+        WALManager ageManager = new WALManager(ageConfig, clock, null);
 
         // Force rotate to create empty current segment
         ageManager.forceRotate();
@@ -179,7 +179,7 @@ class SegmentRotationTest {
         WALConfig ageConfig = WALConfig.of(config.getWalDir(), 10 * 1024 * 1024,
                 config.getQueueMaxSize(), 1000, // 1 second max age
                 config.getArchiveDir(), config.getArchiveRetentionDays(), config.getArchiveIntervalMs());
-        WALManager ageManager = new WALManager(ageConfig, clock);
+        WALManager ageManager = new WALManager(ageConfig, clock, null);
 
         // Append one entry
         List<WALEntry> batch1 = new ArrayList<>();

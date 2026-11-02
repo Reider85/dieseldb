@@ -37,7 +37,7 @@ public class GroupCommitThroughputTest {
     void setUp() throws IOException {
         tempDir = Files.createTempDirectory("group-commit-test");
         config = WALConfig.of(tempDir, 1024 * 1024, 1000);
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
         scheduler = Executors.newSingleThreadScheduledExecutor();
         coordinator = new GroupCommitCoordinator(writer, FsyncPolicy.GROUP, 10, 64, scheduler);
     }
@@ -189,7 +189,7 @@ public class GroupCommitThroughputTest {
         // ALWAYS policy: one fsync per commit (baseline)
         coordinator.close();
         writer.close();
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
         coordinator = new GroupCommitCoordinator(writer, FsyncPolicy.ALWAYS, 10, batchSize, scheduler);
         double alwaysThroughput = runPipelined(numCommits, batchSize);
         long alwaysFsyncs = coordinator.getFsyncCount();
@@ -197,7 +197,7 @@ public class GroupCommitThroughputTest {
         // GROUP policy: one fsync per group
         coordinator.close();
         writer.close();
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
         coordinator = new GroupCommitCoordinator(writer, FsyncPolicy.GROUP, 10, batchSize, scheduler);
         double groupThroughput = runPipelined(numCommits, batchSize);
         long groupFsyncs = coordinator.getFsyncCount();

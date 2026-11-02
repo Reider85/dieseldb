@@ -105,15 +105,16 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
         });
     }
 
-    /**
-     * Creates a WAL writer that owns its WAL manager (convenience for tests).
+/**
+     * Opens a new WAL writer with the given configuration.
      *
      * @param config the WAL configuration
+     * @param database the database instance for replication slot checks (prompt4 #59)
      * @return a new WAL writer with an owned manager
      * @throws IOException if the WAL manager cannot be created
      */
-    public static WALWriter open(WALConfig config) throws IOException {
-        WALManager manager = new WALManager(config);
+    public static WALWriter open(WALConfig config, diesel.Database database) throws IOException {
+        WALManager manager = new WALManager(config, java.time.Clock.systemUTC(), database);
         return new WALWriter(manager, config);
     }
 

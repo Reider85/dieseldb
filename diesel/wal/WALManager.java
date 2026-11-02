@@ -80,21 +80,22 @@ public final class WALManager implements AutoCloseable {
      * @throws IOException if the WAL directory cannot be created or opened
      */
     public WALManager(WALConfig config) throws IOException {
-        this(config, Clock.systemUTC());
+        this(config, Clock.systemUTC(), null);
     }
 
     /**
-     * Creates a WALManager with the given configuration and clock (for testing).
+     * Creates a WAL manager.
      *
      * @param config the WAL configuration
      * @param clock the clock for age-based rotation and retention
+     * @param database the database instance for replication slot checks (prompt4 #59)
      * @throws IOException if the WAL directory cannot be created or opened
      */
-    public WALManager(WALConfig config, Clock clock) throws IOException {
-this.config = config;
+    public WALManager(WALConfig config, Clock clock, diesel.Database database) throws IOException {
+        this.config = config;
         this.clock = clock;
         this.rotator = WALSegmentRotator.create(config, clock);
-        this.archiver = WALArchiver.create(config, this, clock);
+        this.archiver = new WALArchiver(config, this, clock, database);
         this.checkpointPointerFile = new CheckpointPointerFile(config.getWalDir());
         // Preserve an existing checkpoint pointer across close() cycles.
         this.lastCheckpointLsn = this.checkpointPointerFile.read();

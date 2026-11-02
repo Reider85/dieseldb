@@ -102,7 +102,7 @@ public class CsvRowStorage extends AbstractRowStorage {
         syncIndexInsert(arr, rowIndex);
     }
 
-    @Override
+@Override
     public synchronized void update(int rowIndex, Map<String, Object> row) {
         Object[] oldRow = rows.get(rowIndex);
         Object[] newRow = rowColumns.fromMap(row);
@@ -123,6 +123,11 @@ public class CsvRowStorage extends AbstractRowStorage {
         List<Object[]> snapshot;
         synchronized (this) {
             snapshot = new ArrayList<>(rows);
+            System.out.println("DEBUG: saveToFile snapshot size: " + snapshot.size());
+            for (int i = 0; i < snapshot.size(); i++) {
+                Object[] row = snapshot.get(i);
+                System.out.println("DEBUG: Row " + i + ": " + java.util.Arrays.toString(row));
+            }
         }
         saveCsv(tableName, snapshot);
         if (isTableMirrorEnabled("csv.table.mirror")) {
@@ -161,6 +166,8 @@ public class CsvRowStorage extends AbstractRowStorage {
     // ─── CSV persistence ────────────────────────────────────────────
 
     private void saveCsv(String tableName, List<Object[]> snapshot) {
+        System.out.println("DEBUG: saveCsv called for table " + tableName + " with " + snapshot.size() + " rows");
+        System.out.println("DEBUG: Snapshot data: " + snapshot);
         CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
         File base = new File(resolveFilePath(".csv"));
         String fileName = CompressionFactory.delimitedWriteTarget(base, codec).getPath();

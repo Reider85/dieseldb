@@ -51,7 +51,7 @@ class RetentionTest {
                 archiveDir, 7, // 7 day retention
                 0); // Disable daemon for tests
         clock = new TestClock();
-        walManager = new WALManager(config, clock);
+        walManager = new WALManager(config, clock, null);
     }
 
     @Test
@@ -91,7 +91,7 @@ class RetentionTest {
                 config.getQueueMaxSize(), config.getMaxSegmentAgeMs(),
                 config.getArchiveDir(), 0, // Disabled retention
                 config.getArchiveIntervalMs());
-        WALManager disabledManager = new WALManager(disabledConfig, clock);
+        WALManager disabledManager = new WALManager(disabledConfig, clock, null);
 
         // Advance clock past retention period
         clock.advanceDays(12);

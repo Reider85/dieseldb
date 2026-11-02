@@ -119,6 +119,12 @@ class QueryParser {
             + "(?:\\s+PASSWORD\\s+'([^']*)')?\\s*;?\\s*$");
     private static final Pattern DROP_TENANT_PATTERN = Pattern.compile(
             "(?i)^DROP\\s+TENANT\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    
+    // Replication slot DDL (prompt4 #59): CREATE REPLICATION SLOT <name>
+    private static final Pattern CREATE_REPLICATION_SLOT_PATTERN = Pattern.compile(
+            "(?i)^CREATE\\s+REPLICATION\\s+SLOT\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    private static final Pattern DROP_REPLICATION_SLOT_PATTERN = Pattern.compile(
+            "(?i)^DROP\\s+REPLICATION\\s+SLOT\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern GRANT_PRIVILEGE_PATTERN = Pattern.compile(
             "(?i)^GRANT\\s+(" + PRIVILEGE_ACTIONS_PATTERN + ")\\s+(?:ON\\s+(" + IDENTIFIER_PATTERN + ")\\s+)?TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern REVOKE_PRIVILEGE_PATTERN = Pattern.compile(
@@ -812,6 +818,28 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.CREATE_REPLICATION_SLOT);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateReplicationSlotQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.DROP_REPLICATION_SLOT);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseDropReplicationSlotQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
                 return n.startsWith(SqlKeywords.GRANT + " ");
             }
             @Override
@@ -1440,6 +1468,24 @@ class QueryParser {
             throw new SyntaxErrorException("Invalid DROP TENANT syntax: expected DROP TENANT <name>");
         }
         return new DropTenantQuery(unquoteIdentifier(m.group(1)));
+    }
+
+    /** Parses {@code CREATE REPLICATION SLOT <name>} (prompt4 #59). */
+    private Query<?> parseCreateReplicationSlotQuery(String original) {
+        Matcher m = CREATE_REPLICATION_SLOT_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid CREATE REPLICATION SLOT syntax: expected CREATE REPLICATION SLOT <name>");
+        }
+        return new CreateReplicationSlotQuery(unquoteIdentifier(m.group(1)));
+    }
+
+    /** Parses {@code DROP REPLICATION SLOT <name>} (prompt4 #59). */
+    private Query<?> parseDropReplicationSlotQuery(String original) {
+        Matcher m = DROP_REPLICATION_SLOT_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid DROP REPLICATION SLOT syntax: expected DROP REPLICATION SLOT <name>");
+        }
+        return new DropReplicationSlotQuery(unquoteIdentifier(m.group(1)));
     }
 
     /** Parses {@code GRANT <role> TO <user>} (prompt4 #30). */

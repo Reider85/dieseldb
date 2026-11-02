@@ -43,7 +43,7 @@ class WALBackpressureTest {
     void setUp() throws IOException {
         // Use a very small queue for testing backpressure
         config = WALConfig.of(tempDir, 1024 * 1024, 3); // Queue size = 3 (even smaller)
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
     }
 
     @Test
@@ -121,7 +121,7 @@ class WALBackpressureTest {
     void blockingAppendDoesNotDropUnderSustainedLoad() throws Exception {
         // Test with a slightly larger queue but sustained load
         config = WALConfig.of(tempDir, 1024 * 1024, 16);
-        writer = WALWriter.open(config);
+        writer = WALWriter.open(config, null);
 
         int totalAppends = 1000;
         List<CompletableFuture<WALEntry>> futures = new ArrayList<>();
