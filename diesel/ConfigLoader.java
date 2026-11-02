@@ -126,6 +126,46 @@ final class ConfigLoader {
     static final String CHECKPOINT_MODE = "checkpoint.mode";
     /** Default "fuzzy": non-blocking checkpoint mode */
     static final String DEFAULT_CHECKPOINT_MODE = "fuzzy";
+
+    // ─── Physical streaming replication (prompt4 #58, R3-016) ────
+    static final String REPLICATION_ROLE = "replication.role";
+    static final String REPLICATION_UPSTREAM_HOST = "replication.upstream.host";
+    static final String REPLICATION_UPSTREAM_PORT = "replication.upstream.port";
+    static final String REPLICATION_PORT = "replication.port";
+    /** Default "off": no replication endpoints are started. */
+    static final String DEFAULT_REPLICATION_ROLE = "off";
+    /** Default master host for a standby's upstream connection. */
+    static final String DEFAULT_REPLICATION_UPSTREAM_HOST = "localhost";
+    /** Default master replication port (standby connects here). */
+    static final int DEFAULT_REPLICATION_UPSTREAM_PORT = 5433;
+    /** Default port the master's WalSender listens on. */
+    static final int DEFAULT_REPLICATION_PORT = 5433;
+
+    /**
+     * The replication role of this process: {@code off}, {@code master} or
+     * {@code standby} (case-insensitive). An unrecognized value falls back to
+     * {@link #DEFAULT_REPLICATION_ROLE} so a typo can never disable a node's
+     * data service.
+     */
+    static String getReplicationRole() {
+        String role = getString(REPLICATION_ROLE, DEFAULT_REPLICATION_ROLE);
+        return role == null ? DEFAULT_REPLICATION_ROLE : role.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** Host a standby connects to (its upstream master). */
+    static String getReplicationUpstreamHost() {
+        return getString(REPLICATION_UPSTREAM_HOST, DEFAULT_REPLICATION_UPSTREAM_HOST);
+    }
+
+    /** Port a standby connects to (its upstream master's replication port). */
+    static int getReplicationUpstreamPort() {
+        return getInt(REPLICATION_UPSTREAM_PORT, DEFAULT_REPLICATION_UPSTREAM_PORT);
+    }
+
+    /** Port the master's WalSender listens on. */
+    static int getReplicationPort() {
+        return getInt(REPLICATION_PORT, DEFAULT_REPLICATION_PORT);
+    }
     
     // ─── String literal case compatibility (prompt4 #49) ────────────
     static final String COMPAT_UPPERCASE_STRING_LITERALS = "compat.uppercase.string.literals";

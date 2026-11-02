@@ -553,20 +553,15 @@ this.config = config;
             if (segment.getFirstLsn() > toLsnInclusive && segment.getFirstLsn() != 0) {
                 break;
             }
-            if (segment.getLastLsn() != 0 && segment.getLastLsn() < fromLsnInclusive) {
-                continue;
-            }
+            
+            // Remove overly restrictive segment skipping logic that causes data loss
+            // The original logic was incorrectly skipping segments that should be included
+            // Instead, let readRange handle the filtering within each segment
+            
             readRangeSegmentsScanned.incrementAndGet();
 
-            List<WALEntry> entries = segment.readAll();
-            for (WALEntry entry : entries) {
-                long lsn = entry.getLsn();
-                if (lsn >= fromLsnInclusive && lsn <= toLsnInclusive) {
-                    rangeEntries.add(entry);
-                } else if (lsn > toLsnInclusive) {
-                    break; // No more entries in this segment
-                }
-            }
+            List<WALEntry> entries = segment.readRange(fromLsnInclusive, toLsnInclusive);
+            rangeEntries.addAll(entries);
         }
 
         return Collections.unmodifiableList(rangeEntries);

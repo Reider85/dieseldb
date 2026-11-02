@@ -23,4 +23,4 @@
 
 3.3.90 Fix AvroShiftPositionsIsOAffectedTest performance bounds by adjusting overly strict JVM noise tolerance
 
-3.3.91 Reduce method parameter count (java:S107) using Builder pattern for CliArgs, WALConfig, LibpqMessage.FieldDescription, AvroIntegrityChecker.BlockIntegrityResult, and RowVersionMeta classes
+3.3.91 Prompt4 #58: Physical streaming replication (WAL streaming to standbies)

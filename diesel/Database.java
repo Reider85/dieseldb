@@ -100,6 +100,10 @@ class Database {
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
     private final QueryCache queryCache = new QueryCache();
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
+    // prompt4 #58: hot-standby replica — reads allowed, writes rejected by
+    // HotStandbyHandler before parsing. The replication apply pipeline does
+    // not go through executeQuery, so it bypasses this gate by design.
+    private volatile boolean hotStandbyMode;
     private final TxStatusTracker txStatusTracker = new TxStatusTracker();        // MVCC: tracks transaction status and commit CSNs
     private final VacuumManager vacuumManager = new VacuumManager(this);           // MVCC: dead row version reclamation
     private final ConflictDetector conflictDetector = new ConflictDetector();     // MVCC: SERIALIZABLE SSI conflict detection (prompt4 #5)
@@ -845,6 +849,11 @@ class Database {
      */
     Object executeQueryInternal(String query, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing query: {0}", query);
+        // prompt4 #58: hot standby serves reads only — reject writes before
+        // parsing so the gate costs one volatile read on the read path.
+        if (hotStandbyMode) {
+            diesel.replication.HotStandbyHandler.checkAllowed(query);
+        }
         Long maxRowsHint = parseMaxRowsHint(query);
         String cleanQuery = stripMaxRowsHint(query);
 
@@ -1263,6 +1272,11 @@ class Database {
     /** Audit-free prepared core shared by both overloads (prompt4 #33). */
     private Object executeParsedPreparedInternal(Query<?> parsedQuery, String concreteSql, UUID transactionId) {
         LOGGER.log(Level.FINE, "Executing prepared query: {0}", concreteSql);
+        // prompt4 #58: same hot-standby gate as executeQueryInternal — the
+        // prepared path parses a cached AST, so the text check is mandatory.
+        if (hotStandbyMode) {
+            diesel.replication.HotStandbyHandler.checkAllowed(concreteSql);
+        }
         Transaction currentTransaction = transactionId != null ? activeTransactions.get(transactionId) : null;
         long execStart = System.nanoTime();
         try {
@@ -3476,12 +3490,43 @@ class Database {
     /**
      * Returns whether the given transaction id refers to an active transaction.
      *
-     * @param transactionId the transaction id to check
+     * @param transactionId the transaction to check
      * @return true when the transaction exists and is still active
      */
     public boolean isInTransaction(UUID transactionId) {
         Transaction transaction = activeTransactions.get(transactionId);
         return transaction != null && transaction.isActive();
+    }
+
+    /**
+     * Returns the number of currently registered (active) transactions —
+     * used by the physical base backup to wait for a quiesced state
+     * (prompt4 #58).
+     *
+     * @return the active transaction count
+     */
+    public int getActiveTransactionCount() {
+        return activeTransactions.size();
+    }
+
+    /**
+     * Enables or disables hot-standby mode (prompt4 #58): while enabled every
+     * query reaching {@link #executeQueryInternal} is screened by
+     * {@code HotStandbyHandler} and non-read statements are rejected.
+     *
+     * @param hotStandbyMode true to serve read-only traffic
+     */
+    public void setHotStandbyMode(boolean hotStandbyMode) {
+        this.hotStandbyMode = hotStandbyMode;
+    }
+
+    /**
+     * Returns whether this database is a hot-standby replica.
+     *
+     * @return true when writes are rejected
+     */
+    public boolean isHotStandbyMode() {
+        return hotStandbyMode;
     }
 
     /**

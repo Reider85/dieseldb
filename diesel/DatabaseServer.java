@@ -82,6 +82,8 @@ public class DatabaseServer {
     private volatile MetricsHttpServer metricsHttpServer;
     /** libpq protocol server (prompt4 #54); null until started or when disabled. */
     private volatile LibpqServer libpqServer;
+    /** Physical streaming replication endpoint (prompt4 #58); null when replication.role=off. */
+    private volatile ReplicationCoordinator replicationCoordinator;
 
     /**
      * Creates a server on the given port with the default socket timeout.
@@ -232,12 +234,58 @@ public class DatabaseServer {
         LOGGER.log(Level.INFO, "Server configured with transaction isolation level: {0}", isolationLevel);
 
         running = true;
+        // prompt4 #58: a standby must receive the master's base backup BEFORE
+        // its catalog/tables load, otherwise it would boot an empty directory.
+        String replicationRole = config.getProperty("replication.role", "off").trim()
+                .toLowerCase(java.util.Locale.ROOT);
+        if ("standby".equals(replicationRole)) {
+            String upstreamHost = config.getProperty("replication.upstream.host", "localhost");
+            int upstreamPort = Integer.parseInt(
+                    config.getProperty("replication.upstream.port", "5433"));
+            try {
+                long bootstrapped = ReplicationCoordinator.bootstrapStandbyIfEmpty(
+                        upstreamHost, upstreamPort, java.nio.file.Path.of(database.getDataDir()));
+                if (bootstrapped >= 0) {
+                    LOGGER.log(Level.INFO,
+                            "Standby base backup complete from {0}:{1}, resume LSN {2}",
+                            new Object[]{upstreamHost, upstreamPort, bootstrapped});
+                }
+            } catch (IOException e) {
+                startupError = e;
+                LOGGER.log(Level.SEVERE, "Standby base backup failed: {0}", e.getMessage());
+                return;
+            }
+        }
         database.loadCatalog();
         database.loadTablesFromDisk();
         // ARIES startup recovery (prompt4 #19): analysis → redo → undo before
         // the vacuum daemon starts and strictly before client connections are
         // accepted. No-op when the WAL is disabled.
         database.runRecovery();
+        // prompt4 #58: wire replication endpoints after recovery, before the
+        // accept loop — a master starts streaming, a standby starts applying
+        // and flips to hot-standby (read-only) mode for every client below.
+        if ("master".equals(replicationRole) || "standby".equals(replicationRole)) {
+            try {
+                if ("master".equals(replicationRole)) {
+                    int replPort = Integer.parseInt(config.getProperty("replication.port", "5433"));
+                    replicationCoordinator = ReplicationCoordinator.startMaster(database, replPort);
+                    LOGGER.log(Level.INFO, "Replication master streaming on port {0}", replPort);
+                } else {
+                    String upstreamHost = config.getProperty("replication.upstream.host", "localhost");
+                    int upstreamPort = Integer.parseInt(
+                            config.getProperty("replication.upstream.port", "5433"));
+                    replicationCoordinator = ReplicationCoordinator.startStandby(
+                            database, upstreamHost, upstreamPort);
+                    LOGGER.log(Level.INFO, "Replication standby streaming from {0}:{1} (hot standby)",
+                            new Object[]{upstreamHost, upstreamPort});
+                }
+            } catch (IOException e) {
+                startupError = e;
+                LOGGER.log(Level.SEVERE, "Replication startup failed: {0}", e.getMessage());
+                return;
+            }
+        }
         // Start background page flusher (prompt4 #20)
         database.startPageFlusher();
         // Start background checkpoint manager (prompt4 #21)
@@ -425,6 +473,19 @@ public class DatabaseServer {
                 LOGGER.log(Level.INFO, "libpq server stopped");
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Error stopping libpq server: {0}", e.getMessage());
+            }
+        }
+
+        // Stop replication endpoints (prompt4 #58): sender stops streaming to
+        // standbys, receiver closes its upstream connection and persists the
+        // resume marker with the final row files.
+        ReplicationCoordinator repl = replicationCoordinator;
+        if (repl != null) {
+            try {
+                repl.close();
+                LOGGER.log(Level.INFO, "Replication endpoints stopped");
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error stopping replication: {0}", e.getMessage());
             }
         }
         

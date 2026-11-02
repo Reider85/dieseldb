@@ -731,6 +731,77 @@ public final class WALSegment implements AutoCloseable {
     }
 
     /**
+     * Reads a range of entries from this segment efficiently without reading the entire file.
+     * This is much more efficient than readAll() for large segments.
+     *
+     * @param fromLsnInclusive the starting LSN (inclusive)
+     * @param toLsnInclusive the ending LSN (inclusive)
+     * @return list of entries in the specified range
+     * @throws IOException if reading fails
+     */
+    public java.util.List<WALEntry> readRange(long fromLsnInclusive, long toLsnInclusive) throws IOException {
+        java.util.List<WALEntry> entries = new java.util.ArrayList<>();
+        if (channel == null) {
+            throw new IllegalStateException("Segment " + segmentNumber + " is closed");
+        }
+        if (writePosition < headerSize) {
+            return entries; // Empty segment
+        }
+
+        // Only use optimization if we have valid firstLsn/lastLsn values and the range covers the entire segment
+        if (firstLsn > 0 && lastLsn > 0 && 
+            fromLsnInclusive <= firstLsn && toLsnInclusive >= lastLsn) {
+            return readAll();
+        }
+
+        // Stream through the segment, reading only the entries we need
+        ByteBuffer buffer = ByteBuffer.allocate((int) Math.min(64 * 1024, writePosition - headerSize)); // 64KB buffer
+        buffer.position(0);
+        
+        // Start reading from the beginning of the segment data, don't assume LSN start value
+        long currentLsn = firstLsn > 0 ? firstLsn : headerSize + 1;
+        int bytesRead = 0;
+        int totalBytes = (int) (writePosition - headerSize);
+        
+        while (bytesRead < totalBytes && currentLsn <= toLsnInclusive) {
+            // Read a chunk of the file
+            int chunkSize = Math.min(buffer.capacity(), totalBytes - bytesRead);
+            buffer.clear();
+            int actualRead = channel.read(buffer, headerSize + bytesRead);
+            if (actualRead <= 0) break;
+            
+            buffer.flip();
+            int bufferPosition = 0;
+            
+            while (bufferPosition < actualRead && currentLsn <= toLsnInclusive) {
+                if (buffer.remaining() < WALFormat.MIN_ENTRY_SIZE) break;
+                
+                try {
+                    int position = buffer.position();
+                    WALEntry entry = WALEntry.readFrom(buffer);
+                    long entryLsn = entry.getLsn();
+                    
+                    if (entryLsn >= fromLsnInclusive && entryLsn <= toLsnInclusive) {
+                        entries.add(entry);
+                    }
+                    
+                    currentLsn = entryLsn + 1;
+                    bufferPosition += buffer.position() - position;
+                } catch (WALFormatException e) {
+                    // Incomplete entry: stop reading this chunk
+                    LOGGER.debug("Stopped reading segment {} at position {}: {}", 
+                            segmentNumber, headerSize + bytesRead + bufferPosition, e.getMessage());
+                    break;
+                }
+            }
+            
+            bytesRead += actualRead;
+        }
+
+        return entries;
+    }
+
+    /**
      * Aligns the given size down to the nearest multiple of 8.
      *
      * @param size the size to align
