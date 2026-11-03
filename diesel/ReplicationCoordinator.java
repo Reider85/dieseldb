@@ -5,6 +5,7 @@ import diesel.replication.WalApplier;
 import diesel.replication.WalReceiver;
 import diesel.replication.WalSender;
 import diesel.replication.WalSource;
+import diesel.SyncReplicationCoordinator;
 import diesel.wal.WALEntry;
 import diesel.wal.WALManager;
 
@@ -77,7 +78,7 @@ public final class ReplicationCoordinator implements AutoCloseable {
         if (!database.isWALEnabled() || database.getWalManager() == null) {
             throw new IOException("Physical replication requires wal.enabled=true on the master");
         }
-        coordinator.sender = new WalSender(new DatabaseWalSource(database), port);
+        coordinator.sender = new WalSender(new DatabaseWalSource(database), database.getSyncReplicationCoordinator(), port);
         return coordinator;
     }
 

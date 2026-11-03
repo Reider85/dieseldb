@@ -75,6 +75,8 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
     private final AtomicLong appendErrors = new AtomicLong();
     private final AtomicLong queueBlockedCount = new AtomicLong();
     private final AtomicReference<ObjectName> registeredName = new AtomicReference<>();
+    /** LSN of the last commit record written to WAL. */
+    private final AtomicLong lastCommitLsn = new AtomicLong(0);
 
     /** Ring buffer for append latencies (nanoseconds, single writer ⇒ no contention). */
     private final long[] latencyRing = new long[LATENCY_RING_SIZE];
@@ -125,6 +127,16 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
      */
     public WALManager getManager() {
         return manager;
+    }
+
+    /**
+     * Returns the LSN of the last commit record written to WAL.
+     * Used by synchronous replication to determine which records need acknowledgment.
+     *
+     * @return the last commit LSN, or 0 if no commits have been written
+     */
+    public long getLastCommitLsn() {
+        return lastCommitLsn.get();
     }
 
     /**
@@ -304,6 +316,14 @@ public final class WALWriter implements AutoCloseable, DynamicMBean {
             manager.appendBatch(entries);
             long completedAt = System.nanoTime();
             lastAppendNanos.set(completedAt);
+            
+            // Track the last commit LSN for synchronous replication
+            for (WALEntry entry : entries) {
+                if (entry.getOp() == WALOpcode.COMMIT) {
+                    lastCommitLsn.set(entry.getLsn());
+                }
+            }
+            
             for (int i = 0; i < entries.size(); i++) {
                 recordLatency(completedAt - requests.get(i).enqueueNanos());
                 appendCount.incrementAndGet();

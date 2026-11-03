@@ -28,3 +28,5 @@
 3.3.93 O2 CSV-5 + TSV-5: inverse-map-based shift optimization for deleteRow
 
 3.3.94 Implement replication slots for database HA and replication
+
+3.3.95 Implement synchronous replication with standby ACK waiting

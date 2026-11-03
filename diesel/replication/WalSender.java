@@ -1,5 +1,6 @@
 package diesel.replication;
 
+import diesel.SyncReplicationCoordinator;
 import diesel.wal.WALEntry;
 
 import java.io.BufferedInputStream;
@@ -54,6 +55,7 @@ public final class WalSender implements AutoCloseable {
     static final long HEARTBEAT_INTERVAL_MS = 200;
 
     private final WalSource source;
+    private final SyncReplicationCoordinator syncCoordinator;
     private final ServerSocket serverSocket;
     private final List<Socket> activeSockets = new CopyOnWriteArrayList<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
@@ -65,11 +67,13 @@ public final class WalSender implements AutoCloseable {
      * Binds the replication listener on the given port (0 = ephemeral).
      *
      * @param source the master WAL/data source
+     * @param syncCoordinator the synchronous replication coordinator, or null
      * @param port   the listen port
      * @throws IOException if the socket cannot be bound
      */
-    public WalSender(WalSource source, int port) throws IOException {
+    public WalSender(WalSource source, SyncReplicationCoordinator syncCoordinator, int port) throws IOException {
         this.source = Objects.requireNonNull(source, "source");
+        this.syncCoordinator = syncCoordinator;
         this.serverSocket = new ServerSocket();
         this.serverSocket.bind(new InetSocketAddress(port));
         this.acceptThread = new Thread(this::acceptLoop, "wal-sender-accept");
@@ -135,7 +139,13 @@ public final class WalSender implements AutoCloseable {
                         return; // streamWal returns only on close/error
                     }
                     case ReplicationWire.TYPE_ACK -> {
-                        // Reserved for synchronous replication (prompt 60).
+                        // Process synchronous replication acknowledgment
+                        long appliedLsn = ReplicationWire.readLong(frame);
+                        if (syncCoordinator != null) {
+                            // For now, we use a placeholder standby name - in a full implementation,
+                            // this would be extracted from the connection or frame metadata
+                            syncCoordinator.processAck("standby-1", appliedLsn);
+                        }
                     }
                     default -> ReplicationWire.writeFrame(out, ReplicationWire.TYPE_ERROR,
                             ("Unexpected replication message type: " + frame.type())

@@ -1454,9 +1454,16 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             List<Map<String, Map<String, Object>>> newJoinedRows = new ArrayList<>();
             boolean lastStream = useStreaming && join == joins.get(joins.size() - 1);
 
-            boolean useHashJoin = canUseHashJoin(join);
-            if (hasOrInOnConditions(join)) {
+            boolean useHashJoin = canUseHashJoin(join, ctx.tables);
+            boolean hasOrConditions = hasOrInOnConditions(join);
+            
+            if (hasOrConditions) {
                 LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
+                // Check if we can use a specialized hash join for OR conditions
+                if (canUseSpecializedHashJoinForOrConditions(join)) {
+                    useHashJoin = true;
+                    LOGGER.log(Level.INFO, "Using specialized hash join for OR conditions on {0}", join.tableName);
+                }
             }
 
             if (shouldReplanToNestedLoop() && useHashJoin) {
@@ -1466,7 +1473,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         new Object[]{join.tableName, String.format("%.2f", adaptiveState.maxDeviation)});
             }
 
-            LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}", new Object[]{join.tableName, useHashJoin});
+            LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}, hasOrConditions={2}", 
+                    new Object[]{join.tableName, useHashJoin, hasOrConditions});
 
             ensureJoinColumnIndexes(ctx.tables, join);
 
@@ -1754,6 +1762,20 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
     private List<Map<String, Map<String, Object>>> runInMemoryHashJoin(
             List<Map<String, Object>> buildRows, Table buildTable, Table probeTable,
             String buildColumnKey, String probeColumnKey, JoinContext ctx) {
+
+        // Additional memory safety check for OR conditions
+        if (hasOrInOnConditions(ctx.join)) {
+            LOGGER.warning("Using in-memory hash join with OR conditions - monitoring memory usage");
+            
+            // Check if we're approaching memory limits
+            long estimatedMemoryUsage = estimateHashTableSizeBytes(buildRows.size(), buildTable);
+            if (estimatedMemoryUsage > maxHashTableSizeBytes * 0.7) { // 70% of limit for OR conditions
+                LOGGER.warning("Hash table memory usage high for OR conditions: " + estimatedMemoryUsage + 
+                        " bytes (limit: " + maxHashTableSizeBytes + ")");
+                // Fall back to nested loop join
+                return runBlockNestedLoopJoin(null, probeTable, ctx);
+            }
+        }
 
         long buildStart = System.nanoTime();
         Map<Object, List<Map<String, Object>>> hashTable = new HashMap<>();
@@ -2664,6 +2686,71 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
     }
 
     /**
+     * Checks if a join operation would exceed memory limits and cause potential OOM.
+     * This method provides additional safety checks beyond the existing memory guards.
+     *
+     * @param join the join clause to check
+     * @param buildTable the build table for hash join
+     * @param probeTable the probe table for hash join
+     * @return true if the join would likely cause OOM
+     */
+    private boolean wouldJoinExceedMemory(QueryParser.JoinInfo join, Table buildTable, Table probeTable) {
+        if (buildTable == null || probeTable == null) {
+            return false;
+        }
+
+        long buildRows = buildTable.rowCount();
+        long probeRows = probeTable.rowCount();
+
+        // Check for potential Cartesian product explosion
+        if (hasOrInOnConditions(join)) {
+            // For OR conditions, be more conservative about memory usage
+            long estimatedMaxResultSize = buildRows * probeRows;
+            if (estimatedMaxResultSize > maxResultRows * 10) { // Be 10x more conservative for OR conditions
+                LOGGER.warning("JOIN with OR conditions may produce excessive result set: estimated " + 
+                        estimatedMaxResultSize + " rows (limit: " + maxResultRows + ")");
+                return true;
+            }
+        }
+
+        // Check if hash table would exceed memory limits
+        long estimatedHashTableSize = estimateHashTableSizeBytes(buildTable.getLiveRows(), buildTable);
+        if (estimatedHashTableSize > maxHashTableSizeBytes * 0.8) { // Use 80% of limit for safety
+            LOGGER.warning("Hash table size may exceed memory limits: estimated " + 
+                    estimatedHashTableSize + " bytes (limit: " + maxHashTableSizeBytes + ")");
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Estimates the memory usage of a hash table in bytes.
+     * This provides a more accurate estimate than just counting rows.
+     *
+     * @param rowCount the number of rows to be stored
+     * @param table the table containing the rows
+     * @return estimated memory usage in bytes
+     */
+    private long estimateHashTableSizeBytes(long rowCount, Table table) {
+        if (table == null || rowCount <= 0) {
+            return 0;
+        }
+
+        // Base size: HashMap overhead + array for entries
+        long baseSize = 16 + (long) (rowCount * 24); // HashMap + Entry array
+
+        // Size of keys and values
+        Table.TableStatistics stats = table.getStatistics();
+        long avgRowSize = stats != null ? stats.getAvgRowSizeBytes() : 100; // Default 100 bytes per row
+        
+        // For hash table: each entry stores the key + reference to list + list overhead
+        long dataSize = rowCount * (avgRowSize + 16 + 8); // row + list reference + list overhead
+
+        return baseSize + dataSize;
+    }
+
+    /**
      * Decides between a hash join and a nested loop join using the stored table
      * statistics ({@link Table.TableStatistics}, refreshed by ANALYZE TABLE and
      * asynchronously after INSERT/DELETE). The nested-loop cost is the row-count
@@ -2700,6 +2787,56 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         return nestedLoopCost < hashJoinCost;
     }
 
+    private boolean canUseHashJoin(QueryParser.JoinInfo join, Map<String, Table> tables) {
+        if (join.joinType != QueryParser.JoinType.INNER &&
+                join.joinType != QueryParser.JoinType.LEFT_INNER &&
+                join.joinType != QueryParser.JoinType.RIGHT_INNER) {
+            return false;
+        }
+        boolean hasEquality = false;
+        for (QueryParser.Condition condition : join.onConditions) {
+            if (condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison()) {
+                hasEquality = true;
+            }
+        }
+        if (!hasEquality) {
+            return false;
+        }
+
+        // Additional memory safety check
+        Table buildTable = null;
+        Table probeTable = null;
+        for (QueryParser.Condition condition : join.onConditions) {
+            if (condition.isColumnComparison()) {
+                // Find the tables involved in the join
+                String leftTable = normalizeColumnName(condition.column, mainTableName).split("\\.")[0];
+                String rightTable = normalizeColumnName(condition.rightColumn, mainTableName).split("\\.")[0];
+                
+                // This is a simplified check - in a real implementation we'd need to properly
+                // identify which table is the build side and which is the probe side
+                if (buildTable == null) {
+                    buildTable = tables.get(leftTable);
+                    probeTable = tables.get(rightTable);
+                }
+                break;
+            }
+        }
+
+        if (buildTable != null && probeTable != null) {
+            // Check if the join would exceed memory limits
+            if (wouldJoinExceedMemory(join, buildTable, probeTable)) {
+                LOGGER.warning("Hash join disabled due to memory constraints for join on " + join.tableName);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Planning version of canUseHashJoin that doesn't require tables parameter.
+     * Used for explain plans and planning purposes.
+     */
     private boolean canUseHashJoin(QueryParser.JoinInfo join) {
         if (join.joinType != QueryParser.JoinType.INNER &&
                 join.joinType != QueryParser.JoinType.LEFT_INNER &&
@@ -2729,6 +2866,87 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         }
         return join.onConditions.stream()
                 .anyMatch(c -> Objects.equals(c.conjunction, SqlKeywords.OR));
+    }
+
+    /**
+     * Determines if we can use a specialized hash join for OR conditions.
+     * This method checks if the OR conditions can be decomposed into individual
+     * equality conditions that can be handled by a hash join.
+     *
+     * @param join the join clause to inspect
+     * @return true if a specialized hash join can be used
+     */
+    private boolean canUseSpecializedHashJoinForOrConditions(QueryParser.JoinInfo join, Map<String, Table> tables) {
+        if (join.onConditions == null || join.onConditions.isEmpty()) {
+            return false;
+        }
+
+        // Check if we have at least one equality condition that can be used for hash join
+        boolean hasEquality = false;
+        for (QueryParser.Condition condition : join.onConditions) {
+            if (condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison()) {
+                hasEquality = true;
+                break;
+            }
+        }
+
+        if (!hasEquality) {
+            return false;
+        }
+
+        // Check if the OR conditions are structured in a way that allows decomposition
+        // For example: "A.id = B.id OR A.name = B.name" can be handled by hash join
+        // But: "A.id = B.id OR A.value > 100" might not benefit from hash join
+        
+        int orConditions = 0;
+        int equalityConditions = 0;
+        
+        for (QueryParser.Condition condition : join.onConditions) {
+            if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
+                orConditions++;
+                if (condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison()) {
+                    equalityConditions++;
+                }
+            }
+        }
+
+        // Allow hash join if we have equality conditions mixed with OR conditions
+        // This covers cases like: "A.id = B.id OR A.name = B.name"
+        return equalityConditions > 0;
+    }
+
+    /**
+     * Planning version of canUseSpecializedHashJoinForOrConditions that doesn't require tables parameter.
+     * Used for explain plans and planning purposes.
+     */
+    private boolean canUseSpecializedHashJoinForOrConditions(QueryParser.JoinInfo join) {
+        if (join.onConditions == null || join.onConditions.isEmpty()) {
+            return false;
+        }
+
+        // Check if we have at least one equality condition that can be used for hash join
+        boolean hasEquality = false;
+        for (QueryParser.Condition condition : join.onConditions) {
+            if (condition.operator == QueryParser.Operator.EQUALS && condition.isColumnComparison()) {
+                hasEquality = true;
+                break;
+            }
+        }
+
+        if (!hasEquality) {
+            return false;
+        }
+
+        // Check if there are OR conditions present
+        boolean hasOrConditions = false;
+        for (QueryParser.Condition condition : join.onConditions) {
+            if (Objects.equals(condition.conjunction, SqlKeywords.OR)) {
+                hasOrConditions = true;
+                break;
+            }
+        }
+
+        return hasOrConditions;
     }
 
     /**

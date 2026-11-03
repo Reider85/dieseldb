@@ -130,6 +130,7 @@ public class Database {
     private volatile TenantStore tenantStore;                                   // SNI tenant store (prompt4 #36), lazy
     private volatile boolean auditInitDone;                                     // audit config resolved at most once
     private volatile ReplicationSlotRegistry replicationSlotRegistry;            // Replication slot registry (prompt4 #59), lazy
+    private volatile SyncReplicationCoordinator syncReplicationCoordinator;     // Synchronous replication coordinator (prompt4 #60), lazy
     // Online ALTER TABLE ... ALGORITHM=COPY (prompt4 #38): running copies by
     // table name + bounded history of finished ones for ALTER STATUS.
     private final Map<String, AlterTableCopyAlgorithm> activeAlters = new ConcurrentHashMap<>();
@@ -341,6 +342,36 @@ public class Database {
     public diesel.wal.WALManager getWalManager() {
         WALWriter writer = walWriter;
         return writer != null ? writer.getManager() : null;
+    }
+
+    /**
+     * Returns the synchronous replication coordinator, or null if not configured.
+     * Used by the commit flow to wait for standby acknowledgments.
+     *
+     * @return the synchronous replication coordinator, or null
+     */
+    public SyncReplicationCoordinator getSyncReplicationCoordinator() {
+        if (syncReplicationCoordinator == null && ConfigLoader.getSynchronousCommit().equals("on")) {
+            synchronized (this) {
+                if (syncReplicationCoordinator == null) {
+                    syncReplicationCoordinator = new SyncReplicationCoordinator(this);
+                }
+            }
+        }
+        return syncReplicationCoordinator;
+    }
+
+    /**
+     * Returns the LSN of the last commit record written to WAL.
+     * Used by synchronous replication to determine which records need acknowledgment.
+     *
+     * @return the last commit LSN, or 0 if no commits have been written
+     */
+    private long getLastCommitLsn() {
+        if (walWriter != null) {
+            return walWriter.getLastCommitLsn();
+        }
+        return 0;
     }
 
     /**
@@ -1701,6 +1732,27 @@ public class Database {
                 activeTransactions.remove(transactionId);
                 setAutoCommit(false);
                 throw new TransactionException("Transaction commit failed due to WAL error: " + e.getMessage());
+            }
+        }
+        
+        // Synchronous replication: wait for standby acknowledgments if enabled
+        SyncReplicationCoordinator syncCoordinator = getSyncReplicationCoordinator();
+        if (syncCoordinator != null) {
+            long commitLsn = getLastCommitLsn(); // Get the LSN of the commit record
+            if (!syncCoordinator.submitCommit(currentTransaction, commitLsn)) {
+                // Synchronous replication failed: abort the commit
+                final long txid = currentTransaction.getTxid();
+                LOGGER.log(Level.SEVERE, "Synchronous replication failed for txid={0}, aborting transaction", txid);
+                // Rollback transaction state
+                try {
+                    currentTransaction.getUndoLog().clear();
+                } catch (IOException ioException) {
+                    LOGGER.log(Level.WARNING, "Failed to cleanup undo log during abort", ioException);
+                }
+                currentTransaction.setInactive();
+                activeTransactions.remove(transactionId);
+                setAutoCommit(false);
+                throw new TransactionException("Transaction commit failed due to synchronous replication timeout");
             }
         }
         
@@ -3643,8 +3695,24 @@ public class Database {
      * @see Transaction
      */
     public UUID beginTransaction(IsolationLevel isolationLevel) {
+        // MVCC: allocate txid and register with status tracker
+        long txid = txStatusTracker.registerTransaction();
+        long snapshotTxid = txid; // Snapshot of txid counter at BEGIN
+        long snapshotCsn = txStatusTracker.getCurrentCommitCsn(); // Snapshot of commit CSN counter at BEGIN
+        
         Transaction transaction = new Transaction(this, isolationLevel);
         UUID transactionId = transaction.getTransactionId();
+        
+        // Set MVCC fields using package-private setters
+        transaction.setTxid(txid);
+        transaction.setSnapshotTxid(snapshotTxid);
+        transaction.setSnapshotCsn(snapshotCsn);
+        
+        // MVCC SSI: begin tracking for SERIALIZABLE transactions
+        if (isolationLevel == IsolationLevel.SERIALIZABLE) {
+            conflictDetector.beginTracking(txid, snapshotCsn);
+        }
+        
         activeTransactions.put(transactionId, transaction);
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             transaction.snapshotTable(entry.getKey(), entry.getValue());

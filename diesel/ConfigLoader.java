@@ -27,6 +27,18 @@ final class ConfigLoader {
                 // Fail-safe: an empty Properties lets callers keep defaults.
             }
         }
+        
+        // Also check system properties (for testing)
+        String syncCommit = System.getProperty("synchronous_commit");
+        if (syncCommit != null) {
+            props.setProperty(SYNCHRONOUS_COMMIT, syncCommit);
+        }
+        
+        String syncStandbyNames = System.getProperty("synchronous_standby_names");
+        if (syncStandbyNames != null) {
+            props.setProperty(SYNCHRONOUS_STANDBY_NAMES, syncStandbyNames);
+        }
+        
         return props;
     }
 
@@ -212,5 +224,30 @@ final class ConfigLoader {
     static String getCheckpointMode() {
         String mode = getString(CHECKPOINT_MODE, DEFAULT_CHECKPOINT_MODE);
         return mode != null ? mode.trim() : DEFAULT_CHECKPOINT_MODE;
+    }
+    
+    // ─── Synchronous replication configuration (prompt4 #60) ───────
+    static final String SYNCHRONOUS_COMMIT = "synchronous_commit";
+    static final String SYNCHRONOUS_STANDBY_NAMES = "synchronous_standby_names";
+    /** Default "off": no synchronous replication. */
+    static final String DEFAULT_SYNCHRONOUS_COMMIT = "off";
+    /** Default empty string: no standbys configured. */
+    static final String DEFAULT_SYNCHRONOUS_STANDBY_NAMES = "";
+    
+    /**
+     * Synchronous commit mode: "off", "local", or "on".
+     * Defaults to "off" for backward compatibility.
+     */
+    static String getSynchronousCommit() {
+        String mode = getString(SYNCHRONOUS_COMMIT, DEFAULT_SYNCHRONOUS_COMMIT);
+        return mode != null ? mode.trim().toLowerCase() : DEFAULT_SYNCHRONOUS_COMMIT;
+    }
+    
+    /**
+     * Comma-separated list of standby names that must acknowledge commits.
+     * Defaults to empty string (no standbys).
+     */
+    static String getSynchronousStandbyNames() {
+        return getString(SYNCHRONOUS_STANDBY_NAMES, DEFAULT_SYNCHRONOUS_STANDBY_NAMES);
     }
 }
