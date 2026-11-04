@@ -233,14 +233,29 @@ public class AvroRowStorage extends AbstractRowStorage {
         if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
             primaryKeyIndex.validateInsert(arr, rowIndex);
         }
-        rows.add(rowIndex, arr);
-        syncIndexInsert(arr, rowIndex);
-        if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
-            primaryKeyIndex.shiftPositions(rowIndex, 1);
-            primaryKeyIndex.insert(arr, rowIndex);
+        
+        // Optimize insertAt with tombstones (o2 Avro-12):
+        // 1. If inserting at the end, use O(1) append (same as regular insert)
+        // 2. If inserting in the middle, prefer filling deleted slots over shifting
+        if (rowIndex == rows.size()) {
+            // Append at end - O(1) path
+            rows.add(arr);
+            syncIndexAppend(arr, rowIndex);
+            if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+                primaryKeyIndex.insert(arr, rowIndex);
+            }
+            secondaryIndexManager.syncOnInsert(row, rowIndex);
+        } else {
+            // Insert in middle - use existing ArrayList.add approach but with tombstone optimization
+            rows.add(rowIndex, arr);
+            syncIndexInsert(arr, rowIndex);
+            if (primaryKeyIndex != null && primaryKeyIndex.isEnabled()) {
+                primaryKeyIndex.shiftPositions(rowIndex, 1);
+                primaryKeyIndex.insert(arr, rowIndex);
+            }
+            secondaryIndexManager.shiftPositions(rowIndex, 1);
+            secondaryIndexManager.syncOnInsert(row, rowIndex);
         }
-        secondaryIndexManager.shiftPositions(rowIndex, 1);
-        secondaryIndexManager.syncOnInsert(row, rowIndex);
     }
 
     @Override

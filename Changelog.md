@@ -32,3 +32,5 @@
 3.3.95 Implement synchronous replication with standby ACK waiting
 
 3.3.96 JSONL-3: Defer insertAt and deleteRow position-shift to bulk mode or use inverse map
+
+3.3.97 O2 Avro-12: Optimize insertAt with tombstones and subMap index shifts
