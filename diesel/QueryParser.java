@@ -16,6 +16,8 @@ import java.util.logging.Level;
 import javax.annotation.Nullable;
 import javax.annotation.Nonnull;
 import diesel.security.Privilege;
+import diesel.replication.Publication;
+import diesel.replication.Subscription;
 
 /**
  * Parser that turns a SQL string into a {@link Query} execution object.
@@ -125,6 +127,16 @@ class QueryParser {
             "(?i)^CREATE\\s+REPLICATION\\s+SLOT\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern DROP_REPLICATION_SLOT_PATTERN = Pattern.compile(
             "(?i)^DROP\\s+REPLICATION\\s+SLOT\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    
+    // Logical replication DDL (prompt4 #61): CREATE/DROP PUBLICATION/SUBSCRIPTION
+    private static final Pattern CREATE_PUBLICATION_PATTERN = Pattern.compile(
+            "(?i)^CREATE\\s+PUBLICATION\\s+(" + IDENTIFIER_PATTERN + ")\\s+(?:FOR\\s+TABLE\\s+((?:[a-zA-Z_][a-zA-Z0-9_]*\\s*,\\s*)*[a-zA-Z_][a-zA-Z0-9_]*))?\\s*(?:WITH\\s+\\(\\s*conflict_resolution\\s*=\\s*(error|skip|replace)\\s*\\))?\\s*;?\\s*$");
+    private static final Pattern CREATE_SUBSCRIPTION_PATTERN = Pattern.compile(
+            "(?i)^CREATE\\s+SUBSCRIPTION\\s+(" + IDENTIFIER_PATTERN + ")\\s+TO\\s+PUBLICATION\\s+(" + IDENTIFIER_PATTERN + ")\\s+CONNECTION\\s+\\'([^\\']+)\\'\\s*(?:WITH\\s+\\(\\s*conflict_resolution\\s*=\\s*(error|skip|replace)\\s*\\))?\\s*;?\\s*$");
+    private static final Pattern DROP_PUBLICATION_PATTERN = Pattern.compile(
+            "(?i)^DROP\\s+PUBLICATION\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    private static final Pattern DROP_SUBSCRIPTION_PATTERN = Pattern.compile(
+            "(?i)^DROP\\s+SUBSCRIPTION\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern GRANT_PRIVILEGE_PATTERN = Pattern.compile(
             "(?i)^GRANT\\s+(" + PRIVILEGE_ACTIONS_PATTERN + ")\\s+(?:ON\\s+(" + IDENTIFIER_PATTERN + ")\\s+)?TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern REVOKE_PRIVILEGE_PATTERN = Pattern.compile(
@@ -840,6 +852,50 @@ class QueryParser {
         strategies.add(new QueryParseStrategy() {
             @Override
             public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.CREATE_PUBLICATION);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreatePublicationQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.CREATE_SUBSCRIPTION);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseCreateSubscriptionQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.DROP_PUBLICATION);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseDropPublicationQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.DROP_SUBSCRIPTION);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseDropSubscriptionQuery(o);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
                 return n.startsWith(SqlKeywords.GRANT + " ");
             }
             @Override
@@ -1486,6 +1542,91 @@ class QueryParser {
             throw new SyntaxErrorException("Invalid DROP REPLICATION SLOT syntax: expected DROP REPLICATION SLOT <name>");
         }
         return new DropReplicationSlotQuery(unquoteIdentifier(m.group(1)));
+    }
+
+    /** Parses {@code CREATE PUBLICATION <name> [FOR TABLE table1, table2] [WITH (conflict_resolution = error|skip|replace)]} (prompt4 #61). */
+    private Query<?> parseCreatePublicationQuery(String original) {
+        Matcher m = CREATE_PUBLICATION_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid CREATE PUBLICATION syntax: expected CREATE PUBLICATION <name> [FOR TABLE table1, table2] [WITH (conflict_resolution = error|skip|replace)]");
+        }
+        
+        String name = unquoteIdentifier(m.group(1));
+        String tablesPart = m.group(2);
+        String conflictResolution = m.group(3);
+        
+        Set<String> tables = new HashSet<>();
+        if (tablesPart != null && !tablesPart.trim().isEmpty()) {
+            String[] tableNames = tablesPart.split("\\s*,\\s*");
+            for (String tableName : tableNames) {
+                tables.add(unquoteIdentifier(tableName.trim()));
+            }
+        }
+        
+        Publication.ConflictResolutionStrategy strategy = Publication.ConflictResolutionStrategy.ERROR;
+        if (conflictResolution != null) {
+            strategy = Publication.ConflictResolutionStrategy.valueOf(conflictResolution.toUpperCase());
+        }
+        
+        Publication publication;
+        if (tables.isEmpty()) {
+            publication = new Publication(name, strategy);
+        } else {
+            publication = new Publication(name, tables, strategy);
+        }
+        
+        return new CreatePublicationQuery(publication);
+    }
+
+    /** Parses {@code CREATE SUBSCRIPTION <name> TO PUBLICATION <pub_name> CONNECTION '<host:port>' [WITH (conflict_resolution = error|skip|replace)]} (prompt4 #61). */
+    private Query<?> parseCreateSubscriptionQuery(String original) {
+        Matcher m = CREATE_SUBSCRIPTION_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid CREATE SUBSCRIPTION syntax: expected CREATE SUBSCRIPTION <name> TO PUBLICATION <pub_name> CONNECTION '<host:port>' [WITH (conflict_resolution = error|skip|replace)]");
+        }
+        
+        String name = unquoteIdentifier(m.group(1));
+        String publicationName = unquoteIdentifier(m.group(2));
+        String connection = m.group(3);
+        String conflictResolution = m.group(4);
+        
+        // Parse connection string (format: host:port)
+        String[] parts = connection.split(":");
+        if (parts.length != 2) {
+            throw new SyntaxErrorException("Invalid connection format: expected 'host:port'");
+        }
+        String host = parts[0].trim();
+        int port;
+        try {
+            port = Integer.parseInt(parts[1].trim());
+        } catch (NumberFormatException e) {
+            throw new SyntaxErrorException("Invalid port number: " + parts[1].trim());
+        }
+        
+        Subscription.ConflictResolutionStrategy strategy = Subscription.ConflictResolutionStrategy.ERROR;
+        if (conflictResolution != null) {
+            strategy = Subscription.ConflictResolutionStrategy.valueOf(conflictResolution.toUpperCase());
+        }
+        
+        return new CreateSubscriptionQuery(name, publicationName, host, port, strategy);
+    }
+
+    /** Parses {@code DROP PUBLICATION <name>} (prompt4 #61). */
+    private Query<?> parseDropPublicationQuery(String original) {
+        Matcher m = DROP_PUBLICATION_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid DROP PUBLICATION syntax: expected DROP PUBLICATION <name>");
+        }
+        return new DropPublicationQuery(unquoteIdentifier(m.group(1)));
+    }
+
+    /** Parses {@code DROP SUBSCRIPTION <name>} (prompt4 #61). */
+    private Query<?> parseDropSubscriptionQuery(String original) {
+        Matcher m = DROP_SUBSCRIPTION_PATTERN.matcher(original.trim());
+        if (!m.matches()) {
+            throw new SyntaxErrorException("Invalid DROP SUBSCRIPTION syntax: expected DROP SUBSCRIPTION <name>");
+        }
+        return new DropSubscriptionQuery(unquoteIdentifier(m.group(1)));
     }
 
     /** Parses {@code GRANT <role> TO <user>} (prompt4 #30). */

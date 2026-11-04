@@ -35,6 +35,14 @@ public final class WALSegment implements AutoCloseable {
     private long firstLsn;
     private long lastLsn;
     private long persistedLastLsn;
+    /**
+     * Whether {@link #lastLsn} is known to be exact. True after in-memory
+     * appends or a lazy tail scan; false when it was taken from a segment
+     * header, which can lag the entries actually present in the file after a
+     * crash (header is only rewritten on {@link #force()}). readRange must
+     * not skip segments on a non-exact lastLsn (prompt4 #58 data-loss fix).
+     */
+    private volatile boolean lastLsnExact;
     private int headerSize;
     private short headerVersion;
 
@@ -106,6 +114,9 @@ public final class WALSegment implements AutoCloseable {
      * @throws IOException if the header is corrupt
      */
     private void readHeader() throws IOException {
+        // A lastLsn taken from the header is only a lower bound until proven
+        // otherwise (see lastLsnExact).
+        lastLsnExact = false;
         if (writePosition < WALFormat.SEGMENT_HEADER_V1_SIZE) {
             // Empty or incomplete file: header not written yet
             headerWritten = false;
@@ -267,6 +278,7 @@ public final class WALSegment implements AutoCloseable {
         
         // Update last LSN to this entry
         lastLsn = entry.getLsn();
+        lastLsnExact = true;
     }
 
     /**
@@ -321,6 +333,7 @@ public final class WALSegment implements AutoCloseable {
         
         // Update last LSN to the last entry in the batch
         lastLsn = entries.get(entries.size() - 1).getLsn();
+        lastLsnExact = true;
     }
 
     /**
@@ -599,12 +612,28 @@ public final class WALSegment implements AutoCloseable {
                         lastLsn = entries.get(entries.size() - 1).getLsn();
                     }
                 }
+                if (lastLsn != 0) {
+                    lastLsnExact = true; // computed from the entries in the file
+                }
             } catch (IOException e) {
                 // If read fails, lastLsn remains 0 (empty segment)
                 LOGGER.debug("Failed to compute lastLsn for segment {}: {}", segmentNumber, e.getMessage());
             }
         }
         return lastLsn;
+    }
+
+    /**
+     * Returns whether {@link #getLastLsn()} is known to be exact. False when
+     * the value was only read from the segment header, which can lag the
+     * entries actually present in the file after a crash. Callers that skip
+     * work based on lastLsn (e.g. {@code WALManager.readRange}) must not do
+     * so while this is false (prompt4 #58).
+     *
+     * @return true when lastLsn is exact
+     */
+    public boolean isLastLsnExact() {
+        return lastLsnExact;
     }
 
     /**

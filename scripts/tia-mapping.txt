@@ -225,3 +225,13 @@ src/test/java/diesel/net/libpq/ScramSha256Test.java		network
 src/test/java/diesel/net/libpq/LibpqProtocolTest.java		network
 src/test/java/diesel/net/libpq/PsqlCompatTest.java		network
 src/test/java/diesel/net/libpq/ExtendedQueryTest.java		network
+diesel/replication/*.java	query,storage
+diesel/CreatePublicationQuery.java	query,storage
+diesel/CreateSubscriptionQuery.java	query,storage
+diesel/DropPublicationQuery.java	query,storage
+diesel/DropSubscriptionQuery.java	query,storage
+diesel/CreateReplicationSlotQuery.java	query,storage
+diesel/DropReplicationSlotQuery.java	query,storage
+diesel/ReplicationCoordinator.java	query,storage
+diesel/SyncAck.java	query,storage
+diesel/SyncReplicationCoordinator.java	query,storage

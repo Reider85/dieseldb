@@ -134,17 +134,9 @@ public class RowVersionMeta implements Serializable {
         }
         
         RowVersionMeta build() {
-            return new RowVersionMeta.Builder()
-                    .xmin(xmin)
-                    .xmax(xmax)
-                    .commandId(commandId)
-                    .committedValues(committedValues)
-                    .uncommittedInsert(uncommittedInsert)
-                    .uncommittedDelete(uncommittedDelete)
-                    .uncommittedUpdate(uncommittedUpdate)
-                    .ownerTxid(ownerTxid)
-                    .lastCommittedCsn(lastCommittedCsn)
-                    .build();
+            return new RowVersionMeta(xmin, xmax, commandId, committedValues,
+                    uncommittedInsert, uncommittedDelete, uncommittedUpdate,
+                    ownerTxid, lastCommittedCsn);
         }
     }
 

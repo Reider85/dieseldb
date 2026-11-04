@@ -1,3 +1,0 @@
-ID,SLOT_NAME,CONFIRMED_FLUSH_LSN,RESTART_LSN,CREATED_AT
-persist_test_slot,persist_test_slot,999,999,1793686739100
-temp_init_slot,temp_init_slot,0,0,1793686739053

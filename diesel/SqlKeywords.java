@@ -170,4 +170,10 @@ public final class SqlKeywords {
     // Replication slot commands (prompt4 #59)
     public static final String CREATE_REPLICATION_SLOT = "CREATE REPLICATION SLOT";
     public static final String DROP_REPLICATION_SLOT = "DROP REPLICATION SLOT";
+    
+    // Logical replication commands (prompt4 #61)
+    public static final String CREATE_PUBLICATION = "CREATE PUBLICATION";
+    public static final String CREATE_SUBSCRIPTION = "CREATE SUBSCRIPTION";
+    public static final String DROP_PUBLICATION = "DROP PUBLICATION";
+    public static final String DROP_SUBSCRIPTION = "DROP SUBSCRIPTION";
 }

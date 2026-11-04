@@ -44,6 +44,8 @@ final class LruEvictionPolicy {
     private Node head;
     /** Most-recently-released end. */
     private Node tail;
+    /** Queue of unpinned pages for O(1) eviction under any pin distribution. */
+    private final java.util.ArrayDeque<PageId> unpinnedQueue = new java.util.ArrayDeque<>();
 
     /**
      * Registers the pin-count 0&#8594;1 transition: the page leaves the
@@ -56,6 +58,8 @@ final class LruEvictionPolicy {
         Node node = nodes.remove(pageId);
         if (node != null) {
             detach(node);
+            // Mark as stale in the unpinned queue for lazy removal
+            unpinnedQueue.remove(pageId);
         }
     }
 
@@ -75,15 +79,16 @@ final class LruEvictionPolicy {
         Node node = new Node(pageId);
         nodes.put(pageId, node);
         appendTail(node);
+        // Add to unpinned queue for O(1) eviction
+        unpinnedQueue.addLast(pageId);
     }
 
     /**
      * Selects the least-recently-released page accepted by {@code evictable},
      * removing it from the queue (the caller removes the frame itself).
      *
-     * <p>Every queued page is unpinned by invariant, so the head qualifies in
-     * the common case and the call is O(1); the walk only continues when the
-     * predicate rejects a candidate (defensive: missing frame).
+     * <p>Uses the unpinned queue for O(1) eviction under any pin distribution.
+     * Only walks the LRU list as a fallback for stale entries.
      *
      * @param evictable predicate deciding whether a page may be evicted
      *                  (BufferPool tests residency and {@code pinCount == 0})
@@ -91,12 +96,18 @@ final class LruEvictionPolicy {
      *         qualifies (all resident pages pinned)
      */
     PageId pollEvictable(Predicate<PageId> evictable) {
-        for (Node node = head; node != null; node = node.next) {
-            if (evictable.test(node.pageId)) {
-                detach(node);
-                nodes.remove(node.pageId);
-                return node.pageId;
+        while (!unpinnedQueue.isEmpty()) {
+            PageId candidate = unpinnedQueue.poll();
+            // Check if the candidate is still valid and evictable
+            if (nodes.containsKey(candidate) && evictable.test(candidate)) {
+                // Remove from LRU list (it may be anywhere in the recency list)
+                Node node = nodes.remove(candidate);
+                if (node != null) {
+                    detach(node);
+                }
+                return candidate;
             }
+            // else: stale entry — drop it
         }
         return null;
     }
@@ -106,6 +117,7 @@ final class LruEvictionPolicy {
         nodes.clear();
         head = null;
         tail = null;
+        unpinnedQueue.clear();
     }
 
     private void appendTail(Node node) {

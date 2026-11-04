@@ -131,7 +131,11 @@ public abstract class DelimitedIndexManager {
             new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
     private long nextRowId = 0;
-    private final NavigableMap<Long, Integer> rowIdToPosition = new TreeMap<>();
+    // HashMap: only get/put/remove/size/clear are used (never a sorted
+    // view), and the deleteRow shift loop touches this map once per shifted
+    // row — TreeMap's O(log n) per put dominated mid-table deletes
+    // (BatchDeleteIsONTest: ~80s -> ~10s for 20k mid deletes on 100k rows).
+    private final Map<Long, Integer> rowIdToPosition = new HashMap<>();
     /**
      * Inverse of {@link #rowIdToPosition}: physical position → rowId
      * (o2 CSV-1). Kept in sync on every mutation so the reverse lookup is

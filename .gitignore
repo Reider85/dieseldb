@@ -32,4 +32,7 @@ timing/*
 .mvn/build-cache/
 
 # Agent scratch plans
-.opencode/
+.opencode
+
+# Test data directories created at repo root by integration tests
+/test_data_*/

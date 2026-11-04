@@ -68,6 +68,11 @@ import diesel.security.AuditRecord;
 import diesel.security.Authorizer;
 import diesel.security.PasswordHasher;
 import diesel.security.Privilege;
+import diesel.replication.ReplicationRegistry;
+import diesel.replication.Publication;
+import diesel.replication.Subscription;
+import diesel.replication.ReplicationApplyPipeline;
+import diesel.wal.WALManager;
 import diesel.security.Session;
 import diesel.security.Tenant;
 import diesel.security.TenantStore;
@@ -131,6 +136,8 @@ public class Database {
     private volatile boolean auditInitDone;                                     // audit config resolved at most once
     private volatile ReplicationSlotRegistry replicationSlotRegistry;            // Replication slot registry (prompt4 #59), lazy
     private volatile SyncReplicationCoordinator syncReplicationCoordinator;     // Synchronous replication coordinator (prompt4 #60), lazy
+    private volatile ReplicationRegistry replicationRegistry;                   // Logical replication registry (prompt4 #61), lazy
+    private final Map<String, ReplicationApplyPipeline> replicationPipelines = new ConcurrentHashMap<>();  // Active replication apply pipelines (prompt4 #61)
     // Online ALTER TABLE ... ALGORITHM=COPY (prompt4 #38): running copies by
     // table name + bounded history of finished ones for ALTER STATUS.
     private final Map<String, AlterTableCopyAlgorithm> activeAlters = new ConcurrentHashMap<>();
@@ -180,7 +187,7 @@ public class Database {
      * @param walConfigOverride explicit WAL configuration, or null to resolve
      *                          wal.* from system properties/config.properties
      */
-    Database(String dataDir, WALConfig walConfigOverride) {
+    public Database(String dataDir, WALConfig walConfigOverride) {
         if (dataDir != null && !dataDir.isBlank()) {
             this.dataDir = dataDir;
         }
@@ -1491,6 +1498,18 @@ public class Database {
         if (parsedQuery instanceof VacuumQuery q) {
             return executeVacuum(q);
         }
+        if (parsedQuery instanceof CreatePublicationQuery q) {
+            return executeCreatePublication(q);
+        }
+        if (parsedQuery instanceof DropPublicationQuery q) {
+            return executeDropPublication(q);
+        }
+        if (parsedQuery instanceof CreateSubscriptionQuery q) {
+            return executeCreateSubscription(q);
+        }
+        if (parsedQuery instanceof DropSubscriptionQuery q) {
+            return executeDropSubscription(q);
+        }
         // Prompt 4 #48 (R3-013b): constant SELECT without FROM (SELECT 1 = 1)
         // has no table, so it must be answered before executeDataQuery, which
         // would try to extract a table name and throw.
@@ -2492,6 +2511,19 @@ public class Database {
         }
     }
 
+    public ReplicationRegistry getReplicationRegistry() {
+        synchronized (this) {
+            if (replicationRegistry == null) {
+                ensureSystemTable("diesel_replication_registry",
+                        List.of("ID", "TYPE", "NAME", "PUBLICATION_NAME", "MASTER_HOST", "MASTER_PORT", "CONFLICT_RESOLUTION", "ENABLED", "CREATED_AT"), "ID");
+                replicationRegistry = new ReplicationRegistry();
+                // Load existing publications and subscriptions from the system table
+                loadReplicationRegistry();
+            }
+            return replicationRegistry;
+        }
+    }
+
     /** Load existing replication slots from the system table (prompt4 #59). */
     private void loadReplicationSlots() {
         Table slotsTable = getTable("diesel_replication_slots");
@@ -2511,6 +2543,58 @@ public class Database {
                 getReplicationSlotRegistry().createSlot(slotName, restartLsn);
                 getReplicationSlotRegistry().updateConfirmedFlushLsn(slotName, confirmedFlushLsn);
                 System.out.println("DEBUG: Loaded slot " + slotName + " with confirmedFlushLsn=" + confirmedFlushLsn);
+            }
+        }
+    }
+
+    /** Load existing publications and subscriptions from the system table (prompt4 #61). */
+    private void loadReplicationRegistry() {
+        Table registryTable = getTable("diesel_replication_registry");
+        if (registryTable != null) {
+            System.out.println("DEBUG: Loading " + registryTable.getRows().size() + " replication registry entries from table");
+            for (Map<String, Object> row : registryTable.getRows()) {
+                String type = (String) row.get("TYPE");
+                String name = (String) row.get("NAME");
+                String conflictResolution = (String) row.get("CONFLICT_RESOLUTION");
+                Boolean enabled = (Boolean) row.get("ENABLED");
+                
+                if (enabled == null) {
+                    enabled = true;
+                }
+                
+                System.out.println("DEBUG: Loading replication registry entry: type=" + type + ", name=" + name + ", conflictResolution=" + conflictResolution + ", enabled=" + enabled);
+                
+                if ("PUBLICATION".equals(type)) {
+                    String publicationName = name;
+                    String tablesStr = (String) row.get("PUBLICATION_NAME"); // In this context, this contains the tables
+                    Publication.ConflictResolutionStrategy strategy = Publication.ConflictResolutionStrategy.valueOf(conflictResolution.toUpperCase());
+                    
+                    Publication publication;
+                    if (tablesStr != null && !tablesStr.trim().isEmpty()) {
+                        String[] tableNames = tablesStr.split(",");
+                        Set<String> tables = new HashSet<>();
+                        for (String tableName : tableNames) {
+                            tables.add(tableName.trim());
+                        }
+                        publication = new Publication(publicationName, tables, strategy);
+                    } else {
+                        publication = new Publication(publicationName, strategy);
+                    }
+                    
+                    getReplicationRegistry().createPublication(publication);
+                    System.out.println("DEBUG: Loaded publication " + publicationName);
+                    
+                } else if ("SUBSCRIPTION".equals(type)) {
+                    String subscriptionName = name;
+                    String publicationName = (String) row.get("PUBLICATION_NAME");
+                    String masterHost = (String) row.get("MASTER_HOST");
+                    int masterPort = Integer.parseInt((String) row.get("MASTER_PORT"));
+                    Subscription.ConflictResolutionStrategy strategy = Subscription.ConflictResolutionStrategy.valueOf(conflictResolution.toUpperCase());
+                    
+                    Subscription subscription = new Subscription(subscriptionName, publicationName, masterHost, masterPort, strategy, enabled);
+                    getReplicationRegistry().createSubscription(subscription);
+                    System.out.println("DEBUG: Loaded subscription " + subscriptionName);
+                }
             }
         }
     }
@@ -3419,6 +3503,23 @@ public class Database {
     }
 
     /**
+     * Returns the primary key column of a table (case-insensitive lookup),
+     * or null when the table does not exist or has no primary key.
+     * Used by the replication apply pipeline for the REPLACE conflict
+     * strategy (prompt4 #61).
+     *
+     * @param tableName table name (any case)
+     * @return the primary key column, or null
+     */
+    public String getPrimaryKeyColumn(String tableName) {
+        Table table = findTable(tableName);
+        if (table == null) {
+            table = findTable(tableName.toUpperCase(java.util.Locale.ROOT));
+        }
+        return table != null ? table.getPrimaryKeyColumn() : null;
+    }
+
+    /**
      * Package-private: returns the table if present, or null.
      * Used by recovery sinks to skip unknown tables with warnings instead of throwing.
      *
@@ -4090,15 +4191,183 @@ public class Database {
         return getReplicationSlotRegistry().needsWALSegmentsBeyond(lsn);
     }
 
-    /**
-     * Gets the current WAL end LSN (prompt4 #59).
-     * 
-     * @return the current WAL end LSN
-     */
+/**
+      * Gets the current WAL end LSN (prompt4 #59).
+      * 
+      * @return the current WAL end LSN
+      */
     public long getCurrentWALLSN() {
         if (walWriter != null) {
             return walWriter.getManager().getLastLsn();
         }
         return 0;
+    }
+
+    /**
+      * Starts a replication apply pipeline for a subscription (prompt4 #61).
+      * 
+      * @param subscriptionName Name of the subscription to start replicating
+      * @param masterWalManager WAL manager of the master database
+      * @throws IllegalStateException if subscription doesn't exist or pipeline is already running
+      */
+    public void startReplicationPipeline(String subscriptionName, WALManager masterWalManager) {
+        Subscription subscription = getReplicationRegistry().getSubscription(subscriptionName);
+        if (subscription == null) {
+            throw new IllegalStateException("Subscription '" + subscriptionName + "' does not exist");
+        }
+        
+        if (replicationPipelines.containsKey(subscriptionName)) {
+            throw new IllegalStateException("Replication pipeline already running for subscription: " + subscriptionName);
+        }
+        
+        ReplicationApplyPipeline pipeline = new ReplicationApplyPipeline(this, masterWalManager, subscription);
+        replicationPipelines.put(subscriptionName, pipeline);
+        pipeline.start();
+        
+        System.out.println("Started replication pipeline for subscription: " + subscriptionName);
+    }
+    
+    /**
+      * Stops a replication apply pipeline for a subscription (prompt4 #61).
+      * 
+      * @param subscriptionName Name of the subscription to stop replicating
+      * @throws IllegalStateException if subscription doesn't exist or pipeline is not running
+      */
+    public void stopReplicationPipeline(String subscriptionName) {
+        ReplicationApplyPipeline pipeline = replicationPipelines.remove(subscriptionName);
+        if (pipeline == null) {
+            throw new IllegalStateException("No replication pipeline running for subscription: " + subscriptionName);
+        }
+        
+        pipeline.stop();
+        System.out.println("Stopped replication pipeline for subscription: " + subscriptionName);
+    }
+    
+    /**
+      * Gets all active replication pipelines (prompt4 #61).
+      * 
+      * @return map of subscription names to active pipelines
+      */
+    public Map<String, ReplicationApplyPipeline> getReplicationPipelines() {
+        return new ConcurrentHashMap<>(replicationPipelines);
+    }
+    
+    /**
+      * Checks if a replication pipeline is running for a subscription (prompt4 #61).
+      * 
+      * @param subscriptionName Name of the subscription to check
+      * @return true if pipeline is running, false otherwise
+      */
+    public boolean isReplicationPipelineRunning(String subscriptionName) {
+        ReplicationApplyPipeline pipeline = replicationPipelines.get(subscriptionName);
+        return pipeline != null && pipeline.isRunning();
+    }
+    
+/**
+       * Gets the logical replication registry (prompt4 #61).
+       * 
+       * @return the logical replication registry
+       */
+    public ReplicationRegistry getLogicalReplicationRegistry() {
+        return getReplicationRegistry();
+    }
+    
+    /**
+     * Executes a CREATE PUBLICATION query (prompt4 #61).
+     * 
+     * @param query the CREATE PUBLICATION query
+     * @return success message
+     */
+    private Object executeCreatePublication(CreatePublicationQuery query) {
+        ReplicationRegistry registry = getReplicationRegistry();
+        Publication publication = query.getPublication();
+        
+        // Create the publication in the registry
+        registry.createPublication(publication);
+        
+        // Save to persistent storage
+        Table registryTable = getTable("diesel_replication_registry");
+        if (registryTable != null) {
+            registryTable.saveToFile("diesel_replication_registry");
+        }
+        
+        return "Publication created successfully: " + publication.getName();
+    }
+    
+    /**
+     * Executes a DROP PUBLICATION query (prompt4 #61).
+     * 
+     * @param query the DROP PUBLICATION query
+     * @return success message
+     */
+    private Object executeDropPublication(DropPublicationQuery query) {
+        ReplicationRegistry registry = getReplicationRegistry();
+        String publicationName = query.getPublicationName();
+        
+        // Drop the publication from the registry
+        registry.dropPublication(publicationName);
+        
+        // Save to persistent storage
+        Table registryTable = getTable("diesel_replication_registry");
+        if (registryTable != null) {
+            registryTable.saveToFile("diesel_replication_registry");
+        }
+        
+        return "Publication dropped successfully: " + publicationName;
+    }
+    
+    /**
+     * Executes a CREATE SUBSCRIPTION query (prompt4 #61).
+     * 
+     * @param query the CREATE SUBSCRIPTION query
+     * @return success message
+     */
+    private Object executeCreateSubscription(CreateSubscriptionQuery query) {
+        ReplicationRegistry registry = getReplicationRegistry();
+        
+        // Create the subscription in the registry
+        registry.createSubscription(new Subscription(
+            query.getName(), 
+            query.getPublicationName(), 
+            query.getMasterHost(), 
+            query.getMasterPort(),
+            query.getConflictResolution(),
+            true
+        ));
+        
+        // Save to persistent storage
+        Table registryTable = getTable("diesel_replication_registry");
+        if (registryTable != null) {
+            registryTable.saveToFile("diesel_replication_registry");
+        }
+        
+        return "Subscription created successfully: " + query.getName();
+    }
+    
+    /**
+     * Executes a DROP SUBSCRIPTION query (prompt4 #61).
+     * 
+     * @param query the DROP SUBSCRIPTION query
+     * @return success message
+     */
+    private Object executeDropSubscription(DropSubscriptionQuery query) {
+        ReplicationRegistry registry = getReplicationRegistry();
+        String subscriptionName = query.getSubscriptionName();
+        
+        // Stop any running replication pipeline for this subscription
+        if (replicationPipelines.containsKey(subscriptionName)) {
+            stopReplicationPipeline(subscriptionName);
+        }
+        
+        // Drop the subscription from the registry
+        registry.dropSubscription(subscriptionName);
+        
+        // Save to persistent storage
+        Table registryTable = getTable("diesel_replication_registry");
+        if (registryTable != null) {
+            registryTable.saveToFile("diesel_replication_registry");
+        }
+        
+        return "Subscription dropped successfully: " + subscriptionName;
     }
 }

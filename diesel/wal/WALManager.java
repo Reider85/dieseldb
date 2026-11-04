@@ -554,11 +554,15 @@ public final class WALManager implements AutoCloseable {
             if (segment.getFirstLsn() > toLsnInclusive && segment.getFirstLsn() != 0) {
                 break;
             }
-            
-            // Remove overly restrictive segment skipping logic that causes data loss
-            // The original logic was incorrectly skipping segments that should be included
-            // Instead, let readRange handle the filtering within each segment
-            
+            // Skip segments that end before the window opens — but only when
+            // lastLsn is exact: a header-derived value can lag the entries in
+            // the file after a crash, and skipping on it would lose data
+            // (prompt4 #58). WAL-4 expects this skip (3.2.93).
+            if (segment.getLastLsn() != 0 && segment.isLastLsnExact()
+                    && segment.getLastLsn() < fromLsnInclusive) {
+                continue;
+            }
+
             readRangeSegmentsScanned.incrementAndGet();
 
             List<WALEntry> entries = segment.readRange(fromLsnInclusive, toLsnInclusive);

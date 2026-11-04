@@ -40,8 +40,21 @@ class ReplicationSlotIntegrationTest {
         if (database != null) {
             database.close();
         }
-        // Clean up test data directory
-        new java.io.File(TEST_DIR).delete();
+        // Clean up test data directory recursively: a plain File.delete() on a
+        // non-empty directory silently fails, so slots persisted by earlier
+        // test methods reload into the next one and the counts drift
+        // (testGetAllReplicationSlots then sees every previous method's slots).
+        deleteRecursively(new java.io.File(TEST_DIR));
+    }
+
+    private static void deleteRecursively(java.io.File file) {
+        java.io.File[] children = file.listFiles();
+        if (children != null) {
+            for (java.io.File child : children) {
+                deleteRecursively(child);
+            }
+        }
+        file.delete();
     }
 
     @Test

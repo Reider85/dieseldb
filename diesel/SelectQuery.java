@@ -2822,8 +2822,12 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             }
         }
 
-        if (buildTable != null && probeTable != null) {
-            // Check if the join would exceed memory limits
+        if (buildTable != null && probeTable != null && hasOrInOnConditions(join)) {
+            // Check if the join would exceed memory limits. Only OR joins are
+            // disabled here: a plain equality join that exceeds the budget is
+            // routed to the partitioned (spill-to-disk) hash join inside
+            // executeHashJoin instead of being downgraded to a nested loop
+            // (HashJoinMemoryTest: zero-byte budget must force partitioning).
             if (wouldJoinExceedMemory(join, buildTable, probeTable)) {
                 LOGGER.warning("Hash join disabled due to memory constraints for join on " + join.tableName);
                 return false;
