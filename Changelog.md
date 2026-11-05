@@ -978,3 +978,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.3.98 O2 Avro-12: Optimize insertAt with tombstones and subMap index shifts
 3.3.99 Optimize LRU eviction policy with unpinned-page queue for O(1) eviction
 3.4.0  README.md
+
+3.4.1 Fix start-server classpath missing lz4 jar: generate target/classpath.txt and extend fallback deps in start scripts

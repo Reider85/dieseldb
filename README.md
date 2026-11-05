@@ -11,7 +11,7 @@
 [![Stars](https://img.shields.io/github/stars/Reider85/dieseldb?style=social)](https://github.com/Reider85/dieseldb/stargazers)
 [![License](https://img.shields.io/badge/license-NOT%20SET-red.svg)](#license)
 
-> 🚀 **Status:** Production-like. Under active development toward v1.0.0 stable release. Current version `3.3.99` — see [§ Releases](#releases) and [§ Roadmap](#roadmap).
+> 🚀 **Status:** Production-like. Current version `3.3.99` — see [§ Releases](#releases) and [§ Roadmap](#roadmap).
 
 ---
 
