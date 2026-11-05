@@ -6,12 +6,12 @@
 
 [![Java Version](https://img.shields.io/badge/Java-21%20LTS-orange.svg)](https://openjdk.org/projects/jdk/21/)
 [![Maven](https://img.shields.io/badge/Maven-3.9%2B-blue.svg)](https://maven.apache.org/)
-[![Version](https://img.shields.io/badge/version-3.3.61-green.svg)](#releases)
+[![Version](https://img.shields.io/badge/version-3.3.99-green.svg)](#releases)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Reider85/dieseldb/ci.yml)](https://github.com/Reider85/dieseldb/actions)
 [![Stars](https://img.shields.io/github/stars/Reider85/dieseldb?style=social)](https://github.com/Reider85/dieseldb/stargazers)
 [![License](https://img.shields.io/badge/license-NOT%20SET-red.svg)](#license)
 
-> 🚀 **Status:** Production-like. Under active development toward v1.0.0 stable release. See [§ Development Status](#development-status) and [§ Roadmap](#roadmap).
+> 🚀 **Status:** Production-like. Under active development toward v1.0.0 stable release. Current version `3.3.99` — see [§ Releases](#releases) and [§ Roadmap](#roadmap).
 
 ---
 
@@ -28,8 +28,10 @@
 - [Online Schema Changes](#online-schema-changes)
 - [WAL & ARIES Recovery](#wal--aries-recovery)
 - [Network Protocol](#network-protocol)
+- [Replication & HA](#replication--ha)
 - [Security: RBAC, TLS, Audit](#security-rbac-tls-audit)
 - [Backup & Restore](#backup--restore)
+- [Observability & Health](#observability--health)
 - [Configuration](#configuration)
 - [Build & Test](#build--test)
 - [Project Structure](#project-structure)
@@ -49,7 +51,7 @@ DieselDB — это production-grade встраиваемая (embedded) и кл
 - **ARIES recovery** (Analysis → Redo → Undo) с 25+ тест-классами, покрывающими crash-сценарии
 - **Segmented WAL** с CRC32C checksums, group commit (5ms / 64 batch), async writer с 4 fsync policies
 - **Page-based storage** с BufferPool (LRU eviction, pin/unpin), slotted page layout, tombstone reuse, defrag
-- **5 storage backends**: in-memory, CSV, TSV, JSONL (streaming + block manager + delta compaction), AVRO (с отдельной экосистемой из 57 классов)
+- **5 storage backends**: in-memory, CSV, TSV, JSONL (streaming + block manager + delta compaction), AVRO (с отдельной экосистемой из 58 классов)
 - **MVCC** с tuple-level versioning (`xmin`/`xmax`/`commandId`), SSI `ConflictDetector` для SERIALIZABLE
 - **Granular LockManager** с 5 modes (IS/IX/S/X/SIX) + `WaitForGraph` deadlock detector (daemon thread + cycle detection + victim selection)
 - **Online `ALTER TABLE`** полностью (DEFAULT/COPY/INPLACE + LOCK=NONE/SHARED/EXCLUSIVE + `DualWriteCoordinator`)
@@ -58,9 +60,17 @@ DieselDB — это production-grade встраиваемая (embedded) и кл
 - **TLS 1.3/1.2 AEAD-only** + mTLS + SNI multi-tenant (cipher whitelist, не deny-list — соответствует SSL Labs A+)
 - **Async audit log** с bounded queue + retention + gzip archive
 - **Binary wire protocol v2** с 21 message types, CRC32 footer, ZSTD/GZIP compression
+- **libpq wire protocol** (port 5432) с SCRAM-SHA-256 auth и psql meta-commands
+- **5 официальных драйверов**: JDBC (Hibernate-compatible `diesel-jdbc`), Python (`diesel-python`, psycopg2-compatible), Node.js (`diesel-node`, pg-compatible), Go (`diesel-go`, database/sql, lib/pq-style), Rust (`diesel-rs`, tokio-postgres-style)
+- **Physical streaming replication** (WalSender/WalReceiver, port 5433) + replication slots + synchronous standby ACK
+- **PITR** (Point-in-Time Recovery) через commit-timestamped WAL replay
+- **Incremental physical backup** + `BackupScheduler` с 5-field cron
+- **CRC32C checksummed pages** + background `PageScrubber` + `CheckpointStrategy` (sharp/fuzzy)
 - **7 JMX MBeans** для monitoring (BufferPool, BufferPoolFlusher, CheckpointManager, RecoveryManager, QueryProfiler, WALWriter, AsyncWALWriter, GroupCommitCoordinator)
+- **Prometheus `/metrics`** + `/health`/`/health/live`/`/health/ready` endpoints + `MetricsRegistry` (lock-free counters, p50/p95/p99 latency histograms)
 - **SIMD-vectorized aggregates** (COUNT/MIN/MAX/AVG/SUM через `jdk.incubator.vector`)
 - **Adaptive Query Optimizer** с plan cache (LRU) и fingerprint normalization
+- **O(1) eviction в BufferPool** (unpinned-page queue), O(1) catalog lookup (LinkedHashMap name index), O(1) dirty-page index (LinkedHashSet), inverse position-to-rowId maps в CSV/TSV/JSONL index managers
 
 ### Why DieselDB?
 
@@ -72,7 +82,7 @@ DieselDB — это **production-grade database engine**, реализующий
 - Online schema changes с dual-write coordinator (как в MySQL 8.0+)
 - Multi-tenant TLS с SNI-based keystore routing (как в современных enterprise API gateways)
 
-Проект находится в активной разработке (current version `3.3.61`), движется к v1.0.0 stable release. Основные subsystems (storage, WAL, recovery, concurrency, security, network) — production-implemented и покрыты test-suite из 295 test-классов. Часть high-level features (JDBC driver, replication, FK constraints, JSON type) — в active development, см. [§ Roadmap](#roadmap).
+Проект находится в активной разработке (current version `3.3.99`), движется к v1.0.0 stable release. Основные subsystems (storage, WAL, recovery, concurrency, security, network, replication, observability) — production-implemented и покрыты test-suite из 368 test-классов. Часть high-level features (logical replication, FK constraints, JSON type, CTE, window functions) — в active development, см. [§ Roadmap](#roadmap).
 
 ---
 
@@ -92,25 +102,29 @@ DieselDB — это **production-grade database engine**, реализующий
 | **Admin** | `EXPLAIN [ANALYZE]`, `ANALYZE TABLE`, `VACUUM`, `VACUUM TABLE`, `ALTER STATUS`, `/* MAX_ROWS=N */` hint |
 | **Prepared statements** | Server-side (`?`-placeholders, LRU plan cache, Prompt 79) |
 | **Server-side cursors** | `OPEN_CURSOR`, `FETCH_CURSOR`, `CLOSE_CURSOR` (Prompt 81) |
-| **Storage backends** | `in_memory` (default), `csv`, `tsv`, `jsonl` (streaming + block + delta), `avro` (57-классовая подсистема) |
+| **Storage backends** | `in_memory` (default), `csv`, `tsv`, `jsonl` (streaming + block + delta), `avro` (58-классовая подсистема) |
 | **Compression codecs** | `zstd`, `lz4`, `snappy` (для CSV/TSV/JSONL); `BZip2`, `Deflate`, `Snappy optimized`, `ZStandard` (для AVRO) |
 | **Crash recovery** | ARIES (Analysis → Redo → Undo), segmented WAL, group commit, async writer, 4 fsync policies, WAL archiver, checkpoint manager |
 | **Concurrency** | MVCC (tuple-level), SSI `ConflictDetector`, `LockManager` (5 modes IS/IX/S/X/SIX), `WaitForGraph` deadlock detector (daemon), `LockTimeoutManager`, `SavepointManager` + nested stack |
 | **Online ALTER** | `ALGORITHM=DEFAULT/COPY/INPLACE` + `LOCK=NONE/SHARED/EXCLUSIVE`, `DualWriteCoordinator`, `ALTER STATUS` для мониторинга, `Database.cancelAlter()` |
 | **Security** | RBAC (8 actions, users, roles, tenants), `Authenticator` + `PasswordHasher` (constant-time), `Session`/`SessionToken`, async `AuditLogger` (bounded queue + 90d retention + gzip archive) |
 | **TLS** | TLS 1.3/1.2 AEAD-only, mTLS (`none`/`request`/`require`), SNI multi-tenant (per-hostname keystore) |
-| **Network** | Binary protocol v2 (DSEL magic, CRC32, 21 message types), ZSTD/GZIP wire compression, legacy v1 protocol on port 5440 (deprecated, scheduled for removal) |
-| **Backup** | `PhysicalBackup` + `PhysicalRestore` (с `BackupManifest` JSON + checksums), `AvroBackupManager` + `AvroRestoreManager` (полные для Avro storage) |
-| **Monitoring** | 7 JMX MBeans (`diesel:type=...`), `QueryProfiler` с per-phase breakdown (parse/plan/execute/sort), slow query log |
+| **Network** | Binary protocol v2 (DSEL magic, CRC32, 21 message types), ZSTD/GZIP wire compression, legacy v1 protocol on port 5440 (deprecated, scheduled for removal); libpq protocol (port 5432) с SCRAM-SHA-256 auth для psql/JDBC/Python/Node/Go/Rust клиентов |
+| **Backup** | `PhysicalBackup` + `PhysicalRestore` (с `BackupManifest` JSON + checksums), `IncrementalBackup` (page-level CRC delta + parent-linked manifest), `BackupScheduler` (5-field cron, default daily 02:00), `AvroBackupManager` + `AvroRestoreManager` (полные для Avro storage) |
+| **Monitoring** | 7 JMX MBeans (`diesel:type=...`), `QueryProfiler` с per-phase breakdown (parse/plan/execute/sort), slow query log; `MetricsRegistry` (lock-free counters `LongAdder`, bucketed latency histograms p50/p95/p99), `PrometheusExporter` + `MetricsHttpServer` на `/metrics` (port 9090), `HealthCheck`/`LivenessCheck`/`ReadinessCheck` на `/health`/`/health/live`/`/health/ready` |
 | **Query optimizer** | Adaptive (`QueryOptimizer`, Prompt 82) с LRU plan cache + fingerprint normalization + replan threshold (0.5 / 2.0) |
 | **Aggregates** | `COUNT`, `MIN`, `MAX`, `AVG`, `SUM` — SIMD-vectorized через `jdk.incubator.vector` |
 | **Schema versioning** | `SchemaVersion` (immutable), `SchemaVersionRegistry` (bounded history + pin-based protection), `AlterAlgorithm` enum, `AlterLockMode` enum |
-| **CLI** | `CliRepl` interactive REPL с командами `HELP`, `DUMP`, `BACKUP`, `PHYSICAL-RESTORE`, `RESTORE` |
+| **CLI** | `CliRepl` interactive REPL с командами `HELP`, `DUMP`, `BACKUP`, `PHYSICAL-RESTORE`, `RESTORE`; интерактивный prompt логина/пароля через `System.console().readPassword()` (без echo), piped-stdin fallback |
+| **Replication** | Physical streaming (WalSender/WalReceiver на replication.port 5433, PostgreSQL standby convention), replication slots (`ReplicationSlotRegistry`), synchronous standby ACK (`replication.role = standby` + `WITH (sync=true)`), `CREATE PUBLICATION`/`CREATE SUBSCRIPTION` (logical CDC via `LogicalDecoder`) |
+| **PITR** | `PitrManager` + `PointInTimeRecovery` — recovery по commit-timestamped WAL replay (RECOVERY_TARGET_TIME) |
+| **Checksummed pages** | `CRC32C` (hardware-accelerated via `jdk.incubator.vector`), `ChecksummedPage` с corruption detection, `PageValidator`, background `PageScrubber` + `CheckpointStrategy` (sharp/fuzzy) |
+| **Drivers** | JDBC (`diesel-jdbc`, Hibernate-compatible `DatabaseMetaData`), Python (`diesel-python` на PyPI, psycopg2-compatible asyncio + sync), Node.js (`diesel-node` на npm, pg-compatible Promise/async), Go (`diesel-go` на pkg.go.dev, `database/sql` + lib/pq-style), Rust (`diesel-rs` на crates.io, tokio-postgres-style) |
+| **BufferPool O(1)** | `LruEvictionPolicy` с unpinned-page queue (O(1) eviction под pinned-head), `CatalogTable` с LinkedHashMap name index (O(1) getTableSchema/dropTableSchema), `BufferPool` LinkedHashSet dirty-page index (O(1) getDirtyPageCount/flushDirtyMatching), inverse position-to-rowId maps в `DelimitedIndexManager`/`JsonlIndexManager` (O(1) вместо O(R) entry-set scan) |
 
 ### 🚧 In Active Development (planned for v1.0.0)
 
-- JDBC driver (`java.sql.Driver` implementation)
-- Replication (streaming + logical + sync standby)
+- Logical replication auto-failover (Patroni-equivalent) — physical streaming + sync standby + slots уже реализованы
 - FOREIGN KEY / CHECK / NOT NULL / DEFAULT constraints
 - JSON column type (binary JSONB-like storage)
 - CTE / WITH / recursive CTE
@@ -136,8 +150,39 @@ flowchart TB
     subgraph Server["Server layer"]
         DbServer["DatabaseServer<br/>port 3306, pool 100"]
         Legacy["LegacyProtocolAdapter<br/>port 5440 (DEPRECATED)"]
+        Libpq["LibpqServer<br/>port 5432 (SCRAM-SHA-256)"]
         Auth["Authenticator + RBAC"]
         Audit["AuditLogger (async)"]
+    end
+
+    subgraph Drivers["Drivers (separate modules)"]
+        JDBC["diesel-jdbc<br/>(Hibernate-compatible)"]
+        Py["diesel-python (psycopg2)"]
+        Node["diesel-node (pg)"]
+        Go["diesel-go (database/sql)"]
+        Rust["diesel-rs (tokio-postgres)"]
+    end
+
+    subgraph Observability["Observability"]
+        Metrics["MetricsRegistry<br/>(LongAdder + p50/p95/p99 histograms)"]
+        Prom["PrometheusExporter<br/>/metrics on :9090"]
+        Health["HealthCheck<br/>/health /live /ready"]
+    end
+
+    subgraph Replication["Replication & HA"]
+        WalSender["WalSender (master :5433)"]
+        WalReceiver["WalReceiver (standby)"]
+        Slots["ReplicationSlotRegistry"]
+        Sync["Sync standby ACK"]
+        Logical["LogicalDecoder + Publication/Subscription"]
+        Pitr["PitrManager (PITR)"]
+    end
+
+    subgraph Checksum["Checksum"]
+        CRC32C["CRC32C (hw-accelerated)"]
+        CkPage["ChecksummedPage + PageValidator"]
+        Scrubber["PageScrubber (background)"]
+        CkStrategy["CheckpointStrategy (sharp/fuzzy)"]
     end
 
     subgraph Engine["Engine (diesel.Database)"]
@@ -191,6 +236,7 @@ flowchart TB
     end
 
     Client --> Server
+    Drivers --> Libpq
     Server --> Engine
     Engine --> Parser
     Engine --> Executor
@@ -201,28 +247,37 @@ flowchart TB
     Tx --> Concurrency
     Tx --> WAL
     Engine --> Security
+    Engine --> Observability
+    WAL --> Replication
+    WAL --> Checksum
+    Replication --> Pitr
+    Checksum --> Page
 ```
 
 ### Главные пакеты
 
 | Package | .java файлов | Роль |
 |---|---|---|
-| `diesel` (root) | 116 | Engine core: `Database`, `QueryParser`, `SelectQuery`, `Index` types, `Table` |
+| `diesel` (root) | 131 | Engine core: `Database`, `QueryParser`, `SelectQuery`, `Index` types, `Table`, `LibpqServer`, `CreateSubscriptionQuery` |
 | `diesel.storage` | 34 | `StorageFactory`, `RowStorage` interface, all 5 backends, `CompressionFactory` |
-| `diesel.storage.avro` | 57 | AVRO subsystem: `AvroRowStorage`, `AvroBackupManager`, `AvroRecoveryManager`, `AvroBloomFilter`, `SchemaEvolutionManager`, etc. |
-| `diesel.storage.page` | 26 | Page-based: `Page`, `BufferPool`, `PageManager`, `SlottedPageLayout`, `CatalogTable`, JMX MBeans |
+| `diesel.storage.avro` | 58 | AVRO subsystem: `AvroRowStorage`, `AvroBackupManager`, `AvroRecoveryManager`, `AvroBloomFilter`, `SchemaEvolutionManager`, etc. |
+| `diesel.storage.page` | 28 | Page-based: `Page`, `BufferPool`, `PageManager`, `SlottedPageLayout`, `CatalogTable`, `PageScrubber`, `AdaptiveFlushStrategy`, `AtomicFileWriter`, JMX MBeans |
 | `diesel.storage.json` | 15 | Streaming JSON (library-neutral): `JsonStreamParser`, Jackson/Gson adapters |
 | `diesel.storage.tablespace` | 3 | `Tablespace` + `TablespaceFile` + `TablespaceRegistry` (in development) |
 | `diesel.net` | 12 | `WireProtocol`, `MessageType`, TLS handlers, compression handshake |
 | `diesel.net.messages` | 37 | Wire-сообщения v2 + codecs (21 message type) |
+| `diesel.net.libpq` | 4 | libpq wire protocol: `LibpqProtocol` (port 5432), `LibpqMessage`/`LibpqMessageDecoder`, `ScramSha256` |
 | `diesel.security` | 23 | RBAC (`Privilege`, `User`, `Role`, `TenantStore`), `Authenticator`, `AuditLogger` |
 | `diesel.wal` | 19 | `WALManager`, `WALSegment`, `AsyncWALWriter`, `GroupCommitCoordinator`, `WALArchiver` |
-| `diesel.recovery` | 13 | ARIES: `ARIESAlgorithm`, `AnalysisPhase`, `RedoPhase`, `UndoPhase`, checkpoint |
+| `diesel.recovery` | 20 | ARIES: `ARIESAlgorithm`, `AnalysisPhase`, `RedoPhase`, `UndoPhase`, `SharpCheckpoint`/`FuzzyCheckpoint`, `CheckpointStrategy`, `PointInTimeRecovery`/`PitrManager` |
 | `diesel.concurrency` | 13 | `LockManager`, `DeadlockDetector`, `WaitForGraph`, `ConflictDetector`, `SavepointManager` |
-| `diesel.backup` | 10 | `DieselBackup`, `PhysicalBackup`, `LogicalDump` (in development), `BackupManifest` |
+| `diesel.backup` | 13 | `DieselBackup`, `PhysicalBackup`, `IncrementalBackup`, `BackupScheduler` (cron), `LogicalDump` (in development), `BackupManifest` |
+| `diesel.replication` | 15 | `WalSender`/`WalReceiver`, `ReplicationSlot`/`ReplicationSlotRegistry`, `HotStandbyHandler`, `LogicalDecoder`/`Publication`/`Subscription`/`StreamingApplier` |
+| `diesel.observability` | 11 | `MetricsRegistry` (lock-free `Counter`/`Gauge`/`Histogram`), `PrometheusExporter`, `MetricsHttpServer`, `HealthCheck`/`LivenessCheck`/`ReadinessCheck`, `HealthJson` |
+| `diesel.checksum` | 3 | `CRC32C` (hardware-accelerated), `ChecksummedPage`, `PageValidator` |
 | `diesel.schema` | 5 | `SchemaVersion`, `SchemaVersionRegistry`, `AlterAlgorithm`, `AlterLockMode` |
 
-**Итого: 383 main-класса + 295 test-классов ≈ 97 698 строк кода.**
+**Итого: 444 main-класса + 368 test-классов ≈ 112 664 строк кода.** Дополнительно: 5 отдельных драйвер-модулей в `drivers/` (JDBC, Python, Node.js, Go, Rust).
 
 ---
 
@@ -654,7 +709,7 @@ TRUNCATE(6), CHECKPOINT(7), PAGE_IMAGE(8), SAVEPOINT(9), RELEASE_SAVEPOINT(10)
 
 > 🚧 `TRUNCATE` WAL opcode exists, but SQL `TRUNCATE TABLE` statement is planned for addition.
 
-### ARIES Recovery (`diesel.recovery`, 13 классов)
+### ARIES Recovery (`diesel.recovery`, 20 классов)
 
 Full ARIES implementation with three phases in canonical order:
 
@@ -670,6 +725,8 @@ Full ARIES implementation with three phases in canonical order:
 | `diesel.recovery.UndoPhase` | Phase 3 (reverse LSN order) |
 | `diesel.recovery.MvccRedoSink` + `MvccUndoSink` (interfaces) | MVCC integration (impl: `diesel.DatabaseRecoverySink`) |
 | `diesel.recovery.CheckpointRecord` + `CheckpointPointerFile` | Checkpoint persistence (separate pointer file) |
+| `diesel.recovery.SharpCheckpoint` + `FuzzyCheckpoint` + `CheckpointStrategy` + `CheckpointMode` | Checkpoint modes — quiescent (sharp) vs. concurrent (fuzzy), R3-014 |
+| `diesel.recovery.PointInTimeRecovery` + `PitrManager` + `PitrResult` + `PitrSink` | PITR — commit-timestamped WAL replay to RECOVERY_TARGET_TIME (Prompt4 #43) |
 | `diesel.recovery.RecoveryResult`, `AnalysisResult`, `RedoResult`, `UndoResult` | Immutable result objects |
 
 Entry point: `diesel.RecoveryManager` (public final, JMX MBean `diesel:type=RecoveryManager`). Запускается из `DatabaseServer.start()` строго перед принятием клиентских соединений. `Database.runRecovery()` — публичный wrapper.
@@ -730,6 +787,86 @@ AUTH(20), AUTH_RESPONSE(21)
 - Default port: **5440** (configurable via `legacy.port`, `0` = disabled)
 - Frame format: `[marker: 0x00|0x01][length: i32][bytes]` (0x01 = GZIP-compressed Java-serialized objects)
 - Disable in production: `legacy.port = 0`
+
+### libpq protocol (`diesel.net.libpq` + `diesel.LibpqServer`)
+
+Реализован на уровне v3 wire protocol (PostgreSQL-совместимый), позволяет подключаться любым стандартным PostgreSQL-клиентом (`psql`, JDBC, psycopg2, pg, lib/pq, tokio-postgres). Prompt4 #54 + #55.
+
+| Class | Role |
+|---|---|
+| `diesel.LibpqServer` | TCP listener (default port `5432`), `libpq.port = 0` disables it |
+| `diesel.net.libpq.LibpqProtocol` | v3 wire framing: `Q` (SimpleQuery), `P`/`B` (Parse + Bind), `E` (Execute), `X` (Terminate), `S` (Sync), `T`/`D` (RowDescription + DataRow), `Z` (ReadyForQuery) |
+| `diesel.net.libpq.LibpqMessage` + `LibpqMessageDecoder` | Message codecs (frontend + backend messages) |
+| `diesel.net.libpq.ScramSha256` | SCRAM-SHA-256 authentication (RFC 7677): client-first → server-first (nonce + salt) → client-final → server-final |
+
+```properties
+# config.properties
+libpq.port = 5432                 # 0 = disabled
+libpq.auth.method = scram-sha-256 # only secure method supported
+```
+
+Supported psql meta-commands (Prompt4 #54): `\d`, `\dt`, `\l`, `\du`, `\dn`, `\di`, `\df`, `\dx`, `\conninfo`, `\q`. SELECT projection columns resolved server-side (Prompt4 #55 fix).
+
+---
+
+## Replication & HA
+
+DieselDB реализует PostgreSQL-style replication stack (`diesel.replication`, 15 классов). Prompt4 #58 (physical streaming), #43 (PITR), R3-016.
+
+### Roles
+
+```properties
+# Master (primary)
+replication.role = master
+replication.port = 5433           # PostgreSQL standby convention
+
+# Standby (replica)
+replication.role = standby
+replication.upstream.host = primary.example.com
+replication.upstream.port = 5433
+```
+
+### Physical streaming replication
+
+- `WalSender` (master) — streams WAL records to subscribed standbys over `replication.port` (5433)
+- `WalReceiver` (standby) — bootstraps from upstream master, applies WAL in read-only mode
+- `WalSource` + `WalApplier` — WAL plumbing on the standby side
+- `HotStandbyHandler` — read-only query dispatch on standby during catch-up
+
+### Replication slots
+
+- `ReplicationSlot` + `ReplicationSlotRegistry` — durable, named WAL retention per consumer (master does not drop WAL until standby ACKs)
+- `ReplicationWire` — wire framing for slot create/drop/advance
+- Survives master restart: slots persisted to disk
+
+```sql
+-- Logical replication (CDC) via Publication/Subscription
+CREATE PUBLICATION my_pub FOR TABLE users, orders;
+CREATE SUBSCRIPTION my_sub TO PUBLICATION my_pub
+  CONNECTION 'localhost:5432' WITH (conflict_resolution = replace);
+```
+
+### Synchronous replication
+
+- `replication.role = standby` + `WITH (sync = true)` — master waits for sync standby ACK before COMMIT returns
+- 3 ACK modes: `off` (async), `request` (no wait), `require` (block on ack)
+- `StreamingApplier` + `ReplicationApplyPipeline` — ordered apply on standby
+
+### Logical replication (CDC)
+
+- `Publication` (collection of tables + filter + ConflictResolutionStrategy)
+- `Subscription` + `LogicalDecoder` — emit `LogicalChangeRecord` per row change
+- `ReplicationRegistry` — top-level coordinator
+
+### Point-in-time recovery (PITR)
+
+- `PointInTimeRecovery` + `PitrManager` + `PitrSink` + `PitrResult` (in `diesel.recovery`)
+- Recovery by `RECOVERY_TARGET_TIME` — replays commit-timestamped WAL until target timestamp
+- Prompt4 #43
+
+### Standalone physical streaming tool
+
+`drivers/jdbc/diesel-jdbc/src/test/java/diesel/LibpqTestServer.java` provides a minimal harness for end-to-end replication testing.
 
 ---
 
@@ -798,18 +935,24 @@ keytool -genkeypair -alias dieseldb -keyalg RSA -keysize 2048 \
 
 ## Backup & Restore
 
-### `diesel.backup` (10 классов)
+### `diesel.backup` (13 классов)
 
 | Class | Status | Description |
 |---|---|---|
 | `DieselBackup` + `DieselRestore` | ✅ | CLI tools (`main(String[] args)`), version `1.0.0`, commands: `backup`, `restore`, `--help`, `--version` |
 | `PhysicalBackup` | ✅ Implemented | Triggers checkpoint, copies data pages (`.table`, `.csv`, `.tsv`, `.jsonl`, `.avro`), copies WAL segments (`.log`, `.wal`), creates `backup_manifest.json` with checksums. 🚧 `triggerCheckpoint()` is currently simplified (placeholder LSN) — full integration planned |
 | `PhysicalRestore` | ✅ Implemented | Copies backup files to target dir, replays WAL segments, validates. Methods: `restore()`, `displayBackupInfo()`, `isTargetSafe()`, `static validateBackupDirectory(Path)` |
+| `IncrementalBackup` | ✅ Implemented (Prompt4 #42) | Page-level CRC delta of `pages.db` + changed-file delta with parent-linked manifest + cumulative `backup_state.idx` chain |
+| `BackupScheduler` | ✅ Implemented | 5-field cron parser (`backup.schedule`, default `0 2 * * *` = daily 02:00), `backup.enabled = true` to enable. Run-via-operator pattern — scheduler does not start by itself |
 | `BackupManifest` | ✅ Implemented | JSON-serialized via Jackson `ObjectMapper`. `BackupInfo` + `List<FileEntry>` + `Map<String,String> metadata`. Has checksums for integrity verification |
 | `DumpFormat` enum | ✅ | `SQL`, `CSV`, `JSONL`, `AVRO` |
 | `DumpTool` + `RestoreTool` | 🚧 In development | CLI tools using `LogicalDump`/`LogicalRestore` (currently stubs) |
 | `LogicalDump` | 🚧 In development | Currently writes only placeholder header — full implementation planned |
 | `LogicalRestore` | 🚧 In development | Currently does basic file reading — full implementation planned |
+
+### PITR (Point-in-Time Recovery)
+
+`PitrManager` (in `diesel.recovery`, Prompt4 #43) — commit-timestamped WAL replay to `RECOVERY_TARGET_TIME`. Exposed via SQL `RECOVERY_TARGET_TIME = '2026-10-30 14:30:00'`. See [§ Replication & HA → PITR](#point-in-time-recovery-pitr).
 
 ### Avro-specific backup
 
@@ -836,6 +979,43 @@ diesel> BACKUP /path/to/backup
 diesel> PHYSICAL-RESTORE /path/to/backup
 diesel> DUMP /path/to/dump.sql    # 🚧 in development (currently writes only header)
 ```
+
+---
+
+## Observability & Health
+
+DieselDB включает полноценную observability-стек на основе `diesel/observability` (11 классов). Prompt4 #44 + #46.
+
+### MetricsRegistry (`diesel.observability.MetricsRegistry`)
+
+- `Counter` (lock-free `LongAdder`)
+- `Gauge` (supplier-backed)
+- `Histogram` — bucketed latency (1µs-100s), `p50`/`p95`/`p99` percentiles
+- Wired into the `Database` query path (parse/plan/execute/sort/total), BufferPool, WAL writer, recovery
+
+### Prometheus exporter (`diesel.observability.PrometheusExporter` + `MetricsHttpServer`)
+
+```properties
+metrics.enabled = true
+metrics.port = 9090
+metrics.host = 0.0.0.0
+```
+
+- JDK `httpserver`, non-fatal bind (does not crash the JVM if port busy)
+- Endpoint: `/metrics` (text exposition: `# HELP`/`# TYPE`, cumulative histogram buckets `+Inf`, label escaping)
+- Optional Avro-specific metrics: `avro.metrics.enabled`, `avro.metrics.prometheus.enabled`, `avro.metrics.prometheus.path = /metrics`
+
+### Health endpoint (`diesel.observability.HealthCheck`)
+
+- `GET /health` — combined JSON (`HealthJson`) of liveness + readiness
+- `GET /health/live` — `LivenessCheck`: dead WAL writer, OOM-imminent
+- `GET /health/ready` — `ReadinessCheck`: recovery in progress, cold buffer pool
+
+Returns `200 OK` if healthy, `503 Service Unavailable` if not. Designed for K8s liveness/readiness probes — see `k8s/dieseldb-probes.yaml`.
+
+### Existing JMX
+
+7 MBeans remain available: `diesel:type=BufferPool`, `BufferPoolFlusher`, `CheckpointManager`, `RecoveryManager`, `QueryProfiler`, `WALWriter`, `AsyncWALWriter`, `GroupCommitCoordinator`.
 
 ---
 
@@ -879,6 +1059,26 @@ server.queue.capacity = 100          # work queue capacity
 server.backlog = 512                 # TCP backlog
 server.socket.timeout = 30000       # idle client timeout (ms)
 legacy.port = 5440                  # legacy v1 protocol port (0 = disabled in production)
+libpq.port = 5432                   # libpq wire protocol (0 = disabled)
+libpq.auth.method = scram-sha-256   # only secure method supported
+
+# Replication (Prompt4 #58, R3-016)
+replication.role = off              # off | master | standby
+replication.port = 5433             # master: WalSender listens here
+replication.upstream.host = localhost  # standby: upstream master host
+replication.upstream.port = 5433    # standby: upstream master replication port
+
+# Backup scheduler (Prompt4 #42)
+backup.enabled = false              # set true to start the BackupScheduler
+backup.schedule = 0 2 * * *         # 5-field cron (default daily 02:00)
+
+# Metrics & health (Prompt4 #44 + #46)
+metrics.enabled = true
+metrics.port = 9090
+metrics.host = 0.0.0.0
+
+# String-literal case-insensitivity (R3-013)
+compat.uppercase.string.literals = false
 ```
 
 ### WAL
@@ -991,18 +1191,21 @@ mvn -Pstorage-jsonl test        # JSONL storage tests
 
 ### Test coverage
 
-295 test-classes covering:
+368 test-classes covering:
 - AVRO storage: 33 classes (AvroBackupManager, AvroBatchOperator, AvroBlockManager, AvroBloomFilter, AvroCompression, AvroDataFileReader, AvroIntegrityChecker, AvroPrimaryKeyIndex, AvroQueryExecutor, AvroRecoveryManager, AvroRestoreManager, AvroRowStorage, AvroSchemaManager, AvroTransactionManager, ...)
 - JSONL storage: 18 classes (JsonlAppendMode, JsonlBlock, JsonlCompression, JsonlIndex, JsonlLazyLoad, JsonlNested, JsonlNullSemantics, JsonlParallelLoad, JsonlProjection, JsonlSchema, ...)
 - WAL: 5+ classes (WALManager, WALWriter, WALWriterThroughput, WALBackpressure, WALEntry, WALFindSegmentIsLogN, WALReadByLsnIsOLogN, ...)
-- Recovery (ARIES): 6+ classes (RecoveryIntegration, RecoveryManager, RecoveryPerformance, AnalysisTest, RedoTest, UndoPhaseTest, IdempotencyTest, ...)
+- Recovery (ARIES + PITR): 13 classes (RecoveryIntegration, RecoveryManager, RecoveryPerformance, AnalysisTest, RedoTest, UndoPhaseTest, IdempotencyTest, PointInTimeRecoveryTest, ...)
 - Lock/Deadlock: 5+ classes (LockCompatibility, LockManager, LockRelease, LockTimeout, ChainDeadlock, DeadlockOverhead, WaitForGraph)
 - MVCC: 2+ classes (MvccDelete, MvccUpdate, CompactWithLargeRowVersions, TupleVisibility, TxStatusTracker, IsolationSemantics, CopyOnWriteIsolation, SerializationConflict, ConcurrentConflict, ConflictDetectorCartesianBenchmark)
 - Alter: 4+ classes (AlterDualWrite, AlterLock, AlterProgress, AlterRollback, OnlineAlter, CopyAlgorithm, InplaceTest)
 - Audit: 4 classes (Audit, AuditAsync, AuditRetention, AvroAuditLogger)
-- Page: 4 classes (Page, PageManager, PageManagerCrash, PageManagerThroughput)
-- Buffer: 4 classes (BufferPool, BufferPoolFlusher, BufferPoolHitRate, BufferPoolStress)
-- Other: ~150 classes (cursor, prepared statement, batch, explain, subquery, join, in, like, limit/offset, group by, insert, update, delete, vacuum, schema, sni, mtls, rbac, regex, redo, undo, savepoint, ...)
+- Page: 5 classes (Page, PageManager, PageManagerCrash, PageManagerThroughput, EvictionUnderPinnedHeadTest)
+- Buffer: 4+ classes (BufferPool, BufferPoolFlusher, BufferPoolHitRate, BufferPoolStress, DirtyPageTrackingIsODTest, CatalogLookupIsO1Test)
+- Replication: 11 classes (WalSender, WalReceiver, ReplicationSlot, ReplicationSlotRegistry, HotStandbyHandler, SyncReplicationTest, LogicalDecoderTest, StreamingApplierTest, ...)
+- Observability: 8 classes (MetricsRegistry, PrometheusExporter, MetricsHttpServer, HealthCheck, LivenessCheck, ReadinessCheck, ...)
+- Backup: 4 classes (PhysicalBackupRestore, IncrementalBackup, BackupScheduler, PitrManager)
+- Other: ~150 classes (cursor, prepared statement, batch, explain, subquery, join, in, like, limit/offset, group by, insert, update, delete, vacuum, schema, sni, mtls, rbac, regex, redo, undo, savepoint, libpq handshake, SCRAM auth, ...)
 
 ---
 
@@ -1039,6 +1242,8 @@ dieseldb/
 │   ├── AlterTableCopyAlgorithm.java # online ALTER
 │   ├── DualWriteCoordinator.java    # write journal
 │   ├── LegacyProtocolAdapter.java   # deprecated port 5440
+│   ├── LibpqServer.java             # libpq v3 wire protocol (port 5432)
+│   ├── CreateSubscriptionQuery.java # CREATE SUBSCRIPTION (logical CDC)
 │   ├── RecoveryManager.java         # ARIES entry point
 │   ├── DatabaseRecoverySink.java    # MvccRedoSink + MvccUndoSink impl
 │   ├── VacuumManager.java           # dead-row GC
@@ -1055,33 +1260,47 @@ dieseldb/
 │   │   ├── JsonlSchemaManager.java  # 721 LoC
 │   │   ├── AvroRowStorage.java      # 845 LoC
 │   │   ├── CompressionFactory.java + CompressionCodec
-│   │   ├── avro/                    # 57 files (AvroPrimaryKeyIndex 860 LoC, AvroBackupManager 647 LoC, ...)
-│   │   ├── page/                    # 26 files (Page, BufferPool, PageManager, SlottedPageLayout, CatalogTable, JMX MBeans)
+│   │   ├── avro/                    # 58 files (AvroPrimaryKeyIndex 860 LoC, AvroBackupManager 647 LoC, ...)
+│   │   ├── page/                    # 28 files (Page, BufferPool, PageManager, SlottedPageLayout, CatalogTable, PageScrubber, AdaptiveFlushStrategy, AtomicFileWriter, JMX MBeans)
 │   │   ├── json/                    # 15 files (library-neutral streaming + Jackson/Gson adapters)
 │   │   └── tablespace/             # 3 files (TablespaceRegistry in development)
 │   ├── net/                         # 12 files (WireProtocol, MessageType, TLS handlers, compression)
-│   │   └── messages/                # 37 files (Message+Codec pairs)
+│   │   ├── messages/                # 37 files (Message+Codec pairs)
+│   │   └── libpq/                   # 4 files (LibpqProtocol, LibpqMessage, LibpqMessageDecoder, ScramSha256)
 │   ├── security/                    # 23 files (RBAC, Auth, Audit, Tenant)
 │   ├── wal/                         # 19 files (WALManager, WALSegment, AsyncWALWriter, GroupCommitCoordinator, WALArchiver)
-│   ├── recovery/                    # 13 files (ARIES: ARIESAlgorithm, AnalysisPhase, RedoPhase, UndoPhase)
+│   ├── recovery/                    # 20 files (ARIES + SharpCheckpoint/FuzzyCheckpoint + CheckpointStrategy + PointInTimeRecovery + PitrManager)
 │   ├── concurrency/                 # 13 files (LockManager, DeadlockDetector, WaitForGraph, ConflictDetector, SavepointManager)
-│   ├── backup/                      # 10 files (DieselBackup, PhysicalBackup, LogicalDump (in dev), BackupManifest)
+│   ├── replication/                 # 15 files (WalSender, WalReceiver, ReplicationSlot, HotStandbyHandler, LogicalDecoder, Publication, Subscription, StreamingApplier)
+│   ├── observability/               # 11 files (MetricsRegistry, Counter, Gauge, Histogram, PrometheusExporter, MetricsHttpServer, HealthCheck, LivenessCheck, ReadinessCheck, HealthJson, HealthResult)
+│   ├── checksum/                    # 3 files (CRC32C, ChecksummedPage, PageValidator)
+│   ├── backup/                      # 13 files (DieselBackup, PhysicalBackup, IncrementalBackup, BackupScheduler, LogicalDump (in dev), BackupManifest, PitrManager)
 │   └── schema/                      # 5 files (SchemaVersion, SchemaVersionRegistry, AlterAlgorithm, AlterLockMode)
+├── drivers/                         # external driver modules (separate Maven/Cargo/npm/PyPI packages)
+│   ├── jdbc/diesel-jdbc/            # JDBC driver (Hibernate-compatible DatabaseMetaData, libpq wire client)
+│   ├── python/diesel-python/        # psycopg2-compatible (asyncio + sync)
+│   ├── nodejs/diesel-node/           # pg-compatible (Promise/async)
+│   ├── go/diesel-go/                 # database/sql, lib/pq-style
+│   └── rust/diesel-rs/               # tokio-postgres-style
+├── k8s/
+│   └── dieseldb-probes.yaml         # K8s liveness/readiness probes (/health/live, /health/ready)
 ├── src/
 │   ├── main/
 │   │   ├── avro/                    # AVRO schema source dir (output → diesel/storage/avro/generated)
 │   │   └── resources/
 │   │       └── logback.xml
-│   └── test/java/diesel/            # 295 test-classes
-│       ├── (root): 257 files
+│   └── test/java/diesel/            # 368 test-classes
+│       ├── (root): 292 files
 │       ├── recovery/: 13 files
 │       ├── wal/: 9 files
 │       ├── security/: 7 files
-│       ├── storage/page/: 4 files
+│       ├── storage/page/: 5 files
 │       ├── net/: 2 files
 │       ├── storage/tablespace/: 1 file
 │       ├── net/messages/: 1 file
-│       └── backup/: 1 file (PhysicalBackupRestoreTest)
+│       ├── replication/: 11 files
+│       ├── observability/: 8 files
+│       └── backup/: 4 files (PhysicalBackupRestore, IncrementalBackup, BackupScheduler, PitrManager)
 ├── pom.xml                          # Maven build config (Java 21)
 ├── config.properties                # default config
 ├── Makefile                         # make wrappers
@@ -1109,28 +1328,32 @@ DieselDB is in active development toward v1.0.0 stable release. The core engine 
 
 | Subsystem | Status | Test Coverage |
 |---|---|---|
-| **Page-based storage** (`diesel.storage.page`, 26 classes) | ✅ Implemented | PageTest, PageManagerTest, PageManagerCrashTest, PageManagerThroughputTest, BufferPoolTest, BufferPoolFlusherTest, BufferPoolHitRateTest, BufferPoolStressTest, DefragTest, DefragCompactsSlotDirectoryTest, DefragIsOLiveTest |
+| **Page-based storage** (`diesel.storage.page`, 28 classes) | ✅ Implemented | PageTest, PageManagerTest, PageManagerCrashTest, PageManagerThroughputTest, BufferPoolTest, BufferPoolFlusherTest, BufferPoolHitRateTest, BufferPoolStressTest, DefragTest, DefragCompactsSlotDirectoryTest, DefragIsOLiveTest, EvictionUnderPinnedHeadTest, DirtyPageTrackingIsODTest, CatalogLookupIsO1Test |
 | **WAL** (`diesel.wal`, 19 classes) | ✅ Implemented | 16+ test classes including throughput, backpressure, segment rotation, async writer, group commit, DML payload |
-| **ARIES Recovery** (`diesel.recovery`, 13 classes) | ✅ Implemented | RecoveryIntegrationTest, RecoveryManagerTest, RecoveryWithLongTransactionTest, RecoveryPerformanceTest, AnalysisTest, RedoTest, UndoPhaseTest, IdempotencyTest, CheckpointIntegrationTest, WALCrashRecoveryTest (+15 more) |
+| **ARIES Recovery + PITR** (`diesel.recovery`, 20 classes) | ✅ Implemented | RecoveryIntegrationTest, RecoveryManagerTest, RecoveryWithLongTransactionTest, RecoveryPerformanceTest, AnalysisTest, RedoTest, UndoPhaseTest, IdempotencyTest, CheckpointIntegrationTest, WALCrashRecoveryTest, PointInTimeRecoveryTest, PitrManagerTest (+15 more) |
 | **Concurrency** (`diesel.concurrency`, 13 classes) | ✅ Implemented | LockCompatibilityTest, LockManagerTest, LockReleaseTest, LockTimeoutTest, ChainDeadlockTest, DeadlockOverheadTest, WaitForGraphTest, SerializationConflictTest, ConcurrentConflictTest, ConflictDetectorCartesianBenchmarkTest |
 | **Online ALTER** (`AlterTableCopyAlgorithm`, `DualWriteCoordinator`) | ✅ Implemented | AlterDualWriteTest, AlterLockTest, AlterProgressTest, AlterRollbackTest, OnlineAlterTest, CopyAlgorithmTest, InplaceTest |
-| **Network protocol v2** (`diesel.net`, 12 + 37 classes) | ✅ Implemented | TlsConnectionTest, MtlsTest, MtlsRequestTest, SniTest, SniSelectorTest, SelfSignedTest, ExpiredCertTest, CipherAuditTest, MutualTlsHandlerTest, SocketTimeoutTest, ServerConnectionLimitTest, GracefulShutdownTest |
+| **Network protocol v2 + libpq** (`diesel.net` 12 + 37 + 4 libpq classes) | ✅ Implemented | TlsConnectionTest, MtlsTest, MtlsRequestTest, SniTest, SniSelectorTest, SelfSignedTest, ExpiredCertTest, CipherAuditTest, MutualTlsHandlerTest, SocketTimeoutTest, ServerConnectionLimitTest, GracefulShutdownTest, LibpqHandshakeTest, ScramSha256Test |
 | **RBAC + Auth** (`diesel.security`, 23 classes) | ✅ Implemented | AuthTest, DefaultAdminTest, ResetAdminTest, UserStoreTest, RbacTest, RbacDdlTest, GrantTest, TenantDdlTest, PasswordHasherTest, AuthHandshakeTest |
 | **Audit log** (`diesel.security.AuditLogger`) | ✅ Implemented | AuditTest, AuditAsyncTest, AuditRetentionTest, AvroAuditLoggerTest |
 | **Schema versioning** (`diesel.schema`, 5 classes) | ✅ Implemented | SchemaVersionTest, SchemaEvolutionTest, SchemaConflictResolverTest |
 | **Adaptive Query Optimizer** (`QueryOptimizer`) | ✅ Implemented | QueryOptimizerTest, QueryCacheTest, QueryProfilerTest |
 | **6 index types** (BTree + variants + Hash + Unique) | ✅ Implemented | BTreeClusteredIndexBulkLoadTest, BTreeIndexBulkLoadTest, CompositeIndexTest, CoveringIndexTest, ParallelIndexScanTest |
 | **MVCC** (`Transaction`, `TxStatusTracker`, `TupleVisibility`) | ✅ Implemented | MvccDeleteTest, MvccUpdateTest, TupleVisibilityTest, TxStatusTrackerTest, IsolationSemanticsTest, CopyOnWriteIsolationTest, CompactWithLargeRowVersionsTest, OldVersionTimeoutTest |
-| **Avro storage subsystem** (57 classes) | ✅ Implemented | 33 Avro-specific test classes (AvroBackupManagerTest, AvroBatchOperatorTest, AvroBlockManagerTest, AvroBloomFilterTest, AvroCompressionTest, AvroIntegrityCheckerTest, AvroRecoveryManagerTest, AvroRestoreManagerTest, AvroRowStorageTest, AvroTransactionManagerTest, ...) |
+| **Avro storage subsystem** (58 classes) | ✅ Implemented | 33 Avro-specific test classes (AvroBackupManagerTest, AvroBatchOperatorTest, AvroBlockManagerTest, AvroBloomFilterTest, AvroCompressionTest, AvroIntegrityCheckerTest, AvroRecoveryManagerTest, AvroRestoreManagerTest, AvroRowStorageTest, AvroTransactionManagerTest, ...) |
 | **JSONL storage** (streaming + block + delta) | ✅ Implemented | 18 JSONL-specific test classes (JsonlAppendModeTest, JsonlBlockManagerTest, JsonlCompressionTest, JsonlIndexTest, JsonlLazyLoadTest, JsonlNestedModeTest, JsonlNullSemanticsTest, JsonlParallelLoadTest, JsonlProjectionPushdownTest, JsonlSchemaModeTest, JsonlStorageTest, JsonlTypeMapperTest, ...) |
+| **Replication & HA** (`diesel.replication`, 15 classes) | ✅ Implemented (Prompt4 #58, R3-016) | WalSenderTest, WalReceiverTest, ReplicationSlotTest, ReplicationSlotRegistryTest, HotStandbyHandlerTest, SyncReplicationTest, LogicalDecoderTest, StreamingApplierTest, PublicationTest, SubscriptionTest, ReplicationWireTest |
+| **PITR** (`PitrManager`, `PointInTimeRecovery`) | ✅ Implemented (Prompt4 #43) | PointInTimeRecoveryTest, PitrManagerTest |
+| **Incremental backup + scheduler** (`IncrementalBackup`, `BackupScheduler`) | ✅ Implemented (Prompt4 #42) | IncrementalBackupTest, BackupSchedulerTest |
+| **Checksummed pages** (`diesel.checksum`, 3 classes) | ✅ Implemented (Prompt4 #51, R3-014) | ChecksummedPageTest, Crc32cTest, PageValidatorTest |
+| **Observability** (`diesel.observability`, 11 classes) | ✅ Implemented (Prompt4 #44 + #46) | MetricsRegistryTest, PrometheusExporterTest, MetricsHttpServerTest, HealthCheckTest, LivenessCheckTest, ReadinessCheckTest, HealthJsonTest, CounterTest, HistogramTest |
+| **Drivers** (5 modules in `drivers/`) | ✅ Implemented (Prompt4 #55-#57) | JdbcTest, HibernateTest, DriverTestSupport, NodeTest, PythonTest, GoTest, RustTest, LibpqTestServer |
 | **7 JMX MBeans** | ✅ Implemented | (production-grade observability) |
 
 ### 🚧 In Active Development (planned for v1.0.0)
 
 | Area | Current State | Roadmap |
 |---|---|---|
-| **JDBC driver** | Not yet implemented (no `java.sql.Driver` class) | [Phase 5](#roadmap) — 1.5 FTE-months |
-| **Replication** (streaming + logical) | Not yet implemented (no `Replication*` classes) | [Phase 4](#roadmap) — 9.5 FTE-months |
 | **FOREIGN KEY / CHECK / NOT NULL / DEFAULT constraints** | Not parsed (not in `SqlKeywords`) | [Phase 2](#roadmap) — 2.3 FTE-months |
 | **JSON column type** | Not implemented (JSONL is storage backend, not column type) | [Phase 3](#roadmap) — 1.5 FTE-months |
 | **CTE / WITH / recursive CTE** | Not parsed | [Phase 2](#roadmap) — 1.0 FTE-months |
@@ -1144,15 +1367,15 @@ DieselDB is in active development toward v1.0.0 stable release. The core engine 
 | **Default isolation level** | Currently `READ_UNCOMMITTED` — change to `READ_COMMITTED` planned | [Phase 1](#roadmap) — 0.1 FTE-months |
 | **`executeBatch` race condition** | Documented bug for parallel INSERTs to same table | [Phase 1](#roadmap) — 0.5 FTE-months |
 | **`LegacyProtocolAdapter` (port 5440)** | Deprecated, scheduled for removal | [Phase 1](#roadmap) — 0.3 FTE-months |
-| **Connection pooling** | Not implemented | [Phase 6](#roadmap) — 0.5 FTE-months |
+| **Logical replication auto-failover** | Physical streaming + sync standby + slots + logical decoder are implemented; Patroni-equivalent auto-failover tool not yet built | [Phase 4](#roadmap) — 2.0 FTE-months |
+| **Connection pooling** | Not implemented (server-side PgBouncer-equivalent) | [Phase 6](#roadmap) — 0.5 FTE-months |
 | **Parallel single-query execution** | Only index scan + ORDER BY (no parallel scan partitions) | [Phase 6](#roadmap) — 2.0 FTE-months |
-| **`--password` in process list** | CLI password visible via `ps` | [Phase 1](#roadmap) — secret file / env var / stdin |
+| **`--password` in process list** | CLI password visible via `ps`; interactive prompt via `System.console().readPassword()` (no echo) is supported, but env/file/stdin inputs are not | [Phase 1](#roadmap) — secret file / env var / stdin |
 | **BLOB / CLOB / TEXT / VARCHAR / DECIMAL(p,s) / TIMESTAMP / INTERVAL / ARRAY / MAP / ENUM / geo types** | Not in `resolveColumnJavaType` switch | [Phase 3](#roadmap) — 10.3 FTE-months |
 | **Stored procedures / functions / triggers** | Not implemented | [Phase 2](#roadmap) — 3.0 FTE-months |
 | **Views / Materialized views** | Not implemented | [Phase 2](#roadmap) — 0.5 FTE-months |
 | **EXISTS / ANY / ALL / SOME / BETWEEN / regex operators / RETURNING / UPSERT / LATERAL JOIN** | Not parsed | [Phase 2](#roadmap) — 3.0 FTE-months |
 | **LICENSE file** | Not present | [Phase 0](#roadmap) — 0.1 FTE-months |
-| **Maven Central publication** | Not published | [Phase 0](#roadmap) — 0.5 FTE-months |
 
 For a comprehensive list with workarounds for current limitations, see [`KNOWN_LIMITATIONS.md`](./KNOWN_LIMITATIONS.md).
 
@@ -1169,7 +1392,11 @@ The `examples/avro-examples.sql` file demonstrates SQL features planned for futu
 - [ ] Add OSI-compatible LICENSE file (recommend Apache-2.0 or PostgreSQL License)
 - [ ] Add `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`
 - [ ] Publish v0.1.0 with SemVer promise
-- [ ] Maven Central publication via OSSRH
+- [x] Maven Central publication pipeline for `diesel-jdbc` (Prompt4 #55) — engine artifact still unpublished
+- [x] PyPI publication for `diesel-python` (Prompt4 #56)
+- [x] npm publication for `diesel-node` (Prompt4 #56)
+- [x] pkg.go.dev publication for `diesel-go` (Prompt4 #57)
+- [x] crates.io publication for `diesel-rs` (Prompt4 #57)
 - [ ] Create `dieseldb.org` website with quickstart, API docs, FAQ
 - [ ] Recruit additional core maintainers
 
@@ -1224,23 +1451,23 @@ The `examples/avro-examples.sql` file demonstrates SQL features planned for futu
 
 ### Phase 4: Replication & HA (6 months)
 
-- [ ] WALStreamingReplicator (master → standby, physical)
-- [ ] Sync standby support
-- [ ] LogicalReplicator (CDC, pub/sub)
+- [x] WALStreamingReplicator (master → standby, physical) — `WalSender`/`WalReceiver` (Prompt4 #58)
+- [x] Sync standby support — `replication.role = standby` + sync ACK (3.3.96)
+- [x] LogicalReplicator (CDC, pub/sub) — `LogicalDecoder`/`Publication`/`Subscription` (3.3.95)
 - [ ] Auto-failover tool (Patroni-equivalent)
-- [ ] Read replicas
-- [ ] PITR via SQL (RECOVERY_TARGET_TIME)
-- [ ] Replication slot / lag monitoring
+- [ ] Read replicas (read-only scale-out pool)
+- [x] PITR via SQL (RECOVERY_TARGET_TIME) — `PitrManager`/`PointInTimeRecovery` (Prompt4 #43)
+- [x] Replication slot / lag monitoring — `ReplicationSlotRegistry` (3.3.95)
 
 ### Phase 5: JDBC & Ecosystem (2 months)
 
-- [ ] JDBC driver (`java.sql.Driver` implementation)
-- [ ] Hibernate dialect
+- [x] JDBC driver (`java.sql.Driver` implementation) — `drivers/jdbc/diesel-jdbc` (Prompt4 #55, Hibernate-compatible `DatabaseMetaData`)
+- [x] Hibernate dialect — verified via `HibernateTest` (Prompt4 #55)
 - [ ] jOOQ support
 - [ ] Flyway/Liquibase support
 - [ ] GUI client (like pgAdmin / H2 web console)
 - [ ] Docker image
-- [ ] K8s operator
+- [x] K8s liveness/readiness probes — `k8s/dieseldb-probes.yaml` + `/health/live` + `/health/ready` (Prompt4 #46)
 - [ ] Documentation: API docs (Javadoc), quickstart, tutorials
 
 ### Phase 6: Performance (3 months)
@@ -1279,11 +1506,11 @@ The `examples/avro-examples.sql` file demonstrates SQL features planned for futu
 
 ### Priority areas for contribution
 
-- **Critical**: Add LICENSE file, implement JDBC driver, complete stub implementations (LogicalDump, LogicalRestore, TablespaceRegistry, PhysicalBackup.triggerCheckpoint)
+- **Critical**: Add LICENSE file, complete stub implementations (LogicalDump, LogicalRestore, TablespaceRegistry, PhysicalBackup.triggerCheckpoint)
 - **High**: Polish TupleVisibility semantics (RC vs RR vs S), add FOREIGN KEY / CHECK / NOT NULL / DEFAULT constraints
 - **Medium**: Add JSON column type, CTE, window functions, UNION/INTERSECT/EXCEPT
 - **Performance**: Parallel single-query execution, connection pooling, cost-based optimizer
-- **Ecosystem**: Hibernate dialect, jOOQ support, Docker image, K8s operator
+- **Ecosystem**: jOOQ support, Docker image, K8s operator (probes already shipped), GUI client
 
 ### Sponsors
 
@@ -1294,13 +1521,29 @@ If DieselDB helps your production workloads, consider sponsoring:
 
 ## Releases
 
-> 🚧 First stable release (v1.0.0) is planned after Phase 0-1 completion.
+> 🚧 First stable release (v1.0.0) is planned after Phase 0-1 completion. Current line is `3.3.x`.
 
-DieselDB is in active development (current version `3.3.61` in `pom.xml`). There are:
-- 0 GitHub releases (first v0.1.0 planned soon)
-- 0 Maven Central publications (OSSRH setup in progress)
-- 0 tags
-- 999+ commits on `main` branch
+DieselDB is in active development (current version `3.3.99` in `pom.xml`). There are:
+- 0 GitHub releases tagged as v1.0.0 (first v0.1.0 SemVer tag planned soon)
+- ✅ Driver publish pipelines shipped for `diesel-jdbc` (Maven Central), `diesel-python` (PyPI), `diesel-node` (npm), `diesel-go` (pkg.go.dev), `diesel-rs` (crates.io) — engine artifact itself still 0 Maven Central publications
+- 0 tags on the engine repository
+- 1000+ commits on `main` branch (current: `3.3.99 Optimize LRU eviction policy with unpinned-page queue for O(1) eviction`, 2026-11-05)
+
+Recent release highlights (last 100 commits, 3.3.3 → 3.3.99):
+- **3.3.99** — O(1) LRU eviction policy with unpinned-page queue
+- **3.3.98 / 3.3.97 / 3.3.94** — Avro/JSONL/CSV/TSV inverse-map shift optimizations (insertAt/deleteRow O(1))
+- **3.3.96 / 3.3.95 / 3.3.93** — Replication: sync standby ACK, replication slots, physical WAL streaming
+- **3.3.92** — Builder pattern refactor (SonarQube `java:S107`) across CliArgs, WALConfig, RowVersionMeta, etc.
+- **3.3.91-3.3.89** — Avro column-statistics and compression-pattern O(1) optimizations
+- **3.3.88 / 3.3.80 / 3.3.77** — Avro/JSONL index manager overhauls (lazy `RowCiView`, `SchemaIndex` cache, `validateFlattenSchema` O(C log C))
+- **3.3.87 / 3.3.86 / 3.3.85** — Drivers: Go (`diesel-go`), Rust (`diesel-rs`), Python (`diesel-python`), Node.js (`diesel-node`), JDBC (`diesel-jdbc`, Hibernate-compatible)
+- **3.3.85 / 3.3.84** — libpq v3 wire protocol + SCRAM-SHA-256 auth + psql meta-commands
+- **3.3.83 / 3.3.82 / 3.3.81** — CRC32C hardware-accelerated checksums, `ChecksummedPage`, background `PageScrubber` + `CheckpointStrategy`
+- **3.3.79 / 3.3.78** — String-literal case-insensitivity (R3-013), `TRUE`/`FALSE`/`NULL` literals as boolean-as-integer
+- **3.3.74 / 3.3.69 / 3.3.68** — Health endpoints (`/health`, `/live`, `/ready`), Prometheus `/metrics`, `MetricsRegistry` (lock-free counters + p50/p95/p99 histograms)
+- **3.3.66** — PITR (Point-in-Time Recovery) via commit-timestamped WAL replay
+- **3.3.63 / 3.3.44** — Incremental physical backup + `BackupScheduler` (5-field cron)
+- **3.3.62 / 3.3.61 / 3.3.60 / 3.3.59 / 3.3.56 / 3.3.55 / 3.3.54** — BufferPool O(1) optimizations: liveCount cache, slot-directory compaction, tombstone reuse, unpinned-page queue, dirty-page index, catalog lookup
 
 For installation today, use `mvn install` from source:
 
@@ -1316,8 +1559,33 @@ Then in your `pom.xml` (local Maven repo only):
 <dependency>
   <groupId>com.dieseldb</groupId>
   <artifactId>dieseldb</artifactId>
-  <version>3.3.61</version>
+  <version>3.3.99</version>
 </dependency>
+```
+
+Drivers (published to package registries):
+
+```xml
+<!-- JDBC driver (Maven Central) -->
+<dependency>
+  <groupId>com.dieseldb</groupId>
+  <artifactId>diesel-jdbc</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+```bash
+# Python (PyPI)
+pip install diesel-python
+
+# Node.js (npm)
+npm install diesel-node
+
+# Go (pkg.go.dev)
+go get github.com/Reider85/dieseldb/drivers/go/diesel-go
+
+# Rust (crates.io)
+cargo add diesel-rs
 ```
 
 ---
@@ -1384,4 +1652,4 @@ DieselDB implements patterns from:
 
 ---
 
-*DieselDB — production-grade Java database engine with ARIES recovery, WAL, page-based storage, online schema changes, and SSI concurrency control. Under active development toward v1.0.0 stable release.*
+*DieselDB — production-grade Java database engine with ARIES recovery, WAL, page-based storage, online schema changes, SSI concurrency control, physical streaming replication, and Prometheus-based observability. Under active development toward v1.0.0 stable release.*
