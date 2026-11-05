@@ -114,6 +114,19 @@ final class ConfigLoader {
         return getString(METRICS_HOST, DEFAULT_METRICS_HOST);
     }
 
+    // ─── PageScrubber configuration (prompt4 #53) ──────────────────
+    static final String SCRUBBER_ENABLED = "scrubber.enabled";
+    static final String SCRUBBER_INTERVAL_DAYS = "scrubber.interval.days";
+    /** Default true: scrubber runs by default with 7-day interval */
+    static final boolean DEFAULT_SCRUBBER_ENABLED = true;
+    /** Default 7: scrubber runs every 7 days */
+    static final int DEFAULT_SCRUBBER_INTERVAL_DAYS = 7;
+    
+    // ─── Checkpoint strategy configuration (prompt4 #53) ─────────
+    static final String CHECKPOINT_MODE = "checkpoint.mode";
+    /** Default "fuzzy": non-blocking checkpoint mode */
+    static final String DEFAULT_CHECKPOINT_MODE = "fuzzy";
+    
     // ─── String literal case compatibility (prompt4 #49) ────────────
     static final String COMPAT_UPPERCASE_STRING_LITERALS = "compat.uppercase.string.literals";
     /** Default false: string literals keep their original case (SQL standard). */
@@ -141,5 +154,23 @@ final class ConfigLoader {
             return Boolean.parseBoolean(sysprop.trim());
         }
         return COMPAT_UPPERCASE_FILE_VALUE;
+    }
+    
+    // ─── PageScrubber configuration methods ────────────────────────
+    /** Whether the page scrubber is enabled. */
+    static boolean getScrubberEnabled() {
+        return getBoolean(SCRUBBER_ENABLED, DEFAULT_SCRUBBER_ENABLED);
+    }
+    
+    /** Scrub interval in days. */
+    static int getScrubberIntervalDays() {
+        return getInt(SCRUBBER_INTERVAL_DAYS, DEFAULT_SCRUBBER_INTERVAL_DAYS);
+    }
+    
+    // ─── Checkpoint strategy configuration methods ─────────────────
+    /** Checkpoint mode: "fuzzy" or "sharp". Defaults to "fuzzy". */
+    static String getCheckpointMode() {
+        String mode = getString(CHECKPOINT_MODE, DEFAULT_CHECKPOINT_MODE);
+        return mode != null ? mode.trim() : DEFAULT_CHECKPOINT_MODE;
     }
 }

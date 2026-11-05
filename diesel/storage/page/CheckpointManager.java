@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import diesel.wal.WALManager;
 import diesel.wal.WALArchiver;
 import diesel.TxStatusTracker;
+import diesel.recovery.CheckpointStrategy;
 
 /**
  * Background checkpoint manager (prompt4.md #21, R3-005 step 2/3).
@@ -42,6 +43,7 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
     private final long maxWalBytes;
     private final boolean enabled;
     private final ReadWriteLock writeGate = new ReentrantReadWriteLock();
+    private final CheckpointStrategy strategy;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean shutdownRequested = new AtomicBoolean(false);
@@ -57,7 +59,7 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
     private volatile long bytesAtLastCheckpoint;
 
     /**
-     * Creates a checkpoint manager with the given dependencies.
+     * Creates a checkpoint manager with the given dependencies and strategy.
      *
      * @param walManager the WAL manager (must not be null)
      * @param bufferPoolFlusher the background flusher (nullable, direct pool flush used if null)
@@ -66,6 +68,7 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
      * @param intervalMs checkpoint interval in milliseconds (must be positive)
      * @param maxWalBytes maximum WAL bytes before triggering checkpoint (must be positive)
      * @param enabled whether checkpointing is enabled
+     * @param strategy the checkpoint strategy (nullable, defaults to sharp for backward compatibility)
      */
     public CheckpointManager(WALManager walManager,
                              BufferPoolFlusher bufferPoolFlusher,
@@ -73,7 +76,8 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
                              TxStatusTracker txStatusTracker,
                              long intervalMs,
                              long maxWalBytes,
-                             boolean enabled) {
+                             boolean enabled,
+                             CheckpointStrategy strategy) {
         if (walManager == null) {
             throw new IllegalArgumentException("WAL manager must not be null");
         }
@@ -94,7 +98,39 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
         this.intervalMs = intervalMs;
         this.maxWalBytes = maxWalBytes;
         this.enabled = enabled;
+        this.strategy = strategy != null ? strategy : createDefaultStrategy();
         this.bytesAtLastCheckpoint = walManager.getTotalAppendedBytes();
+    }
+    
+    /**
+     * Creates a checkpoint manager with legacy sharp checkpoint behavior.
+     * For backward compatibility with existing tests and code.
+     *
+     * @param walManager the WAL manager (must not be null)
+     * @param bufferPoolFlusher the background flusher (nullable, direct pool flush used if null)
+     * @param bufferPool the buffer pool (must not be null)
+     * @param txStatusTracker transaction status tracker (nullable, empty list used if null)
+     * @param intervalMs checkpoint interval in milliseconds (must be positive)
+     * @param maxWalBytes maximum WAL bytes before triggering checkpoint (must be positive)
+     * @param enabled whether checkpointing is enabled
+     */
+    public CheckpointManager(WALManager walManager,
+                             BufferPoolFlusher bufferPoolFlusher,
+                             BufferPool bufferPool,
+                             TxStatusTracker txStatusTracker,
+                             long intervalMs,
+                             long maxWalBytes,
+                             boolean enabled) {
+        this(walManager, bufferPoolFlusher, bufferPool, txStatusTracker, 
+             intervalMs, maxWalBytes, enabled, null); // null = default sharp strategy
+    }
+    
+    /**
+     * Creates a default sharp checkpoint strategy for backward compatibility.
+     */
+    private CheckpointStrategy createDefaultStrategy() {
+        return new diesel.recovery.SharpCheckpoint(walManager, bufferPoolFlusher, 
+                                                  bufferPool, txStatusTracker, writeGate);
     }
 
     /**
@@ -198,9 +234,8 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
     }
 
     /**
-     * Performs a checkpoint immediately (blocking).
-     * Acquires the write gate, flushes dirty pages, writes checkpoint record,
-     * and releases the gate.
+     * Performs a checkpoint immediately using the configured strategy.
+     * Delegates to the checkpoint strategy for flush and record writing logic.
      *
      * @return LSN of the checkpoint, or 0 if checkpointing is disabled
      * @throws IOException if checkpoint fails
@@ -212,6 +247,51 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
         }
 
         long start = System.currentTimeMillis();
+        
+        // Delegate to checkpoint strategy
+        long checkpointLsn;
+        if (strategy != null) {
+            checkpointLsn = strategy.checkpoint();
+        } else {
+            // Fallback to legacy sharp behavior (should not happen with new constructor)
+            checkpointLsn = legacyCheckpointNow();
+        }
+        
+        if (checkpointLsn > 0) {
+            lastCheckpointLsn.set(checkpointLsn);
+            totalCheckpoints.incrementAndGet();
+            checkpointCount.incrementAndGet();
+
+            // Update metrics
+            long duration = System.currentTimeMillis() - start;
+            lastCheckpointDurationMs.set(duration);
+            totalFlushDurationMs.addAndGet(duration);
+
+            // Trigger WAL archiver for segments before checkpoint
+            try {
+                WALArchiver archiver = walManager.getArchiver();
+                if (archiver != null) {
+                    archiver.runOnce();
+                }
+            } catch (Exception e) {
+                LOGGER.warn("WAL archiver runOnce failed after checkpoint: " + e.getMessage());
+            }
+
+            // Reset WAL byte counter
+            bytesAtLastCheckpoint = walManager.getTotalAppendedBytes();
+
+            LOGGER.info("Checkpoint completed at LSN {} in {} ms using {} strategy",
+                       checkpointLsn, duration, strategy != null ? strategy.name() : "legacy");
+        }
+
+        return checkpointLsn;
+    }
+    
+    /**
+     * Legacy checkpoint implementation for backward compatibility.
+     * Used only when strategy is null (should not happen with new constructor).
+     */
+    private long legacyCheckpointNow() throws IOException {
         writeGate.writeLock().lock();
         try {
             // Flush all dirty pages
@@ -235,30 +315,10 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
             // Write checkpoint record
             walManager.writeCheckpoint(activeTxids);
             long checkpointLsn = walManager.getLastCheckpointLsn();
-            lastCheckpointLsn.set(checkpointLsn);
-            totalCheckpoints.incrementAndGet();
-            checkpointCount.incrementAndGet();
-
-            // Update metrics
-            long duration = System.currentTimeMillis() - start;
-            lastCheckpointDurationMs.set(duration);
-            totalFlushDurationMs.addAndGet(duration);
-
-            // Trigger WAL archiver for segments before checkpoint
-            try {
-                WALArchiver archiver = walManager.getArchiver();
-                if (archiver != null) {
-                    archiver.runOnce();
-                }
-            } catch (Exception e) {
-                LOGGER.warn("WAL archiver runOnce failed after checkpoint: " + e.getMessage());
+            
+            if (flushed > 0) {
+                LOGGER.debug("Legacy checkpoint flushed {} dirty pages", flushed);
             }
-
-            // Reset WAL byte counter
-            bytesAtLastCheckpoint = walManager.getTotalAppendedBytes();
-
-            LOGGER.info("Checkpoint completed at LSN {} in {} ms, {} active txids, {} pages flushed",
-                       checkpointLsn, duration, activeTxids.size(), flushed);
 
             return checkpointLsn;
         } finally {
@@ -275,6 +335,16 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
      */
     public ReadWriteLock getWriteGate() {
         return writeGate;
+    }
+    
+    /**
+     * Returns the name of the current checkpoint strategy.
+     * Useful for testing and monitoring.
+     *
+     * @return strategy name, or "legacy" if no strategy is set
+     */
+    public String getCheckpointStrategyName() {
+        return strategy != null ? strategy.name() : "legacy";
     }
 
     // ─── JMX MXBean methods ────────────────────────────────────────────────
