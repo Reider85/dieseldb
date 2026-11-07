@@ -304,6 +304,26 @@ switch ($Target) {
         Write-Host ""
         Write-Host "Full gate (all + perf + large) passed." -ForegroundColor Green
     }
+    "all-tests-all-storages" {
+        # Release gate against ALL four storage types (csv, tsv, jsonl, avro).
+        # Each iteration runs `mvn -B clean verify -P all -Ddiesel.storage.type=<type>`.
+        # Fails fast on the first red iteration.
+        $storages = @("csv", "tsv", "jsonl", "avro")
+        $rc = 0
+        foreach ($st in $storages) {
+            Write-Host ""
+            Write-Host "=== all-tests storage.type=$st ==="
+            Invoke-Native -FilePath $mvnPs -Arguments @("-B", "clean", "verify", "-P", "all", "-Ddiesel.storage.type=$st")
+            if ($LASTEXITCODE -ne 0) { $rc = 1 }
+            $stamp = New-TemporaryFile
+            Invoke-Native -FilePath $assertTestsPs -Arguments @($stamp.FullName, $st)
+            if ($LASTEXITCODE -ne 0) { $rc = 1 }
+            if ($rc -ne 0) { break }
+        }
+        if ($rc -ne 0) { exit $rc }
+        Write-Host ""
+        Write-Host "All storage types passed." -ForegroundColor Green
+    }
     "build" {
         Write-Host "Building DieselDB..."
         Invoke-Native -FilePath $mvnPs -Arguments @("-B", "package", "-DskipTests")
@@ -426,7 +446,7 @@ switch ($Target) {
         Write-Host "  build, compile, test, test-incr, test-one, test-core"
         Write-Host "  test-network, test-concurrency, test-perf, large-test"
         Write-Host "  test-flaky (quarantined flakes, opt-in)"
-        Write-Host "  all-tests (single mvn verify -P all), all-tests-large (+perf,large)"
+        Write-Host "  all-tests (single mvn verify -P all), all-tests-all-storages (csv+tsv+jsonl+avro), all-tests-large (+perf,large)"
         Write-Host "  timing-quick (3-5min), timing-full (10-30min),"
         Write-Host "  timing (alias -> quick), compare-timing, tia, tia-run"
         Write-Host "  changelog, release, release-local, sync-version"

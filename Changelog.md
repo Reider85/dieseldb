@@ -980,3 +980,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.0  README.md
 3.4.1 Fix start-server classpath missing lz4 jar: generate target/classpath.txt and extend fallback deps in start scripts
 3.4.2 TESTS system analytics
+
+3.4.2 Add all-tests-all-storages Makefile target for comprehensive storage testing

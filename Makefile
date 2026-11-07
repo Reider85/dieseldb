@@ -74,7 +74,7 @@ define run-tests-incr
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
-.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests all-tests-large timing timing-quick timing-full profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
+.PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests all-tests-all-storages all-tests-large timing timing-quick timing-full profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
 
 # Default target
 all: build
@@ -244,6 +244,22 @@ all-tests:
 	$(ASSERT_TESTS) "$$stamp"
 	@echo ""
 	@echo "All profiles passed."
+
+## Run the release gate against ALL four storage types (csv, tsv, jsonl, avro).
+## Each iteration runs `mvn -B clean verify -P all -Ddiesel.storage.type=<type>`.
+## Use for tag-pushes that touch storage-format code (Avro, Jsonl, Tsv, Csv).
+## Wall-time: ~4x `make all-tests` (~12-30 min total depending on machine).
+all-tests-all-storages:
+	@rc=0; \
+	for st in csv tsv jsonl avro; do \
+		echo ""; \
+		echo "=== all-tests storage.type=$$st ==="; \
+		$(MVN) -B clean verify -P all -Ddiesel.storage.type=$$st || rc=1; \
+		stamp=$$(mktemp); \
+		$(ASSERT_TESTS) "$$stamp" $$st || rc=1; \
+		[ $$rc -ne 0 ] && break; \
+	done; \
+	exit $$rc
 
 ## Full release gate (TESTS-7) - all-tests + perf + large. Use for tag-pushes.
 ## perf runs BEFORE large (same order as the old 6-profile loop): the large
@@ -437,6 +453,7 @@ help:
 	@echo "  make large-test         - Large profile: @LargeTest tests (3-8 min, 4GB heap)"
 	@echo "  make test-flaky         - Quarantined flaky tests (opt-in, 4 tests, profile 'flaky')"
 	@echo "  make all-tests          - ALL profiles in ONE mvn invocation (release gate)"
+	@echo "  make all-tests-all-storages - Release gate across csv+tsv+jsonl+avro (4x ~3-8 min)"
 	@echo "  make all-tests-large    - Full gate: all-tests + perf + large (tag-pushes)"
 	@echo "  make tia                - Test-impact analysis: recommend profiles"
 	@echo "  make tia-run            - TIA + run recommended profiles"
