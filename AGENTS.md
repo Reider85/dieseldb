@@ -21,7 +21,7 @@ Each prompt ends with a Changelog entry + commit + push. Remote: `github.com/Rei
    If `origin/main` is ahead — rebase **before** implementing, not at push time (avoids mid-release version collisions).
 
 1. Read `PROMPT_STATUS.md` → select next TODO with highest priority.
-2. Read the prompt source (`prompt3.md` / `prompt4.md` / `o2-prompts.md` — whichever owns the task) → find detailed description.
+2. Read the prompt source (`prompt3.md` / `prompt4.md` / `o2-prompts.md` — whichever owns the task) → find detailed description. For test-infrastructure prompts (`TESTS-N`), read `analytics/TESTS.md` (TESTS-1..TESTS-15) or `TESTS3.md` (TESTS-16..TESTS-22) at the repo root.
 3. Implement changes.
 4. **Choose test depth based on change type:**
 
@@ -169,6 +169,8 @@ BEFORE the first `make test`. A missed pattern costs one full 7-13 min red run.
   `$env:JAVA_HOME = "C:\tools\jdk-21.0.12+8"; & "C:\tools\apache-maven-3.9.9\bin\mvn.cmd" <args>`
 - `mvn package` produces a jar without a usable `Main-Class`; launch the engine via `diesel.DatabaseServer` or use `start-server.bat/.sh`.
 - Build: `make build` (or `mvn package -DskipTests`).
+- **Vector API flag (since TESTS-22)** – the `--add-modules=jdk.incubator.vector` argLine flag in `large`/`perf`/`timing-quick`/`flaky`/`flaky-jsonl`/`storage-*` profiles is parameterized as `${diesel.vector.argline}` in `pom.xml`. On Java 21 (current), the property resolves to `--add-modules=jdk.incubator.vector` (incubator, non-preview). On Java 22+, an auto-activated profile adds `--enable-preview` (the API moved to a preview module). On Java 25+ (when the API graduates from the incubator), the property resolves to empty (the flag becomes unnecessary). This avoids a hard JVM-startup failure (`java.lang.module.FindException: Module jdk.incubator.vector not found`) when the JDK is upgraded.
+- **Obsolete documentation removed (since TESTS-20)** – `AGENTS3.md` was deleted (it referenced the removed `make quick-test` target, the non-functional `mvn test -DskipLargeTests` flag, an obsolete `>100ms` timing floor, and the old `prompt2.md` filename). `AGENTS.md` is now the single source of truth for the prompt-driven workflow; for test-infrastructure prompts, see `analytics/TESTS.md` (TESTS-1..TESTS-15) and `TESTS3.md` at the repo root (TESTS-16..TESTS-22).
 
 ### PowerShell Quick Reference (for agents that can't use make)
 
@@ -239,9 +241,11 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 | Fast suite (incremental) | `make test-incr` | 6-13 min |
 | Fast suite | `make test` | 6-13 min (no clean since TESTS-1) |
 | Core suite | `make test-core` | 6-8 min |
-| Quarantined flakes (opt-in, 5 tests) | `make test-flaky` | ~7-10 min (4 invocations, no clean, +1 isolated retry on red: GroupCommit → 1M-бенчмарк → FlusherTest → WALReadAll-бенчмарк) |
+| Quarantined flakes (opt-in, 5 tests) | `make test-flaky` | ~7-10 min (4 invocations, no clean, +1 isolated retry on red: GroupCommit → 1M-бенчмарк → FlusherTest → WALReadAll-бенчмарк; guarded by `check-flaky-jsonl-compat.sh` since TESTS-18) |
 | Timing gate (query-path default) | `make timing-quick` (alias `make timing`) | 3-5 min |
 | Timing gate (full large profile) | `make timing-full` | 10-30 min |
+| Release gate (default storage: csv) | `make all-tests` | 3-8 min |
+| Release gate (all 4 storage types, since TESTS-16) | `make all-tests-all-storages` | 4 × ~3-8 min ≈ 12-30 min |
 
 **Measured 2026-10-24 (TESTS-3 session, 4-core machine):** fast = 546s baseline / 389-407s after JUnit parallelism, core = 381-407s. The fast floor is dominated by `OldVersionTimeoutTest` (~280s reaper waits) + `AutoJoinIndexTest` benchmark (~75-180s) + `WALRecoverLsnIsOLogNTest` (10-170s) — these run in every fast pass, so **any estimate below ~6 min for `make test` is wrong**. Old table values (~15-30s) were from a different machine/era and caused agents to set 10-min timeouts that killed healthy runs.
 
@@ -249,9 +253,9 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 ```powershell
 .\scripts\mvn.ps1 -B test -P core -Dtest="SomeCoreTest#someMethod"
 ```
-**Quarantined `@Tag("flaky")` tests run through neither command** — every gate excludes
-them (`surefire.excludedGroups` ends in `,flaky`). Run them only via `make test-flaky`
-(profile `flaky` sets `diesel.runFlaky=true`), see Known Flakes.
+**Quarantined `@Tag("flaky")` tests run through neither command** — every gate excludes them (`surefire.excludedGroups` ends in `,flaky`). Run them only via `make test-flaky` (profile `flaky` sets `diesel.runFlaky=true`), see Known Flakes.
+
+**Adding a new `@Tag("flaky")` test (since TESTS-18):** every new flaky test is automatically included in profile `flaky-jsonl` under `diesel.storage.type=jsonl`. If the test is storage-agnostic and fast under jsonl, no action is needed. If the test is slow or broken under jsonl (precedent: `FlusherTest`'s 50k-insert loop took 14 min for 5k rows under jsonl — explicitly excluded in `flaky-jsonl`'s `<excludes>` block in pom.xml), add its path to that block. The script `scripts/check-flaky-jsonl-compat.sh` runs as the first step of `make test-flaky` and as a CI step — it fails the build if a stale `<exclude>` references a deleted test file. It does NOT fail for missing exclusions (those are a judgment call), but the CI log lists every `@StorageType`-less flaky class so the maintainer can review.
 
 ### Guard: "no tests ran" fails the build
 
@@ -270,13 +274,12 @@ A successful run prints `Verified: N surefire report(s) written by profile 'fast
 If you see `ERROR: no surefire reports were written ...` the profile was lost from
 the Maven command line — treat it as a hard failure, not a pass.
 
-**Do not add a `param()` block to `scripts/mvn.ps1`.** A `param([string[]]$MvnArgs)`
-with `ValueFromRemainingArguments` silently drops `-P <profile>` and every `-D`
-property, which is exactly the failure this guard exists to catch. The wrapper
-relies on the automatic `$args` variable, which preserves them.
+**Do not add a `param()` block to `scripts/mvn.ps1`.** A `param([string[]]$MvnArgs)` with `ValueFromRemainingArguments` silently drops `-P <profile>` and every `-D` property, which is exactly the failure this guard exists to catch. The wrapper relies on the automatic `$args` variable, which preserves them.
 
-- **Fast profile** – `make test` (= `mvn -B test -P fast`, tags: smoke, query, index; **no clean** since TESTS-1) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate.
-- **Other profiles:** `make test-core` (query-full, storage), `make test-concurrency` (concurrency), `make test-network` (network), `make test-perf` (perf), `make large-test` (large, 4GB heap).
+**Storage-aware extension (since TESTS-19):** `assert-tests-ran.sh` accepts an optional second argument, the expected `diesel.storage.type` value. When present, the script additionally verifies that at least one `TEST-*.xml` report corresponds to a source file annotated with `@StorageType("<expected>")`. This catches the failure mode where `diesel.storage.type` is misspelled (e.g., `AVRO` instead of `avro`) or set to an unsupported value — surefire still writes reports for storage-agnostic classes (smoke, query, etc.), so the original "at least one report" check passes silently. The `run-tests-storage` Makefile macro (used by `test-storage-*` and `all-tests-all-storages`) passes the storage type through to the assertion.
+
+- **Fast profile** – `make test` (= `mvn -B test -P fast`, tags: smoke, query, index; **no clean** since TESTS-1) runs only fast unit tests. **Use this as a first filter** before the heavy acceptance gate. (Profile `test`, formerly a duplicate of `fast`, was removed in TESTS-17 — the Maven lifecycle phase `mvn test` is unrelated and still requires `-P <profile>` to run any test, since the default surefire config excludes `**/*.java`.)
+- **Other profiles:** `make test-core` (query-full, storage), `make test-concurrency` (concurrency), `make test-network` (network), `make test-perf` (perf), `make large-test` (large, 4GB heap). (Profile `ci` was removed in TESTS-17 — its `forkCount=2, reuseForks=true` topology was the source of the cross-class state-bleed reds that profile `all`'s `forkCount=1, reuseForks=false` exists to prevent per TESTS-7; use `make all-tests` instead.)
 - **Format-specific storage profiles:** When `storage.type` is set in `config.properties` (or via `-Ddiesel.storage.type=`), only tests matching that format run. The `@StorageType` annotation gates format-specific test classes.
 
 | Profile | Command | What it runs |
@@ -305,7 +308,30 @@ $env:JAVA_HOME = "C:\Program Files\Axiom\AxiomJDK-21"; & "C:\tools\apache-maven-
 - `@StorageType({"jsonl","csv"})` — Cross-format tests (2 classes): JsonlLoadModeTest, StorageLoadModeTest
 - `@StorageType({"csv","tsv"})` — Delimited tests (4 classes): CharsetEncodingTest, CompressionTest, AtomicFileWriteTest, CsvTsvHeaderMappingTest
 - `@StorageType({"avro","csv","tsv","jsonl"})` — Codec/cross tests (5 classes): SnappyOptimizedCodecTest, SnappyOptimizationBenchmark, DelimitedByteParserTest, ReaderCorrectnessTest, JsonStreamAbstractionTest
-- **Full release gate** – `make all-tests` = ONE `mvn clean verify -P all` invocation (the `all` profile aggregates the fast+core+concurrency+network tag groups; perf and large are excluded by design). `make all-tests-large` = `all-tests` + `perf` + `large` — the complete 6-profile gate, **recommended for tag-pushes**.
+
+### Storage-type coverage (since TESTS-16)
+
+The `all` Maven profile (and therefore `make all-tests`) does **not** set `diesel.storage.type`. `StorageTypeCondition` (src/test/java/diesel/StorageTypeCondition.java:32–39) falls back to `config.properties:40` (`storage.type = csv`), so `-P all` exercises only CSV-format storage tests — `@StorageType({"jsonl"|"tsv"|"avro"})`-only classes (~60 files: all `Avro*Test`, `Jsonl*Test`, `Tsv*Test`) are silently `disabled` by the JUnit condition. This is by design for the default release gate (CSV is the most-tested path); use `make all-tests-all-storages` for full coverage.
+
+Coverage matrix:
+
+| Command | storage classes exercised | storage classes skipped |
+|---------|---------------------------|-------------------------|
+| `make all-tests` | `@StorageType("csv")` + multi-format (`{"csv","tsv"}`, `{"jsonl","csv"}`, `{"avro","csv","tsv","jsonl"}`) | All `@StorageType({"jsonl"|"tsv"|"avro"})`-only classes |
+| `make all-tests-all-storages` | All four format buckets (csv, tsv, jsonl, avro), one Maven invocation per type | None (full `@StorageType` coverage) |
+| `make test-storage-<format>` | Only `@StorageType("<format>")` + multi-format classes | All other format-specific classes |
+| `make test-core -Ddiesel.storage.type=<format>` (manual) | All `@Tag("storage")` + `@Tag("query-full")` classes for the given format | Storage classes for other formats |
+
+**When to use which:**
+- Tag-pushes that touch storage-format code (Avro schema, Jsonl parser, Tsv codec, Csv reader) → `make all-tests-all-storages`.
+- Tag-pushes that touch only query-path code (no storage) → `make all-tests` is sufficient.
+- Tag-pushes that touch both → `make all-tests-all-storages` + `make all-tests-large`.
+
+`make all-tests-all-storages` runs `mvn clean verify -P all -Ddiesel.storage.type=<type>` four times (csv, tsv, jsonl, avro), failing fast on the first red iteration. Each iteration calls `assert-tests-ran.sh` with the storage type as the second argument (TESTS-19), so a misspelled type or an accidentally-unsupported value fails the build with `ERROR: 0 storage reports for diesel.storage.type=<type>` instead of silently passing on the storage-agnostic smoke/query/index classes.
+
+- **Release gate (default storage)** – `make all-tests` = ONE `mvn clean verify -P all` invocation. The `all` profile aggregates the fast+core+concurrency+network tag groups; perf and large are excluded by design. **Storage coverage is limited to the `storage.type` set in `config.properties` (default: `csv`)** — `@StorageType({"jsonl"|"tsv"|"avro"})` classes are silently `disabled` because profile `all` does not set `diesel.storage.type` (see `StorageTypeCondition.java:32-39`). Use `make all-tests-all-storages` for full storage coverage.
+- **Release gate (all storage types, since TESTS-16)** – `make all-tests-all-storages` runs `mvn clean verify -P all -Ddiesel.storage.type=<type>` four times, once each for `csv`, `tsv`, `jsonl`, `avro`. **Recommended for tag-pushes** that touch storage-format code; pairs with `make all-tests-large` for the complete gate. Wall-time ~4x `make all-tests`.
+- **`make all-tests-large`** = `all-tests` + `perf` + `large`. Note: still limited to one storage.type (the `config.properties` default); for full coverage under large/perf too, run `make all-tests-all-storages` then `make large-test -Ddiesel.storage.type=<type>` per format manually.
 - **Perf test isolation** – Performance tests (`perf` profile) run with `forkCount=1` and no parallel execution to avoid CPU contention. The `all` profile excludes `perf` to prevent interference with other test types. Run performance regression checks with `make test-perf` or `make check-profile` (JOINs only).
 - **TIA** – `make tia` (recommend profiles) / `make tia-run` (recommend + run).
 - **Isolation Rule for Failures:** If `make timing` fails, DO NOT immediately re-run `make timing`. Find the exact failing test name in the log. Fix the code and run ONLY that specific test:
@@ -453,6 +479,7 @@ Read the **Timing Policy** section above first — most storage-engine prompts s
   | `make timing-quick` / `make timing` (alias) | 1_200_000 (20 min) | expected 3–5 min + up to ~2.5 min recompile after a pom/profile edit (TESTS-6) |
   | `make timing-full` | 1_800_000 (30 min) | absolute cap (full `large` profile) |
   | `make all-tests` | 2_400_000 (40 min) | absolute cap |
+  | `make all-tests-all-storages` (since TESTS-16) | 7_200_000 (120 min) | 4x `make all-tests` (csv/tsv/jsonl/avro); each iteration inherits the 40-min cap, the wrapper kills on first red |
   | `make all-tests-large` | 3_600_000 (60 min) | all-tests + perf + large; tag-push gate |
   | ProfileMain / `check-profile` | 900_000 (15 min) | |
 
@@ -501,6 +528,8 @@ Failures below are **pre-existing / environmental** on this machine. When one ap
 - `WALReadAllIsAlreadySortedTest#readAllIsAtLeastAsFastAsTheOldSortPath` (quarantined 3.3.50 — two strikes: red after the 3.2.99 best-of-median fix, red again at 594µs vs 434µs×1.1 under -P all load)
 
 Gates never execute them (no false-red core/perf/timing from these five). Run them on demand with **`make test-flaky`** — it runs **four separate Maven invocations, in this order, with NO `clean`**: (1) `-P flaky -Dtest=GroupCommitThroughputTest` first, with **ONE isolated retry on red** (the p99 assertion is load-sensitive; a clean+full-recompile right before it measured 42ms), (2) `-P flaky-jsonl` (the 1M-row benchmark alone — it needs `diesel.storage.type=jsonl` to pass its `@StorageType` gate; a jsonl engine makes FlusherTest's insert loop take hours, hence the split), (3) `-P flaky -Dtest=FlusherTest` (timing-insensitive), (4) `-P flaky -Dtest=WALReadAllIsAlreadySortedTest` (sub-ms microbenchmark, last). The target is **continue-on-error**: all four always run, the exit code aggregates at the end. Profile `flaky` sets `diesel.runFlaky=true`, `diesel.largeTests=true` and turns class-parallelism off. CI runs all four nightly in the `nightly-flaky` job. A red `make test-flaky`/nightly = the flake got worse — that is the signal, investigate, do not "re-run until green". If a future fix removes a flake, delete its two annotations and the test rejoins the gate automatically.
+
+**Pre-flight guard (since TESTS-18):** `make test-flaky` runs `scripts/check-flaky-jsonl-compat.sh` as its first step. The script fails the build (exit 1, before any Maven invocation) if a `<exclude>` path in the `flaky-jsonl` profile references a deleted test file — catches stale exclusions from renamed or removed `@Tag("flaky")` classes. See the "Adding a new `@Tag("flaky")` test" paragraph above for the contract on adding new exclusions.
 
 | Symptom | Class / area | Notes |
 |---|---|---|
