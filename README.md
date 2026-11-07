@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/badge/version-3.3.99-green.svg)](#releases)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Reider85/dieseldb/ci.yml)](https://github.com/Reider85/dieseldb/actions)
 [![Stars](https://img.shields.io/github/stars/Reider85/dieseldb?style=social)](https://github.com/Reider85/dieseldb/stargazers)
-[![License](https://img.shields.io/badge/license-NOT%20SET-red.svg)](#license)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
 
 > 🚀 **Status:** Production-like. Current version `3.3.99` — see [§ Releases](#releases) and [§ Roadmap](#roadmap).
 
@@ -1375,7 +1375,7 @@ DieselDB is in active development toward v1.0.0 stable release. The core engine 
 | **Stored procedures / functions / triggers** | Not implemented | [Phase 2](#roadmap) — 3.0 FTE-months |
 | **Views / Materialized views** | Not implemented | [Phase 2](#roadmap) — 0.5 FTE-months |
 | **EXISTS / ANY / ALL / SOME / BETWEEN / regex operators / RETURNING / UPSERT / LATERAL JOIN** | Not parsed | [Phase 2](#roadmap) — 3.0 FTE-months |
-| **LICENSE file** | Not present | [Phase 0](#roadmap) — 0.1 FTE-months |
+| **LICENSE file** | ✅ Apache-2.0 — [LICENSE](LICENSE) | Done (Phase 0) |
 
 For a comprehensive list with workarounds for current limitations, see [`KNOWN_LIMITATIONS.md`](./KNOWN_LIMITATIONS.md).
 
@@ -1389,8 +1389,9 @@ The `examples/avro-examples.sql` file demonstrates SQL features planned for futu
 
 ### Phase 0: Legal & Governance (1 month)
 
-- [ ] Add OSI-compatible LICENSE file (recommend Apache-2.0 or PostgreSQL License)
-- [ ] Add `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`
+- [x] Add OSI-compatible LICENSE file (Apache-2.0 — [LICENSE](LICENSE))
+- [x] Add [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [ ] Add `CODE_OF_CONDUCT.md`, `SECURITY.md`
 - [ ] Publish v0.1.0 with SemVer promise
 - [x] Maven Central publication pipeline for `diesel-jdbc` (Prompt4 #55) — engine artifact still unpublished
 - [x] PyPI publication for `diesel-python` (Prompt4 #56)
@@ -1485,12 +1486,14 @@ The `examples/avro-examples.sql` file demonstrates SQL features planned for futu
 
 ## Contributing
 
+> 📄 Full contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev setup, test gates, commit format, PR process.
+
 ### How to contribute
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make changes, add tests in `src/test/java/diesel/`
-4. Run tests: `mvn -Ptest test`
+4. Run tests: `make test` (see [Test gates](CONTRIBUTING.md#test-gates-by-change-type) by change type)
 5. Run SonarQube analysis: `mvn sonar:sonar`
 6. Commit changes following existing commit message format (e.g., `3.x.y Prompt N: description`)
 7. Open a Pull Request
@@ -1506,7 +1509,7 @@ The `examples/avro-examples.sql` file demonstrates SQL features planned for futu
 
 ### Priority areas for contribution
 
-- **Critical**: Add LICENSE file, complete stub implementations (LogicalDump, LogicalRestore, TablespaceRegistry, PhysicalBackup.triggerCheckpoint)
+- **Critical**: complete stub implementations (LogicalDump, LogicalRestore, TablespaceRegistry, PhysicalBackup.triggerCheckpoint)
 - **High**: Polish TupleVisibility semantics (RC vs RR vs S), add FOREIGN KEY / CHECK / NOT NULL / DEFAULT constraints
 - **Medium**: Add JSON column type, CTE, window functions, UNION/INTERSECT/EXCEPT
 - **Performance**: Parallel single-query execution, connection pooling, cost-based optimizer
@@ -1592,17 +1595,25 @@ cargo add diesel-rs
 
 ## License
 
-> 🚧 **LICENSE file to be added (Phase 0).**
+DieselDB is licensed under the **Apache License, Version 2.0** — see [LICENSE](LICENSE) for the full text.
 
-The repository does not yet contain a `LICENSE` file, and `pom.xml` does not include a `<licenses>` section. This is the first item in the [Roadmap Phase 0](#roadmap).
+```
+Copyright 2026 Reider85 (Vasiliy Zhila)
 
-For production adoption, an OSI-compatible license will be added. Recommended options:
-- **Apache-2.0** — most permissive, patent grant, popular for Java projects
-- **PostgreSQL License** — BSD-like, similar to PostgreSQL itself
-- **MIT** — simple, permissive
-- **MPL-2.0** — weak copyleft, file-level (like H2 / Firefox)
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-Until LICENSE is added, please contact the author (Reider85 / Vasiliy Zhila) for licensing inquiries.
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+Contributions are submitted under the same license — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
