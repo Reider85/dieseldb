@@ -2776,7 +2776,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
             validateJoinCondition(cond, tableName, joinTableName, tableAliases);
         }
 
-        LOGGER.log(Level.FINE, "Разобранные условия ON для {0}: {1}", new Object[]{joinTypeStr, onConditions});
+        LOGGER.debug( "Разобранные условия ON для {0}: {1}", new Object[]{joinTypeStr, onConditions});
         joins.add(new JoinInfo(tableName, joinTableName, joinTableAlias, null, null, joinType, onConditions));
     }
 
@@ -3472,7 +3472,7 @@ LOGGER.error("Unknown column in UPDATE: {}, available columns: {}", column, colu
 LOGGER.debug("No WHERE clause in DELETE query");
             }
         } else {
-            LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
+            LOGGER.debug( "No WHERE clause in DELETE query");
         }
 
         LOGGER.info("Parsed DELETE query: table={}, conditions={}", tableName, conditions);
@@ -3658,7 +3658,7 @@ LOGGER.debug("Processing token at position {}: {}", currentPos, conditionStr.sub
             throw new IllegalArgumentException("Невалидное условие: не удалось выделить токенов из '" + conditionStr + "'");
         }
 
-        LOGGER.log(Level.FINE, "Токенизация завершена, получено токенов: {0}, токены: {1}",
+        LOGGER.debug( "Токенизация завершена, получено токенов: {0}, токены: {1}",
                 new Object[]{tokens.size(), tokens});
         return tokens;
     }
@@ -3722,7 +3722,7 @@ LOGGER.debug("Паттерн '{}' сработал, токен: {}, конец: 
             if (likeMatcher.matches()) {
                 String pattern = likeMatcher.group(3);
                 if (!pattern.endsWith("'")) {
-                    LOGGER.log(Level.WARNING, "Незакрытая кавычка в LIKE шаблоне на позиции {0}: {1}",
+                    LOGGER.warn( "Незакрытая кавычка в LIKE шаблоне на позиции {0}: {1}",
                             new Object[]{currentPos, matchedToken});
                     throw new IllegalArgumentException("Незакрытая кавычка в LIKE шаблоне на позиции " + currentPos + ": " + matchedToken);
                 }
@@ -3731,7 +3731,7 @@ LOGGER.debug("Паттерн '{}' сработал, токен: {}, конец: 
                 tokens.add(new Token(TokenType.CONDITION, matchedToken));
                 LOGGER.debug("Добавлен токен Like Condition: {}", matchedToken);
             } else {
-                LOGGER.log(Level.WARNING, "Некорректный LIKE токен на позиции {0}: {1}",
+                LOGGER.warn( "Некорректный LIKE токен на позиции {0}: {1}",
                         new Object[]{currentPos, matchedToken});
                 throw new IllegalArgumentException("Некорректный LIKE токен на позиции " + currentPos + ": " + matchedToken);
             }
@@ -3739,7 +3739,7 @@ LOGGER.debug("Паттерн '{}' сработал, токен: {}, конец: 
             tokens.add(new Token(TokenType.LOGICAL_OPERATOR, matchedToken));
             LOGGER.debug("Добавлен токен Logical Operator: {}", matchedToken);
         } else if (matchedPatternName.equals("Invalid Token")) {
-            LOGGER.log(Level.WARNING, "Обнаружен некорректный токен на позиции {0}: {1}",
+            LOGGER.warn( "Обнаружен некорректный токен на позиции {0}: {1}",
                     new Object[]{currentPos, matchedToken});
             throw new IllegalArgumentException("Некорректный токен в условии на позиции " + currentPos + ": " + matchedToken);
         } else {
@@ -3750,7 +3750,7 @@ LOGGER.debug("Паттерн '{}' сработал, токен: {}, конец: 
 
     private void validateLikePattern(String pattern, int position) {
         if (pattern == null || pattern.isEmpty()) {
-            LOGGER.log(Level.WARNING, "Empty LIKE pattern at position {0}", position);
+            LOGGER.warn( "Empty LIKE pattern at position {0}", position);
             throw new IllegalArgumentException("LIKE pattern cannot be empty at position " + position);
         }
         // Проверка на SQL-конструкции удалена, так как строковый литерал — это просто строка
@@ -3872,12 +3872,12 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
 
         if (matcher.find()) {
             String token = matcher.group().trim();
-            LOGGER.log(Level.FINE, "Extracted token from index {0}: {1}",
+            LOGGER.debug( "Extracted token from index {0}: {1}",
                     new Object[]{startIndex, token});
             return token;
         }
 
-        LOGGER.log(Level.FINE, "No token found from index {0}", startIndex);
+        LOGGER.debug( "No token found from index {0}", startIndex);
         return "";
     }
 
@@ -4389,7 +4389,7 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
             if (!condStr.isEmpty()) {
                 HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, state.conjunction, state.not);
                 conditions.add(condition);
-                LOGGER.log(Level.FINE, "Parsed HAVING condition: {0}", condition);
+                LOGGER.debug( "Parsed HAVING condition: {0}", condition);
             }
             state.conjunction = nextToken.toUpperCase();
             state.not = false;
@@ -4562,7 +4562,7 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
         Pattern subQueryPattern = SUBQUERY_LOOKAHEAD_PATTERN;
         String fromStart = startIndex + 7 < str.length() ? str.substring(startIndex, startIndex + 7) : "";
         if (!subQueryPattern.matcher(fromStart).lookingAt()) {
-            LOGGER.log(Level.FINE, "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
+            LOGGER.debug( "Строка в startIndex не похожа на подзапрос: {0}", fromStart);
         }
     }
 

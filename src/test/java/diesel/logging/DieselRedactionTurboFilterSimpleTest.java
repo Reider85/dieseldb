@@ -5,12 +5,13 @@ import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.Set;
 import java.util.Properties;
+import java.util.regex.Pattern;
 
 /**
  * Simple test for DieselRedactionTurboFilter without full compilation.
  * This tests the core redaction logic.
  */
-public class DieselRedactionTurboFilterTest {
+public class DieselRedactionTurboFilterSimpleTest {
     
     @Test
     void testIsSafeKey() {

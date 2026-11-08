@@ -282,7 +282,7 @@ public final class RecoveryManager implements AutoCloseable, DynamicMBean {
                 ManagementFactory.getPlatformMBeanServer().registerMBean(this, name);
                 registeredName = name;
             } catch (Exception e) {
-                LOGGER.warning("Failed to register RecoveryManager MBean: " + e);
+                LOGGER.warn("Failed to register RecoveryManager MBean: " + e);
             }
         }
     }

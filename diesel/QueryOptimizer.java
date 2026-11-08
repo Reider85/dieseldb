@@ -79,7 +79,7 @@ final class QueryOptimizer {
             String rawSample = props.getProperty(SAMPLING_KEY);
             if (rawSample != null) samplingRows = Integer.parseInt(rawSample.trim());
         } catch (Exception ignored) {
-            LOGGER.fine("Adaptive config error, using defaults: " + ignored.getMessage());
+            LOGGER.debug("Adaptive config error, using defaults: " + ignored.getMessage());
         }
     }
 

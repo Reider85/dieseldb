@@ -466,6 +466,16 @@ public class DieselLogConfig {
             }
         }
         
+        /**
+         * Converts a Properties map to Map<String, String> for compatibility.
+         */
+        private Map<String, String> convertToStringMap(Properties props) {
+            Map<String, String> result = new HashMap<>();
+            for (String key : props.stringPropertyNames()) {
+                result.put(key, props.getProperty(key));
+            }
+            return result;
+        }
         
     }
 }

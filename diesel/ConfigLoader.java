@@ -11,13 +11,18 @@ import java.util.Properties;
  * A missing or unreadable file yields an empty {@link Properties} instance and
  * callers fall back to their defaults.
  */
-final class ConfigLoader {
+public class ConfigLoader {
 
-    private ConfigLoader() {
+    public ConfigLoader() {
     }
 
     /** Loads {@code config.properties} from the working directory. */
     static Properties load() {
+        return loadProperties();
+    }
+    
+    /** Alternative method name for compatibility */
+    static Properties loadProperties() {
         Properties props = new Properties();
         File configFile = new File(ErrorMessages.CONFIG_FILE);
         if (configFile.exists()) {

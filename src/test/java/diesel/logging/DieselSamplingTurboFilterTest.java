@@ -2,7 +2,9 @@ package diesel.logging;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.spi.FilterReply;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
@@ -25,7 +27,8 @@ public class DieselSamplingTurboFilterTest {
         filter.start();
         
         // Create a mock logger context
-        logger = new Logger("diesel.wal.WALWriter", null, null);
+        LoggerContext loggerContext = new LoggerContext();
+        logger = loggerContext.getLogger("diesel.wal.WALWriter");
     }
     
     @Test
@@ -134,10 +137,10 @@ public class DieselSamplingTurboFilterTest {
     @Test
     void testModuleMapping() {
         // Test different logger names map to correct modules
-        Logger walLogger = new Logger("diesel.wal.WALWriter", null, null);
-        Logger bufferpoolLogger = new Logger("diesel.storage.page.BufferPool", null, null);
-        Logger replicationLogger = new Logger("diesel.replication.Replication", null, null);
-        Logger otherLogger = new Logger("diesel.DatabaseServer", null, null);
+        Logger walLogger = loggerContext.getLogger("diesel.wal.WALWriter");
+        Logger bufferpoolLogger = loggerContext.getLogger("diesel.storage.page.BufferPool");
+        Logger replicationLogger = loggerContext.getLogger("diesel.replication.Replication");
+        Logger otherLogger = loggerContext.getLogger("diesel.DatabaseServer");
         
         Map<String, String> config = new HashMap<>();
         config.put("logging.sampling.wal", "100");

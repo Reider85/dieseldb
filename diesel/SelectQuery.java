@@ -366,7 +366,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return;
         }
         if (!resultLimitWarningLogged && size >= queryMaxResultRows - queryMaxResultRows / 5) {
-            LOGGER.warning("WARNING: query result is approaching the maximum allowed row limit: " + size
+            LOGGER.warn("WARNING: query result is approaching the maximum allowed row limit: " + size
                     + " of " + queryMaxResultRows + " rows (80%). Consider adding LIMIT or a MAX_ROWS hint.");
             resultLimitWarningLogged = true;
         }
@@ -1418,7 +1418,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         result.size(), join.tableName);
                 return result;
             } catch (IOException e) {
-                LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
+                LOGGER.warn("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
                 ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
                 return runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
             }
@@ -1458,7 +1458,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             boolean hasOrConditions = hasOrInOnConditions(join);
             
             if (hasOrConditions) {
-                LOGGER.warning("WARNING: JOIN with OR condition may produce large result set");
+                LOGGER.warn("WARNING: JOIN with OR condition may produce large result set");
                 // Check if we can use a specialized hash join for OR conditions
                 if (canUseSpecializedHashJoinForOrConditions(join)) {
                     useHashJoin = true;
@@ -1649,7 +1649,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             Map<String, Class<?>> combinedColumnTypes) {
         List<Map<String, Object>> result = new ArrayList<>();
         if (offset != null && limit == null) {
-            LOGGER.warning("OFFSET without LIMIT may be inefficient");
+            LOGGER.warn("OFFSET without LIMIT may be inefficient");
         }
 
         if (!aggregates.isEmpty() && groupBy.isEmpty()) {
@@ -1743,7 +1743,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                     }
                 } catch (IOException ignored) {
                     // Best-effort drain; row is added directly below on failure
-                    LOGGER.fine("Best-effort spill drain failed: " + ignored.getMessage());
+                    LOGGER.debug("Best-effort spill drain failed: " + ignored.getMessage());
                 } finally {
                     spill.close();
                 }
@@ -1765,12 +1765,12 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
 
         // Additional memory safety check for OR conditions
         if (hasOrInOnConditions(ctx.join)) {
-            LOGGER.warning("Using in-memory hash join with OR conditions - monitoring memory usage");
+            LOGGER.warn("Using in-memory hash join with OR conditions - monitoring memory usage");
             
             // Check if we're approaching memory limits
             long estimatedMemoryUsage = estimateHashTableSizeBytes(buildRows.size(), buildTable);
             if (estimatedMemoryUsage > maxHashTableSizeBytes * 0.7) { // 70% of limit for OR conditions
-                LOGGER.warning("Hash table memory usage high for OR conditions: " + estimatedMemoryUsage + 
+                LOGGER.warn("Hash table memory usage high for OR conditions: " + estimatedMemoryUsage + 
                         " bytes (limit: " + maxHashTableSizeBytes + ")");
                 // Fall back to nested loop join
                 return runBlockNestedLoopJoin(null, probeTable, ctx);
@@ -1938,14 +1938,14 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                 try {
                     Files.deleteIfExists(tempFile.toPath());
                 } catch (IOException ignored) {
-                    LOGGER.fine("Temp spill file cleanup failed: " + ignored.getMessage());
+                    LOGGER.debug("Temp spill file cleanup failed: " + ignored.getMessage());
                 }
             }
         }
         try {
             Files.deleteIfExists(tempDir.toPath());
         } catch (IOException ignored) {
-            LOGGER.fine("Temp spill dir cleanup failed: " + ignored.getMessage());
+            LOGGER.debug("Temp spill dir cleanup failed: " + ignored.getMessage());
         }
     }
 
@@ -2432,7 +2432,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                 }
             } catch (IOException ignored) {
                 // Best-effort close; failure is non-critical
-                LOGGER.fine("Best-effort writer close failed: " + ignored.getMessage());
+                LOGGER.debug("Best-effort writer close failed: " + ignored.getMessage());
             }
             try {
                 if (reader != null) {
@@ -2440,14 +2440,14 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                 }
             } catch (IOException ignored) {
                 // Best-effort close; failure is non-critical
-                LOGGER.fine("Best-effort reader close failed: " + ignored.getMessage());
+                LOGGER.debug("Best-effort reader close failed: " + ignored.getMessage());
             }
             if (spillFile != null) {
                 try {
                     Files.deleteIfExists(spillFile.toPath());
                 } catch (IOException ignored) {
                     // Best-effort temp file cleanup
-                    LOGGER.fine("Best-effort spill file cleanup failed: " + ignored.getMessage());
+                    LOGGER.debug("Best-effort spill file cleanup failed: " + ignored.getMessage());
                 }
             }
         }
@@ -2707,7 +2707,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             // For OR conditions, be more conservative about memory usage
             long estimatedMaxResultSize = buildRows * probeRows;
             if (estimatedMaxResultSize > maxResultRows * 10) { // Be 10x more conservative for OR conditions
-                LOGGER.warning("JOIN with OR conditions may produce excessive result set: estimated " + 
+                LOGGER.warn("JOIN with OR conditions may produce excessive result set: estimated " + 
                         estimatedMaxResultSize + " rows (limit: " + maxResultRows + ")");
                 return true;
             }
@@ -2716,7 +2716,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         // Check if hash table would exceed memory limits
         long estimatedHashTableSize = estimateHashTableSizeBytes(buildTable.getLiveRows(), buildTable);
         if (estimatedHashTableSize > maxHashTableSizeBytes * 0.8) { // Use 80% of limit for safety
-            LOGGER.warning("Hash table size may exceed memory limits: estimated " + 
+            LOGGER.warn("Hash table size may exceed memory limits: estimated " + 
                     estimatedHashTableSize + " bytes (limit: " + maxHashTableSizeBytes + ")");
             return true;
         }
@@ -2829,7 +2829,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             // executeHashJoin instead of being downgraded to a nested loop
             // (HashJoinMemoryTest: zero-byte budget must force partitioning).
             if (wouldJoinExceedMemory(join, buildTable, probeTable)) {
-                LOGGER.warning("Hash join disabled due to memory constraints for join on " + join.tableName);
+                LOGGER.warn("Hash join disabled due to memory constraints for join on " + join.tableName);
                 return false;
             }
         }
@@ -3031,7 +3031,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         }
         try {
             table.createBTreeIndex(unqualified);
-            LOGGER.warning("Consider creating index on " + tableName + "." + unqualified + " for faster JOIN");
+            LOGGER.warn("Consider creating index on " + tableName + "." + unqualified + " for faster JOIN");
         } catch (RuntimeException e) {
             LOGGER.debug("Skipped auto-creating index on {}.{}: {}",
                     tableName, unqualified, e.getMessage());
@@ -3065,7 +3065,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                             && !(table.hasClusteredIndex() && unqualified.equals(table.getClusteredIndexColumn()))) {
                         try {
                             table.createBTreeIndex(unqualified);
-                            LOGGER.warning("Auto-created index on " + tableName + "." + unqualified + " for WHERE filtering");
+                            LOGGER.warn("Auto-created index on " + tableName + "." + unqualified + " for WHERE filtering");
                         } catch (RuntimeException e) {
                             LOGGER.debug("Skipped auto-creating index on {}.{}: {}",
                                     tableName, unqualified, e.getMessage());

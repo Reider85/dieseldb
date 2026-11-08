@@ -196,7 +196,7 @@ if (config.isEmpty()) {
             );
             
             config.forEach((key, value) -> {
-                if (isSafeKey(key, safeKeys)) {
+                if (isSafeKey((String)key, safeKeys)) {
                     LOGGER.info("Config: {} = {}", key, value.toString());
                 }
             });

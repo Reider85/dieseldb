@@ -9,6 +9,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import static org.junit.jupiter.api.Assertions.*;
+import org.slf4j.Marker;
+import java.util.regex.Pattern;
 
 /**
  * Tests for DieselRedactionTurboFilter functionality.
@@ -33,14 +35,12 @@ public class DieselRedactionTurboFilterTest {
     @Test
     void testSecretRedactionForPassword() {
         // Test that password values are redacted
-        FilterReply reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: tls.keystore.password = changeit"), 
-                                        "Config: tls.keystore.password = {}", new Object[]{"changeit"}, null);
+        FilterReply reply = filter.decide(null, logger, Level.INFO, "Config: tls.keystore.password = {}", new Object[]{"changeit"}, null);
         
         assertEquals(FilterReply.NEUTRAL, reply); // Message allowed but value should be redacted
         
         // Test direct password mention in message
-        reply = filter.decide(null, createLoggingEvent(Level.INFO, "User password is secret123"), 
-                            "User password is {}", new Object[]{"secret123"}, null);
+        reply = filter.decide(null, logger, Level.INFO, "User password is {}", new Object[]{"secret123"}, null);
         
         assertEquals(FilterReply.DENY, reply); // Message denied entirely
     }
@@ -48,14 +48,12 @@ public class DieselRedactionTurboFilterTest {
     @Test
     void testSecretRedactionForToken() {
         // Test that token values are redacted
-        FilterReply reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: api.token = abc123def"), 
-                                        "Config: api.token = {}", new Object[]{"abc123def"}, null);
+FilterReply reply = filter.decide(null, logger, Level.INFO, "Config: api.token = {}", new Object[]{"abc123def"}, null);
         
         assertEquals(FilterReply.NEUTRAL, reply); // Message allowed but value should be redacted
         
         // Test direct token mention in message
-        reply = filter.decide(null, createLoggingEvent(Level.INFO, "Access token xyz789"), 
-                            "Access token {}", new Object[]{"xyz789"}, null);
+reply = filter.decide(null, logger, Level.INFO, "Access token {}", new Object[]{"xyz789"}, null);
         
         assertEquals(FilterReply.DENY, reply); // Message denied entirely
     }
@@ -63,14 +61,12 @@ public class DieselRedactionTurboFilterTest {
     @Test
     void testSafeConfigKeysAreLogged() {
         // Test that safe keys are allowed
-        FilterReply reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: server.port = 5432"), 
-                                        "Config: server.port = {}", new Object[]{"5432"}, null);
+FilterReply reply = filter.decide(null, logger, Level.INFO, "Config: server.port = {}", new Object[]{"5432"}, null);
         
         assertEquals(FilterReply.NEUTRAL, reply); // Message allowed
         
         // Test safe key with prefix
-        reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: storage.data.dir = /data"), 
-                            "Config: storage.data.dir = {}", new Object[]{"/data"}, null);
+reply = filter.decide(null, logger, Level.INFO, "Config: storage.data.dir = {}", new Object[]{"/data"}, null);
         
         assertEquals(FilterReply.NEUTRAL, reply); // Message allowed
     }
@@ -78,8 +74,7 @@ public class DieselRedactionTurboFilterTest {
     @Test
     void testKeystorePasswordRedaction() {
         // Test keystore password redaction
-        FilterReply reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: tls.keystore.password = mysecret"), 
-                                        "Config: tls.keystore.password = {}", new Object[]{"mysecret"}, null);
+FilterReply reply = filter.decide(null, logger, Level.INFO, "Config: tls.keystore.password = {}", new Object[]{"mysecret"}, null);
         
         assertEquals(FilterReply.NEUTRAL, reply); // Message allowed but value redacted
     }
@@ -96,8 +91,7 @@ public class DieselRedactionTurboFilterTest {
     @Test
     void testArchiveDirRedaction() {
         // Test archive directory redaction
-        FilterReply reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: audit.archive.dir = /secure/audit"), 
-                                        "Config: audit.archive.dir = {}", new Object[]{"/secure/audit"}, null);
+FilterReply reply = filter.decide(null, logger, Level.INFO, "Config: audit.archive.dir = {}", new Object[]{"/secure/audit"}, null);
         
         assertEquals(FilterReply.DENY, reply); // Message denied entirely
     }
@@ -107,8 +101,7 @@ public class DieselRedactionTurboFilterTest {
         // Test that filter can be disabled
         filter.setEnabled(false);
         
-        FilterReply reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: tls.keystore.password = changeme"), 
-                                        "Config: tls.keystore.password = {}", new Object[]{"changeme"}, null);
+FilterReply reply = filter.decide(null, logger, Level.INFO, "Config: tls.keystore.password = {}", new Object[]{"changeme"}, null);
         
         assertEquals(FilterReply.NEUTRAL, reply); // Message allowed when disabled
     }
@@ -116,8 +109,7 @@ public class DieselRedactionTurboFilterTest {
     @Test
     void testUnknownPatternsPassThrough() {
         // Test that unknown patterns pass through
-        FilterReply reply = filter.decide(null, createLoggingEvent(Level.INFO, "Config: server.name = production"), 
-                                        "Config: server.name = {}", new Object[]{"production"}, null);
+FilterReply reply = filter.decide(null, logger, Level.INFO, "Config: server.name = {}", new Object[]{"production"}, null);
         
         assertEquals(FilterReply.NEUTRAL, reply); // Message allowed
     }

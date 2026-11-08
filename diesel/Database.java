@@ -286,7 +286,7 @@ public class Database {
                     LOGGER.info("No checkpoint found, starting with clean state");
                 }
             } catch (Exception e) {
-                LOGGER.warning("Failed to load checkpoint: " + e.getMessage());
+                LOGGER.warn("Failed to load checkpoint: " + e.getMessage());
                 // Continue without checkpoint - will recover from WAL entries
             }
             
@@ -432,7 +432,7 @@ public class Database {
         }
 
         if (pageManager == null) {
-            LOGGER.warning("Cannot start page flusher: PageManager not initialized");
+            LOGGER.warn("Cannot start page flusher: PageManager not initialized");
             return;
         }
 
@@ -502,7 +502,7 @@ public class Database {
         }
 
         if (pageManager == null) {
-            LOGGER.warning("Cannot start checkpoint manager: PageManager not initialized");
+            LOGGER.warn("Cannot start checkpoint manager: PageManager not initialized");
             return;
         }
 
@@ -577,7 +577,7 @@ public class Database {
         }
 
         if (pageManager == null) {
-            LOGGER.warning("Cannot start page scrubber: PageManager not initialized");
+            LOGGER.warn("Cannot start page scrubber: PageManager not initialized");
             return;
         }
 

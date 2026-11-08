@@ -43,7 +43,7 @@ public class DieselJsonLayoutTest {
     @Test
     void testJsonWithTraceId() {
         // Create event with trace ID in MDC
-        LoggingEvent event = createLoggingEvent(Level.DEBUG, "Debug message", "diesel.Database");
+        ILoggingEvent event = createLoggingEvent(Level.DEBUG, "Debug message", "diesel.Database");
         event.getMDCPropertyMap().put("traceId", "abc123");
         
         String json = layout.doLayout(event);
@@ -143,14 +143,12 @@ public class DieselJsonLayoutTest {
      * Helper method to create a logging event for testing.
      */
     private ILoggingEvent createLoggingEvent(Level level, String message, String loggerName, Object... args) {
-        return new LoggingEvent(
-            loggerName,
-            logger.getLogger(loggerName),
-            System.currentTimeMillis(),
-            level,
-            message,
-            args != null && args.length > 0 ? args : null,
-            null
-        );
+        // Create a simple logging event for testing
+        LoggingEvent event = new LoggingEvent();
+        event.setLoggerName(loggerName);
+        event.setLevel(level);
+        event.setMessage(message);
+        event.setTimeStamp(System.currentTimeMillis());
+        return event;
     }
 }
