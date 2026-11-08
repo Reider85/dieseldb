@@ -171,9 +171,14 @@ public class DieselLogConfig {
      */
     private static Properties loadConfig() {
         try {
-            // Use reflection to access the package-private ConfigLoader
+            // ConfigLoader.load() is package-private: Class.getMethod() only
+            // returns public methods, so getMethod("load") / getMethod("loadProperties")
+            // both threw NoSuchMethodException and silently fell back to empty
+            // properties (config.properties was never applied). getDeclaredMethod
+            // + setAccessible resolves the package-private method correctly.
             Class<?> configLoaderClass = Class.forName("diesel.ConfigLoader");
-            java.lang.reflect.Method loadMethod = configLoaderClass.getMethod("loadProperties");
+            java.lang.reflect.Method loadMethod = configLoaderClass.getDeclaredMethod("load");
+            loadMethod.setAccessible(true);
             return (Properties) loadMethod.invoke(null);
         } catch (Exception e) {
             LOGGER.warn("Failed to load config from ConfigLoader, using empty properties", e);
@@ -205,12 +210,16 @@ public class DieselLogConfig {
      * Resolves global logging level from priority chain.
      */
     private static String resolveGlobalLevel(Properties config) {
+        // Deprecated alias is reported whenever it is present, regardless of
+        // whether logging.level is also set (config.properties contract:
+        // "emits one deprecation warning").
+        if (System.getProperty("logging.level.diesel") != null) {
+            LOGGER.warn("Deprecated sysprop -Dlogging.level.diesel used; use -Dlogging.level instead");
+        }
+
         // 1. Check system property first (highest priority)
         String syspropLevel = System.getProperty("logging.level");
         if (syspropLevel != null && !syspropLevel.trim().isEmpty()) {
-            if (System.getProperty("logging.level.diesel") != null) {
-                LOGGER.warn("Deprecated sysprop -Dlogging.level.diesel used; use -Dlogging.level instead");
-            }
             return normalizeLevel(syspropLevel);
         }
         
@@ -329,6 +338,19 @@ public class DieselLogConfig {
                 LOGGER.info("Module '{}' logging level set to: {}", module, normalizedLevel);
             }
         }
+
+        // Warn about unrecognized logging.level.<name> keys so typos are not
+        // silently ignored. "diesel" is the documented deprecated alias (warned
+        // by resolveGlobalLevel) and dotted suffixes are not module keys.
+        String levelPrefix = "logging.level.";
+        for (String key : config.stringPropertyNames()) {
+            if (key.startsWith(levelPrefix) && key.length() > levelPrefix.length()) {
+                String name = key.substring(levelPrefix.length());
+                if (!name.contains(".") && !"diesel".equals(name) && !moduleMapping.containsKey(name)) {
+                    LOGGER.warn("Unknown logging level '{}'", name);
+                }
+            }
+        }
     }
     
     /**
@@ -403,27 +425,42 @@ public class DieselLogConfig {
             boolean includeCallerData = Boolean.parseBoolean(includeCallerDataStr);
             asyncAppender.setIncludeCallerData(includeCallerData);
             
-            // Add existing appenders to async appender
-            if (consoleAppender != null) {
-                asyncAppender.addAppender(consoleAppender);
-            }
-            if (fileAppender != null) {
-                asyncAppender.addAppender(fileAppender);
-            }
+            // logback 1.5.x: AsyncAppenderBase.addAppender accepts only ONE
+            // nested appender ("One and only one appender may be attached") and
+            // detachAndStopAllAppenders() would stop CONSOLE, so appending
+            // directly to it silently killed all output. Wrap both targets in a
+            // single forwarding appender instead; the originals are DETACHED
+            // from root but never stopped - the async worker appends to them
+            // via doAppend().
+            AppenderBase<ILoggingEvent> targets = new AppenderBase<ILoggingEvent>() {
+                @Override
+                protected void append(ILoggingEvent event) {
+                    if (consoleAppender != null) {
+                        consoleAppender.doAppend(event);
+                    }
+                    if (fileAppender != null) {
+                        fileAppender.doAppend(event);
+                    }
+                }
+            };
+            targets.setContext(loggerContext);
+            targets.setName("TARGETS");
+            targets.start();
+            asyncAppender.addAppender(targets);
             
             // Note: Status listener tracking will be added when MetricsRegistry is available
             
-            // Start async appender
+            // Start async appender (requires at least one nested appender)
             asyncAppender.start();
+            if (!asyncAppender.isStarted()) {
+                LOGGER.error("AsyncAppender failed to start - async logging not applied");
+                return;
+            }
             
-            // Replace root appenders with async appender
-            rootLogger.detachAndStopAllAppenders();
-            if (consoleAppender != null) {
-                rootLogger.detachAppender("CONSOLE");
-            }
-            if (fileAppender != null) {
-                rootLogger.detachAppender("FILE");
-            }
+            // Detach (do NOT stop) the original appenders from root and route
+            // all output through the async appender.
+            rootLogger.detachAppender("CONSOLE");
+            rootLogger.detachAppender("FILE");
             rootLogger.addAppender(asyncAppender);
             
             LOGGER.info("Async logging enabled with queueSize={}, discardingThreshold={}, neverBlock={}", 

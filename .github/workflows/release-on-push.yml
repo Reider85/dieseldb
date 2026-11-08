@@ -1,0 +1,126 @@
+name: Release on Push
+
+# Auto-release after every SUCCESSFUL CI run on main (GITHUB.md prompt 2).
+#
+# Design (approach B, "tag-only" - see PROMPT_STATUS.md GITHUB-2 for why):
+#   - Triggered via workflow_run on CI, NOT via push: a release is created
+#     only after compile-gate + fast are green for that commit.
+#   - Doc-only pushes never reach here: ci.yml has paths-ignore, so it does
+#     not run at all for **/*.md, docs/**, LICENSE, NOTICE -> no CI run ->
+#     no workflow_run event -> no release (paths filtering is inherited).
+#   - Schedule / workflow_dispatch / pull_request CI runs are excluded by the
+#     job condition below (event == 'push' && head_branch == 'main').
+#   - pom.xml is NOT modified and nothing is pushed back to main, so this
+#     workflow cannot trigger CI recursively and needs no [skip ci] tag.
+#     Version ownership stays with the local `make release` flow.
+#   - Tag: v{pom-version}-build.{ci-run-number}, e.g. v3.4.18-build.762.
+#     ci-run-number is unique per CI run -> no duplicate tags; the guard step
+#     additionally skips the release if the tag already exists (rerun case).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+# Serialize release jobs (never cancel one in-flight: a cancelled job means a
+# missed release). Concurrent pushes queue up instead of racing.
+concurrency:
+  group: release-on-push
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Only a successful, push-triggered CI run of main produces a release.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    permissions:
+      contents: write   # required to push tags and create releases
+    steps:
+      # Full history: tag creation + release-notes context.
+      - name: Checkout the tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Compute release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=$(mvn -B help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null | tr -d '\r' | tail -n 1)
+          case "$BASE" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "ERROR: cannot parse project.version from pom.xml (got: '$BASE')"; exit 1 ;;
+          esac
+          RUN="${{ github.event.workflow_run.run_number }}"
+          if ! printf '%s' "$RUN" | grep -Eq '^[0-9]+$'; then
+            echo "ERROR: workflow_run.run_number is not numeric (got: '$RUN')"
+            exit 1
+          fi
+          VERSION="${BASE}-build.${RUN}"
+          TAG="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release version: $TAG (base $BASE, CI run #$RUN)"
+
+      - name: Skip if tag already exists (idempotent rerun)
+        id: guard
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists - skipping (rerun/duplicate)"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tests already ran in the CI run this workflow waits for, so skipTests.
+      # Build BEFORE tagging: a failed build must not leave an orphan tag.
+      - name: Build JAR
+        if: steps.guard.outputs.exists == 'false'
+        shell: bash
+        run: mvn -B package -DskipTests -T 4 --no-transfer-progress 2>&1 | tee build.log
+
+      - name: Print build failure diagnosis (last 50 lines)
+        if: failure()
+        run: |
+          echo "==== last 50 lines of Maven log ===="
+          tail -n 50 build.log || true
+          echo "==== errors ===="
+          grep -E 'ERROR|BUILD FAILURE' build.log | head -n 30 || true
+
+      - name: Create and push tag
+        if: steps.guard.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release with JAR
+        if: steps.guard.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true   # GitHub builds notes from commits since previous tag
+          files: target/*.jar
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false

@@ -997,3 +997,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.17 Clean up pom.xml version
 
 3.4.18 GITHUB-1 fix CI: compile-gate fail-fast, fast-only push gate, corrected cache keys, auto-issue on failure
+
+3.4.19 Fix ConcurrentModificationException in DieselLogConfigTest

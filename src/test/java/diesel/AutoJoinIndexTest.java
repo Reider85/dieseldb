@@ -10,10 +10,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Handler;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
 import java.nio.file.Path;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -27,53 +27,28 @@ public class AutoJoinIndexTest {
     private Database database;
     @TempDir
     Path tempDir;
-    private List<LogRecord> captured;
-    private Handler handler;
-    private long ownerThreadId;
+    private Slf4jLogCapture capture;
+    private String ownerThreadName;
 
     @BeforeEach
     void setUp() {
         database = new Database();
         database.setDataDir(tempDir.toString());
         dropTables();
-        Logger logger = Logger.getLogger("diesel.SelectQuery");
-        captured = new ArrayList<>();
-        ownerThreadId = Thread.currentThread().getId();
-        handler = new Handler() {
-            @Override
-            public void publish(LogRecord logRecord) {
-                // The diesel.SelectQuery logger is global: under parallel
-                // classes other tests' join warnings land here too. Keep
-                // only records logged from this test's thread.
-                if (logRecord.getThreadID() == ownerThreadId) {
-                    captured.add(logRecord);
-                }
-            }
-
-            @Override
-            public void flush() {
-                // no-op
-            }
-
-            @Override
-            public void close() {
-                // no-op
-            }
-        };
-        logger.addHandler(handler);
-    }
-
-    private void reattachHandler() {
-        Logger logger = Logger.getLogger("diesel.SelectQuery");
-        if (java.util.Arrays.asList(logger.getHandlers()).contains(handler)) {
-            return;
-        }
-        logger.addHandler(handler);
+        // SelectQuery logs via SLF4J since the JUL->SLF4J migration, so a JUL
+        // Handler never sees the warning - capture with Slf4jLogCapture instead.
+        // WARN level only: TRACE would capture per-row DEBUG of the 10k-row
+        // benchmark join and OOM the heap.
+        capture = new Slf4jLogCapture("diesel.SelectQuery", Level.WARN);
+        ownerThreadName = Thread.currentThread().getName();
     }
 
     @AfterEach
     void tearDown() {
-        Logger.getLogger("diesel.SelectQuery").removeHandler(handler);
+        if (capture != null) {
+            capture.close();
+            capture = null;
+        }
         dropTables();
             
         if (database != null) {
@@ -108,11 +83,16 @@ public class AutoJoinIndexTest {
     }
 
     private List<String> warnings() {
+        // The diesel.SelectQuery logger is global: under parallel classes other
+        // tests' join warnings land here too - keep only this test's thread.
         List<String> warnings = new ArrayList<>();
-        for (LogRecord logRecord : captured) {
-            String message = logRecord.getMessage();
-            if (message != null && message.contains("Consider creating index on")) {
-                warnings.add(message);
+        for (ILoggingEvent event : capture.events()) {
+            if (event.getLevel() == Level.WARN
+                    && ownerThreadName.equals(event.getThreadName())) {
+                String message = event.getFormattedMessage();
+                if (message != null && message.contains("Consider creating index on")) {
+                    warnings.add(message);
+                }
             }
         }
         return warnings;
@@ -209,7 +189,6 @@ public class AutoJoinIndexTest {
         String literalJoin = "SELECT COUNT(*) FROM A JOIN B ON B.A_ID = 5";
         long unindexedMillis = measureLiteralJoinMillis(literalJoin);
 
-        reattachHandler();
         database.executeQuery("SELECT A.ID, B.A_ID FROM A JOIN B ON A.ID = B.A_ID", null);
         assertNotNull(database.getTable("B").getIndex("A_ID"), "Equi-join auto-created the index");
         List<String> warnings = warnings();

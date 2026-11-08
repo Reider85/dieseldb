@@ -140,6 +140,7 @@ diesel/MessageConstants.java		network
 diesel/SubqueryConstants.java		query,query-full
 pom.xml					all
 .github/workflows/ci.yml		none
+.github/workflows/release-on-push.yml	none
 Makefile				none
 diesel/UndoLog.java		concurrency
 diesel/security/*.java		smoke,query
@@ -235,3 +236,4 @@ diesel/DropReplicationSlotQuery.java	query,storage
 diesel/ReplicationCoordinator.java	query,storage
 diesel/SyncAck.java	query,storage
 diesel/SyncReplicationCoordinator.java	query,storage
+diesel/logging/*.java	smoke,query

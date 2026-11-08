@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.util.*;
-import java.util.logging.*;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -103,23 +102,15 @@ public class AutoWhereIndexTest {
     @Test
     void autoIndexWarningLogged() {
         createTable();
-        // Set up log capture
-        Logger logger = Logger.getLogger(SelectQuery.class.getName());
-        List<LogRecord> warnings = new ArrayList<>();
-        Handler handler = new Handler() {
-            @Override public void publish(LogRecord logRecord) { warnings.add(logRecord); }
-            @Override public void flush() {}
-            @Override public void close() {}
-        };
-        handler.setLevel(Level.WARNING);
-        logger.addHandler(handler);
-        try {
+        // SelectQuery logs via SLF4J since the JUL->SLF4J migration, so a JUL
+        // Handler never sees the warning - capture with Slf4jLogCapture instead.
+        // WARN level only: TRACE would capture per-row DEBUG events.
+        try (Slf4jLogCapture capture = new Slf4jLogCapture(SelectQuery.class, ch.qos.logback.classic.Level.WARN)) {
             query("SELECT ID FROM T1 WHERE SALARY > 50000");
-            assertTrue(warnings.stream().anyMatch(r ->
-                    r.getMessage().contains("Auto-created index") && r.getMessage().contains("SALARY")),
+            List<ch.qos.logback.classic.spi.ILoggingEvent> warnings =
+                    capture.eventsMatching(ch.qos.logback.classic.Level.WARN, "Auto-created index");
+            assertTrue(warnings.stream().anyMatch(e -> e.getFormattedMessage().contains("SALARY")),
                     "Should log WARNING about auto-created index");
-        } finally {
-            logger.removeHandler(handler);
         }
     }
 

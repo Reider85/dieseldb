@@ -1,9 +1,11 @@
 package diesel.logging;
 
 import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ch.qos.logback.classic.Level;
@@ -18,11 +20,16 @@ import java.util.Properties;
  * Unit tests for DieselLogConfig functionality.
  */
 @Tag("query")
+// Both logging test classes mutate the shared root logger (levels, appenders)
+// and must not run concurrently with each other (TESTS-3 parallel-race rule).
+@ResourceLock("logback-state")
 class DieselLogConfigTest {
     
     private LoggerContext loggerContext;
     private ListAppender<ILoggingEvent> listAppender;
     private DieselLogConfigTest.TestConfigLoader testConfigLoader;
+    private Level originalRootLevel;
+    private Level originalDieselLevel;
     
     @BeforeEach
     void setUp() {
@@ -37,8 +44,22 @@ class DieselLogConfigTest {
         
         // Add appender to root logger
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+        originalRootLevel = rootLogger.getLevel();
+        originalDieselLevel = loggerContext.getLogger("diesel").getLevel();
         rootLogger.addAppender(listAppender);
         rootLogger.setLevel(Level.DEBUG); // Capture all levels for testing
+    }
+    
+    @AfterEach
+    void tearDown() {
+        // Without this, every test leaks a ListAppender on the root logger -
+        // the accumulated appenders OOM'd the suite (ListAppender.append ->
+        // ArrayList.grow in the PersistFlusher background thread).
+        ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+        rootLogger.detachAppender(listAppender);
+        listAppender.stop();
+        rootLogger.setLevel(originalRootLevel);
+        loggerContext.getLogger("diesel").setLevel(originalDieselLevel);
     }
     
     @Test
@@ -129,8 +150,10 @@ class DieselLogConfigTest {
         
         // Verify warning was logged
         assertTrue(listAppender.list.stream()
+            .collect(java.util.stream.Collectors.toList())
+            .stream()
             .anyMatch(event -> event.getLevel() == Level.WARN && 
-                             event.getMessage().contains("Unknown logging level 'NOPE'")));
+                             event.getFormattedMessage().contains("Unknown logging level 'NOPE'")));
     }
     
     @Test
@@ -199,8 +222,9 @@ class DieselLogConfigTest {
         assertEquals(Level.DEBUG, walLogger.getLevel());
         
         // Verify non-WAL loggers inherit global INFO level
+        // (getLevel() returns null for inherited levels - use getEffectiveLevel())
         ch.qos.logback.classic.Logger serverLogger = loggerContext.getLogger("diesel.DatabaseServer");
-        assertEquals(Level.INFO, serverLogger.getLevel());
+        assertEquals(Level.INFO, serverLogger.getEffectiveLevel());
     }
     
     @Test
@@ -223,8 +247,9 @@ class DieselLogConfigTest {
         assertEquals(Level.WARN, walLogger.getLevel());
         
         // Verify non-WAL loggers inherit global DEBUG level
+        // (getLevel() returns null for inherited levels - use getEffectiveLevel())
         ch.qos.logback.classic.Logger serverLogger = loggerContext.getLogger("diesel.DatabaseServer");
-        assertEquals(Level.DEBUG, serverLogger.getLevel());
+        assertEquals(Level.DEBUG, serverLogger.getEffectiveLevel());
     }
     
     @Test
@@ -263,7 +288,7 @@ class DieselLogConfigTest {
         // Verify warning was logged
         assertTrue(listAppender.list.stream()
             .anyMatch(event -> event.getLevel() == Level.WARN && 
-                             event.getMessage().contains("Unknown logging level 'foobar'")));
+                             event.getFormattedMessage().contains("Unknown logging level 'foobar'")));
         
         // Verify global level is still applied
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -284,7 +309,8 @@ class DieselLogConfigTest {
         ch.qos.logback.classic.Logger newWalLogger = loggerContext.getLogger("diesel.wal.NewClass");
         
         // Verify it inherits the DEBUG level from diesel.wal
-        assertEquals(Level.DEBUG, newWalLogger.getLevel());
+        // (getLevel() returns null for inherited levels - use getEffectiveLevel())
+        assertEquals(Level.DEBUG, newWalLogger.getEffectiveLevel());
     }
     
     @Test
