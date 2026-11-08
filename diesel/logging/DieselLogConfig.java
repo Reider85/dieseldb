@@ -3,6 +3,7 @@ package diesel.logging;
 import java.util.Map;
 import java.util.List;
 import java.util.Properties;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,9 @@ import ch.qos.logback.core.status.StatusListener;
 import ch.qos.logback.core.status.Status;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.AppenderBase;
+import diesel.logging.DieselRedactionTurboFilter;
+import diesel.logging.DieselJsonLayout;
+import diesel.logging.DieselSamplingTurboFilter;
 
 /**
  * Centralized logging configuration manager for DieselDB.
@@ -40,7 +44,126 @@ public class DieselLogConfig {
         Properties config = loadConfig();
         applyGlobalLevel(config);
         applyModuleLevels(config);
+        configureRedactionFilter(config);
+        configureTraceContext(config);
+        configureJsonFormat(config);
+        configureSamplingFilter(config);
         configureAsyncLogging(config);
+    }
+    
+    /**
+     * Configures sampling filter if enabled in configuration.
+     */
+    private static void configureSamplingFilter(Properties config) {
+        // Check if any sampling keys are present
+        boolean hasSamplingKeys = false;
+        for (String key : config.stringPropertyNames()) {
+            if (key.startsWith("logging.sampling.")) {
+                hasSamplingKeys = true;
+                break;
+            }
+        }
+        
+        if (!hasSamplingKeys) {
+            LOGGER.info("Sampling filter is not configured");
+            return;
+        }
+        
+        LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
+        DieselSamplingTurboFilter samplingFilter = new DieselSamplingTurboFilter();
+        samplingFilter.setContext(loggerContext);
+        
+        // Convert Properties to Map for sampling filter
+        Map<String, String> samplingConfig = new HashMap<>();
+        for (String key : config.stringPropertyNames()) {
+            if (key.startsWith("logging.sampling.")) {
+                samplingConfig.put(key, config.getProperty(key));
+            }
+        }
+        
+        samplingFilter.updateSampleRates(samplingConfig);
+        samplingFilter.start();
+        
+        // Add filter to logger context
+        loggerContext.addTurboFilter(samplingFilter);
+        LOGGER.info("Sampling filter enabled for {} modules", samplingConfig.size());
+    }
+    
+    /**
+     * Configures JSON logging format if enabled in configuration.
+     */
+    private static void configureJsonFormat(Properties config) {
+        String format = config.getProperty("logging.format", "text");
+        
+        if (!"json".equalsIgnoreCase(format)) {
+            LOGGER.info("Using text logging format (default)");
+            return;
+        }
+        
+        LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
+        DieselJsonLayout jsonLayout = new DieselJsonLayout();
+        jsonLayout.setContext(loggerContext);
+        jsonLayout.start();
+        
+        // Find and replace encoders in CONSOLE and FILE appenders
+        ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+        
+        // Update CONSOLE appender
+        ch.qos.logback.core.Appender<ILoggingEvent> consoleAppender = rootLogger.getAppender("CONSOLE");
+        if (consoleAppender instanceof ch.qos.logback.core.ConsoleAppender) {
+            ch.qos.logback.core.ConsoleAppender<ILoggingEvent> console = 
+                (ch.qos.logback.core.ConsoleAppender<ILoggingEvent>) consoleAppender;
+            console.setLayout(jsonLayout);
+        }
+        
+        // Update FILE appender
+        ch.qos.logback.core.Appender<ILoggingEvent> fileAppender = rootLogger.getAppender("FILE");
+        if (fileAppender instanceof ch.qos.logback.core.rolling.RollingFileAppender) {
+            ch.qos.logback.core.rolling.RollingFileAppender<ILoggingEvent> file = 
+                (ch.qos.logback.core.rolling.RollingFileAppender<ILoggingEvent>) fileAppender;
+            file.setLayout(jsonLayout);
+        }
+        
+        LOGGER.info("JSON logging format enabled");
+    }
+    
+    /**
+     * Configures trace context if enabled in configuration.
+     */
+    private static void configureTraceContext(Properties config) {
+        String enabledStr = config.getProperty("logging.trace.enabled", "false");
+        boolean enabled = Boolean.parseBoolean(enabledStr);
+        
+        if (!enabled) {
+            LOGGER.info("Trace context is disabled (default behavior)");
+            return;
+        }
+        
+        LOGGER.info("Trace context enabled for request correlation");
+        // Trace context is used via DieselTraceContext.set() calls
+        // No additional configuration needed at this level
+    }
+    
+    /**
+     * Configures redaction filter if enabled in configuration.
+     */
+    private static void configureRedactionFilter(Properties config) {
+        String enabledStr = config.getProperty("logging.redaction.enabled", "true");
+        boolean enabled = Boolean.parseBoolean(enabledStr);
+        
+        if (!enabled) {
+            LOGGER.info("Redaction filter is disabled");
+            return;
+        }
+        
+        LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
+        DieselRedactionTurboFilter redactionFilter = new DieselRedactionTurboFilter();
+        redactionFilter.setContext(loggerContext);
+        redactionFilter.start();
+        
+        // Add filter to logger context
+        loggerContext.addTurboFilter(redactionFilter);
+        LOGGER.info("Redaction filter enabled for sensitive information");
     }
     
     /**
@@ -288,8 +411,7 @@ public class DieselLogConfig {
                 asyncAppender.addAppender(fileAppender);
             }
             
-            // Add status listener to track dropped events
-            asyncAppender.addStatusListener(new AsyncAppenderStatusListener());
+            // Note: Status listener tracking will be added when MetricsRegistry is available
             
             // Start async appender
             asyncAppender.start();

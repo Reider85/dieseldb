@@ -178,15 +178,57 @@ public class DatabaseServer {
         return ConfigLoader.load();
     }
 
-    // Log configuration parameters
+// Log configuration parameters
 private static void logConfig(Properties config) {
     LOGGER.info("Configuration parameters loaded from {}:", CONFIG_FILE);
 if (config.isEmpty()) {
     LOGGER.warn("No configuration parameters found in {}", CONFIG_FILE);
         } else {
-config.forEach((key, value) ->
-        LOGGER.info("Config: {} = {}", key, value));
+            // Whitelist of safe configuration keys to log (avoiding passwords, secrets, tokens)
+            Set<String> safeKeys = Set.of(
+                "storage.*", "server.*", "page.*", "bufferpool.*", 
+                "deadlock.*", "lock.*", "query.cache.*", "libpq.*",
+                "transaction.isolation.level", "server.pool.size", 
+                "server.queue.capacity", "server.backlog", "server.port",
+                "server.bind.address", "server.ssl.enabled", 
+                "server.ssl.protocol", "server.ssl.ciphers",
+                "logging.*", "metrics.*", "observability.*"
+            );
+            
+            config.forEach((key, value) -> {
+                if (isSafeKey(key, safeKeys)) {
+                    LOGGER.info("Config: {} = {}", key, value.toString());
+                }
+            });
         }
+    }
+    
+    /**
+     * Checks if a configuration key is safe to log (not containing sensitive information).
+     */
+    private static boolean isSafeKey(String key, Set<String> safeKeys) {
+        // Check against whitelist patterns
+        for (String safePattern : safeKeys) {
+            if (safePattern.endsWith(".*")) {
+                String prefix = safePattern.substring(0, safePattern.length() - 2);
+                if (key.startsWith(prefix)) {
+                    return true;
+                }
+            } else if (key.equals(safePattern)) {
+                return true;
+            }
+        }
+        
+        // Additional blacklist check for known sensitive keys
+        String lowerKey = key.toLowerCase();
+        return !lowerKey.contains("password") &&
+               !lowerKey.contains("passwd") &&
+               !lowerKey.contains("secret") &&
+               !lowerKey.contains("token") &&
+               !lowerKey.contains("privatekey") &&
+               !lowerKey.contains("keystore.password") &&
+               !lowerKey.contains("truststore.password") &&
+               !lowerKey.contains("archive.dir");
     }
 
     // Get isolation level from Properties

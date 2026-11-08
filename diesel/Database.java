@@ -1734,7 +1734,7 @@ public class Database {
                 final long txid = currentTransaction.getTxid();
                 final long finalCsn = commitCsn;
                 LOGGER.debug("WAL commit recorded for txid={}, csn={}", 
-                    txid, finalCsn));
+                    txid, finalCsn);
             } catch (Exception e) {
                 // WAL write failed: abort the commit (no durability = no commit)
                 final long txid = currentTransaction.getTxid();
