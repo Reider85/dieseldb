@@ -20,6 +20,7 @@ public class DieselSamplingTurboFilterTest {
     
     private DieselSamplingTurboFilter filter;
     private Logger logger;
+    private LoggerContext loggerContext;
     
     @BeforeEach
     void setUp() {
@@ -27,7 +28,7 @@ public class DieselSamplingTurboFilterTest {
         filter.start();
         
         // Create a mock logger context
-        LoggerContext loggerContext = new LoggerContext();
+        loggerContext = new LoggerContext();
         logger = loggerContext.getLogger("diesel.wal.WALWriter");
     }
     
@@ -127,7 +128,8 @@ public class DieselSamplingTurboFilterTest {
         filter.updateSampleRates(config);
         
         // Test a non-sampled logger (should pass through)
-        Logger otherLogger = new Logger("diesel.DatabaseServer", null, null);
+        LoggerContext loggerContext = new LoggerContext();
+        Logger otherLogger = loggerContext.getLogger("diesel.DatabaseServer");
         for (int i = 0; i < 10; i++) {
             FilterReply reply = filter.decide(null, otherLogger, Level.INFO, "Test message", null, null);
             assertEquals(FilterReply.NEUTRAL, reply);

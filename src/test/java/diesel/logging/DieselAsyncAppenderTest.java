@@ -77,8 +77,8 @@ class DieselAsyncAppenderTest {
         testConfigLoader.setProperty("logging.async.never.block", "true");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.configureAsyncLogging(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.configureAsyncLogging(testConfigLoader.loadProperties());
         
         // Verify root logger has AsyncAppender
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -106,8 +106,8 @@ class DieselAsyncAppenderTest {
         testConfigLoader.setProperty("logging.async.queue.size", "10");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.configureAsyncLogging(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.configureAsyncLogging(testConfigLoader.loadProperties());
         
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
         AsyncAppender asyncAppender = (AsyncAppender) rootLogger.getAppender("ASYNC");
@@ -148,8 +148,8 @@ class DieselAsyncAppenderTest {
         testConfigLoader.setProperty("logging.async.never.block", "true");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.configureAsyncLogging(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.configureAsyncLogging(testConfigLoader.loadProperties());
         
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
         AsyncAppender asyncAppender = (AsyncAppender) rootLogger.getAppender("ASYNC");
@@ -189,15 +189,15 @@ class DieselAsyncAppenderTest {
         testConfigLoader.setProperty("logging.async.enabled", "true");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.configureAsyncLogging(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.configureAsyncLogging(testConfigLoader.loadProperties());
         
         // Verify no AsyncAppender was created
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
         assertNull(rootLogger.getAppender("ASYNC"), "AsyncAppender should not be created when level is OFF");
         
         // Verify original appenders are still there
-        assertNotNull(rootLogger.getAppender("CONSOLE") || rootLogger.getAppender("FILE"), 
+        assertNotNull(rootLogger.getAppender("CONSOLE") != null || rootLogger.getAppender("FILE") != null, 
                     "Original appenders should remain when async is disabled due to OFF level");
     }
     
@@ -211,8 +211,8 @@ class DieselAsyncAppenderTest {
         testConfigLoader.setProperty("logging.async.never.block", "true");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.configureAsyncLogging(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.configureAsyncLogging(testConfigLoader.loadProperties());
         
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
         AsyncAppender asyncAppender = (AsyncAppender) rootLogger.getAppender("ASYNC");
@@ -251,8 +251,8 @@ class DieselAsyncAppenderTest {
         testConfigLoader.setProperty("logging.async.queue.size", "20");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.configureAsyncLogging(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.configureAsyncLogging(testConfigLoader.loadProperties());
         
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
         AsyncAppender asyncAppender = (AsyncAppender) rootLogger.getAppender("ASYNC");
@@ -291,8 +291,8 @@ class DieselAsyncAppenderTest {
         testConfigLoader.setProperty("logging.async.include.caller.data", "true");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.configureAsyncLogging(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.configureAsyncLogging(testConfigLoader.loadProperties());
         
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
         AsyncAppender asyncAppender = (AsyncAppender) rootLogger.getAppender("ASYNC");
@@ -318,8 +318,7 @@ class DieselAsyncAppenderTest {
             properties.clear();
         }
         
-        @Override
-        protected Properties loadProperties() {
+        public Properties loadProperties() {
             return properties;
         }
     }

@@ -48,7 +48,7 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level", "DEBUG");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
         
         // Verify root logger level
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -68,7 +68,7 @@ class DieselLogConfigTest {
         
         try {
             // Apply configuration
-            DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+            DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
             
             // Verify root logger level (system property should win)
             ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -90,7 +90,7 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level", "SEVERE");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
         
         // Verify root logger level (should be ERROR, not SEVERE)
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -102,15 +102,15 @@ class DieselLogConfigTest {
     void julAliasesAccepted() {
         // Test various JUL aliases
         testConfigLoader.setProperty("logging.level", "FINE");
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
         assertEquals(Level.DEBUG, loggerContext.getLogger(Logger.ROOT_LOGGER_NAME).getLevel());
         
         testConfigLoader.setProperty("logging.level", "WARNING");
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
         assertEquals(Level.WARN, loggerContext.getLogger(Logger.ROOT_LOGGER_NAME).getLevel());
         
         testConfigLoader.setProperty("logging.level", "CONFIG");
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
         assertEquals(Level.INFO, loggerContext.getLogger(Logger.ROOT_LOGGER_NAME).getLevel());
     }
     
@@ -121,7 +121,7 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level", "NOPE");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
         
         // Verify root logger level (should default to INFO)
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -142,7 +142,7 @@ class DieselLogConfigTest {
         
         try {
             // Apply configuration
-            DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+            DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
             
             // Verify warning was logged
             assertTrue(listAppender.list.stream()
@@ -163,7 +163,7 @@ class DieselLogConfigTest {
         
         try {
             // Apply configuration
-            DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
+            DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
             
             // Verify root logger level (should be INFO from config, not WARNING from diesel alias)
             ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -187,8 +187,8 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level.wal", "DEBUG");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.applyModuleLevels(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.applyModuleLevels(testConfigLoader.loadProperties());
         
         // Verify global level is INFO
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -211,8 +211,8 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level.wal", "WARN");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.applyModuleLevels(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.applyModuleLevels(testConfigLoader.loadProperties());
         
         // Verify global level is DEBUG
         ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
@@ -237,8 +237,8 @@ class DieselLogConfigTest {
         
         try {
             // Apply configuration
-            DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-            DieselLogConfig.applyModuleLevels(testConfigLoader.load());
+            DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+            DieselLogConfig.applyModuleLevels(testConfigLoader.loadProperties());
             
             // Verify WAL module level is DEBUG (system property wins)
             ch.qos.logback.classic.Logger walLogger = loggerContext.getLogger("diesel.wal");
@@ -257,8 +257,8 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level.foobar", "DEBUG");
         
         // Apply configuration
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.applyModuleLevels(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.applyModuleLevels(testConfigLoader.loadProperties());
         
         // Verify warning was logged
         assertTrue(listAppender.list.stream()
@@ -277,8 +277,8 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level", "INFO");
         testConfigLoader.setProperty("logging.level.wal", "DEBUG");
         
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.applyModuleLevels(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.applyModuleLevels(testConfigLoader.loadProperties());
         
         // Create a new logger after configuration (should inherit from diesel.wal parent)
         ch.qos.logback.classic.Logger newWalLogger = loggerContext.getLogger("diesel.wal.NewClass");
@@ -294,8 +294,8 @@ class DieselLogConfigTest {
         testConfigLoader.setProperty("logging.level", "INFO");
         testConfigLoader.setProperty("logging.level.wal", "DEBUG");
         
-        DieselLogConfig.applyGlobalLevel(testConfigLoader.load());
-        DieselLogConfig.applyModuleLevels(testConfigLoader.load());
+        DieselLogConfig.applyGlobalLevel(testConfigLoader.loadProperties());
+        DieselLogConfig.applyModuleLevels(testConfigLoader.loadProperties());
         
         // Verify initial state
         ch.qos.logback.classic.Logger walLogger = loggerContext.getLogger("diesel.wal");
@@ -321,8 +321,7 @@ class DieselLogConfigTest {
             properties.setProperty(key, value);
         }
         
-        @Override
-        protected Properties loadProperties() {
+        public Properties loadProperties() {
             return properties;
         }
     }

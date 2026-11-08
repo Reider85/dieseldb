@@ -183,11 +183,11 @@ public class DieselLogConfig {
     
     /**
      * Applies global logging level from priority chain:
-     * 1. System property -Dlogging.level=&lt;level&gt;
-     * 2. config.properties logging.level=&lt;level&gt; 
+     * 1. System property -Dlogging.level=<level>
+     * 2. config.properties logging.level=<level> 
      * 3. Default INFO (from logback.xml)
      */
-    private static void applyGlobalLevel(Properties config) {
+    public static void applyGlobalLevel(Properties config) {
         String resolvedLevel = resolveGlobalLevel(config);
         
         LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
@@ -267,7 +267,7 @@ public class DieselLogConfig {
      * Applies per-module logging levels with priority over global level.
      * Called after applyGlobalLevel() so module levels can override.
      */
-    private static void applyModuleLevels(Properties config) {
+    public static void applyModuleLevels(Properties config) {
         // Module mapping - can be extended as needed
         Map<String, List<String>> moduleMapping = Map.ofEntries(
             Map.entry("parser", List.of("diesel.QueryParser", "diesel.SelectQueryParser", "diesel.SubqueryParser", 
@@ -349,7 +349,7 @@ public class DieselLogConfig {
      * <p>When enabled, wraps CONSOLE and FILE appenders from logback.xml
      * into a single AsyncAppender drained by a daemon 'logback-async' thread.
      */
-    private static void configureAsyncLogging(Properties config) {
+    public static void configureAsyncLogging(Properties config) {
         // Check if async logging is enabled
         String enabledStr = config.getProperty("logging.async.enabled", "false");
         boolean enabled = Boolean.parseBoolean(enabledStr);
