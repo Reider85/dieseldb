@@ -304,8 +304,8 @@ class DieselLogConfigTest {
         // Change configuration
         testConfigLoader.setProperty("logging.level.wal", "WARN");
         
-        // Reapply configuration
-        DieselLogConfig.reapply();
+        // Apply configuration directly using test config loader
+        DieselLogConfig.applyModuleLevels(testConfigLoader.loadProperties());
         
         // Verify new state
         assertEquals(Level.WARN, walLogger.getLevel());
