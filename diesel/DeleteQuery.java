@@ -272,7 +272,7 @@ class DeleteQuery implements Query<Void> {
             rowsToDelete.addAll(deduped);
             LOGGER.info("Using {} index for IN query on column {} with values {}", 
                     indexTypeName(index),
-                            condition.column, condition.inValues});
+                    condition.column, condition.inValues);
         }
     }
 

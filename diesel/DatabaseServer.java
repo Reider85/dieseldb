@@ -221,8 +221,10 @@ config.forEach((key, value) ->
      * until {@link #stop()} is called.
      */
     public void start() {
-        // Load and log configuration
+        // Load configuration
         Properties config = loadConfig();
+        // Initialize logging configuration (first step after loadConfig)
+        diesel.logging.DieselLogConfig.init();
         // Instance-level overlay (prompt4 #29): wins over config.properties for
         // this server only, keeping tests free of process-wide property flips.
         if (configOverride != null) {
