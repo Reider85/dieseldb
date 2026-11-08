@@ -1,0 +1,5 @@
+reword 9be2ab7 3.4.9 Fix logging system compilation issues and JUL to SLF4J migration
+reword b1456ea 3.4.8 Fix JUL to SLF4J compilation errors - replace warning/fine with warn/debug, fix Level.FINEST to trace
+reword bf207aa 3.4.7 Phase 2: Per-module logging switches with priority
+reword ed371f8 3.4.6 Migrate all legacy classes from JUL to SLF4J logging
+reword 567ea7b 3.4.5 TESTS-16,17: Add all-tests-all-storages target and remove unused Maven profiles
