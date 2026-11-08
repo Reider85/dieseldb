@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-<version>3.4.12</version>
+<version>3.4.12</version> ce2dc305346aa419423ec454714b01b65b4b44e4
     <packaging>jar</packaging>
 
     <licenses>
