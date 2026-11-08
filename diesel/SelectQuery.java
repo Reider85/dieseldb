@@ -3890,7 +3890,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
     }
 
     private void logConditionEvaluation(List<QueryParser.Condition> conditions) {
-        if (!LOGGER.isLoggable(Level.FINE)) {
+        if (!LOGGER.isDebugEnabled()) {
             return;
         }
         StringBuilder sb = new StringBuilder("Evaluating WHERE: ");
@@ -3901,7 +3901,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             }
             sb.append(conditions.get(i));
         }
-        LOGGER.fine(sb.toString());
+        LOGGER.debug(sb.toString());
     }
 
     private ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,

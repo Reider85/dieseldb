@@ -2196,8 +2196,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
             return -2;
         }
         if (info.tokenType.equals("from") && bracketDepth == 0) {
-            LOGGER.log(Level.FINEST, "Найден основной FROM на позиции {0} в запросе: {1}",
-                    new Object[]{info.startPos, query});
+            LOGGER.trace("Найден основной FROM на позиции {} в запросе: {}", info.startPos, query);
             return info.startPos;
         }
         return -1;
@@ -2566,8 +2565,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
 
         if (isSubQuery) {
             Query<?> subQuery = parse(subQueryStr, database);
-            LOGGER.log(Level.FINE, "Parsed {0}(subquery){1}",
-                    new Object[]{funcName, alias != null ? MessageConstants.SQL_AS_SPACED + alias : ""});
+            LOGGER.debug("Parsed {}(subquery){}", funcName, alias != null ? MessageConstants.SQL_AS_SPACED + alias : "");
             return new AggregateFunction(funcName, new SubQuery(subQuery, null), alias);
         } else {
             LOGGER.debug("Parsed {}({}){}", funcName, column == null ? "*" : column, alias != null ? MessageConstants.SQL_AS_SPACED + alias : "");
@@ -2643,7 +2641,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
         }
         if (tableAlias != null) {
             tableAliases.put(tableAlias, tableName);
-            LOGGER.log(Level.FINE, "Разобран алиас главной таблицы: {0} -> {1}", new Object[]{tableAlias, tableName});
+            LOGGER.debug("Разобран алиас главной таблицы: {} -> {}", tableAlias, tableName);
         }
 
         Table mainTable = database.getTable(tableName);
@@ -2683,7 +2681,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
             String onClausePart = joinPart;
             if (clauseMatcher.find()) {
                 onClausePart = joinPart.substring(0, clauseMatcher.start()).trim();
-                LOGGER.log(Level.FINE, "Обрезана часть после ON до {0}: {1}", new Object[]{clauseMatcher.group(1), onClausePart});
+                LOGGER.debug("Обрезана часть после ON до {}: {}", clauseMatcher.group(1), onClausePart);
             }
 
 // Обновляем разделение joinPart
@@ -2707,7 +2705,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
             joinTableAlias = parseJoinTableAlias(joinTableParts);
             if (joinTableAlias != null) {
                 tableAliases.put(joinTableAlias, joinTableName);
-                LOGGER.log(Level.FINE, "Разобран алиас таблицы соединения: {0} -> {1}", new Object[]{joinTableAlias, joinTableName});
+                LOGGER.debug("Разобран алиас таблицы соединения: {} -> {}", joinTableAlias, joinTableName);
             }
 
             if (joinType == JoinType.CROSS) {
@@ -2751,7 +2749,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
                 throw new IllegalArgumentException("CROSS JOIN не поддерживает ON: " + joinPart);
             }
         }
-        LOGGER.log(Level.FINE, "Разобран CROSS JOIN: таблица={0}, алиас={1}", new Object[]{joinTableName, joinTableAlias});
+        LOGGER.debug("Разобран CROSS JOIN: таблица={}, алиас={}", joinTableName, joinTableAlias);
         joins.add(new JoinInfo(tableName, joinTableName, joinTableAlias, null, null, joinType, onConditions));
     }
 
@@ -3142,7 +3140,7 @@ LOGGER.error("Unknown column, alias, or subquery in ORDER BY: {}, available colu
             column = match.column;
 
             orderBy.add(new OrderByInfo(column, ascending));
-            LOGGER.log(Level.FINE, "Parsed ORDER BY item: column={0}, ascending={1}", new Object[]{column, ascending});
+            LOGGER.debug("Parsed ORDER BY item: column={}, ascending={}", column, ascending);
         }
 
         return orderBy;
@@ -3395,7 +3393,7 @@ LOGGER.error("Unknown column in INSERT: {}, available columns: {}", column, colu
         tableAliases.put(tableName, tableName);
         if (tableAlias != null) {
             tableAliases.put(tableAlias, tableName);
-            LOGGER.log(Level.FINE, "Parsed UPDATE table alias: {0} -> {1}", new Object[]{tableAlias, tableName});
+            LOGGER.debug("Parsed UPDATE table alias: {} -> {}", tableAlias, tableName);
         }
 
         String setAndWhere = original.substring(parts[0].length() + SqlKeywords.SET.length()).trim();
@@ -3436,8 +3434,8 @@ LOGGER.error("Unknown column in UPDATE: {}, available columns: {}", column, colu
     }
 
     private Query<Void> parseDeleteQuery(String normalized, String original, Database database) {
-        LOGGER.log(Level.FINE, "Raw DELETE query: {0}", original);
-        LOGGER.log(Level.FINE, "Normalized DELETE query: {0}", normalized);
+        LOGGER.debug("Raw DELETE query: {}", original);
+        LOGGER.debug("Normalized DELETE query: {}", normalized);
 
         // Use normalized query for table name extraction (identifiers are uppercased)
         String[] fromParts = normalized.split(ErrorMessages.FROM_PATTERN, 2);
@@ -3459,7 +3457,7 @@ LOGGER.error("Unknown column in UPDATE: {}, available columns: {}", column, colu
 
             if (wherePartsOrig.length == 2) {
                 String conditionStr = wherePartsOrig[1].trim();
-                LOGGER.log(Level.FINE, "Parsing WHERE clause for DELETE: {0}", conditionStr);
+                LOGGER.debug("Parsing WHERE clause for DELETE: {}", conditionStr);
                 if (conditionStr.isEmpty()) {
                     LOGGER.error("Empty WHERE clause in DELETE query: {}", original);
                     throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
@@ -3471,7 +3469,7 @@ LOGGER.error("Unknown column in UPDATE: {}, available columns: {}", column, colu
                 conditions = parseConditions(conditionStr, new ParseContext(tableName, database, original, false,
                         table.getColumnTypes(), new HashMap<>(), new HashMap<>()));
             } else {
-                LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
+LOGGER.debug("No WHERE clause in DELETE query");
             }
         } else {
             LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
@@ -3598,17 +3596,17 @@ LOGGER.error("Unknown column in UPDATE: {}, available columns: {}", column, colu
     }
 
     private List<Condition> parseConditions(String conditionStr, ParseContext ctx) {
-        LOGGER.log(Level.FINE, "Начало парсинга условий: conditionStr={0}, defaultTableName={1}, isJoinCondition={2}",
-                new Object[]{conditionStr, ctx.defaultTableName, ctx.isJoinCondition});
+        LOGGER.debug("Начало парсинга условий: conditionStr={}, defaultTableName={}, isJoinCondition={}",
+                conditionStr, ctx.defaultTableName, ctx.isJoinCondition);
 
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
-            LOGGER.log(Level.FINE, "Пустая строка условий, возвращается пустой список условий");
+            LOGGER.debug("Пустая строка условий, возвращается пустой список условий");
             return new ArrayList<>();
         }
 
         // Обрезаем строку до ключевых слов
         String trimmedConditionStr = trimToClause(conditionStr);
-        LOGGER.log(Level.FINE, "Условие обрезано до: {0}", trimmedConditionStr);
+        LOGGER.debug("Условие обрезано до: {}", trimmedConditionStr);
 
         List<Token> tokens = tokenizeConditions(trimmedConditionStr);
         return parseTokenizedConditions(tokens, ctx, null, false);
@@ -3846,7 +3844,7 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
             LOGGER.error("Invalid subquery structure: SELECT and FROM out of order in {}", subquery);
             throw new IllegalArgumentException("Invalid subquery structure: " + subquery);
         }
-        LOGGER.log(Level.FINE, "Validated subquery: {0}", subquery);
+        LOGGER.debug("Validated subquery: {}", subquery);
     }
 
     private Operator parseOperator(String operatorStr) {
@@ -3859,8 +3857,8 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
 
     private String getNextToken(String conditionStr, int startIndex) {
         if (conditionStr == null || startIndex < 0 || startIndex >= conditionStr.length()) {
-            LOGGER.log(Level.FINE, "Invalid input for getNextToken: conditionStr={0}, startIndex={1}",
-                    new Object[]{conditionStr, startIndex});
+            LOGGER.debug("Invalid input for getNextToken: conditionStr={}, startIndex={}",
+                    conditionStr, startIndex);
             return "";
         }
 
@@ -3975,7 +3973,7 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
             }
             validateSubquery(subQueryStr);
             Query<?> subQuery = parse(subQueryStr, ctx.database);
-            LOGGER.log(Level.FINE, "Parsed IN subquery: {0}", subQueryStr);
+            LOGGER.debug("Parsed IN subquery: {}", subQueryStr);
             return new Condition(actualColumn, new SubQuery(subQuery, null), conjunction, inNot);
         }
 
@@ -3989,7 +3987,7 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
             throw new IllegalArgumentException("Empty IN list in: " + condStr);
         }
 
-        LOGGER.log(Level.FINE, "Parsed IN condition: column={0}, values={1}", new Object[]{actualColumn, inValues});
+        LOGGER.debug("Parsed IN condition: column={}, values={}", actualColumn, inValues);
         return new Condition(actualColumn, inValues, conjunction, inNot);
     }
 
@@ -4073,8 +4071,8 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
         String normalizedColumn = normalizeColumnName(column, ctx.defaultTableName, ctx.tableAliases);
         validateColumn(normalizedColumn, ctx.combinedColumnTypes);
 
-        LOGGER.log(Level.FINE, "Parsed subquery condition: column={0}, operator={1}, subQuery={2}",
-                new Object[]{normalizedColumn, operator, subQueryStr});
+        LOGGER.debug("Parsed subquery condition: column={}, operator={}, subQuery={}",
+                normalizedColumn, operator, subQueryStr);
         return new Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
     }
 
@@ -4329,7 +4327,7 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
         if (!finalCondStr.isEmpty()) {
             HavingCondition condition = parseSingleHavingCondition(finalCondStr, ctx, aggregates, state.conjunction, state.not);
             conditions.add(condition);
-            LOGGER.log(Level.FINE, "Parsed final HAVING condition: {0}", condition);
+            LOGGER.debug("Parsed final HAVING condition: {}", condition);
         }
 
         return conditions;
@@ -4373,8 +4371,8 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
             if (!condStr.isEmpty()) {
                 List<HavingCondition> subConditions = parseHavingConditions(condStr, ctx, aggregates);
                 conditions.add(new HavingCondition(subConditions, state.conjunction, state.not));
-                LOGGER.log(Level.FINE, "Parsed grouped HAVING condition: {0}, conjunction={1}, not={2}",
-                        new Object[]{subConditions, state.conjunction, state.not});
+                LOGGER.debug("Parsed grouped HAVING condition: {}, conjunction={}, not={}",
+                        subConditions, state.conjunction, state.not);
             }
         }
         state.currentCondition = new StringBuilder();
@@ -4410,7 +4408,7 @@ LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subque
             if (!condStr.isEmpty()) {
                 HavingCondition condition = parseSingleHavingCondition(condStr, ctx, aggregates, state.conjunction, state.not);
                 conditions.add(condition);
-                LOGGER.log(Level.FINE, "Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {0}", condition);
+                LOGGER.debug("Parsed HAVING condition before LIMIT/OFFSET/ORDER BY: {}", condition);
             }
             return AND_OR_BREAK_SENTINEL;
         }

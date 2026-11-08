@@ -409,7 +409,7 @@ public class Database {
      */
     public void runRecovery() {
         if (!isWALEnabled() || recoveryManager == null) {
-            LOGGER.fine("WAL disabled - skipping ARIES startup recovery");
+            LOGGER.debug("WAL disabled - skipping ARIES startup recovery");
             return;
         }
         try {
@@ -427,7 +427,7 @@ public class Database {
      */
     public void startPageFlusher() {
         if (bufferPoolFlusher != null && bufferPoolFlusher.isRunning()) {
-            LOGGER.fine("BufferPoolFlusher already running");
+            LOGGER.debug("BufferPoolFlusher already running");
             return;
         }
 
@@ -497,7 +497,7 @@ public class Database {
      */
     public void startCheckpointManager() {
         if (checkpointManager != null && checkpointManager.isRunning()) {
-            LOGGER.fine("CheckpointManager already running");
+            LOGGER.debug("CheckpointManager already running");
             return;
         }
 
@@ -572,7 +572,7 @@ public class Database {
      */
     public void startPageScrubber() {
         if (pageScrubber != null) {
-            LOGGER.fine("PageScrubber already running");
+            LOGGER.debug("PageScrubber already running");
             return;
         }
 
@@ -1733,7 +1733,7 @@ public class Database {
                 
                 final long txid = currentTransaction.getTxid();
                 final long finalCsn = commitCsn;
-                LOGGER.fine(() -> String.format("WAL commit recorded for txid=%d, csn=%d", 
+                LOGGER.debug("WAL commit recorded for txid={}, csn={}", 
                     txid, finalCsn));
             } catch (Exception e) {
                 // WAL write failed: abort the commit (no durability = no commit)

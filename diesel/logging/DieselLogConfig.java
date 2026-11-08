@@ -3,10 +3,19 @@ package diesel.logging;
 import java.util.Map;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.AsyncAppender;
+import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
+import ch.qos.logback.core.ConsoleAppender;
+import ch.qos.logback.core.rolling.RollingFileAppender;
+import ch.qos.logback.core.status.StatusListener;
+import ch.qos.logback.core.status.Status;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 
 /**
  * Centralized logging configuration manager for DieselDB.
@@ -25,11 +34,13 @@ public class DieselLogConfig {
      * 
      * <p>Called as the first line in DatabaseServer.start() after loadConfig().
      * Resolves logging levels from priority chain and applies them to logback.
+     * Also configures async logging if enabled.
      */
     public static void init() {
         Properties config = loadConfig();
         applyGlobalLevel(config);
         applyModuleLevels(config);
+        configureAsyncLogging(config);
     }
     
     /**
@@ -206,5 +217,133 @@ public class DieselLogConfig {
         Properties config = loadConfig();
         applyGlobalLevel(config);
         applyModuleLevels(config);
+        configureAsyncLogging(config);
+    }
+    
+    /**
+     * Configures async logging if enabled in configuration.
+     * 
+     * <p>When enabled, wraps CONSOLE and FILE appenders from logback.xml
+     * into a single AsyncAppender drained by a daemon 'logback-async' thread.
+     */
+    private static void configureAsyncLogging(Properties config) {
+        // Check if async logging is enabled
+        String enabledStr = config.getProperty("logging.async.enabled", "false");
+        boolean enabled = Boolean.parseBoolean(enabledStr);
+        
+        if (!enabled) {
+            LOGGER.info("Async logging is disabled (default behavior)");
+            return;
+        }
+        
+        // Check global level - if OFF, don't start async
+        String globalLevel = resolveGlobalLevel(config);
+        if ("OFF".equalsIgnoreCase(globalLevel)) {
+            LOGGER.info("Async logging disabled: global logging level is OFF");
+            return;
+        }
+        
+        LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
+        ch.qos.logback.classic.Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+        
+        try {
+            // Get existing appenders
+            ConsoleAppender<ILoggingEvent> consoleAppender = 
+                (ConsoleAppender<ILoggingEvent>) rootLogger.getAppender("CONSOLE");
+            RollingFileAppender<ILoggingEvent> fileAppender = 
+                (RollingFileAppender<ILoggingEvent>) rootLogger.getAppender("FILE");
+            
+            if (consoleAppender == null && fileAppender == null) {
+                LOGGER.warn("No CONSOLE or FILE appenders found, skipping async configuration");
+                return;
+            }
+            
+            // Create AsyncAppender
+            AsyncAppender asyncAppender = new AsyncAppender();
+            asyncAppender.setContext(loggerContext);
+            asyncAppender.setName("ASYNC");
+            
+            // Configure async parameters from config
+            String queueSizeStr = config.getProperty("logging.async.queue.size", "4096");
+            int queueSize = Integer.parseInt(queueSizeStr);
+            asyncAppender.setQueueSize(queueSize);
+            
+            String discardingThresholdStr = config.getProperty("logging.async.discarding.threshold", "0");
+            int discardingThreshold = Integer.parseInt(discardingThresholdStr);
+            asyncAppender.setDiscardingThreshold(discardingThreshold);
+            
+            String neverBlockStr = config.getProperty("logging.async.never.block", "true");
+            boolean neverBlock = Boolean.parseBoolean(neverBlockStr);
+            asyncAppender.setNeverBlock(neverBlock);
+            
+            String includeCallerDataStr = config.getProperty("logging.async.include.caller.data", "false");
+            boolean includeCallerData = Boolean.parseBoolean(includeCallerDataStr);
+            asyncAppender.setIncludeCallerData(includeCallerData);
+            
+            // Add existing appenders to async appender
+            if (consoleAppender != null) {
+                asyncAppender.addAppender(consoleAppender);
+            }
+            if (fileAppender != null) {
+                asyncAppender.addAppender(fileAppender);
+            }
+            
+            // Add status listener to track dropped events
+            asyncAppender.addStatusListener(new AsyncAppenderStatusListener());
+            
+            // Start async appender
+            asyncAppender.start();
+            
+            // Replace root appenders with async appender
+            rootLogger.detachAndStopAllAppenders();
+            if (consoleAppender != null) {
+                rootLogger.detachAppender("CONSOLE");
+            }
+            if (fileAppender != null) {
+                rootLogger.detachAppender("FILE");
+            }
+            rootLogger.addAppender(asyncAppender);
+            
+            LOGGER.info("Async logging enabled with queueSize={}, discardingThreshold={}, neverBlock={}", 
+                       queueSize, discardingThreshold, neverBlock);
+            
+        } catch (Exception e) {
+            LOGGER.error("Failed to configure async logging", e);
+        }
+    }
+    
+    /**
+     * Status listener for AsyncAppender to track dropped events.
+     */
+    private static class AsyncAppenderStatusListener implements StatusListener {
+        @Override
+        public void addStatusEvent(Status status) {
+            if (status.getLevel() == Status.WARN && 
+                status.getMessage() != null && 
+                status.getMessage().contains("discarded")) {
+                
+                // Extract dropped count from message
+                String message = status.getMessage();
+                try {
+                    // Example message: "AsyncAppender discarded 15 events"
+                    if (message.contains("discarded")) {
+                        String[] parts = message.split(" ");
+                        for (int i = 0; i < parts.length - 1; i++) {
+                            if (parts[i].equals("discarded") && i + 1 < parts.length) {
+                                int dropped = Integer.parseInt(parts[i + 1]);
+                                // TODO: Integrate with MetricsRegistry when available
+                                // For now, just log the dropped count
+                                LOGGER.debug("AsyncAppender dropped {} events", dropped);
+                                break;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to parse dropped events from status: {}", message, e);
+                }
+            }
+        }
+        
+        
     }
 }
